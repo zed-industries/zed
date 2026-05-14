@@ -26,6 +26,19 @@ use windows_numerics::Vector2;
 use crate::*;
 use gpui::*;
 
+/// DWrite factory: IDWriteFactory5 on upstream builds (Win10 1703+ for in-memory font loader),
+/// IDWriteFactory4 when `win-legacy-compat` is enabled (Win10 1607 / Server 2016+).
+#[cfg(not(feature = "win-legacy-compat"))]
+type DWriteFactory = IDWriteFactory5;
+#[cfg(feature = "win-legacy-compat")]
+type DWriteFactory = IDWriteFactory4;
+
+/// Font-set builder: IDWriteFontSetBuilder1 (upstream) vs IDWriteFontSetBuilder (legacy).
+#[cfg(not(feature = "win-legacy-compat"))]
+type DWriteFontSetBuilder = IDWriteFontSetBuilder1;
+#[cfg(feature = "win-legacy-compat")]
+type DWriteFontSetBuilder = IDWriteFontSetBuilder;
+
 #[derive(Debug)]
 struct FontInfo {
     font_family_h: HSTRING,
@@ -42,14 +55,16 @@ pub(crate) struct DirectWriteTextSystem {
 
 struct DirectWriteComponents {
     locale: HSTRING,
-    factory: IDWriteFactory5,
+    factory: DWriteFactory,
+    #[cfg(not(feature = "win-legacy-compat"))]
     in_memory_loader: IDWriteInMemoryFontFileLoader,
-    builder: IDWriteFontSetBuilder1,
+    builder: DWriteFontSetBuilder,
     text_renderer: TextRendererWrapper,
     system_ui_font_name: SharedString,
     system_subpixel_rendering: bool,
 }
 
+#[cfg(not(feature = "win-legacy-compat"))]
 impl Drop for DirectWriteComponents {
     fn drop(&mut self) {
         unsafe {
@@ -77,6 +92,8 @@ struct DirectWriteState {
     font_to_font_id: HashMap<Font, FontId>,
     font_info_cache: HashMap<usize, FontId>,
     layout_line_scratch: Vec<u16>,
+    #[cfg(feature = "win-legacy-compat")]
+    temp_font_files: Vec<std::path::PathBuf>,
 }
 
 impl GPUState {
@@ -164,11 +181,13 @@ impl GPUState {
 
 impl DirectWriteTextSystem {
     pub(crate) fn new(directx_devices: &DirectXDevices) -> Result<Self> {
-        let factory: IDWriteFactory5 = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
+        let factory: DWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         // The `IDWriteInMemoryFontFileLoader` here is supported starting from
         // Windows 10 Creators Update, which consequently requires the entire
         // `DirectWriteTextSystem` to run on `win10 1703`+.
+        #[cfg(not(feature = "win-legacy-compat"))]
         let in_memory_loader = unsafe { factory.CreateInMemoryFontFileLoader()? };
+        #[cfg(not(feature = "win-legacy-compat"))]
         unsafe { factory.RegisterFontFileLoader(&in_memory_loader)? };
         let builder = unsafe { factory.CreateFontSetBuilder()? };
         let mut locale = [0u16; LOCALE_NAME_MAX_LENGTH as usize];
@@ -183,6 +202,7 @@ impl DirectWriteTextSystem {
         let components = DirectWriteComponents {
             locale,
             factory,
+            #[cfg(not(feature = "win-legacy-compat"))]
             in_memory_loader,
             builder,
             text_renderer,
@@ -214,6 +234,8 @@ impl DirectWriteTextSystem {
                 font_to_font_id: HashMap::default(),
                 font_info_cache: HashMap::default(),
                 layout_line_scratch: Vec::new(),
+                #[cfg(feature = "win-legacy-compat")]
+                temp_font_files: Vec::new(),
             }),
         })
     }
@@ -347,6 +369,7 @@ impl DirectWriteState {
         Some(font_id)
     }
 
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn add_fonts(
         &mut self,
         components: &DirectWriteComponents,
@@ -385,9 +408,57 @@ impl DirectWriteState {
         Ok(())
     }
 
+    #[cfg(feature = "win-legacy-compat")]
+    fn add_fonts(
+        &mut self,
+        components: &DirectWriteComponents,
+        fonts: Vec<Cow<'static, [u8]>>,
+    ) -> Result<()> {
+        for font_data in fonts {
+            let mut temp_path = std::env::temp_dir();
+            temp_path.push(format!(
+                "gpui_font_{}_{}.ttf",
+                std::process::id(),
+                self.temp_font_files.len()
+            ));
+            std::fs::write(&temp_path, font_data.as_ref())?;
+            unsafe {
+                let path_hstr =
+                    HSTRING::from(temp_path.to_str().context("non-UTF8 temp font path")?);
+                let font_file = components.factory.CreateFontFileReference(&path_hstr, None)?;
+                let mut is_supported = BOOL(0);
+                let mut _file_type = DWRITE_FONT_FILE_TYPE::default();
+                let mut face_count = 0u32;
+                font_file.Analyze(
+                    &mut is_supported,
+                    &mut _file_type,
+                    None,
+                    &mut face_count,
+                )?;
+                if is_supported.as_bool() {
+                    for face_index in 0..face_count {
+                        let face_ref = components.factory.CreateFontFaceReference2(
+                            &path_hstr,
+                            None,
+                            face_index,
+                            DWRITE_FONT_SIMULATIONS_NONE,
+                        )?;
+                        components.builder.AddFontFaceReference2(&face_ref)?;
+                    }
+                }
+            }
+            self.temp_font_files.push(temp_path);
+        }
+        let set = unsafe { components.builder.CreateFontSet()? };
+        let collection = unsafe { components.factory.CreateFontCollectionFromFontSet(&set)? };
+        self.custom_font_collection = collection;
+
+        Ok(())
+    }
+
     fn generate_font_fallbacks(
         fallbacks: &FontFallbacks,
-        factory: &IDWriteFactory5,
+        factory: &DWriteFactory,
         system_font_collection: &IDWriteFontCollection1,
     ) -> Result<Option<IDWriteFontFallback>> {
         let fallback_list = fallbacks.fallback_list();
@@ -444,7 +515,7 @@ impl DirectWriteState {
     }
 
     unsafe fn generate_font_features(
-        factory: &IDWriteFactory5,
+        factory: &DWriteFactory,
         font_features: &FontFeatures,
     ) -> Result<IDWriteTypography> {
         let direct_write_features = unsafe { factory.CreateTypography()? };
@@ -461,7 +532,7 @@ impl DirectWriteState {
             style,
         }: &Font,
         collection: &IDWriteFontCollection1,
-        factory: &IDWriteFactory5,
+        factory: &DWriteFactory,
         system_font_collection: &IDWriteFontCollection1,
         system_ui_font_name: &SharedString,
     ) -> Option<FontInfo> {
@@ -1842,7 +1913,7 @@ fn get_system_ui_font_name() -> SharedString {
 fn is_color_glyph(
     font_face: &IDWriteFontFace3,
     glyph_id: GlyphId,
-    factory: &IDWriteFactory5,
+    factory: &DWriteFactory,
 ) -> bool {
     let glyph_run = DWRITE_GLYPH_RUN {
         fontFace: ManuallyDrop::new(Some(unsafe { std::ptr::read(&****font_face) })),

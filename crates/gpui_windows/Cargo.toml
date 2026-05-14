@@ -15,6 +15,11 @@ path = "src/gpui_windows.rs"
 default = ["gpui/default"]
 test-support = ["gpui/test-support"]
 screen-capture = ["gpui/screen-capture", "scap"]
+# Enable compatibility workarounds for Windows Server 2016 / Windows 10 builds
+# before 1809 (build 17763). Without this flag the crate behaves exactly like
+# upstream: Factory6/Factory5 APIs, dual-source ClearType blending, standard
+# MSAA quality sentinel, and no RDP/WDDM-1.x runtime detection.
+win-legacy-compat = []
 
 [dependencies]
 gpui.workspace = true

@@ -24,9 +24,19 @@ mod shader_compilation {
         let out_dir = std::env::var("OUT_DIR").unwrap();
 
         println!("cargo:rerun-if-changed={}", shader_path.display());
+        // Rerun when the feature flag changes so cached shader bytes are invalidated.
+        println!("cargo:rerun-if-env-changed=CARGO_FEATURE_WIN_LEGACY_COMPAT");
 
         // Check if fxc.exe is available
         let fxc_path = find_fxc_compiler();
+
+        // Propagate Cargo feature to HLSL preprocessor so #ifdef WIN_LEGACY_COMPAT works.
+        let extra_defines: Vec<&str> =
+            if std::env::var("CARGO_FEATURE_WIN_LEGACY_COMPAT").is_ok() {
+                vec!["WIN_LEGACY_COMPAT"]
+            } else {
+                vec![]
+            };
 
         // Define all modules
         let modules = [
@@ -52,6 +62,7 @@ mod shader_compilation {
                 &fxc_path,
                 shader_path.to_str().unwrap(),
                 &rust_binding_path,
+                &extra_defines,
             );
         }
 
@@ -64,6 +75,7 @@ mod shader_compilation {
                 &fxc_path,
                 shader_path.to_str().unwrap(),
                 &rust_binding_path,
+                &extra_defines,
             );
         }
     }
@@ -144,6 +156,7 @@ mod shader_compilation {
         fxc_path: &str,
         shader_path: &str,
         rust_binding_path: &str,
+        extra_defines: &[&str],
     ) {
         // Compile vertex shader
         let output_file = format!("{}/{}_vs.h", out_dir, module);
@@ -155,6 +168,7 @@ mod shader_compilation {
             &const_name,
             shader_path,
             "vs_4_1",
+            extra_defines,
         );
         generate_rust_binding(&const_name, &output_file, rust_binding_path);
 
@@ -168,6 +182,7 @@ mod shader_compilation {
             &const_name,
             shader_path,
             "ps_4_1",
+            extra_defines,
         );
         generate_rust_binding(&const_name, &output_file, rust_binding_path);
     }
@@ -179,20 +194,23 @@ mod shader_compilation {
         var_name: &str,
         shader_path: &str,
         target: &str,
+        extra_defines: &[&str],
     ) {
+        // All options (including /D defines) must come before the input filename.
+        let mut args = vec![
+            "/T", target,
+            "/E", entry_point,
+            "/Fh", output_path,
+            "/Vn", var_name,
+            "/O3",
+        ];
+        for define in extra_defines {
+            args.push("/D");
+            args.push(define);
+        }
+        args.push(shader_path);
         let output = Command::new(fxc_path)
-            .args([
-                "/T",
-                target,
-                "/E",
-                entry_point,
-                "/Fh",
-                output_path,
-                "/Vn",
-                var_name,
-                "/O3",
-                shader_path,
-            ])
+            .args(&args)
             .output();
 
         match output {

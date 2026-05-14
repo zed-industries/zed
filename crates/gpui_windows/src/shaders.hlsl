@@ -1165,8 +1165,17 @@ SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentIn
     float3 alpha_corrected = apply_contrast_and_gamma_correction3(sample, input.color.rgb, subpixel_enhanced_contrast, gamma_ratios);
 
     SubpixelSpriteFragmentOutput output;
+#ifdef WIN_LEGACY_COMPAT
+    // Scalar alpha blending: collapses per-channel ClearType mask to a luminance
+    // scalar for use with standard SRC_ALPHA / INV_SRC_ALPHA blending.
+    // Required on pre-1809 WARP/virtual GPU where dual-source blending is broken.
+    float scalar_alpha = dot(alpha_corrected, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
+    output.foreground = float4(input.color.rgb, input.color.a * scalar_alpha);
+    output.alpha = float4(0.0f, 0.0f, 0.0f, 0.0f);
+#else
     output.foreground = float4(input.color.rgb, 1.0f);
     output.alpha = float4(input.color.a * alpha_corrected, 1.0f);
+#endif
     return output;
 }
 

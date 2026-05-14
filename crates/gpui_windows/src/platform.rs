@@ -166,6 +166,9 @@ impl WindowsPlatform {
 
         let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
             .is_ok_and(|value| value == "true" || value == "1");
+        #[cfg(feature = "win-legacy-compat")]
+        let disable_direct_composition =
+            disable_direct_composition || unsafe { GetSystemMetrics(SM_REMOTESESSION) != 0 };
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
 

@@ -53,13 +53,20 @@ pub(crate) struct DirectXRenderer {
     /// In that case we want to discard the first frame that we draw as we got reset in the middle of a frame
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
+
+    /// True on Windows builds < 17763 (Server 2016 / Windows 10 pre-1809).
+    /// On these builds, D3D11_BUFFER_SRV FirstElement is unreliable on WDDM 1.x
+    /// drivers; each batch's data must be re-uploaded to buffer offset 0 and drawn
+    /// with first_instance=0 instead of relying on SRV range offsets.
+    #[cfg(feature = "win-legacy-compat")]
+    is_pre_1809: bool,
 }
 
 /// Direct3D objects
 #[derive(Clone)]
 pub(crate) struct DirectXRendererDevices {
     pub(crate) adapter: IDXGIAdapter1,
-    pub(crate) dxgi_factory: IDXGIFactory6,
+    pub(crate) dxgi_factory: DxgiFactory,
     pub(crate) device: ID3D11Device,
     pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
@@ -148,6 +155,8 @@ impl DirectXRenderer {
             .context("Creating DirectX resources")?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectX global elements")?;
+        #[cfg(feature = "win-legacy-compat")]
+        let is_pre_1809 = is_pre_1809_build();
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectX render pipelines")?;
 
@@ -174,6 +183,8 @@ impl DirectXRenderer {
             width: 1,
             height: 1,
             skip_draws: false,
+            #[cfg(feature = "win-legacy-compat")]
+            is_pre_1809,
         })
     }
 
@@ -272,6 +283,8 @@ impl DirectXRenderer {
         .context("Creating DirectX resources")?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectXGlobalElements")?;
+        #[cfg(feature = "win-legacy-compat")]
+        let is_pre_1809 = is_pre_1809_build();
         let pipelines = DirectXRenderPipelines::new(&devices.device)
             .context("Creating DirectXRenderPipelines")?;
 
@@ -297,6 +310,8 @@ impl DirectXRenderer {
         self.globals = globals;
         self.pipelines = pipelines;
         self.direct_composition = direct_composition;
+        #[cfg(feature = "win-legacy-compat")]
+        { self.is_pre_1809 = is_pre_1809; }
         self.skip_draws = true;
         Ok(())
     }
@@ -320,22 +335,46 @@ impl DirectXRenderer {
 
         for batch in scene.batches() {
             match batch {
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::Shadows(range) => self.draw_shadows(scene, range.start, range.len()),
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::Quads(range) => self.draw_quads(scene, range.start, range.len()),
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
                     self.draw_paths_from_intermediate(paths)
                 }
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::Underlines(range) => self.draw_underlines(scene, range.start, range.len()),
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
                     self.draw_monochrome_sprites(texture_id, range.start, range.len())
                 }
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::MonochromeSprites { texture_id, range } => {
+                    self.draw_monochrome_sprites(scene, texture_id, range.start, range.len())
+                }
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::SubpixelSprites { texture_id, range } => {
                     self.draw_subpixel_sprites(texture_id, range.start, range.len())
                 }
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::SubpixelSprites { texture_id, range } => {
+                    self.draw_subpixel_sprites(scene, texture_id, range.start, range.len())
+                }
+                #[cfg(not(feature = "win-legacy-compat"))]
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
+                }
+                #[cfg(feature = "win-legacy-compat")]
+                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
+                    self.draw_polychrome_sprites(scene, texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
@@ -453,6 +492,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_shadows(&mut self, start: usize, len: usize) -> Result<()> {
         if len == 0 {
             return Ok(());
@@ -475,6 +515,33 @@ impl DirectXRenderer {
         )
     }
 
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_shadows(&mut self, scene: &Scene, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.shadow_pipeline.update_buffer(&devices.device, &devices.device_context, &scene.shadows[start..start + len])?;
+        }
+        self.pipelines.shadow_pipeline.draw_range(
+            &devices.device,
+            &devices.device_context,
+            slice::from_ref(
+                &self
+                    .resources
+                    .as_ref()
+                    .context("resources missing")?
+                    .viewport,
+            ),
+            slice::from_ref(&self.globals.global_params_buffer),
+            4,
+            if !self.is_pre_1809 { start as u32 } else { 0 },
+            len as u32,
+        )
+    }
+
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
         if len == 0 {
             return Ok(());
@@ -493,6 +560,32 @@ impl DirectXRenderer {
             slice::from_ref(&self.globals.global_params_buffer),
             4,
             start as u32,
+            len as u32,
+        )
+    }
+
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_quads(&mut self, scene: &Scene, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.quad_pipeline.update_buffer(&devices.device, &devices.device_context, &scene.quads[start..start + len])?;
+        }
+        self.pipelines.quad_pipeline.draw_range(
+            &devices.device,
+            &devices.device_context,
+            slice::from_ref(
+                &self
+                    .resources
+                    .as_ref()
+                    .context("resources missing")?
+                    .viewport,
+            ),
+            slice::from_ref(&self.globals.global_params_buffer),
+            4,
+            if !self.is_pre_1809 { start as u32 } else { 0 },
             len as u32,
         )
     }
@@ -608,6 +701,7 @@ impl DirectXRenderer {
         )
     }
 
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_underlines(&mut self, start: usize, len: usize) -> Result<()> {
         if len == 0 {
             return Ok(());
@@ -625,6 +719,28 @@ impl DirectXRenderer {
         )
     }
 
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_underlines(&mut self, scene: &Scene, start: usize, len: usize) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.underline_pipeline.update_buffer(&devices.device, &devices.device_context, &scene.underlines[start..start + len])?;
+        }
+        let resources = self.resources.as_ref().context("resources missing")?;
+        self.pipelines.underline_pipeline.draw_range(
+            &devices.device,
+            &devices.device_context,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            4,
+            if !self.is_pre_1809 { start as u32 } else { 0 },
+            len as u32,
+        )
+    }
+
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_monochrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -649,6 +765,36 @@ impl DirectXRenderer {
         )
     }
 
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_monochrome_sprites(
+        &mut self,
+        scene: &Scene,
+        texture_id: AtlasTextureId,
+        start: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.mono_sprites.update_buffer(&devices.device, &devices.device_context, &scene.monochrome_sprites[start..start + len])?;
+        }
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.mono_sprites.draw_range_with_texture(
+            &devices.device,
+            &devices.device_context,
+            &texture_view,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
+            if !self.is_pre_1809 { start as u32 } else { 0 },
+            len as u32,
+        )
+    }
+
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_subpixel_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -673,6 +819,36 @@ impl DirectXRenderer {
         )
     }
 
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_subpixel_sprites(
+        &mut self,
+        scene: &Scene,
+        texture_id: AtlasTextureId,
+        start: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.subpixel_sprites.update_buffer(&devices.device, &devices.device_context, &scene.subpixel_sprites[start..start + len])?;
+        }
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.subpixel_sprites.draw_range_with_texture(
+            &devices.device,
+            &devices.device_context,
+            &texture_view,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
+            if !self.is_pre_1809 { start as u32 } else { 0 },
+            len as u32,
+        )
+    }
+
+    #[cfg(not(feature = "win-legacy-compat"))]
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
@@ -693,6 +869,35 @@ impl DirectXRenderer {
             slice::from_ref(&self.globals.global_params_buffer),
             slice::from_ref(&self.globals.sampler),
             start as u32,
+            len as u32,
+        )
+    }
+
+    #[cfg(feature = "win-legacy-compat")]
+    fn draw_polychrome_sprites(
+        &mut self,
+        scene: &Scene,
+        texture_id: AtlasTextureId,
+        start: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        if self.is_pre_1809 {
+            self.pipelines.poly_sprites.update_buffer(&devices.device, &devices.device_context, &scene.polychrome_sprites[start..start + len])?;
+        }
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.poly_sprites.draw_range_with_texture(
+            &devices.device,
+            &devices.device_context,
+            &texture_view,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
+            if !self.is_pre_1809 { start as u32 } else { 0 },
             len as u32,
         )
     }
@@ -737,7 +942,10 @@ impl DirectXRenderer {
     pub(crate) fn get_font_info() -> &'static FontInfo {
         static CACHED_FONT_INFO: OnceLock<FontInfo> = OnceLock::new();
         CACHED_FONT_INFO.get_or_init(|| unsafe {
+            #[cfg(not(feature = "win-legacy-compat"))]
             let factory: IDWriteFactory5 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
+            #[cfg(feature = "win-legacy-compat")]
+            let factory: IDWriteFactory4 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).unwrap();
             let render_params: IDWriteRenderingParams1 =
                 factory.CreateRenderingParams().unwrap().cast().unwrap();
             FontInfo {
@@ -872,6 +1080,11 @@ impl DirectXRenderPipelines {
             "subpixel_sprite_pipeline",
             ShaderModule::SubpixelSprite,
             512,
+            // win-legacy-compat: standard alpha blending (dual-source broken on WDDM 1.x).
+            // Upstream: dual-source (D3D11_BLEND_SRC1_COLOR) for per-channel ClearType.
+            #[cfg(feature = "win-legacy-compat")]
+            create_blend_state(device)?,
+            #[cfg(not(feature = "win-legacy-compat"))]
             create_blend_state_for_subpixel_rendering(device)?,
         )?;
         let poly_sprites = PipelineState::new(
@@ -1080,6 +1293,7 @@ impl<T> PipelineState<T> {
         );
         unsafe {
             device_context.PSSetSamplers(0, Some(sampler));
+            #[cfg(not(feature = "win-legacy-compat"))]
             device_context.VSSetShaderResources(0, Some(texture));
             device_context.PSSetShaderResources(0, Some(texture));
 
@@ -1177,7 +1391,7 @@ fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
 }
 
 fn create_swap_chain_for_composition(
-    dxgi_factory: &IDXGIFactory6,
+    dxgi_factory: &DxgiFactory,
     device: &ID3D11Device,
     width: u32,
     height: u32,
@@ -1203,7 +1417,7 @@ fn create_swap_chain_for_composition(
 }
 
 fn create_swap_chain(
-    dxgi_factory: &IDXGIFactory6,
+    dxgi_factory: &DxgiFactory,
     device: &ID3D11Device,
     hwnd: HWND,
     width: u32,
@@ -1326,7 +1540,10 @@ fn create_path_intermediate_msaa_texture_and_view(
             Format: RENDER_TARGET_FORMAT,
             SampleDesc: DXGI_SAMPLE_DESC {
                 Count: PATH_MULTISAMPLE_COUNT,
+                #[cfg(not(feature = "win-legacy-compat"))]
                 Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
+                #[cfg(feature = "win-legacy-compat")]
+                Quality: 0, // quality 0 is universally supported; D3D11_STANDARD_MULTISAMPLE_PATTERN requires D3D11.1
             },
             Usage: D3D11_USAGE_DEFAULT,
             BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
@@ -1398,6 +1615,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
 }
 
 #[inline]
+#[cfg(not(feature = "win-legacy-compat"))]
 fn create_blend_state_for_subpixel_rendering(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     let mut desc = D3D11_BLEND_DESC::default();
     desc.RenderTarget[0].BlendEnable = true.into();
@@ -1587,6 +1805,7 @@ pub(crate) mod shader_resources {
     #[cfg(debug_assertions)]
     use windows::{
         Win32::Graphics::Direct3D::{
+            D3D_SHADER_MACRO,
             Fxc::{D3DCOMPILE_DEBUG, D3DCOMPILE_SKIP_OPTIMIZATION, D3DCompileFromFile},
             ID3DBlob,
         },
@@ -1726,9 +1945,23 @@ pub(crate) mod shader_resources {
                 D3D_COMPILE_STANDARD_FILE_INCLUDE as usize,
             );
 
+            // Build a null-terminated D3D_SHADER_MACRO list for any active features.
+            #[cfg(feature = "win-legacy-compat")]
+            let defines_storage = [
+                D3D_SHADER_MACRO {
+                    Name: windows::core::s!("WIN_LEGACY_COMPAT"),
+                    Definition: windows::core::s!("1"),
+                },
+                D3D_SHADER_MACRO { Name: PCSTR::null(), Definition: PCSTR::null() },
+            ];
+            #[cfg(feature = "win-legacy-compat")]
+            let defines_ptr: Option<*const D3D_SHADER_MACRO> = Some(defines_storage.as_ptr());
+            #[cfg(not(feature = "win-legacy-compat"))]
+            let defines_ptr: Option<*const D3D_SHADER_MACRO> = None;
+
             let ret = D3DCompileFromFile(
                 &HSTRING::from(shader_path.to_str().unwrap()),
-                None,
+                defines_ptr,
                 include_handler,
                 entry_point,
                 target_cstr,
@@ -1953,5 +2186,62 @@ mod dxgi {
             (number >> 16) & 0xFFFF,
             number & 0xFFFF
         ))
+    }
+}
+
+#[cfg(feature = "win-legacy-compat")]
+/// Returns true on Windows builds before 17763 (Windows 10 1809 / Windows Server 2019).
+///
+/// On these older builds, D3D11_BUFFER_SRV FirstElement and DrawInstanced
+/// StartInstanceLocation are unreliable on WDDM 1.x virtual GPU drivers
+/// (e.g. Windows Server 2016 RDP WARP). Re-uploading each batch at buffer
+/// offset 0 and drawing with first_instance=0 works around the issue.
+///
+/// Uses RtlGetVersion via ntdll.dll to bypass the GetVersionEx lie introduced
+/// in Windows 8.1 (manifested applications always see 6.2 without this).
+fn is_pre_1809_build() -> bool {
+    use std::mem;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
+
+    #[repr(C)]
+    struct OsVersionInfoExW {
+        dw_size: u32,
+        dw_major_version: u32,
+        dw_minor_version: u32,
+        dw_build_number: u32,
+        dw_platform_id: u32,
+        sz_csd_version: [u16; 128],
+        w_service_pack_major: u16,
+        w_service_pack_minor: u16,
+        w_suite_mask: u16,
+        w_product_type: u8,
+        w_reserved: u8,
+    }
+
+    unsafe {
+        let ntdll = GetModuleHandleA(windows::core::s!("ntdll.dll"));
+        let Ok(ntdll) = ntdll else {
+            return false;
+        };
+        let proc = GetProcAddress(ntdll, windows::core::s!("RtlGetVersion"));
+        let Some(proc) = proc else {
+            return false;
+        };
+
+        type RtlGetVersionFn = unsafe extern "system" fn(*mut OsVersionInfoExW) -> i32;
+        let rtl_get_version: RtlGetVersionFn = mem::transmute(proc);
+
+        let mut info: OsVersionInfoExW = mem::zeroed();
+        info.dw_size = mem::size_of::<OsVersionInfoExW>() as u32;
+        rtl_get_version(&mut info);
+
+        let is_pre_1809 = info.dw_build_number < 17763;
+        if is_pre_1809 {
+            log::info!(
+                "OS build {} < 17763: enabling WDDM 1.x SRV FirstElement workaround.",
+                info.dw_build_number
+            );
+        }
+        is_pre_1809
     }
 }
