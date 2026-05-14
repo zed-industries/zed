@@ -227,15 +227,23 @@ struct WatcherRegistrationState {
     mode: WatcherMode,
 }
 
+struct PathRegistrationState {
+    count: u32,
+    actually_watched: bool,
+}
+
 struct WatcherState {
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_path_registrations: HashMap<Arc<std::path::Path>, u32>,
-    poll_path_registrations: HashMap<Arc<std::path::Path>, u32>,
+    native_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
+    poll_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
     last_registration: WatcherRegistrationId,
 }
 
 impl WatcherState {
-    fn path_registrations(&mut self, mode: WatcherMode) -> &mut HashMap<Arc<std::path::Path>, u32> {
+    fn path_registrations(
+        &mut self,
+        mode: WatcherMode,
+    ) -> &mut HashMap<Arc<std::path::Path>, PathRegistrationState> {
         match mode {
             WatcherMode::Native => &mut self.native_path_registrations,
             WatcherMode::Poll => &mut self.poll_path_registrations,
@@ -249,19 +257,15 @@ impl WatcherState {
         let registration_state = self.watchers.remove(&id)?;
         let path_registrations = self.path_registrations(registration_state.mode);
         let count = path_registrations.get_mut(&registration_state.path)?;
-        *count -= 1;
-        if *count != 0 {
+        count.count -= 1;
+        if count.count != 0 {
             return None;
         }
 
+        let was_actually_watched = count.actually_watched;
         path_registrations.remove(&registration_state.path);
-        let path_still_covered = path_already_covered(
-            registration_state.path.as_ref(),
-            path_registrations,
-            registration_state.mode,
-        );
 
-        (!path_still_covered).then_some((registration_state.path, registration_state.mode))
+        was_actually_watched.then_some((registration_state.path, registration_state.mode))
     }
 }
 
@@ -317,7 +321,14 @@ impl GlobalWatcher {
             mode,
         };
         state.watchers.insert(id, registration_state);
-        *state.path_registrations(mode).entry(path).or_insert(0) += 1;
+        state
+            .path_registrations(mode)
+            .entry(path)
+            .and_modify(|registration| registration.count += 1)
+            .or_insert(PathRegistrationState {
+                count: 1,
+                actually_watched: !path_already_covered,
+            });
 
         Ok(id)
     }
@@ -402,7 +413,7 @@ impl GlobalWatcher {
 
 fn path_already_covered(
     path: &Path,
-    path_registrations: &HashMap<Arc<std::path::Path>, u32>,
+    path_registrations: &HashMap<Arc<std::path::Path>, PathRegistrationState>,
     mode: WatcherMode,
 ) -> bool {
     (mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
