@@ -19,8 +19,8 @@ use multi_buffer::ToOffset as _;
 use ordered_float::OrderedFloat;
 use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
-    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, DiagnosticSummary,
-    PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
+    Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
+    DiagnosticSummary, PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
 use prompt_store::{PromptStore, UserPromptId};
 use rope::Point;
@@ -1381,7 +1381,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     snippet_deduplication_key: None,
                                     insert_text_mode: None,
                                     confirm: Some(confirm),
-                                    group: show_section_headers.then(|| "Skills".into()),
+                                    group: show_section_headers.then(|| CompletionGroup {
+                                        key: "skills".into(),
+                                        label: Some("Skills".into()),
+                                    }),
                                 }
                             }
                             SlashCompletionCandidate::Command(command) => {
@@ -1436,7 +1439,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             false
                                         }
                                     })),
-                                    group: show_section_headers.then(|| "Agent Commands".into()),
+                                    group: show_section_headers.then(|| CompletionGroup {
+                                        key: "agent-commands".into(),
+                                        label: Some("Agent Commands".into()),
+                                    }),
                                 }
                             }
                         })
@@ -1526,9 +1532,15 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                         Match::File(FileMatch {
                                             is_recent: true, ..
                                         })
-                                        | Match::RecentThread(_) => Some("Recent".into()),
+                                        | Match::RecentThread(_) => Some(CompletionGroup {
+                                            key: "recent".into(),
+                                            label: None,
+                                        }),
                                         Match::Entry(_) | Match::BranchDiff(_) => {
-                                            Some("Context".into())
+                                            Some(CompletionGroup {
+                                                key: "context".into(),
+                                                label: None,
+                                            })
                                         }
                                         _ => None,
                                     }

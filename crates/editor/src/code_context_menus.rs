@@ -13,7 +13,7 @@ use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::Anchor;
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
-use project::{CodeAction, Completion, TaskSourceKind};
+use project::{CodeAction, Completion, CompletionGroup, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
@@ -1378,15 +1378,17 @@ impl CompletionsMenu {
     ) {
         let completions = self.completions.borrow();
         let mut entries: Vec<CompletionMenuEntry> = Vec::with_capacity(matches.len());
-        let mut last_group: Option<&SharedString> = None;
+        let mut last_group: Option<&CompletionGroup> = None;
         for mat in matches {
             let group = completions[mat.candidate_id].group.as_ref();
             if group != last_group {
-                if let Some(group_label) = group {
+                if group.is_some() || last_group.is_some() {
                     if !entries.is_empty() {
                         entries.push(CompletionMenuEntry::Divider);
                     }
-                    entries.push(CompletionMenuEntry::GroupHeader(group_label.clone()));
+                    if let Some(label) = group.and_then(|g| g.label.as_ref()) {
+                        entries.push(CompletionMenuEntry::GroupHeader(label.clone()));
+                    }
                 }
                 last_group = group;
             }
