@@ -100,7 +100,7 @@ pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &Lang
                                 Some(Value::Object(mut map)) => map
                                     .remove("body")
                                     .unwrap_or(Value::Null),
-                                Some(other) => Value::Null,
+                                Some(_) => Value::Null,
                                 None => Value::Null,
                             },
                             util::ConnectionResult::Result(Err(error)) => {
