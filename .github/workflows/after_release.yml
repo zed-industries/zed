@@ -1,6 +1,9 @@
 # Generated from xtask::workflows::after_release
 # Rebuild with `cargo xtask workflows`.
 name: after_release
+env:
+  TAG_NAME: ${{ github.event.release.tag_name || inputs.tag_name }}
+  IS_PRERELEASE: ${{ github.event.release.prerelease || inputs.prerelease }}
 on:
   release:
     types:
@@ -25,7 +28,7 @@ jobs:
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: after_release::rebuild_releases_page::refresh_cloud_releases
-      run: curl -fX POST https://cloud.zed.dev/releases/refresh?expect_tag=${{ github.event.release.tag_name || inputs.tag_name }}
+      run: curl -fX POST "https://cloud.zed.dev/releases/refresh?expect_tag=$TAG_NAME"
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -34,6 +37,18 @@ jobs:
       run: ./script/redeploy-vercel
       env:
         VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+  deploy_docs:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    permissions:
+      contents: read
+    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@main
+    secrets:
+      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    with:
+      channel: ${{ (github.event.release.prerelease || inputs.prerelease) && 'preview' || 'stable' }}
+      checkout_ref: ${{ github.event.release.tag_name || inputs.tag_name }}
   post_to_discord:
     needs:
     - rebuild_releases_page
@@ -43,7 +58,7 @@ jobs:
     - id: get-release-url
       name: after_release::post_to_discord::get_release_url
       run: |
-        if [ "${{ github.event.release.prerelease || inputs.prerelease }}" == "true" ]; then
+        if [ "$IS_PRERELEASE" == "true" ]; then
             URL="https://zed.dev/releases/preview"
         else
             URL="https://zed.dev/releases/stable"
@@ -55,7 +70,7 @@ jobs:
       uses: 2428392/gh-truncate-string-action@b3ff790d21cf42af3ca7579146eedb93c8fb0757
       with:
         stringToTruncate: |
-          📣 Zed [${{ github.event.release.tag_name || inputs.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
+          📣 Zed [${{ env.TAG_NAME }}](<${{ steps.get-release-url.outputs.URL }}>)  was just released!
 
           ${{ github.event.release.body || inputs.body }}
         maxLength: 2000
@@ -90,7 +105,7 @@ jobs:
     - id: set-package-name
       name: after_release::publish_winget::set_package_name
       run: |
-        if ("${{ github.event.release.prerelease || inputs.prerelease }}" -eq "true") {
+        if ($env:IS_PRERELEASE -eq "true") {
             $PACKAGE_NAME = "ZedIndustries.Zed.Preview"
         } else {
             $PACKAGE_NAME = "ZedIndustries.Zed"
@@ -102,7 +117,7 @@ jobs:
       uses: vedantmgoyal9/winget-releaser@19e706d4c9121098010096f9c495a70a7518b30f
       with:
         identifier: ${{ steps.set-package-name.outputs.PACKAGE_NAME }}
-        release-tag: ${{ github.event.release.tag_name || inputs.tag_name }}
+        release-tag: ${{ env.TAG_NAME }}
         max-versions-to-keep: 5
         token: ${{ secrets.WINGET_TOKEN }}
   create_sentry_release:
@@ -127,6 +142,7 @@ jobs:
     - post_to_discord
     - publish_winget
     - create_sentry_release
+    - deploy_docs
     if: failure()
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:

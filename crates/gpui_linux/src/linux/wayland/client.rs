@@ -185,6 +185,7 @@ pub struct InProgressOutput {
     scale: Option<i32>,
     position: Option<Point<DevicePixels>>,
     size: Option<Size<DevicePixels>>,
+    subpixel: Option<wl_output::Subpixel>,
 }
 
 impl InProgressOutput {
@@ -195,6 +196,7 @@ impl InProgressOutput {
                 name: self.name.clone(),
                 scale,
                 bounds: Bounds::new(position, size),
+                subpixel: self.subpixel,
             })
         } else {
             None
@@ -207,6 +209,7 @@ pub struct Output {
     pub name: Option<String>,
     pub scale: i32,
     pub bounds: Bounds<DevicePixels>,
+    pub subpixel: Option<wl_output::Subpixel>,
 }
 
 pub(crate) struct WaylandClientState {
@@ -253,6 +256,7 @@ pub(crate) struct WaylandClientState {
     keyboard_focused_window: Option<WaylandWindowStatePtr>,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
+    cursor_hidden_window: Option<WaylandWindowStatePtr>,
     clipboard: Clipboard,
     data_offers: Vec<DataOffer<WlDataOffer>>,
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
@@ -407,6 +411,65 @@ impl WaylandClientStatePtr {
         {
             state.keyboard_focused_window = Some(window);
         }
+        if let Some(window) = state.cursor_hidden_window.take()
+            && !window.ptr_eq(&closed_window)
+        {
+            state.cursor_hidden_window = Some(window);
+        }
+    }
+}
+
+impl WaylandClientState {
+    fn hide_cursor_until_mouse_moves(&mut self) {
+        if self.cursor_hidden_window.is_some() {
+            return;
+        }
+        let Some(focused_window) = self.mouse_focused_window.clone() else {
+            // No surface to apply the hidden cursor to.
+            return;
+        };
+        let Some(wl_pointer) = self.wl_pointer.clone() else {
+            // Seat lost its pointer capability; nothing to hide.
+            return;
+        };
+        let serial = self.serial_tracker.get(SerialKind::MouseEnter);
+        wl_pointer.set_cursor(serial, None, 0, 0);
+        self.cursor_hidden_window = Some(focused_window);
+    }
+
+    fn restore_cursor_after_hide(&mut self) {
+        if self.cursor_hidden_window.take().is_none() {
+            return;
+        }
+        let Some(style) = self.cursor_style else {
+            return;
+        };
+        let serial = self.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &self.cursor_shape_device {
+            cursor_shape_device.set_shape(serial, to_shape(style));
+            return;
+        }
+        let Some(focused_window) = self.mouse_focused_window.clone() else {
+            log::warn!(
+                "wayland: no focused surface to restore cursor style {:?} after hide; cursor may stay invisible",
+                style
+            );
+            return;
+        };
+        let Some(wl_pointer) = self.wl_pointer.clone() else {
+            log::warn!(
+                "wayland: no wl_pointer to restore cursor style {:?} after hide; cursor may stay invisible",
+                style
+            );
+            return;
+        };
+        let scale = focused_window.primary_output_scale();
+        self.cursor.set_icon(
+            &wl_pointer,
+            serial,
+            cursor_style_to_icon_names(style),
+            scale,
+        );
     }
 }
 
@@ -662,6 +725,7 @@ impl WaylandClient {
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
+            cursor_hidden_window: None,
             clipboard: Clipboard::new(conn.clone(), handle.clone()),
             data_offers: Vec::new(),
             primary_data_offer: None,
@@ -704,7 +768,7 @@ impl LinuxClient for WaylandClient {
             .outputs
             .iter()
             .find_map(|(object_id, output)| {
-                (object_id.protocol_id() == u32::from(id)).then(|| {
+                (object_id.protocol_id() as u64 == u64::from(id)).then(|| {
                     Rc::new(WaylandDisplay {
                         id: object_id.clone(),
                         name: output.name.clone(),
@@ -746,11 +810,11 @@ impl LinuxClient for WaylandClient {
         let parent = state.keyboard_focused_window.clone();
 
         let target_output = params.display_id.and_then(|display_id| {
-            let target_protocol_id: u32 = display_id.into();
+            let target_protocol_id: u64 = display_id.into();
             state
                 .wl_outputs
                 .iter()
-                .find(|(id, _)| id.protocol_id() == target_protocol_id)
+                .find(|(id, _)| id.protocol_id() as u64 == target_protocol_id)
                 .map(|(_, output)| output.clone())
         });
 
@@ -782,33 +846,42 @@ impl LinuxClient for WaylandClient {
                     .as_ref()
                     .is_some_and(|w| !w.is_blocked()));
 
-        if need_update {
-            let serial = state.serial_tracker.get(SerialKind::MouseEnter);
-            state.cursor_style = Some(style);
-
-            if let CursorStyle::None = style {
-                let wl_pointer = state
-                    .wl_pointer
-                    .clone()
-                    .expect("window is focused by pointer");
-                wl_pointer.set_cursor(serial, None, 0, 0);
-            } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
-                cursor_shape_device.set_shape(serial, to_shape(style));
-            } else if let Some(focused_window) = &state.mouse_focused_window {
-                // cursor-shape-v1 isn't supported, set the cursor using a surface.
-                let wl_pointer = state
-                    .wl_pointer
-                    .clone()
-                    .expect("window is focused by pointer");
-                let scale = focused_window.primary_output_scale();
-                state.cursor.set_icon(
-                    &wl_pointer,
-                    serial,
-                    cursor_style_to_icon_names(style),
-                    scale,
-                );
-            }
+        if !need_update {
+            return;
         }
+
+        state.cursor_style = Some(style);
+
+        // Don't clobber the invisible cursor; restore reads back from `cursor_style`.
+        if state.cursor_hidden_window.is_some() {
+            return;
+        }
+
+        let serial = state.serial_tracker.get(SerialKind::MouseEnter);
+        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+            cursor_shape_device.set_shape(serial, to_shape(style));
+        } else if let Some(focused_window) = &state.mouse_focused_window {
+            // cursor-shape-v1 isn't supported, set the cursor using a surface.
+            let wl_pointer = state
+                .wl_pointer
+                .clone()
+                .expect("window is focused by pointer");
+            let scale = focused_window.primary_output_scale();
+            state.cursor.set_icon(
+                &wl_pointer,
+                serial,
+                cursor_style_to_icon_names(style),
+                scale,
+            );
+        }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        self.0.borrow_mut().hide_cursor_until_mouse_moves();
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.0.borrow().cursor_hidden_window.is_none()
     }
 
     fn open_uri(&self, uri: &str) {
@@ -1166,8 +1239,11 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
             wl_output::Event::Scale { factor } => {
                 in_progress_output.scale = Some(factor);
             }
-            wl_output::Event::Geometry { x, y, .. } => {
-                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+            wl_output::Event::Geometry { x, y, subpixel, .. } => {
+                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)));
+                if let WEnum::Value(subpixel) = subpixel {
+                    in_progress_output.subpixel = Some(subpixel);
+                }
             }
             wl_output::Event::Mode { width, height, .. } => {
                 in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
@@ -1426,6 +1502,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.enter_token.take();
                 // Prevent keyboard events from repeating after opening e.g. a file chooser and closing it quickly
                 state.repeat.current_id += 1;
+                state.restore_cursor_after_hide();
 
                 if let Some(window) = keyboard_focused_window {
                     if let Some(ref mut compose) = state.compose_state {
@@ -1726,14 +1803,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     if state.enter_token.is_some() {
                         state.enter_token = None;
                     }
+                    state.restore_cursor_after_hide();
                     if let Some(style) = state.cursor_style {
-                        if let CursorStyle::None = style {
-                            let wl_pointer = state
-                                .wl_pointer
-                                .clone()
-                                .expect("window is focused by pointer");
-                            wl_pointer.set_cursor(serial, None, 0, 0);
-                        } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, to_shape(style));
                         } else {
                             let scale = window.primary_output_scale();
@@ -1759,6 +1831,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     state.mouse_focused_window = None;
                     state.mouse_location = None;
                     state.button_pressed = None;
+                    state.cursor_hidden_window = None;
 
                     drop(state);
                     focused_window.handle_input(input);
@@ -1774,6 +1847,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     return;
                 }
                 state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
+                state.restore_cursor_after_hide();
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     if window.is_blocked() {
@@ -2237,7 +2311,13 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                             let paths: SmallVec<[_; 2]> = file_list
                                 .lines()
                                 .filter_map(|path| Url::parse(path).log_err())
-                                .filter_map(|url| url.to_file_path().log_err())
+                                .filter_map(|url| match url.to_file_path() {
+                                    Ok(url) => Some(url),
+                                    Err(()) => {
+                                        log::error!("Failed turn {url:?} into a file path");
+                                        None
+                                    }
+                                })
                                 .collect();
                             let position = Point::new(x.into(), y.into());
 

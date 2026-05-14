@@ -90,12 +90,6 @@ pub struct ProjectSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set or null, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: null
-    pub project_name: Option<String>,
-
     /// Whether to prevent this project from being shared in public channels.
     ///
     /// Default: false
@@ -506,6 +500,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: Option<GitPathStyle>,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: Option<bool>,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory.
     ///

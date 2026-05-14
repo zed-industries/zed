@@ -354,6 +354,10 @@ impl ChatGptModel {
         }
     }
 
+    fn supports_none_reasoning_effort(&self) -> bool {
+        matches!(self, Self::Gpt54 | Self::Gpt54Mini)
+    }
+
     fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::Gpt54 | Self::Gpt54Mini => true,
@@ -423,24 +427,6 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         self.model.max_output_tokens()
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.model.max_token_count();
-        cx.background_spawn(async move {
-            let messages = crate::provider::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                "gpt-4o"
-            } else {
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
-    }
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -462,6 +448,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             self.model.reasoning_effort(),
+            self.model.supports_none_reasoning_effort(),
         );
         responses_request.store = Some(false);
 

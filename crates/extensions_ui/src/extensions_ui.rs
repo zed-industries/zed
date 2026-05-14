@@ -14,8 +14,8 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
-    Action, App, ClipboardItem, Context, Corner, Entity, EventEmitter, Focusable,
-    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TextStyle,
+    Action, Anchor, App, ClipboardItem, Context, Entity, EventEmitter, Focusable,
+    InteractiveElement, KeyContext, ParentElement, Point, Render, Styled, Task, TaskExt, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
@@ -923,7 +923,7 @@ impl ExtensionsPage {
                                     )
                                     .icon_size(IconSize::Small),
                                 )
-                                .anchor(Corner::TopRight)
+                                .anchor(Anchor::TopRight)
                                 .offset(Point {
                                     x: px(0.0),
                                     y: px(2.0),

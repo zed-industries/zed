@@ -1,4 +1,3 @@
-use remote::Interactive;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -9,7 +8,7 @@ use std::{
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task};
+use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, TaskExt};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
@@ -19,6 +18,7 @@ use rpc::{
     proto::{self, ExternalExtensionAgent},
 };
 use schemars::JsonSchema;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, SettingsStore};
 use sha2::{Digest, Sha256};
@@ -116,9 +116,9 @@ pub enum ExternalAgentSource {
 
 pub trait ExternalAgentServer {
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>>;
 
@@ -569,8 +569,10 @@ impl AgentServerStore {
                                 agent_name.clone(),
                                 ExternalAgentEntry::new(
                                     Box::new(LocalRegistryNpxAgent {
+                                        fs: fs.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        registry_id: Arc::from(name.as_str()),
                                         version: agent.metadata.version.clone(),
                                         package: agent.package.clone(),
                                         args: agent.args.clone(),
@@ -800,11 +802,10 @@ impl AgentServerStore {
                 if no_browser {
                     extra_env.insert("NO_BROWSER".to_owned(), "1".to_owned());
                 }
-                anyhow::Ok(agent.get_command(
-                    extra_env,
-                    new_version_available_tx,
-                    &mut cx.to_async(),
-                ))
+                if let Some(new_version_available_tx) = new_version_available_tx {
+                    agent.set_new_version_available_tx(new_version_available_tx);
+                }
+                anyhow::Ok(agent.get_command(vec![], extra_env, &mut cx.to_async()))
             })?
             .await?;
         Ok(proto::AgentServerCommand {
@@ -986,16 +987,15 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
     }
 
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let project_id = self.project_id;
         let name = self.name.to_string();
         let upstream_client = self.upstream_client.downgrade();
         let worktree_store = self.worktree_store.clone();
-        self.new_version_available_tx = new_version_available_tx;
         cx.spawn(async move |cx| {
             let root_dir = worktree_store.read_with(cx, |worktree_store, cx| {
                 crate::Project::default_visible_worktree_paths(worktree_store, cx)
@@ -1015,22 +1015,13 @@ impl ExternalAgentServer for RemoteExternalAgentServer {
                         })
                 })?
                 .await?;
-            let root_dir = response.root_dir;
+            response.args.extend(extra_args);
             response.env.extend(extra_env);
-            let command = upstream_client.update(cx, |client, _| {
-                client.build_command_with_options(
-                    Some(response.path),
-                    &response.args,
-                    &response.env.into_iter().collect(),
-                    Some(root_dir.clone()),
-                    None,
-                    Interactive::No,
-                )
-            })??;
+
             Ok(AgentServerCommand {
-                path: command.program.into(),
-                args: command.args,
-                env: Some(command.env),
+                path: response.path.into(),
+                args: response.args,
+                env: Some(response.env.into_iter().collect()),
             })
         })
     }
@@ -1096,8 +1087,8 @@ fn github_release_archive_from_url(archive_url: &str) -> Option<GithubReleaseArc
     })
 }
 
-fn sanitized_version_component(version: &str) -> String {
-    let sanitized = version
+fn sanitize_path_component(input: &str) -> String {
+    let sanitized = input
         .chars()
         .map(|character| match character {
             'a'..='z' | 'A'..='Z' | '0'..='9' | '.' | '_' | '-' => character,
@@ -1118,7 +1109,7 @@ fn versioned_archive_cache_dir(
     archive_url: &str,
 ) -> PathBuf {
     let version = version.unwrap_or_default();
-    let sanitized_version = sanitized_version_component(version);
+    let sanitized_version = sanitize_path_component(version);
 
     let mut version_hasher = Sha256::new();
     version_hasher.update(version.as_bytes());
@@ -1162,12 +1153,11 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
     }
 
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
-        self.new_version_available_tx = new_version_available_tx;
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1309,9 +1299,12 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                 }
             };
 
+            let mut args = target_config.args.clone();
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: cmd_path,
-                args: target_config.args.clone(),
+                args,
                 env: Some(env),
             };
 
@@ -1354,12 +1347,11 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
     }
 
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
-        self.new_version_available_tx = new_version_available_tx;
         let fs = self.fs.clone();
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
@@ -1379,7 +1371,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 
             let dir = paths::external_agents_dir()
                 .join("registry")
-                .join(registry_id.as_ref());
+                .join(sanitize_path_component(&registry_id));
             fs.create_dir(&dir).await?;
 
             let os = if cfg!(target_os = "macos") {
@@ -1486,9 +1478,12 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                 }
             };
 
+            let mut args = target_config.args.clone();
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: cmd_path,
-                args: target_config.args.clone(),
+                args,
                 env: Some(env),
             };
 
@@ -1506,8 +1501,10 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
 }
 
 struct LocalRegistryNpxAgent {
+    fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    registry_id: Arc<str>,
     version: SharedString,
     package: SharedString,
     args: Vec<String>,
@@ -1530,15 +1527,16 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
-        self.new_version_available_tx = new_version_available_tx;
+        let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
-        let package = self.package.clone();
+        let registry_id = self.registry_id.clone();
+        let package = bounded_npm_package_spec(&self.package);
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
@@ -1551,11 +1549,18 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package.to_string()];
+            let prefix_dir = paths::external_agents_dir()
+                .join("registry")
+                .join("npx")
+                .join(sanitize_path_component(&registry_id));
+            fs.create_dir(&prefix_dir).await?;
+
+            let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
             exec_args.extend(args);
 
             let npm_command = node_runtime
                 .npm_command(
+                    Some(&prefix_dir),
                     "exec",
                     &exec_args.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
                 )
@@ -1566,9 +1571,12 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
             env.extend(extra_env);
             env.extend(settings_env);
 
+            let mut args = npm_command.args;
+            args.extend(extra_args);
+
             let command = AgentServerCommand {
                 path: npm_command.path,
-                args: npm_command.args,
+                args,
                 env: Some(env),
             };
 
@@ -1585,6 +1593,37 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
     }
 }
 
+/// People are using min-release-age more frequently. Which means a fresh registry will likely have
+/// new package versions than the user can install.
+/// We set the version to now be a ceiling and not an exact pin instead. This allows npm to resolve
+/// the latest version it can find that satisfies the constraint. npm seems to check regularly enough
+/// that new versions are available. This does have a few downsides:
+/// - The user might have an older cached version of the package that satisfies the constraint, until
+///   npm checks for updates again.
+/// - The registry args/env may not be valid for the resolved version.
+///
+/// This is a best-effort attempt to install a version that works without overriding the user's
+/// security settings, as the args don't change often. The registry will need to support this better
+/// at some point, but until then, this is a best-effort workaround that hopefully solves the issue
+/// for most users.
+///
+/// We use npm's hyphen-range syntax (`0.0.0 - <version>`, equivalent to `<=<version>`) instead of
+/// the more compact `<=<version>` form because on Windows, `npm` is `npm.cmd` (a batch file run by
+/// cmd.exe), and the quotes our shell builder emits are PowerShell string-literal syntax that PS
+/// strips during parsing. PS only re-adds CRT-style transport quotes around native command args
+/// containing whitespace, so `package@<=0.25.3` reaches cmd.exe bare and the unquoted `<` is
+/// interpreted as input redirection. See zed-industries/zed#55921.
+fn bounded_npm_package_spec(package_spec: &str) -> String {
+    let Some((package_name, version)) = package_spec.rsplit_once('@') else {
+        return package_spec.to_string();
+    };
+    if package_name.is_empty() || Version::parse(version).is_err() {
+        return package_spec.to_string();
+    }
+
+    format!("{package_name}@0.0.0 - {version}")
+}
+
 struct LocalCustomAgent {
     project_environment: Entity<ProjectEnvironment>,
     command: AgentServerCommand,
@@ -1592,9 +1631,9 @@ struct LocalCustomAgent {
 
 impl ExternalAgentServer for LocalCustomAgent {
     fn get_command(
-        &mut self,
+        &self,
+        extra_args: Vec<String>,
         extra_env: HashMap<String, String>,
-        _new_version_available_tx: Option<watch::Sender<Option<String>>>,
         cx: &mut AsyncApp,
     ) -> Task<Result<AgentServerCommand>> {
         let mut command = self.command.clone();
@@ -1609,6 +1648,7 @@ impl ExternalAgentServer for LocalCustomAgent {
             env.extend(command.env.unwrap_or_default());
             env.extend(extra_env);
             command.env = Some(env);
+            command.args.extend(extra_args);
             Ok(command)
         })
     }
@@ -1986,6 +2026,26 @@ mod tests {
                 )
             })
         })
+    }
+
+    #[test]
+    fn builds_bounded_npm_package_specs() {
+        assert_eq!(
+            bounded_npm_package_spec("agent-package@1.2.3"),
+            "agent-package@0.0.0 - 1.2.3"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("@scope/agent-package@1.2.3-beta.1"),
+            "@scope/agent-package@0.0.0 - 1.2.3-beta.1"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("@scope/agent-package"),
+            "@scope/agent-package"
+        );
+        assert_eq!(
+            bounded_npm_package_spec("agent-package@latest"),
+            "agent-package@latest"
+        );
     }
 
     #[test]

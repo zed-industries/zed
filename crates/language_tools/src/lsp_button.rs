@@ -13,7 +13,7 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Corner, Entity, Subscription, Task, WeakEntity, actions};
+use gpui::{Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
@@ -420,7 +420,7 @@ impl LanguageServerState {
                             let workspace_for_debug = workspace.clone();
                             let server_selector_for_debug = server_selector.clone();
                             submenu = submenu.entry("View Logs", None, move |window, cx| {
-                                lsp_log_view::open_server_trace(
+                                lsp_log_view::open(
                                     &lsp_logs_for_debug,
                                     workspace_for_debug.clone(),
                                     server_selector_for_debug.clone(),
@@ -1248,6 +1248,12 @@ impl StatusItemView for LspButton {
             self.refresh_lsp_menu(false, window, cx);
         }
     }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.global_lsp_settings.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 impl Render for LspButton {
@@ -1321,7 +1327,7 @@ impl Render for LspButton {
                         .ok()
                         .flatten()
                 })
-                .anchor(Corner::BottomLeft)
+                .anchor(Anchor::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)

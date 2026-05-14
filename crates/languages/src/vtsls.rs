@@ -15,6 +15,7 @@ use serde_json::json;
 use settings::update_settings_file;
 use std::{
     ffi::OsString,
+    future::Future,
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
@@ -123,54 +124,56 @@ impl LspInstaller for VtslsLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let server_path = container_dir.join(Self::SERVER_PATH);
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
 
-        let typescript_version = latest_version.typescript_version.to_string();
-        let server_version = latest_version.server_version.to_string();
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
 
-        let mut packages_to_install = Vec::new();
+            let typescript_version = latest_version.typescript_version.to_string();
+            let server_version = latest_version.server_version.to_string();
 
-        if self
-            .node
-            .should_install_npm_package(
-                Self::PACKAGE_NAME,
-                &server_path,
-                &container_dir,
-                VersionStrategy::Latest(&latest_version.server_version),
-            )
-            .await
-        {
-            packages_to_install.push((Self::PACKAGE_NAME, server_version.as_str()));
+            let mut packages_to_install = Vec::new();
+
+            if node
+                .should_install_npm_package(
+                    Self::PACKAGE_NAME,
+                    &server_path,
+                    &container_dir,
+                    VersionStrategy::Latest(&latest_version.server_version),
+                )
+                .await
+            {
+                packages_to_install.push((Self::PACKAGE_NAME, server_version.as_str()));
+            }
+
+            if node
+                .should_install_npm_package(
+                    Self::TYPESCRIPT_PACKAGE_NAME,
+                    &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
+                    &container_dir,
+                    VersionStrategy::Latest(&latest_version.typescript_version),
+                )
+                .await
+            {
+                packages_to_install
+                    .push((Self::TYPESCRIPT_PACKAGE_NAME, typescript_version.as_str()));
+            }
+
+            node.npm_install_packages(&container_dir, &packages_to_install)
+                .await?;
+
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
         }
-
-        if self
-            .node
-            .should_install_npm_package(
-                Self::TYPESCRIPT_PACKAGE_NAME,
-                &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
-                &container_dir,
-                VersionStrategy::Latest(&latest_version.typescript_version),
-            )
-            .await
-        {
-            packages_to_install.push((Self::TYPESCRIPT_PACKAGE_NAME, typescript_version.as_str()));
-        }
-
-        self.node
-            .npm_install_packages(&container_dir, &packages_to_install)
-            .await?;
-
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: typescript_server_binary_arguments(&server_path),
-        })
     }
 
     async fn cached_server_binary(
@@ -268,6 +271,15 @@ impl LspAdapter for VtslsLspAdapter {
                 "enumMemberValues": {
                     "enabled": true
                 }
+            },
+            "implementationsCodeLens": {
+                "enabled": true,
+                "showOnAllClassMethods": true,
+                "showOnInterfaceMethods": true
+            },
+            "referencesCodeLens": {
+                "enabled": true,
+                "showOnAllFunctions": true
             },
             "tsserver": {
                 "maxTsServerMemory": 8092

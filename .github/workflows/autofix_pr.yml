@@ -16,6 +16,9 @@ on:
 jobs:
   run_autofix:
     runs-on: namespace-profile-16x32-ubuntu-2204
+    env:
+      CC: clang
+      CXX: clang++
     steps:
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -45,19 +48,18 @@ jobs:
         version: '9'
     - name: autofix_pr::run_autofix::install_cargo_machete
       if: ${{ inputs.run_clippy }}
-      uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
       with:
-        command: install
-        args: cargo-machete@0.7.0
+        tool: cargo-machete@0.7.0
     - name: autofix_pr::run_autofix::run_cargo_fix
       if: ${{ inputs.run_clippy }}
-      run: cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged
+      run: cargo fix --workspace --allow-dirty --allow-staged
     - name: autofix_pr::run_autofix::run_cargo_machete_fix
       if: ${{ inputs.run_clippy }}
       run: cargo machete --fix
     - name: autofix_pr::run_autofix::run_clippy_fix
       if: ${{ inputs.run_clippy }}
-      run: cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged
+      run: cargo clippy --workspace --fix --allow-dirty --allow-staged
     - name: autofix_pr::run_autofix::run_prettier_fix
       run: ./script/prettier --write
     - name: autofix_pr::run_autofix::run_cargo_fmt

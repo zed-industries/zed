@@ -118,7 +118,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
+    "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
@@ -183,8 +183,8 @@ TBD: Centered layout related settings
   // Highlight the current line in the editor: none, gutter, line, all
   "current_line_highlight": "all",
 
-  // When does the mouse cursor hide: never, on_typing, on_typing_and_movement
-  "hide_mouse": "on_typing_and_movement",
+  // When does the mouse cursor hide: never, on_typing, on_typing_and_action
+  "hide_mouse": "on_typing_and_action",
 
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
@@ -384,6 +384,11 @@ TBD: Centered layout related settings
   "lsp_document_colors": "inlay",        // none, inlay, border, background
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
+
+  // How to display the LSP item kind (function, method, variable, etc.)
+  // of each entry in the completions menu. "symbol" shows a syntax-colored
+  // single-letter badge.
+  "completion_menu_item_kind": "off", // off, symbol
   // Turn on colorization of brackets in editors (configurable per language)
   "colorize_brackets": true,
 ```
@@ -470,6 +475,12 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     },
     // Sort order for entries (directories_first, mixed, files_first)
     "sort_mode": "directories_first",
+    // Whether to sort file and folder names case-sensitively.
+    // "default": Case-insensitive natural sort, lowercase preferred in ties.
+    // "upper":   Uppercase names grouped before lowercase, natural sort within.
+    // "lower":   Lowercase names grouped before uppercase, natural sort within.
+    // "unicode":  Pure Unicode codepoint comparison, no case folding.
+    "sort_order": "default",
     // Whether to hide the root entry when only one folder is open in the window;
     // this also affects how file paths appear in the file finder history.
     "hide_root": false,

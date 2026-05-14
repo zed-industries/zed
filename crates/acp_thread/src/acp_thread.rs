@@ -3,20 +3,27 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{
+    AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
+};
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
 use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
+use project::{
+    AgentLocation, Project,
+    git_store::{GitStoreCheckpoint, GitStoreEvent, RepositoryEvent},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use std::collections::HashMap;
@@ -35,6 +42,18 @@ use util::markdown::MarkdownEscaped;
 use util::path_list::PathList;
 use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
 use uuid::Uuid;
+
+/// Returned when the model stops because it exhausted its output token budget.
+#[derive(Debug)]
+pub struct MaxOutputTokensError;
+
+impl std::fmt::Display for MaxOutputTokensError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "output token limit reached")
+    }
+}
+
+impl std::error::Error for MaxOutputTokensError {}
 
 /// Key used in ACP ToolCall meta to store the tool's programmatic name.
 /// This is a workaround since ACP's ToolCall doesn't have a dedicated name field.
@@ -72,6 +91,35 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
     meta.as_ref()
         .and_then(|m| m.get(SUBAGENT_SESSION_INFO_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Key used in ACP `AvailableCommand` meta to indicate where a skill
+/// originated from (e.g. `"global"` or a worktree root name). Set by
+/// the native agent so the completion popup can surface skill origin to
+/// disambiguate same-named global vs. project-local skills.
+pub const SKILL_SOURCE_META_KEY: &str = "zed.skill_source";
+
+/// Borrowing accessor for the skill source label stored in ACP meta.
+/// Prefer this over [`skill_source_from_meta`] in hot paths (e.g. per-
+/// command iteration during validation), since it avoids allocating
+/// a `SharedString` for callers that only need to compare against a
+/// `&str`.
+pub fn skill_source_str_from_meta(meta: &Option<acp::Meta>) -> Option<&str> {
+    meta.as_ref()
+        .and_then(|m| m.get(SKILL_SOURCE_META_KEY))
+        .and_then(|v| v.as_str())
+}
+
+/// Helper to extract skill source label from ACP meta as an owned
+/// `SharedString`. Use this when the value needs to outlive the meta
+/// reference; otherwise prefer [`skill_source_str_from_meta`].
+pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    skill_source_str_from_meta(meta).map(|s| SharedString::from(s.to_owned()))
+}
+
+/// Helper to create meta tagging an `AvailableCommand` with a skill source.
+pub fn meta_with_skill_source(source: &str) -> acp::Meta {
+    acp::Meta::from_iter([(SKILL_SOURCE_META_KEY.into(), source.into())])
 }
 
 #[derive(Debug)]
@@ -286,10 +334,15 @@ impl ToolCall {
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
 
+        let label = if tool_call.kind == acp::ToolKind::Execute {
+            cx.new(|cx| Markdown::new_text(title.into(), cx))
+        } else {
+            cx.new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx))
+        };
+
         let result = Self {
             id: tool_call.tool_call_id,
-            label: cx
-                .new(|cx| Markdown::new(title.into(), Some(language_registry.clone()), None, cx)),
+            label,
             kind: tool_call.kind,
             content,
             locations: tool_call.locations,
@@ -552,6 +605,22 @@ impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
     }
 }
 
+/// What a `WaitingForConfirmation` prompt represents semantically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationKind {
+    /// The user is granting or denying permission for the tool call to
+    /// proceed. The selected `PermissionOptionKind` determines whether the
+    /// tool call transitions to `InProgress` (allow) or `Rejected` (reject).
+    /// This is the default for tool authorization prompts.
+    PermissionGrant,
+    /// The user is choosing between actions for the tool to take next
+    /// (for example, "Save" vs "Discard" before editing a dirty buffer).
+    /// The tool call always transitions to `InProgress` regardless of the
+    /// selected `PermissionOptionKind`; the caller interprets the chosen
+    /// `option_id` to decide what to do.
+    ActionChoice,
+}
+
 #[derive(Debug)]
 pub enum ToolCallStatus {
     /// The tool call hasn't started running yet, but we start showing it to
@@ -561,6 +630,7 @@ pub enum ToolCallStatus {
     WaitingForConfirmation {
         options: PermissionOptions,
         respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
+        kind: AuthorizationKind,
     },
     /// The tool call is currently running.
     InProgress,
@@ -696,8 +766,18 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx
-                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+            markdown: cx.new(|cx| {
+                Markdown::new_with_options(
+                    content.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    MarkdownOptions {
+                        render_mermaid_diagrams: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            }),
         }
     }
 
@@ -960,13 +1040,19 @@ impl PlanEntry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub max_tokens: u64,
     pub used_tokens: u64,
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub max_output_tokens: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionCost {
+    pub amount: f64,
+    pub currency: SharedString,
 }
 
 pub const TOKEN_USAGE_WARNING_THRESHOLD: f32 = 0.8;
@@ -1026,11 +1112,14 @@ pub struct AcpThread {
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
+    _git_store_subscription: Subscription,
+    update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
     connection: Rc<dyn AgentConnection>,
     token_usage: Option<TokenUsage>,
+    cost: Option<SessionCost>,
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
@@ -1079,6 +1168,7 @@ impl From<&AcpThread> for ActionLogTelemetry {
 
 #[derive(Debug)]
 pub enum AcpThreadEvent {
+    PromptUpdated,
     NewEntry,
     TitleUpdated,
     TokenUsageUpdated,
@@ -1156,6 +1246,7 @@ pub enum LoadError {
     FailedToInstall(SharedString),
     Exited {
         status: ExitStatus,
+        stderr: Option<SharedString>,
     },
     Other(SharedString),
 }
@@ -1174,7 +1265,7 @@ impl Display for LoadError {
                 )
             }
             LoadError::FailedToInstall(msg) => write!(f, "Failed to install: {msg}"),
-            LoadError::Exited { status } => write!(f, "Server exited with status {status}"),
+            LoadError::Exited { status, .. } => write!(f, "Server exited with status {status}"),
             LoadError::Other(msg) => write!(f, "{msg}"),
         }
     }
@@ -1205,10 +1296,27 @@ impl AcpThread {
             }
         });
 
+        let git_store = project.read(cx).git_store().clone();
+        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
+            if matches!(
+                event,
+                GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
+                    _
+                )
+            ) {
+                this.update_last_checkpoint_if_changed_task =
+                    Some(this.update_last_checkpoint_if_changed(cx));
+            }
+        });
+
         Self {
             parent_session_id,
             work_dirs,
             action_log,
+            _git_store_subscription,
+            update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
@@ -1220,6 +1328,7 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            cost: None,
             prompt_capabilities,
             available_commands: Vec::new(),
             _observe_prompt_capabilities: task,
@@ -1245,11 +1354,20 @@ impl AcpThread {
         &self.available_commands
     }
 
+    pub fn is_draft_thread(&self) -> bool {
+        self.entries().is_empty()
+    }
+
     pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
         self.draft_prompt.as_deref()
     }
 
-    pub fn set_draft_prompt(&mut self, prompt: Option<Vec<acp::ContentBlock>>) {
+    pub fn set_draft_prompt(
+        &mut self,
+        prompt: Option<Vec<acp::ContentBlock>>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(AcpThreadEvent::PromptUpdated);
         self.draft_prompt = prompt;
     }
 
@@ -1287,8 +1405,32 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
+        for entry in &self.entries {
+            let chunks = match entry {
+                AgentThreadEntry::AssistantMessage(message) => &message.chunks,
+                _ => continue,
+            };
+            for chunk in chunks {
+                let block = match chunk {
+                    AssistantMessageChunk::Message { block } => block,
+                    AssistantMessageChunk::Thought { block } => block,
+                };
+                if let Some(markdown) = block.markdown() {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.invalidate_mermaid_cache(cx);
+                    });
+                }
+            }
+        }
+    }
+
     pub fn session_id(&self) -> &acp::SessionId {
         &self.session_id
+    }
+
+    pub fn supports_truncate(&self, cx: &App) -> bool {
+        self.connection.truncate(&self.session_id, cx).is_some()
     }
 
     pub fn work_dirs(&self) -> Option<&PathList> {
@@ -1330,6 +1472,10 @@ impl AcpThread {
 
     pub fn token_usage(&self) -> Option<&TokenUsage> {
         self.token_usage.as_ref()
+    }
+
+    pub fn cost(&self) -> Option<&SessionCost> {
+        self.cost.as_ref()
     }
 
     pub fn has_pending_edit_tool_calls(&self) -> bool {
@@ -1393,7 +1539,17 @@ impl AcpThread {
     ) -> Result<(), acp::Error> {
         match update {
             acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
-                self.push_user_content_block(None, content, cx);
+                // We optimistically add the full user prompt before calling `prompt`.
+                // Some ACP servers echo user chunks back over updates. Skip the chunk if
+                // it's already present in the current user message to avoid duplicating content.
+                let already_in_user_message = self
+                    .entries
+                    .last()
+                    .and_then(|entry| entry.user_message())
+                    .is_some_and(|message| message.chunks.contains(&content));
+                if !already_in_user_message {
+                    self.push_user_content_block(None, content, cx);
+                }
             }
             acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
                 self.push_assistant_content_block(content, false, cx);
@@ -1437,6 +1593,18 @@ impl AcpThread {
                 config_options,
                 ..
             }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
+            acp::SessionUpdate::UsageUpdate(update) if cx.has_flag::<AcpBetaFeatureFlag>() => {
+                let usage = self.token_usage.get_or_insert_with(Default::default);
+                usage.max_tokens = update.size;
+                usage.used_tokens = update.used;
+                if let Some(cost) = update.cost {
+                    self.cost = Some(SessionCost {
+                        amount: cost.amount,
+                        currency: cost.currency.into(),
+                    });
+                }
+                cx.emit(AcpThreadEvent::TokenUsageUpdated);
+            }
             _ => {}
         }
         Ok(())
@@ -1733,6 +1901,9 @@ impl AcpThread {
     }
 
     pub fn update_token_usage(&mut self, usage: Option<TokenUsage>, cx: &mut Context<Self>) {
+        if usage.is_none() {
+            self.cost = None;
+        }
         self.token_usage = usage;
         cx.emit(AcpThreadEvent::TokenUsageUpdated);
     }
@@ -2010,6 +2181,7 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
+        kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
@@ -2017,6 +2189,7 @@ impl AcpThread {
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
             respond_tx: tx,
+            kind,
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
@@ -2048,22 +2221,30 @@ impl AcpThread {
             return;
         };
 
-        let new_status = match outcome.option_kind {
-            acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
-                ToolCallStatus::Rejected
+        let is_action_choice = matches!(
+            call.status,
+            ToolCallStatus::WaitingForConfirmation {
+                kind: AuthorizationKind::ActionChoice,
+                ..
             }
-            acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways => {
+        );
+        let new_status =
+            if is_action_choice {
                 ToolCallStatus::InProgress
-            }
-            _ => ToolCallStatus::InProgress,
-        };
+            } else {
+                match outcome.option_kind {
+                    acp::PermissionOptionKind::RejectOnce
+                    | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                    acp::PermissionOptionKind::AllowOnce
+                    | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
+                    _ => ToolCallStatus::InProgress,
+                }
+            };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
         if let ToolCallStatus::WaitingForConfirmation { respond_tx, .. } = curr_status {
-            respond_tx.send(outcome).log_err();
-        } else if cfg!(debug_assertions) {
-            panic!("tried to authorize an already authorized tool call");
+            respond_tx.send(outcome).ok();
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -2140,17 +2321,13 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = if self.connection.truncate(&self.session_id, cx).is_some() {
-            Some(UserMessageId::new())
-        } else {
-            None
-        };
+        let message_id = UserMessageId::new();
 
         self.run_turn(cx, async move |this, cx| {
             this.update(cx, |this, cx| {
                 this.push_entry(
                     AgentThreadEntry::UserMessage(UserMessage {
-                        id: message_id.clone(),
+                        id: Some(message_id.clone()),
                         content: block,
                         chunks: message,
                         checkpoint: None,
@@ -2230,10 +2407,6 @@ impl AcpThread {
                     this.project
                         .update(cx, |project, cx| project.set_agent_location(None, cx));
                 }
-                let Ok(response) = response else {
-                    // tx dropped, just return
-                    return Ok(None);
-                };
 
                 let is_same_turn = this
                     .running_turn
@@ -2242,10 +2415,17 @@ impl AcpThread {
 
                 // If the user submitted a follow up message, running_turn might
                 // already point to a different turn. Therefore we only want to
-                // take the task if it's the same turn.
+                // take the task if it's the same turn. We do this before the
+                // dropped-tx guard below so the panel exits its generating
+                // state even when the send_task is cancelled before tx.send().
                 if is_same_turn {
                     this.running_turn.take();
                 }
+
+                let Ok(response) = response else {
+                    // tx dropped, just return
+                    return Ok(None);
+                };
 
                 match response {
                     Ok(r) => {
@@ -2262,17 +2442,15 @@ impl AcpThread {
                                         .is_some_and(|max| u.output_tokens >= max)
                                 });
 
-                            let message = if exceeded_max_output_tokens {
+                            if exceeded_max_output_tokens {
                                 log::error!(
                                     "Max output tokens reached. Usage: {:?}",
                                     this.token_usage
                                 );
-                                "Maximum output tokens reached"
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
-                                "Maximum tokens reached"
-                            };
-                            return Err(anyhow!(message));
+                            }
+                            return Err(anyhow!(MaxOutputTokensError));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
@@ -2318,6 +2496,15 @@ impl AcpThread {
                                 // No user message found, treat as general refusal
                                 cx.emit(AcpThreadEvent::Refusal);
                             }
+                        }
+
+                        if cx.has_flag::<AcpBetaFeatureFlag>()
+                            && let Some(response_usage) = &r.usage
+                        {
+                            let usage = this.token_usage.get_or_insert_with(Default::default);
+                            usage.input_tokens = response_usage.input_tokens;
+                            usage.output_tokens = response_usage.output_tokens;
+                            cx.emit(AcpThreadEvent::TokenUsageUpdated);
                         }
 
                         cx.emit(AcpThreadEvent::Stopped(r.stop_reason));
@@ -2439,6 +2626,79 @@ impl AcpThread {
                 })
             })?
             .await;
+            Ok(())
+        })
+    }
+
+    fn update_last_checkpoint_if_changed(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(turn_id) = self.running_turn.as_ref().map(|turn| turn.id) else {
+            return Task::ready(Ok(()));
+        };
+
+        let git_store = self.project.read(cx).git_store().clone();
+
+        let Some((user_message_id, checkpoint)) =
+            self.last_user_message().and_then(|(_, message)| {
+                let id = message.id.clone()?;
+                let checkpoint = message.checkpoint.as_ref()?;
+                Some((id, checkpoint))
+            })
+        else {
+            return Task::ready(Ok(()));
+        };
+        if checkpoint.show {
+            return Task::ready(Ok(()));
+        }
+        let old_checkpoint = checkpoint.git_checkpoint.clone();
+
+        let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
+        cx.spawn(async move |this, cx| {
+            let Some(new_checkpoint) = new_checkpoint
+                .await
+                .context("failed to get new checkpoint")
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            let Some(equal) = git_store
+                .update(cx, |git, cx| {
+                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                })
+                .await
+                .context("failed to compare checkpoints")
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            if equal {
+                return Ok(());
+            }
+
+            this.update(cx, |this, cx| {
+                if !this
+                    .running_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.id == turn_id)
+                {
+                    return;
+                }
+
+                let Some((ix, message)) = this.last_user_message() else {
+                    return;
+                };
+                if message.id.as_ref() != Some(&user_message_id) {
+                    return;
+                }
+                if let Some(checkpoint) = message.checkpoint.as_mut()
+                    && !checkpoint.show
+                {
+                    checkpoint.show = true;
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
+            })?;
+
             Ok(())
         })
     }
@@ -2982,6 +3242,7 @@ fn markdown_for_raw_output(
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use futures::stream::StreamExt as _;
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
@@ -2989,7 +3250,6 @@ mod tests {
     use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use std::{
         any::Any,
         cell::RefCell,
@@ -3194,7 +3454,7 @@ mod tests {
 
         // Create a real PTY terminal that runs a command which prints output then sleeps
         // We use printf instead of echo and chain with && sleep to ensure proper execution
-        let (completion_tx, _completion_rx) = smol::channel::unbounded();
+        let (completion_tx, _completion_rx) = async_channel::unbounded();
         let (program, args) = ShellBuilder::new(&Shell::System, false).build(
             Some("printf 'output_before_kill\\n' && sleep 60".to_owned()),
             &[],
@@ -3438,6 +3698,52 @@ mod tests {
 
             "#}
         );
+    }
+
+    #[gpui::test]
+    async fn test_ignore_echoed_user_message_chunks_during_active_turn(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |request, thread, mut cx| {
+                async move {
+                    let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
+
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                                    prompt,
+                                )),
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
+            .await
+            .unwrap();
+
+        let output = thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+        assert_eq!(output.matches("Hello from Zed!").count(), 1);
     }
 
     #[gpui::test]
@@ -4026,6 +4332,119 @@ mod tests {
         assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
     }
 
+    #[gpui::test(iterations = 10)]
+    async fn test_checkpoint_shows_when_file_changes_during_pending_message(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (request_started_tx, request_started_rx) = oneshot::channel::<()>();
+        let request_started_tx = Rc::new(RefCell::new(Some(request_started_tx)));
+        let (write_file_tx, write_file_rx) = oneshot::channel::<()>();
+        let write_file_rx = Rc::new(RefCell::new(Some(write_file_rx)));
+        let (file_written_tx, file_written_rx) = oneshot::channel::<()>();
+        let file_written_tx = Rc::new(RefCell::new(Some(file_written_tx)));
+        let (finish_response_tx, finish_response_rx) = oneshot::channel::<()>();
+        let finish_response_tx = Rc::new(RefCell::new(Some(finish_response_tx)));
+        let finish_response_rx = Rc::new(RefCell::new(Some(finish_response_rx)));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let request_started_tx = request_started_tx.clone();
+            let write_file_rx = write_file_rx.clone();
+            let file_written_tx = file_written_tx.clone();
+            let finish_response_rx = finish_response_rx.clone();
+            move |_request, thread, mut cx| {
+                let write_file_rx = write_file_rx.borrow_mut().take();
+                let finish_response_rx = finish_response_rx.borrow_mut().take();
+                let request_started_tx = request_started_tx.borrow_mut().take();
+                let file_written_tx = file_written_tx.borrow_mut().take();
+                async move {
+                    if let Some(request_started_tx) = request_started_tx {
+                        request_started_tx.send(()).ok();
+                    }
+                    if let Some(write_file_rx) = write_file_rx {
+                        write_file_rx.await.ok();
+                    }
+
+                    thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.write_text_file(
+                                PathBuf::from(path!("/test/file")),
+                                String::new(),
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    if let Some(file_written_tx) = file_written_tx {
+                        file_written_tx.send(()).ok();
+                    }
+                    if let Some(finish_response_rx) = finish_response_rx {
+                        finish_response_rx.await.ok();
+                    }
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send_task = cx.background_executor.spawn(send);
+        request_started_rx.await.unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    hello
+
+                "}
+            );
+        });
+
+        write_file_tx.send(()).ok();
+        file_written_rx.await.unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    hello
+
+                "}
+            );
+        });
+
+        finish_response_tx
+            .borrow_mut()
+            .take()
+            .unwrap()
+            .send(())
+            .ok();
+        send_task.await.unwrap();
+    }
+
     #[gpui::test]
     async fn test_tool_result_refusal(cx: &mut TestAppContext) {
         use std::sync::atomic::AtomicUsize;
@@ -4300,6 +4719,7 @@ mod tests {
     #[derive(Clone, Default)]
     struct FakeAgentConnection {
         auth_methods: Vec<acp::AuthMethod>,
+        supports_truncate: bool,
         sessions: Arc<parking_lot::Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
         set_title_calls: Rc<RefCell<Vec<SharedString>>>,
         on_user_message: Option<
@@ -4318,10 +4738,16 @@ mod tests {
         fn new() -> Self {
             Self {
                 auth_methods: Vec::new(),
+                supports_truncate: true,
                 on_user_message: None,
                 sessions: Arc::default(),
                 set_title_calls: Default::default(),
             }
+        }
+
+        fn without_truncate_support(mut self) -> Self {
+            self.supports_truncate = false;
+            self
         }
 
         #[expect(unused)]
@@ -4403,7 +4829,7 @@ mod tests {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -4425,9 +4851,11 @@ mod tests {
             session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
-            Some(Rc::new(FakeAgentSessionEditor {
-                _session_id: session_id.clone(),
-            }))
+            self.supports_truncate.then(|| {
+                Rc::new(FakeAgentSessionEditor {
+                    _session_id: session_id.clone(),
+                }) as Rc<dyn AgentSessionTruncate>
+            })
         }
 
         fn set_title(
@@ -4983,6 +5411,37 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_send_assigns_message_id_without_truncate_support(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let connection = Rc::new(FakeAgentConnection::new().without_truncate_support());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let response = thread
+            .update(cx, |thread, cx| thread.send_raw("test message", cx))
+            .await;
+
+        assert!(response.is_ok(), "send should not fail: {response:?}");
+        thread.read_with(cx, |thread, _| {
+            let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
+                panic!("expected first entry to be a user message")
+            };
+            assert!(
+                message.id.is_some(),
+                "user message should always have an id"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_send_returns_cancelled_response_and_marks_tools_as_cancelled(
         cx: &mut TestAppContext,
     ) {
@@ -5189,6 +5648,234 @@ mod tests {
         assert!(
             connection.set_title_calls.borrow().is_empty(),
             "session info title update should not propagate back to the connection"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_usage_update_populates_token_usage_and_cost(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread.token_usage().expect("token_usage should be set");
+            assert_eq!(usage.max_tokens, 10000);
+            assert_eq!(usage.used_tokens, 5000);
+
+            let cost = thread.cost().expect("cost should be set");
+            assert!((cost.amount - 0.42).abs() < f64::EPSILON);
+            assert_eq!(cost.currency.as_ref(), "USD");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_usage_update_without_cost_preserves_existing_cost(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(1000, 10000).cost(acp::Cost::new(0.10, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(2000, 10000)),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread.token_usage().expect("token_usage should be set");
+            assert_eq!(usage.used_tokens, 2000);
+
+            let cost = thread.cost().expect("cost should be preserved");
+            assert!((cost.amount - 0.10).abs() < f64::EPSILON);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_response_usage_does_not_clobber_session_usage(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            move |_, thread, mut cx| {
+                async move {
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::UsageUpdate(
+                                    acp::UsageUpdate::new(3000, 10000)
+                                        .cost(acp::Cost::new(0.05, "EUR")),
+                                ),
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)
+                        .usage(acp::Usage::new(500, 200, 300)))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| thread.send_raw("hello", cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread.token_usage().expect("token_usage should be set");
+            assert_eq!(usage.max_tokens, 10000, "max_tokens from UsageUpdate");
+            assert_eq!(usage.used_tokens, 3000, "used_tokens from UsageUpdate");
+            assert_eq!(usage.input_tokens, 200, "input_tokens from response usage");
+            assert_eq!(
+                usage.output_tokens, 300,
+                "output_tokens from response usage"
+            );
+
+            let cost = thread.cost().expect("cost should be set");
+            assert!((cost.amount - 0.05).abs() < f64::EPSILON);
+            assert_eq!(cost.currency.as_ref(), "EUR");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clearing_token_usage_also_clears_cost(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(1000, 10000).cost(acp::Cost::new(0.25, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            assert!(thread.token_usage().is_some());
+            assert!(thread.cost().is_some());
+
+            thread.update_token_usage(None, cx);
+
+            assert!(thread.token_usage().is_none());
+            assert!(
+                thread.cost().is_none(),
+                "cost should be cleared when token usage is cleared"
+            );
+        });
+    }
+
+    /// Regression test: if the inner send_task is cancelled before it can
+    /// fire `tx.send(...)` (e.g. because the underlying future was dropped),
+    /// the outer task observes `rx.await` returning `Err(Cancelled)` and
+    /// must still clear `running_turn` so the panel transitions out of
+    /// `Generating`. Without this, the agent thread is wedged in the
+    /// loading state until Zed restarts.
+    #[gpui::test]
+    async fn test_running_turn_cleared_when_send_task_dropped(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        // Handler hangs forever so the spawn at run_turn is parked inside
+        // `f(this, cx).await` with `tx` still alive but unsent.
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_params, _thread, _cx| {
+                async move { futures::future::pending::<Result<acp::PromptResponse>>().await }
+                    .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let request = thread.update(cx, |thread, cx| thread.send_raw("hello", cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            thread.read_with(cx, |t, _| t.status()),
+            ThreadStatus::Generating,
+            "thread should be generating while the handler is parked"
+        );
+
+        // Replace the in-flight send_task with a no-op. Dropping the original
+        // Task cancels its inner future, which drops `tx` without ever calling
+        // `tx.send(...)`. This mirrors the production scenario where the
+        // send_task future is cancelled before completion.
+        thread.update(cx, |thread, _| {
+            thread.running_turn.as_mut().unwrap().send_task = Task::ready(());
+        });
+
+        let result = request.await;
+        assert!(
+            matches!(result, Ok(None)),
+            "outer task should resolve to Ok(None) on dropped tx, got {result:?}"
+        );
+
+        assert_eq!(
+            thread.read_with(cx, |t, _| t.status()),
+            ThreadStatus::Idle,
+            "running_turn must be cleared even when tx was dropped without send"
         );
     }
 }

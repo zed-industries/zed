@@ -9,7 +9,7 @@ use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
-use std::{env::consts, path::PathBuf, sync::Arc};
+use std::{env::consts, future::Future, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 pub struct CLspAdapter;
@@ -66,80 +66,88 @@ impl LspInstaller for CLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        ensure_arch_compatibility()?;
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = version;
-        let version_dir = container_dir.join(format!("clangd_{name}"));
-        let binary_path = version_dir.join("bin/clangd");
+        async move {
+            ensure_arch_compatibility()?;
 
-        let binary = LanguageServerBinary {
-            path: binary_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = version_dir.join("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: binary_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {binary_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &container_dir,
-            AssetKind::Zip,
-        )
-        .await?;
-        remove_matching(&container_dir, |entry| entry != version_dir).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = version;
+            let version_dir = container_dir.join(format!("clangd_{name}"));
+            let binary_path = version_dir
+                .join("bin")
+                .join(format!("clangd{}", consts::EXE_SUFFIX));
 
-        Ok(binary)
+            let binary = LanguageServerBinary {
+                path: binary_path.clone(),
+                env: None,
+                arguments: Default::default(),
+            };
+
+            let metadata_path = version_dir.join("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: binary_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {binary_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {binary_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &container_dir,
+                AssetKind::Zip,
+            )
+            .await?;
+            remove_matching(&container_dir, |entry| entry != version_dir).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(binary)
+        }
     }
 
     async fn cached_server_binary(
@@ -388,7 +396,9 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             }
         }
         let clangd_dir = last_clangd_dir.context("no cached binary")?;
-        let clangd_bin = clangd_dir.join("bin/clangd");
+        let clangd_bin = clangd_dir
+            .join("bin")
+            .join(format!("clangd{}", consts::EXE_SUFFIX));
         anyhow::ensure!(
             clangd_bin.exists(),
             "missing clangd binary in directory {clangd_dir:?}"
