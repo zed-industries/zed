@@ -344,6 +344,7 @@ name = "agent_skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "const_format",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -364,6 +365,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
@@ -12271,6 +12273,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
+ "const_format",
  "dirs",
  "ignore",
  "util",
@@ -13648,6 +13651,8 @@ dependencies = [
  "assets",
  "chrono",
  "collections",
+ "db",
+ "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -13660,6 +13665,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "tempfile",
  "text",
@@ -18205,6 +18211,7 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
+ "feature_flags",
  "fs",
  "git_ui",
  "gpui",
