@@ -65,6 +65,7 @@ const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
+const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -2192,8 +2193,24 @@ impl GitGraph {
                         }),
                     }
                 })
-                .when(!git_tasks.is_empty(), |mut menu| {
-                    menu = menu.separator().header("Custom Git Commands");
+                .map(|mut menu| {
+                    menu = menu.separator().header("Custom Commands");
+
+                    if git_tasks.is_empty() {
+                        return menu.item(
+                            ContextMenuEntry::new("Learn More")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler(|_window, cx| {
+                                    let docs_url = release_channel::docs_url(
+                                        CUSTOM_GIT_COMMANDS_DOCS_SLUG,
+                                        cx,
+                                    );
+                                    cx.open_url(&docs_url);
+                                }),
+                        );
+                    }
 
                     for (task_source_kind, resolved_task) in git_tasks {
                         let label = resolved_task.display_label().to_string();
