@@ -12,6 +12,7 @@ workspace = true
 path = "src/auto_update_ui.rs"
 
 [dependencies]
+agent_skills.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
 client.workspace = true
