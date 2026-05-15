@@ -4204,16 +4204,13 @@ impl AgentPanel {
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
                     .icon_size(IconSize::Small),
-                {
-                    let focus_handle = focus_handle.clone();
-                    move |_window, cx| {
-                        Tooltip::for_action_in(
-                            "Toggle Agent Menu",
-                            &ToggleOptionsMenu,
-                            &focus_handle,
-                            cx,
-                        )
-                    }
+                move |_window, cx| {
+                    Tooltip::for_action_in(
+                        "Toggle Agent Menu",
+                        &ToggleOptionsMenu,
+                        &focus_handle,
+                        cx,
+                    )
                 },
             )
             .anchor(Anchor::TopRight)
