@@ -1,7 +1,7 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
-    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, SharedString,
+    FontWeight, GridPlacement, GridTemplate, Hsla, JustifyContent, Length, Pixels, SharedString,
     StrikethroughStyle, StyleRefinement, TemplateColumnMinSize, TextAlign, TextOverflow,
     TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
@@ -108,6 +108,18 @@ pub trait Styled: Sized {
     /// Set the text alignment of the element.
     fn text_align(mut self, align: TextAlign) -> Self {
         self.text_style().text_align = Some(align);
+        self
+    }
+
+    /// Sets the letter spacing (tracking) for text in this element and its children.
+    fn letter_spacing(mut self, spacing: impl Into<Pixels>) -> Self {
+        self.text_style().letter_spacing = Some(spacing.into());
+        self
+    }
+
+    /// Sets the case transform for text in this element and its children.
+    fn text_transform(mut self, transform: crate::TextTransform) -> Self {
+        self.text_style().text_transform = Some(transform);
         self
     }
 

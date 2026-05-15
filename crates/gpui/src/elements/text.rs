@@ -2,7 +2,7 @@ use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    TextRun, TextStyle, TextTransform, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
 };
 use anyhow::Context as _;
@@ -17,6 +17,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 impl Element for &'static str {
     type RequestLayoutState = TextLayout;
@@ -398,6 +399,7 @@ impl TextLayout {
         _: &mut App,
     ) -> LayoutId {
         let text_style = window.text_style();
+        let text = apply_text_transform_preserving_byte_len(text, text_style.text_transform);
         let font_size = text_style.font_size.to_pixels(window.rem_size());
         let line_height = window.pixel_snap(
             text_style
@@ -700,6 +702,134 @@ impl TextLayout {
         // Remove trailing newline
         accumulator.pop();
         accumulator
+    }
+}
+
+/// Applies [`TextTransform`] for display while preserving UTF-8 byte length (see [`TextTransform`]).
+fn apply_text_transform_preserving_byte_len(
+    text: SharedString,
+    transform: Option<TextTransform>,
+) -> SharedString {
+    let Some(transform) = transform else {
+        return text;
+    };
+    if matches!(transform, TextTransform::None) {
+        return text;
+    }
+
+    let mut output = String::with_capacity(text.len());
+    match transform {
+        TextTransform::Uppercase => {
+            for ch in text.as_ref().chars() {
+                push_case_mapped_char(&mut output, ch, CaseMapKind::Upper);
+            }
+        }
+        TextTransform::Lowercase => {
+            for ch in text.as_ref().chars() {
+                push_case_mapped_char(&mut output, ch, CaseMapKind::Lower);
+            }
+        }
+        TextTransform::Capitalize => {
+            // Match CSS / Tailwind `capitalize` (UAX #29 word boundaries): uppercase only the first
+            // alphabetic character in each word; leave every other character unchanged. GPUI does not
+            // model `em` or other CSS units here — only this Unicode algorithm.
+            for piece in text.as_ref().split_word_bounds() {
+                let mut seen_first_letter = false;
+                for ch in piece.chars() {
+                    if !seen_first_letter && ch.is_alphabetic() {
+                        push_case_mapped_char(&mut output, ch, CaseMapKind::Upper);
+                        seen_first_letter = true;
+                    } else {
+                        output.push(ch);
+                    }
+                }
+            }
+        }
+        TextTransform::None => unreachable!(),
+    }
+
+    SharedString::from(output)
+}
+
+#[derive(Copy, Clone)]
+enum CaseMapKind {
+    Upper,
+    Lower,
+}
+
+fn push_case_mapped_char(output: &mut String, ch: char, kind: CaseMapKind) {
+    let mapped = match kind {
+        CaseMapKind::Upper => ch.to_uppercase().collect::<String>(),
+        CaseMapKind::Lower => ch.to_lowercase().collect::<String>(),
+    };
+
+    if mapped.len() == ch.len_utf8() && mapped.chars().count() == 1 {
+        output.push_str(&mapped);
+    } else {
+        output.push(ch);
+    }
+}
+
+#[cfg(test)]
+mod text_transform_tests {
+    use super::apply_text_transform_preserving_byte_len;
+    use crate::{SharedString, TextTransform};
+
+    #[test]
+    fn text_transforms_preserve_bytes_and_spacing() {
+        let input = SharedString::from("hello   WORLD\tfoo-bar 123baz déjà vu");
+        let uppercase =
+            apply_text_transform_preserving_byte_len(input.clone(), Some(TextTransform::Uppercase));
+        let lowercase =
+            apply_text_transform_preserving_byte_len(input.clone(), Some(TextTransform::Lowercase));
+        let capitalize = apply_text_transform_preserving_byte_len(
+            input.clone(),
+            Some(TextTransform::Capitalize),
+        );
+
+        assert_eq!(uppercase.as_ref(), "HELLO   WORLD\tFOO-BAR 123BAZ DÉJÀ VU");
+        assert_eq!(lowercase.as_ref(), "hello   world\tfoo-bar 123baz déjà vu");
+        assert_eq!(capitalize.as_ref(), "Hello   WORLD\tFoo-Bar 123Baz Déjà Vu");
+        assert_eq!(input.len(), uppercase.len());
+        assert_eq!(input.len(), lowercase.len());
+        assert_eq!(input.len(), capitalize.len());
+    }
+
+    #[test]
+    fn text_transforms_skip_expanding_unicode_mappings() {
+        let input = SharedString::from("straße İSTANBUL");
+        let uppercase =
+            apply_text_transform_preserving_byte_len(input.clone(), Some(TextTransform::Uppercase));
+        let lowercase =
+            apply_text_transform_preserving_byte_len(input.clone(), Some(TextTransform::Lowercase));
+
+        assert_eq!(uppercase.as_ref(), "STRAßE İSTANBUL");
+        // `İ` lowercases to ASCII `i` in Turkish, which would shrink UTF-8 length; preserve `İ`.
+        assert_eq!(lowercase.as_ref(), "straße İstanbul");
+        assert_eq!(input.len(), uppercase.len());
+        assert_eq!(input.len(), lowercase.len());
+    }
+
+    #[test]
+    fn capitalize_leaves_letters_after_digit_prefix_unchanged() {
+        let input = SharedString::from("123BAZ");
+        let out = apply_text_transform_preserving_byte_len(input.clone(), Some(TextTransform::Capitalize));
+        assert_eq!(out.as_ref(), "123BAZ");
+        assert_eq!(input.len(), out.len());
+    }
+
+    #[test]
+    fn capitalize_does_not_fold_remaining_letters() {
+        let input = SharedString::from("foo2BAR");
+        let out = apply_text_transform_preserving_byte_len(input, Some(TextTransform::Capitalize));
+        assert_eq!(out.as_ref(), "Foo2BAR");
+    }
+
+    #[test]
+    fn capitalize_handles_apostrophe_contractions_like_css() {
+        let input = SharedString::from("don't panic");
+        let out = apply_text_transform_preserving_byte_len(input, Some(TextTransform::Capitalize));
+        assert_eq!(out.as_ref(), "Don't Panic");
     }
 }
 

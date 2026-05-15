@@ -615,6 +615,7 @@ impl TerminalElement {
             },
             underline,
             strikethrough,
+            letter_spacing: text_style.letter_spacing,
         };
 
         if let Some((style, range)) = hyperlink

@@ -382,9 +382,12 @@ impl Boundary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Font, FontFeatures, FontStyle, FontWeight, TestAppContext, TestDispatcher, font};
+    use crate::{
+        Font, FontFeatures, FontRun, FontStyle, FontWeight, Hsla, TestAppContext,
+        TestDispatcher, TextRun, font,
+    };
     #[cfg(target_os = "macos")]
-    use crate::{TextRun, WindowTextSystem, WrapBoundary};
+    use crate::{WindowTextSystem, WrapBoundary};
 
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(0);
@@ -408,6 +411,53 @@ mod tests {
                 ..Default::default()
             })
             .collect()
+    }
+
+    #[test]
+    fn test_tracking_changes_measured_width() {
+        let dispatcher = TestDispatcher::new(1);
+        let cx = TestAppContext::build(dispatcher, None);
+        let base = TextRun {
+            len: 4,
+            font: font(".ZedMono"),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            ..Default::default()
+        };
+        let font_id = cx.text_system().resolve_font(&base.font);
+        let platform = cx.text_system().platform_text_system_for_tests();
+        let no_tracking = platform.layout_line(
+            "TEST",
+            px(16.),
+            &[FontRun {
+                len: 4,
+                font_id,
+                letter_spacing: None,
+            }],
+        );
+        let wide = platform.layout_line(
+            "TEST",
+            px(16.),
+            &[FontRun {
+                len: 4,
+                font_id,
+                letter_spacing: Some(px(2.0)),
+            }],
+        );
+        let tight = platform.layout_line(
+            "TEST",
+            px(16.),
+            &[FontRun {
+                len: 4,
+                font_id,
+                letter_spacing: Some(px(-0.5)),
+            }],
+        );
+
+        assert!(wide.width > no_tracking.width);
+        assert!(tight.width <= no_tracking.width);
     }
 
     #[test]

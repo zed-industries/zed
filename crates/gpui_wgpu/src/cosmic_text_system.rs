@@ -420,16 +420,17 @@ impl CosmicTextSystemState {
                 continue;
             };
 
-            attrs_list.add_span(
-                offs..(offs + run.len),
-                &Attrs::new()
-                    .metadata(run.font_id.0)
-                    .family(Family::Name(&first_family.0))
-                    .stretch(face.stretch)
-                    .style(face.style)
-                    .weight(face.weight)
-                    .font_features(loaded_font.features.clone()),
-            );
+            let mut attrs = Attrs::new()
+                .metadata(run.font_id.0)
+                .family(Family::Name(&first_family.0))
+                .stretch(face.stretch)
+                .style(face.style)
+                .weight(face.weight)
+                .font_features(loaded_font.features.clone());
+            if let Some(spacing) = run.letter_spacing {
+                attrs = attrs.letter_spacing(spacing.as_f32());
+            }
+            attrs_list.add_span(offs..(offs + run.len), &attrs);
             offs += run.len;
         }
 

@@ -871,7 +871,7 @@ impl PlatformTextSystem for NoopTextSystem {
         Ok((raster_bounds.size, Vec::new()))
     }
 
-    fn layout_line(&self, text: &str, font_size: Pixels, _runs: &[FontRun]) -> LineLayout {
+    fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
         let mut position = px(0.);
         let metrics = self.font_metrics(FontId(0));
         let em_width = font_size
@@ -898,9 +898,9 @@ impl PlatformTextSystem for NoopTextSystem {
                 position += em_width
             }
         }
-        let mut runs = Vec::default();
+        let mut shaped_runs = Vec::default();
         if !glyphs.is_empty() {
-            runs.push(ShapedRun {
+            shaped_runs.push(ShapedRun {
                 font_id: FontId(0),
                 glyphs,
             });
@@ -908,12 +908,26 @@ impl PlatformTextSystem for NoopTextSystem {
             position = px(0.);
         }
 
+        let mut tracking = px(0.);
+        let mut byte_offset = 0usize;
+        for run in font_runs {
+            let end = byte_offset.saturating_add(run.len).min(text.len());
+            let slice = text.get(byte_offset..end).unwrap_or("");
+            let n = slice.chars().count();
+            if n > 1 {
+                if let Some(spacing) = run.letter_spacing {
+                    tracking += spacing * (n - 1) as f32;
+                }
+            }
+            byte_offset = byte_offset.saturating_add(run.len);
+        }
+
         LineLayout {
             font_size,
-            width: position,
+            width: position + tracking,
             ascent: font_size * (metrics.ascent / metrics.units_per_em as f32),
             descent: font_size * (metrics.descent / metrics.units_per_em as f32),
-            runs,
+            runs: shaped_runs,
             len: text.len(),
         }
     }
