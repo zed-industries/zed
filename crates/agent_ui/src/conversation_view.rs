@@ -1087,7 +1087,14 @@ impl ConversationView {
             let fs = self.project.read(cx).fs().clone();
             config_options_view =
                 Some(cx.new(|cx| {
-                    ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
+                    ConfigOptionsView::new(
+                        config_options,
+                        agent_server,
+                        fs,
+                        vec![acp::SessionConfigOptionCategory::ThoughtLevel],
+                        window,
+                        cx,
+                    )
                 }));
             model_selector = None;
             mode_selector = None;

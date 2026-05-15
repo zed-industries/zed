@@ -28,6 +28,7 @@ pub struct ConfigOptionsView {
     selectors: Vec<Entity<ConfigOptionSelector>>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
+    persist_selected_categories_as_defaults: Vec<acp::SessionConfigOptionCategory>,
     config_option_ids: Vec<acp::SessionConfigId>,
     _refresh_task: Task<()>,
 }
@@ -37,10 +38,18 @@ impl ConfigOptionsView {
         config_options: Rc<dyn AgentSessionConfigOptions>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
+        persist_selected_categories_as_defaults: Vec<acp::SessionConfigOptionCategory>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let selectors = Self::build_selectors(&config_options, &agent_server, &fs, window, cx);
+        let selectors = Self::build_selectors(
+            &config_options,
+            &agent_server,
+            &fs,
+            &persist_selected_categories_as_defaults,
+            window,
+            cx,
+        );
         let config_option_ids = Self::config_option_ids(&config_options);
 
         let rx = config_options.watch(cx);
@@ -61,6 +70,7 @@ impl ConfigOptionsView {
             selectors,
             agent_server,
             fs,
+            persist_selected_categories_as_defaults,
             config_option_ids,
             _refresh_task: refresh_task,
         }
@@ -72,7 +82,7 @@ impl ConfigOptionsView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(config_id) = self.first_config_option_id(category) else {
+        let Some(config_id) = self.first_config_option_id(category.clone()) else {
             return false;
         };
 
@@ -93,13 +103,25 @@ impl ConfigOptionsView {
         favorites_only: bool,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(config_id) = self.first_config_option_id(category) else {
+        let Some(config_id) = self.first_config_option_id(category.clone()) else {
             return false;
         };
 
         let Some(next_value) = self.next_value_for_config(&config_id, favorites_only, cx) else {
             return false;
         };
+
+        if self
+            .persist_selected_categories_as_defaults
+            .contains(&category)
+        {
+            self.agent_server.set_default_config_option(
+                config_id.0.as_ref(),
+                Some(next_value.0.as_ref()),
+                self.fs.clone(),
+                cx,
+            );
+        }
 
         let task = self
             .config_options
@@ -191,6 +213,7 @@ impl ConfigOptionsView {
             &self.config_options,
             &self.agent_server,
             &self.fs,
+            &self.persist_selected_categories_as_defaults,
             window,
             cx,
         );
@@ -201,6 +224,7 @@ impl ConfigOptionsView {
         config_options: &Rc<dyn AgentSessionConfigOptions>,
         agent_server: &Rc<dyn AgentServer>,
         fs: &Arc<dyn Fs>,
+        persist_selected_categories_as_defaults: &[acp::SessionConfigOptionCategory],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Entity<ConfigOptionSelector>> {
@@ -211,12 +235,17 @@ impl ConfigOptionsView {
                 let config_options = config_options.clone();
                 let agent_server = agent_server.clone();
                 let fs = fs.clone();
+                let should_persist_selected_value_as_default =
+                    option.category.as_ref().is_some_and(|category| {
+                        persist_selected_categories_as_defaults.contains(category)
+                    });
                 cx.new(|cx| {
                     ConfigOptionSelector::new(
                         config_options,
                         option.id.clone(),
                         agent_server,
                         fs,
+                        should_persist_selected_value_as_default,
                         window,
                         cx,
                     )
@@ -253,15 +282,15 @@ impl ConfigOptionSelector {
         config_id: acp::SessionConfigId,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
+        should_persist_selected_value_as_default: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let option_count = config_options
+        let option = config_options
             .config_options()
-            .iter()
-            .find(|opt| opt.id == config_id)
-            .map(count_config_options)
-            .unwrap_or(0);
+            .into_iter()
+            .find(|opt| opt.id == config_id);
+        let option_count = option.as_ref().map(count_config_options).unwrap_or(0);
 
         let is_searchable = option_count >= PICKER_THRESHOLD;
 
@@ -276,6 +305,7 @@ impl ConfigOptionSelector {
                     config_id,
                     agent_server,
                     fs,
+                    should_persist_selected_value_as_default,
                     window,
                     picker_cx,
                 );
@@ -409,6 +439,7 @@ struct ConfigOptionPickerDelegate {
     config_id: acp::SessionConfigId,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
+    should_persist_selected_value_as_default: bool,
     filtered_entries: Vec<ConfigOptionPickerEntry>,
     all_options: Vec<ConfigOptionValue>,
     selected_index: usize,
@@ -423,6 +454,7 @@ impl ConfigOptionPickerDelegate {
         config_id: acp::SessionConfigId,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
+        should_persist_selected_value_as_default: bool,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
@@ -459,6 +491,7 @@ impl ConfigOptionPickerDelegate {
             config_id,
             agent_server,
             fs,
+            should_persist_selected_value_as_default,
             filtered_entries,
             all_options,
             selected_index,
@@ -564,6 +597,15 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                     self.fs.clone(),
                     cx,
                 );
+            } else {
+                if self.should_persist_selected_value_as_default {
+                    self.agent_server.set_default_config_option(
+                        self.config_id.0.as_ref(),
+                        Some(option.value.0.as_ref()),
+                        self.fs.clone(),
+                        cx,
+                    );
+                }
             }
 
             let task = self.config_options.set_config_option(

@@ -9023,6 +9023,15 @@ impl ThreadView {
 
     fn cycle_thinking_effort(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.as_native_thread(cx) else {
+            if let Some(config_options_view) = self.config_options_view.clone() {
+                config_options_view.update(cx, |view, cx| {
+                    view.cycle_category_option(
+                        acp::SessionConfigOptionCategory::ThoughtLevel,
+                        false,
+                        cx,
+                    )
+                });
+            }
             return;
         };
 
@@ -9081,6 +9090,19 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.as_native_thread(cx).is_none() {
+            if let Some(config_options_view) = self.config_options_view.clone() {
+                config_options_view.update(cx, |view, cx| {
+                    view.toggle_category_picker(
+                        acp::SessionConfigOptionCategory::ThoughtLevel,
+                        window,
+                        cx,
+                    )
+                });
+            }
+            return;
+        }
+
         let menu_handle = self.thinking_effort_menu_handle.clone();
         window.defer(cx, move |window, cx| {
             menu_handle.toggle(window, cx);
