@@ -70,13 +70,17 @@ impl ResizableColumnsState {
         cx: &mut Context<Self>,
     ) {
         let col_idx = drag_event.drag(cx).col_idx;
-        let rem_size = window.rem_size();
-        // When pinned columns are used, the table does not scroll as a whole (unlike the
-        // h_scroll_container approach). The scroll offset must be subtracted from drag_x so the
-        // resize calculation treats the handle as being at its natural (unscrolled) column position.
-        // h_scroll_offset is negative when scrolled right, so subtracting it cancels the visual shift.
+        // h_scroll_offset is negative when scrolled right; subtracting it maps drag_x to the
+        // column's natural (unscrolled) position. Only scrollable columns reach this path —
+        // pinned dividers are rendered non-interactive.
         let drag_x = drag_event.event.position.x - drag_event.bounds.left() - h_scroll_offset;
+        self.drag_to(col_idx, drag_x, window.rem_size());
+        cx.notify();
+    }
 
+    /// Resizes `col_idx` such that its right edge sits at `drag_x`, where `drag_x` is in the
+    /// column-strip's natural (unscrolled) coordinate space, relative to its left edge.
+    pub(crate) fn drag_to(&mut self, col_idx: usize, drag_x: Pixels, rem_size: Pixels) {
         let left_edge: Pixels = self.widths.as_slice()[..col_idx]
             .iter()
             .map(|width| width.to_pixels(rem_size))
@@ -86,7 +90,6 @@ impl ResizableColumnsState {
         let new_width = self.apply_min_size(new_width, self.resize_behavior[col_idx], rem_size);
 
         self.widths[col_idx] = AbsoluteLength::Pixels(new_width);
-        cx.notify();
     }
 
     pub fn set_column_configuration(
@@ -526,6 +529,12 @@ impl Table {
     }
 }
 
+/// True when the table should render a pinned section and a separate scrollable section.
+/// `pinned_cols == 0` and `pinned_cols >= cols` both fall back to a single-section layout.
+fn is_pinned_layout(pinned_cols: usize, cols: usize) -> bool {
+    pinned_cols > 0 && pinned_cols < cols
+}
+
 fn base_cell_style(width: Option<Length>) -> Div {
     div()
         .px_1p5()
@@ -629,7 +638,7 @@ pub fn render_table_row(
 
     let pinned_cols = table_context.pinned_cols;
 
-    if pinned_cols > 0 && pinned_cols < cols {
+    if is_pinned_layout(pinned_cols, cols) {
         let mut items_vec: Vec<AnyElement> = items.map(IntoElement::into_any_element).into_vec();
         let mut widths_vec: Vec<Option<Length>> = column_widths.into_vec();
 
@@ -718,7 +727,7 @@ pub fn render_table_header(
     let use_ui_font = table_context.use_ui_font;
     let resize_info_ref = resize_info.as_ref();
 
-    if pinned_cols > 0 && pinned_cols < cols {
+    if is_pinned_layout(pinned_cols, cols) {
         let mut headers_vec: Vec<AnyElement> = headers
             .into_vec()
             .into_iter()
@@ -854,11 +863,13 @@ impl TableRenderContext {
 }
 
 /// Builds resize dividers for the given column range, positioned absolutely from `left: 0`.
+/// When `interactive` is false, dividers render as plain visual lines with no drag/click handlers.
 fn build_resize_dividers(
     columns_state: &Entity<ResizableColumnsState>,
     widths: &TableRow<AbsoluteLength>,
     resize_behavior: &TableRow<TableResizeBehavior>,
     range: Range<usize>,
+    interactive: bool,
     rem_size: Pixels,
     window: &mut Window,
     cx: &mut App,
@@ -889,10 +900,11 @@ fn build_resize_dividers(
                 });
             })
         };
+        let is_resizable = interactive && resize_behavior[col_idx].is_resizable();
         dividers.push(render_column_resize_divider(
             divider,
             col_idx,
-            resize_behavior[col_idx].is_resizable(),
+            is_resizable,
             entity_id,
             on_reset,
             None,
@@ -925,6 +937,7 @@ fn render_resize_handles_resizable(
             &widths,
             &resize_behavior,
             0..n_cols,
+            true,
             rem_size,
             window,
             cx,
@@ -947,11 +960,14 @@ fn render_resize_handles_resizable(
         .map(|w| w.to_pixels(rem_size))
         .fold(px(0.), |acc, x| acc + x);
 
+    // Non-interactive: pinned columns don't visually shift with scroll, so resizing them would
+    // need separate drag-math from the scrollable columns. Header double-click reset still works.
     let pinned_dividers = build_resize_dividers(
         columns_state,
         &widths,
         &resize_behavior,
         0..pinned_cols,
+        false,
         rem_size,
         window,
         cx,
@@ -965,21 +981,18 @@ fn render_resize_handles_resizable(
         .w(pinned_width)
         .children(pinned_dividers);
 
-    // Scrollable column handles: placed inside an overflow_x_scroll container that tracks the
-    // same scroll handle as the row scrollable sections. Handles scroll in sync with cells,
-    // and are clipped when they scroll out of the visible area.
     let scrollable_dividers = build_resize_dividers(
         columns_state,
         &widths,
         &resize_behavior,
         pinned_cols..n_cols,
+        true,
         rem_size,
         window,
         cx,
     );
 
-    // The inner div provides the scroll extent so the container can scroll.
-    // Handles are absolute within the inner div and scroll with it when the handle updates.
+    // Sized inner div gives the overflow container something to scroll against.
     let inner = div()
         .relative()
         .w(total_scrollable_width)
@@ -1018,10 +1031,8 @@ impl RenderOnce for Table {
             .and_then(|state| state.upgrade());
         let pinned_cols = self.pinned_cols;
 
-        // When pinned columns are used, provide the scroll handle to all rows/header so they can
-        // synchronize their scrollable sections via overflow_x_scroll + track_scroll.
-        // It is also used to correct drag_x in on_drag_move: the table does not shift as a whole
-        // (unlike h_scroll_container), so the scroll offset must be subtracted from the drag position.
+        // Shared by every row's scrollable section so they scroll in lockstep, and read by
+        // on_drag_move to compensate drag_x for the horizontal scroll offset.
         let h_scroll_handle = if pinned_cols > 0 {
             interaction_state
                 .as_ref()
@@ -1045,15 +1056,13 @@ impl RenderOnce for Table {
                     _ => None,
                 });
 
-        // With pinned columns the table fills its container; the scrollable sections in each row
-        // handle horizontal sizing internally, so no fixed table_width is applied.
+        // Pinned mode sizes each row internally, so no fixed table_width or h_scroll_container.
         let table_width = if pinned_cols > 0 {
             None
         } else {
             self.column_width_config.table_width(window, cx)
         };
 
-        // With pinned columns rows are always full-width, so FitList is correct.
         let horizontal_sizing = if pinned_cols > 0 {
             ListHorizontalSizingBehavior::FitList
         } else {
@@ -1228,8 +1237,6 @@ impl RenderOnce for Table {
             );
 
         if let Some(state) = interaction_state.as_ref() {
-            // With pinned columns each row's scrollable section handles horizontal scroll
-            // internally, so no h_scroll_container is needed.
             let content = if is_resizable && pinned_cols == 0 {
                 let mut h_scroll_container = div()
                     .id("table-h-scroll")
@@ -1260,8 +1267,7 @@ impl RenderOnce for Table {
                 )
             };
 
-            // Add horizontal scrollbar when in resizable mode (works for both pinned and non-pinned
-            // since both update the same horizontal_scroll_handle)
+            // Works for both modes since they share horizontal_scroll_handle.
             if is_resizable {
                 content = content.custom_scrollbars(
                     Scrollbars::new(ScrollAxes::Horizontal)
