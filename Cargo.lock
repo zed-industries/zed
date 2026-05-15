@@ -6156,7 +6156,6 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "cloud_api_types",
  "collections",
  "db",

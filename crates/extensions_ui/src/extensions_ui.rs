@@ -7,7 +7,6 @@ use std::time::Duration;
 use std::{ops::Range, sync::Arc};
 
 use anyhow::Context as _;
-use client::zed_urls;
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
@@ -193,6 +192,26 @@ fn extension_provides_label(provides: ExtensionProvides) -> &'static str {
     }
 }
 
+fn show_extension_provides_filter(provides: ExtensionProvides) -> bool {
+    !matches!(
+        provides,
+        ExtensionProvides::AgentServers
+            | ExtensionProvides::SlashCommands
+            | ExtensionProvides::IndexedDocsProviders
+    )
+}
+
+fn show_extension_provides_chip(provides: ExtensionProvides) -> bool {
+    !matches!(
+        provides,
+        ExtensionProvides::SlashCommands | ExtensionProvides::IndexedDocsProviders
+    )
+}
+
+fn provides_agent_servers(provides: &BTreeSet<ExtensionProvides>) -> bool {
+    provides.contains(&ExtensionProvides::AgentServers)
+}
+
 #[derive(Clone)]
 pub enum ExtensionStatus {
     NotInstalled,
@@ -200,6 +219,21 @@ pub enum ExtensionStatus {
     Upgrading,
     Installed(Arc<str>),
     Removing,
+}
+
+fn should_show_remote_extension(
+    provides: &BTreeSet<ExtensionProvides>,
+    status: &ExtensionStatus,
+) -> bool {
+    !provides_agent_servers(provides)
+        || matches!(
+            status,
+            ExtensionStatus::Installed(_) | ExtensionStatus::Removing | ExtensionStatus::Upgrading
+        )
+}
+
+fn can_install_or_upgrade_remote_extension(provides: &BTreeSet<ExtensionProvides>) -> bool {
+    !provides_agent_servers(provides)
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -214,6 +248,14 @@ impl ExtensionFilter {
         match self {
             Self::All | Self::Installed => true,
             Self::NotInstalled => false,
+        }
+    }
+
+    fn includes_status(self, status: &ExtensionStatus) -> bool {
+        match self {
+            Self::All => true,
+            Self::Installed => matches!(status, ExtensionStatus::Installed(_)),
+            Self::NotInstalled => matches!(status, ExtensionStatus::NotInstalled),
         }
     }
 }
@@ -287,19 +329,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
-fn acp_registry_upsell_keywords() -> &'static [&'static str] {
-    &[
-        "opencode",
-        "mistral",
-        "auggie",
-        "stakpak",
-        "codebuddy",
-        "autohand",
-        "factory droid",
-        "corust",
-    ]
-}
-
 fn extension_button_id(extension_id: &Arc<str>, operation: ExtensionOperation) -> ElementId {
     (SharedString::from(extension_id.clone()), operation as usize).into()
 }
@@ -326,7 +355,6 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    show_acp_registry_upsell: bool,
 }
 
 impl ExtensionsPage {
@@ -389,7 +417,6 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                show_acp_registry_upsell: false,
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -470,23 +497,16 @@ impl ExtensionsPage {
         }
     }
 
-    fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
+    fn update_filtered_extension_entries(&mut self, cx: &mut Context<Self>) {
         self.filtered_remote_extension_indices.clear();
         self.filtered_remote_extension_indices.extend(
             self.remote_extension_entries
                 .iter()
                 .enumerate()
-                .filter(|(_, extension)| match self.filter {
-                    ExtensionFilter::All => true,
-                    ExtensionFilter::Installed => {
-                        let status = Self::extension_status(&extension.id, cx);
-                        matches!(status, ExtensionStatus::Installed(_))
-                    }
-                    ExtensionFilter::NotInstalled => {
-                        let status = Self::extension_status(&extension.id, cx);
-
-                        matches!(status, ExtensionStatus::NotInstalled)
-                    }
+                .filter(|(_, extension)| {
+                    let status = Self::extension_status(&extension.id, cx);
+                    self.filter.includes_status(&status)
+                        && should_show_remote_extension(&extension.manifest.provides, &status)
                 })
                 .filter(|(_, extension)| match self.provides_filter {
                     Some(provides) => extension.manifest.provides.contains(&provides),
@@ -506,7 +526,10 @@ impl ExtensionsPage {
                 })
                 .map(|(ix, _)| ix),
         );
+    }
 
+    fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
+        self.update_filtered_extension_entries(cx);
         cx.notify();
     }
 
@@ -778,6 +801,8 @@ impl ExtensionsPage {
         let this = cx.weak_entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
+        let can_install_or_upgrade =
+            can_install_or_upgrade_remote_extension(&extension.manifest.provides);
 
         let extension_id = extension.id.clone();
         let buttons = self.buttons_for_entry(extension, &status, has_dev_extension, cx);
@@ -822,16 +847,12 @@ impl ExtensionsPage {
                                             .manifest
                                             .provides
                                             .iter()
-                                            .filter_map(|provides| {
-                                                match provides {
-                                                    ExtensionProvides::SlashCommands
-                                                    | ExtensionProvides::IndexedDocsProviders => {
-                                                        return None;
-                                                    }
-                                                    _ => {}
-                                                }
-
-                                                Some(Chip::new(extension_provides_label(*provides)))
+                                            .copied()
+                                            .filter(|provides| {
+                                                show_extension_provides_chip(*provides)
+                                            })
+                                            .map(|provides| {
+                                                Chip::new(extension_provides_label(provides))
                                             })
                                             .collect::<Vec<_>>(),
                                     ),
@@ -934,6 +955,7 @@ impl ExtensionsPage {
                                             &this,
                                             extension_id.clone(),
                                             authors.clone(),
+                                            can_install_or_upgrade,
                                             window,
                                             cx,
                                         )
@@ -948,12 +970,13 @@ impl ExtensionsPage {
         this: &Entity<Self>,
         extension_id: Arc<str>,
         authors: Vec<String>,
+        can_install_or_upgrade: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |context_menu, window, _| {
-            context_menu
-                .entry(
+            let context_menu = if can_install_or_upgrade {
+                context_menu.entry(
                     "Install Another Version...",
                     None,
                     window.handler_for(this, {
@@ -963,6 +986,11 @@ impl ExtensionsPage {
                         }
                     }),
                 )
+            } else {
+                context_menu
+            };
+
+            context_menu
                 .entry("Copy Extension ID", None, {
                     let extension_id = extension_id.clone();
                     move |_, cx| {
@@ -1044,6 +1072,8 @@ impl ExtensionsPage {
             .manifest
             .provides
             .contains(&ExtensionProvides::ContextServers);
+        let can_install_or_upgrade =
+            can_install_or_upgrade_remote_extension(&extension.manifest.provides);
 
         match status.clone() {
             ExtensionStatus::NotInstalled => ExtensionCardButtons {
@@ -1148,7 +1178,9 @@ impl ExtensionsPage {
                         }
                     })
                 }),
-                upgrade: if installed_version == extension.manifest.version {
+                upgrade: if installed_version == extension.manifest.version
+                    || !can_install_or_upgrade
+                {
                     None
                 } else {
                     Some(
@@ -1416,13 +1448,11 @@ impl ExtensionsPage {
     fn refresh_feature_upsells(&mut self, cx: &mut Context<Self>) {
         let Some(search) = self.search_query(cx) else {
             self.upsells.clear();
-            self.show_acp_registry_upsell = false;
             return;
         };
 
         if let Some(id) = search.strip_prefix("id:") {
             self.upsells.clear();
-            self.show_acp_registry_upsell = false;
 
             let upsell = match id.to_lowercase().as_str() {
                 "ruff" => Some(Feature::ExtensionRuff),
@@ -1454,61 +1484,6 @@ impl ExtensionsPage {
                 self.upsells.remove(feature);
             }
         }
-
-        self.show_acp_registry_upsell = acp_registry_upsell_keywords()
-            .iter()
-            .any(|keyword| search_terms.iter().any(|term| keyword.contains(term)));
-    }
-
-    fn render_acp_registry_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let registry_url = zed_urls::acp_registry_blog(cx);
-
-        let view_registry = Button::new("view_registry", "View Registry")
-            .style(ButtonStyle::Tinted(ui::TintColor::Warning))
-            .on_click({
-                let registry_url = registry_url.clone();
-                move |_, window, cx| {
-                    telemetry::event!(
-                        "ACP Registry Opened from Extensions",
-                        source = "ACP Registry Upsell",
-                        url = registry_url,
-                    );
-                    window.dispatch_action(Box::new(zed_actions::AcpRegistry), cx)
-                }
-            });
-        let open_registry_button = Button::new("open_registry", "Learn More")
-            .end_icon(
-                Icon::new(IconName::ArrowUpRight)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
-            .on_click({
-                move |_event, _window, cx| {
-                    telemetry::event!(
-                        "ACP Registry Viewed",
-                        source = "ACP Registry Upsell",
-                        url = registry_url,
-                    );
-                    cx.open_url(&registry_url)
-                }
-            });
-
-        div().pt_4().px_4().child(
-            Banner::new()
-                .severity(Severity::Warning)
-                .child(
-                    Label::new(
-                        "Agent Server extensions will be deprecated in favor of the ACP registry.",
-                    )
-                    .mt_0p5(),
-                )
-                .action_slot(
-                    h_flex()
-                        .gap_1()
-                        .child(open_registry_button)
-                        .child(view_registry),
-                ),
-        )
     }
 
     fn render_feature_upsell_banner(
@@ -1707,8 +1682,84 @@ impl ExtensionsPage {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provides(values: &[ExtensionProvides]) -> BTreeSet<ExtensionProvides> {
+        values.iter().copied().collect()
+    }
+
+    #[test]
+    fn agent_servers_are_not_a_top_level_category_filter() {
+        assert!(!show_extension_provides_filter(
+            ExtensionProvides::AgentServers
+        ));
+        assert!(!show_extension_provides_filter(
+            ExtensionProvides::SlashCommands
+        ));
+        assert!(!show_extension_provides_filter(
+            ExtensionProvides::IndexedDocsProviders
+        ));
+        assert!(show_extension_provides_filter(
+            ExtensionProvides::ContextServers
+        ));
+    }
+
+    #[test]
+    fn uninstalled_agent_server_extensions_are_hidden() {
+        let agent_server_provides = provides(&[ExtensionProvides::AgentServers]);
+        let language_provides = provides(&[ExtensionProvides::Languages]);
+
+        assert!(!should_show_remote_extension(
+            &agent_server_provides,
+            &ExtensionStatus::NotInstalled
+        ));
+        assert!(!should_show_remote_extension(
+            &agent_server_provides,
+            &ExtensionStatus::Installing
+        ));
+        assert!(should_show_remote_extension(
+            &agent_server_provides,
+            &ExtensionStatus::Installed("1.0.0".into())
+        ));
+        assert!(should_show_remote_extension(
+            &agent_server_provides,
+            &ExtensionStatus::Removing
+        ));
+        assert!(should_show_remote_extension(
+            &agent_server_provides,
+            &ExtensionStatus::Upgrading
+        ));
+        assert!(should_show_remote_extension(
+            &language_provides,
+            &ExtensionStatus::NotInstalled
+        ));
+    }
+
+    #[test]
+    fn agent_server_extensions_cannot_be_installed_or_upgraded() {
+        let agent_server_provides = provides(&[ExtensionProvides::AgentServers]);
+        let mixed_agent_server_provides = provides(&[
+            ExtensionProvides::AgentServers,
+            ExtensionProvides::ContextServers,
+        ]);
+        let language_provides = provides(&[ExtensionProvides::Languages]);
+
+        assert!(!can_install_or_upgrade_remote_extension(
+            &agent_server_provides
+        ));
+        assert!(!can_install_or_upgrade_remote_extension(
+            &mixed_agent_server_provides
+        ));
+        assert!(can_install_or_upgrade_remote_extension(&language_provides));
+    }
+}
+
 impl Render for ExtensionsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.update_filtered_extension_entries(cx);
+
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1807,10 +1858,8 @@ impl Render for ExtensionsPage {
                             })),
                     )
                     .children(ExtensionProvides::iter().filter_map(|provides| {
-                        match provides {
-                            ExtensionProvides::SlashCommands
-                            | ExtensionProvides::IndexedDocsProviders => return None,
-                            _ => {}
+                        if !show_extension_provides_filter(provides) {
+                            return None;
                         }
 
                         let label = extension_provides_label(provides);
@@ -1831,11 +1880,6 @@ impl Render for ExtensionsPage {
                                 }),
                         )
                     })),
-            )
-            .when(
-                self.provides_filter == Some(ExtensionProvides::AgentServers)
-                    || self.show_acp_registry_upsell,
-                |this| this.child(self.render_acp_registry_upsell(cx)),
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {

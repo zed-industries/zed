@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use cloud_api_types::ExtensionMetadata;
+use cloud_api_types::{ExtensionMetadata, ExtensionProvides};
 use extension_host::ExtensionStore;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -59,6 +59,7 @@ impl ExtensionVersionSelectorDelegate {
         selector: WeakEntity<ExtensionVersionSelector>,
         mut extension_versions: Vec<ExtensionMetadata>,
     ) -> Self {
+        extension_versions.retain(can_install_extension_version);
         extension_versions.sort_unstable_by(|a, b| {
             let a_version = Version::from_str(&a.manifest.version);
             let b_version = Version::from_str(&b.manifest.version);
@@ -174,6 +175,10 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
+        if !can_install_extension_version(extension_version) {
+            return;
+        }
+
         if !extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version) {
             return;
         }
@@ -248,4 +253,11 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
                 ),
         )
     }
+}
+
+fn can_install_extension_version(extension_version: &ExtensionMetadata) -> bool {
+    !extension_version
+        .manifest
+        .provides
+        .contains(&ExtensionProvides::AgentServers)
 }
