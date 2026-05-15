@@ -11,7 +11,6 @@ pub struct Model {
     pub github_login: String,
     pub github_user_id: i32,
     pub email_address: Option<String>,
-    pub name: Option<String>,
     pub admin: bool,
     pub connected_once: bool,
 }
