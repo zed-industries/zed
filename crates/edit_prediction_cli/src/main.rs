@@ -1444,7 +1444,7 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples, args.verbose);
+                        score::print_report(&examples, args.verbose, args.context_only);
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;
                         }

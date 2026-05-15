@@ -208,7 +208,11 @@ pub fn score_prediction(input: PredictionScoringInput<'_>) -> PredictionScore {
             .expected_patches
             .iter()
             .map(|expected| editable_context_coverage(&expected.patch, context))
-            .max_by(|left, right| left.score.total_cmp(&right.score))
+            .max_by(|left, right| {
+                left.lines_f1
+                    .total_cmp(&right.lines_f1)
+                    .then_with(|| left.files_f1.total_cmp(&right.files_f1))
+            })
     });
 
     let Some(actual_patch) = input.actual_patch else {

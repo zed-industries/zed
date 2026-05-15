@@ -144,7 +144,11 @@ pub fn run_context_coverage_scoring(
         .map(|(expected_patch, _)| {
             edit_prediction_metrics::editable_context_coverage(expected_patch, &context)
         })
-        .max_by(|left, right| left.score.total_cmp(&right.score));
+        .max_by(|left, right| {
+            left.lines_f1
+                .total_cmp(&right.lines_f1)
+                .then_with(|| left.files_f1.total_cmp(&right.files_f1))
+        });
 
     let mut score = edit_prediction_metrics::PredictionScore::zero();
     score.editable_context_coverage = editable_context_coverage;
@@ -154,7 +158,7 @@ pub fn run_context_coverage_scoring(
 }
 
 fn context_excerpts(
-    example: &Example,
+    _example: &Example,
     prompt_inputs: &zeta_prompt::ZetaPromptInput,
 ) -> Vec<Excerpt> {
     let mut context = Vec::new();
@@ -192,11 +196,17 @@ fn context_excerpts(
     context
 }
 
-pub fn print_report(examples: &[Example], verbose: bool) {
+pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     use crate::metrics::ClassificationMetrics;
 
     const LINE_WIDTH: usize = 101;
+
+    if context_only {
+        print_context_coverage_report(examples, verbose);
+        return;
+    }
+
     let separator = "─".repeat(LINE_WIDTH);
 
     println!("{}", separator);
@@ -233,10 +243,9 @@ pub fn print_report(examples: &[Example], verbose: bool) {
     let mut discarded_chars_total: usize = 0;
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
-    let mut editable_context_coverage_sum: f64 = 0.0;
     let mut editable_context_coverage_count: usize = 0;
-    let mut changed_lines_reachable: usize = 0;
-    let mut total_changed_lines: usize = 0;
+    let mut total_editable_context_lines = ClassificationMetrics::default();
+    let mut total_editable_context_files = ClassificationMetrics::default();
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
@@ -348,10 +357,17 @@ pub fn print_report(examples: &[Example], verbose: bool) {
                 recall_rate_count += 1;
             }
             if let Some(coverage) = &score.editable_context_coverage {
-                editable_context_coverage_sum += coverage.score;
                 editable_context_coverage_count += 1;
-                changed_lines_reachable += coverage.changed_lines_reachable;
-                total_changed_lines += coverage.total_changed_lines;
+                total_editable_context_lines.accumulate(&ClassificationMetrics {
+                    true_positives: coverage.lines_tp,
+                    false_positives: coverage.lines_fp,
+                    false_negatives: coverage.lines_fn,
+                });
+                total_editable_context_files.accumulate(&ClassificationMetrics {
+                    true_positives: coverage.files_tp,
+                    false_positives: coverage.files_fp,
+                    false_negatives: coverage.files_fn,
+                });
             }
 
             // Accumulate token change metrics (only for predictions that produced a patch)
@@ -504,14 +520,33 @@ pub fn print_report(examples: &[Example], verbose: bool) {
             );
         }
         if editable_context_coverage_count > 0 {
-            let avg_editable_context_coverage =
-                editable_context_coverage_sum / editable_context_coverage_count as f64;
+            let total_coverage = edit_prediction_metrics::EditableContextCoverage::new(
+                total_editable_context_lines.true_positives,
+                total_editable_context_lines.false_positives,
+                total_editable_context_lines.false_negatives,
+                total_editable_context_files.true_positives,
+                total_editable_context_files.false_positives,
+                total_editable_context_files.false_negatives,
+            );
             println!(
-                "Editable context coverage: {:.1}% avg ({} evaluated, {} out of {} edits covered)",
-                avg_editable_context_coverage * 100.0,
+                "Editable context lines: P={:.1}%, R={:.1}%, F1={:.1}% ({} evaluated, TP={}, FP={}, FN={})",
+                total_coverage.lines_precision * 100.0,
+                total_coverage.lines_recall * 100.0,
+                total_coverage.lines_f1 * 100.0,
                 editable_context_coverage_count,
-                changed_lines_reachable,
-                total_changed_lines
+                total_coverage.lines_tp,
+                total_coverage.lines_fp,
+                total_coverage.lines_fn
+            );
+            println!(
+                "Editable context files: P={:.1}%, R={:.1}%, F1={:.1}% ({} evaluated, TP={}, FP={}, FN={})",
+                total_coverage.files_precision * 100.0,
+                total_coverage.files_recall * 100.0,
+                total_coverage.files_f1 * 100.0,
+                editable_context_coverage_count,
+                total_coverage.files_tp,
+                total_coverage.files_fp,
+                total_coverage.files_fn
             );
         }
 
@@ -565,6 +600,125 @@ pub fn print_report(examples: &[Example], verbose: bool) {
                 percentile(&patch_total_tokens, 99),
             );
         }
+    }
+
+    println!("\n");
+}
+
+fn print_context_coverage_report(examples: &[Example], verbose: bool) {
+    const MAX_EXAMPLES_DEFAULT: usize = 20;
+    const LINE_WIDTH: usize = 120;
+
+    use crate::metrics::ClassificationMetrics;
+
+    let separator = "─".repeat(LINE_WIDTH);
+    println!("{}", separator);
+    println!(
+        "{:<40} {:>6} {:>6} {:>6} {:>5} {:>5} {:>5} {:>6} {:>6} {:>6} {:>5} {:>5} {:>5}",
+        "Example",
+        "LineP",
+        "LineR",
+        "LineF1",
+        "LTP",
+        "LFP",
+        "LFN",
+        "FileP",
+        "FileR",
+        "FileF1",
+        "FTP",
+        "FFP",
+        "FFN"
+    );
+    println!("{}", separator);
+
+    let mut total_lines = ClassificationMetrics::default();
+    let mut total_files = ClassificationMetrics::default();
+    let mut total_scores = 0;
+    let mut printed_lines = 0;
+    let mut skipped_lines = 0;
+
+    for example in examples {
+        for score in &example.score {
+            let Some(coverage) = &score.editable_context_coverage else {
+                continue;
+            };
+
+            if verbose || printed_lines < MAX_EXAMPLES_DEFAULT {
+                println!(
+                    "{:<40} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5}",
+                    truncate_name(&example.spec.name, 40),
+                    coverage.lines_precision * 100.0,
+                    coverage.lines_recall * 100.0,
+                    coverage.lines_f1 * 100.0,
+                    coverage.lines_tp,
+                    coverage.lines_fp,
+                    coverage.lines_fn,
+                    coverage.files_precision * 100.0,
+                    coverage.files_recall * 100.0,
+                    coverage.files_f1 * 100.0,
+                    coverage.files_tp,
+                    coverage.files_fp,
+                    coverage.files_fn
+                );
+                printed_lines += 1;
+            } else {
+                skipped_lines += 1;
+            }
+
+            total_scores += 1;
+            total_lines.accumulate(&ClassificationMetrics {
+                true_positives: coverage.lines_tp,
+                false_positives: coverage.lines_fp,
+                false_negatives: coverage.lines_fn,
+            });
+            total_files.accumulate(&ClassificationMetrics {
+                true_positives: coverage.files_tp,
+                false_positives: coverage.files_fp,
+                false_negatives: coverage.files_fn,
+            });
+        }
+    }
+
+    if skipped_lines > 0 {
+        println!(
+            "{:<40} (use --verbose to see all {} examples)",
+            format!("... and {} more", skipped_lines),
+            printed_lines + skipped_lines
+        );
+    }
+
+    println!("{}", separator);
+
+    if total_scores > 0 {
+        let total_coverage = edit_prediction_metrics::EditableContextCoverage::new(
+            total_lines.true_positives,
+            total_lines.false_positives,
+            total_lines.false_negatives,
+            total_files.true_positives,
+            total_files.false_positives,
+            total_files.false_negatives,
+        );
+        println!(
+            "{:<40} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5}",
+            "TOTAL",
+            total_coverage.lines_precision * 100.0,
+            total_coverage.lines_recall * 100.0,
+            total_coverage.lines_f1 * 100.0,
+            total_coverage.lines_tp,
+            total_coverage.lines_fp,
+            total_coverage.lines_fn,
+            total_coverage.files_precision * 100.0,
+            total_coverage.files_recall * 100.0,
+            total_coverage.files_f1 * 100.0,
+            total_coverage.files_tp,
+            total_coverage.files_fp,
+            total_coverage.files_fn
+        );
+        println!("{}", separator);
+        println!(
+            "Evaluated editable context coverage for {} examples",
+            total_scores
+        );
     }
 
     println!("\n");

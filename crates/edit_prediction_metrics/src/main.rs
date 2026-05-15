@@ -387,10 +387,22 @@ fn print_report(report: &EvaluationReport) {
     println!("Jumps metrics");
     println!("-------------");
     println!(
-        "Editable context coverage: {}% ({} out of {} edits covered)",
-        (report.editable_context_coverage.score * 100.0).round(),
-        report.editable_context_coverage.changed_lines_reachable,
-        report.editable_context_coverage.total_changed_lines
+        "Editable context lines: P={}%, R={}%, F1={}% (tp: {}, fp: {}, fn: {})",
+        (report.editable_context_coverage.lines_precision * 100.0).round(),
+        (report.editable_context_coverage.lines_recall * 100.0).round(),
+        (report.editable_context_coverage.lines_f1 * 100.0).round(),
+        report.editable_context_coverage.lines_tp,
+        report.editable_context_coverage.lines_fp,
+        report.editable_context_coverage.lines_fn
+    );
+    println!(
+        "Editable context files: P={}%, R={}%, F1={}% (tp: {}, fp: {}, fn: {})",
+        (report.editable_context_coverage.files_precision * 100.0).round(),
+        (report.editable_context_coverage.files_recall * 100.0).round(),
+        (report.editable_context_coverage.files_f1 * 100.0).round(),
+        report.editable_context_coverage.files_tp,
+        report.editable_context_coverage.files_fp,
+        report.editable_context_coverage.files_fn
     );
 }
 
@@ -903,7 +915,7 @@ mod tests {
         assert_eq!(report.actual_changed_lines, 0);
         assert_eq!(
             report.editable_context_coverage,
-            EditableContextCoverage::new(2, 2)
+            EditableContextCoverage::new(1, 2, 0, 1, 0, 0)
         );
     }
 
@@ -915,7 +927,7 @@ mod tests {
         assert_eq!(report.actual_changed_lines, 0);
         assert_eq!(
             report.editable_context_coverage,
-            EditableContextCoverage::new(2, 2)
+            EditableContextCoverage::new(1, 2, 0, 1, 0, 0)
         );
     }
 }

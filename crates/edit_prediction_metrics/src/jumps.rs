@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    ops::Range,
+};
 
 use crate::patch::{Patch, PatchLine};
 
@@ -11,72 +14,234 @@ pub struct Excerpt {
 
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct EditableContextCoverage {
-    pub changed_lines_reachable: usize,
-    pub total_changed_lines: usize,
-    pub score: f64,
+    pub lines_tp: usize,
+    pub lines_fp: usize,
+    pub lines_fn: usize,
+    pub lines_precision: f64,
+    pub lines_recall: f64,
+    pub lines_f1: f64,
+
+    pub files_tp: usize,
+    pub files_fp: usize,
+    pub files_fn: usize,
+    pub files_precision: f64,
+    pub files_recall: f64,
+    pub files_f1: f64,
 }
 
 impl EditableContextCoverage {
-    pub fn new(changed_lines_reachable: usize, total_changed_lines: usize) -> Self {
-        let score = if total_changed_lines == 0 {
-            1.0
-        } else {
-            changed_lines_reachable as f64 / total_changed_lines as f64
-        };
+    pub fn new(
+        lines_tp: usize,
+        lines_fp: usize,
+        lines_fn: usize,
+        files_tp: usize,
+        files_fp: usize,
+        files_fn: usize,
+    ) -> Self {
         Self {
-            changed_lines_reachable,
-            total_changed_lines,
-            score,
+            lines_tp,
+            lines_fp,
+            lines_fn,
+            lines_precision: precision(lines_tp, lines_fp, lines_fn),
+            lines_recall: recall(lines_tp, lines_fp, lines_fn),
+            lines_f1: f1(lines_tp, lines_fp, lines_fn),
+            files_tp,
+            files_fp,
+            files_fn,
+            files_precision: precision(files_tp, files_fp, files_fn),
+            files_recall: recall(files_tp, files_fp, files_fn),
+            files_f1: f1(files_tp, files_fp, files_fn),
         }
     }
 }
 
-/// Measures how much of the expected edits are covered by the context.
+/// Measures how much expected edit context was retrieved and how much unrelated context was retrieved.
 pub fn editable_context_coverage(
     expected_patch: &str,
     context: &[Excerpt],
 ) -> EditableContextCoverage {
     let patch = Patch::parse_unified_diff(expected_patch);
-    let mut changed_lines_reachable = 0;
-    let mut total_changed_lines = 0;
-    for hunk in patch.hunks {
+    let (expected_files, expected_lines) = expected_context(&patch);
+    let (retrieved_files, retrieved_lines) = retrieved_context(context);
+
+    let (lines_tp, lines_fp, lines_fn) = classify_rows(&expected_lines, &retrieved_lines);
+    let (files_tp, files_fp, files_fn) = classify_values(&expected_files, &retrieved_files);
+
+    EditableContextCoverage::new(lines_tp, lines_fp, lines_fn, files_tp, files_fp, files_fn)
+}
+
+fn expected_context(patch: &Patch) -> (BTreeSet<String>, BTreeMap<String, BTreeSet<u32>>) {
+    let mut expected_files = BTreeSet::new();
+    let mut expected_lines = BTreeMap::new();
+
+    for hunk in &patch.hunks {
+        if hunk
+            .lines
+            .iter()
+            .any(|line| matches!(line, PatchLine::Addition(_) | PatchLine::Deletion(_)))
+        {
+            expected_files.insert(hunk.filename.clone());
+        }
+
         let mut old_row = hunk.old_start.saturating_sub(1).max(0) as u32;
-        for line in hunk.lines {
-            match line {
-                PatchLine::Addition(_) => {
-                    total_changed_lines += 1;
-                    if context_contains_insertion_point(context, &hunk.filename, old_row) {
-                        changed_lines_reachable += 1;
-                    }
-                }
-                PatchLine::Deletion(_) => {
-                    total_changed_lines += 1;
-                    if context_contains_line(context, &hunk.filename, old_row) {
-                        changed_lines_reachable += 1;
-                    }
-                    old_row = old_row.saturating_add(1);
-                }
+        let mut previous_context_row = None;
+        let mut index = 0;
+
+        while index < hunk.lines.len() {
+            match &hunk.lines[index] {
                 PatchLine::Context(_) => {
+                    previous_context_row = Some(old_row);
                     old_row = old_row.saturating_add(1);
+                    index += 1;
                 }
-                _ => {}
+                PatchLine::Addition(_) | PatchLine::Deletion(_) => {
+                    let mut deletion_rows = Vec::new();
+                    let mut has_addition = false;
+
+                    while index < hunk.lines.len() {
+                        match &hunk.lines[index] {
+                            PatchLine::Addition(_) => {
+                                has_addition = true;
+                                index += 1;
+                            }
+                            PatchLine::Deletion(_) => {
+                                deletion_rows.push(old_row);
+                                old_row = old_row.saturating_add(1);
+                                index += 1;
+                            }
+                            _ => break,
+                        }
+                    }
+
+                    if deletion_rows.is_empty() {
+                        if has_addition {
+                            if let Some(row) = previous_context_row {
+                                insert_row(&mut expected_lines, &hunk.filename, row);
+                            }
+                            if matches!(hunk.lines.get(index), Some(PatchLine::Context(_))) {
+                                insert_row(&mut expected_lines, &hunk.filename, old_row);
+                            }
+                        }
+                    } else {
+                        for row in deletion_rows {
+                            insert_row(&mut expected_lines, &hunk.filename, row);
+                        }
+                    }
+
+                    previous_context_row = None;
+                }
+                PatchLine::Garbage(_) => {
+                    index += 1;
+                }
             }
         }
     }
 
-    EditableContextCoverage::new(changed_lines_reachable, total_changed_lines)
+    (expected_files, expected_lines)
 }
 
-fn context_contains_line(context: &[Excerpt], filename: &str, row: u32) -> bool {
-    context
-        .iter()
-        .any(|excerpt| excerpt.path == filename && excerpt.row_range.contains(&row))
+fn retrieved_context(context: &[Excerpt]) -> (BTreeSet<String>, BTreeMap<String, BTreeSet<u32>>) {
+    let mut retrieved_files = BTreeSet::new();
+    let mut retrieved_lines = BTreeMap::new();
+
+    for excerpt in context {
+        retrieved_files.insert(excerpt.path.clone());
+        let rows = retrieved_lines
+            .entry(excerpt.path.clone())
+            .or_insert_with(BTreeSet::new);
+        rows.extend(excerpt.row_range.clone());
+    }
+
+    (retrieved_files, retrieved_lines)
 }
 
-fn context_contains_insertion_point(context: &[Excerpt], filename: &str, row: u32) -> bool {
-    context.iter().any(|excerpt| {
-        excerpt.path == filename && excerpt.row_range.start <= row && row <= excerpt.row_range.end
-    })
+fn insert_row(lines_by_file: &mut BTreeMap<String, BTreeSet<u32>>, path: &str, row: u32) {
+    lines_by_file
+        .entry(path.to_string())
+        .or_insert_with(BTreeSet::new)
+        .insert(row);
+}
+
+fn classify_rows(
+    expected: &BTreeMap<String, BTreeSet<u32>>,
+    retrieved: &BTreeMap<String, BTreeSet<u32>>,
+) -> (usize, usize, usize) {
+    let mut true_positives = 0;
+    let mut false_positives = 0;
+    let mut false_negatives = 0;
+
+    for (path, rows) in retrieved {
+        for row in rows {
+            if expected
+                .get(path)
+                .is_some_and(|expected_rows| expected_rows.contains(row))
+            {
+                true_positives += 1;
+            } else {
+                false_positives += 1;
+            }
+        }
+    }
+
+    for (path, rows) in expected {
+        for row in rows {
+            if !retrieved
+                .get(path)
+                .is_some_and(|retrieved_rows| retrieved_rows.contains(row))
+            {
+                false_negatives += 1;
+            }
+        }
+    }
+
+    (true_positives, false_positives, false_negatives)
+}
+
+fn classify_values<T: Ord>(
+    expected: &BTreeSet<T>,
+    retrieved: &BTreeSet<T>,
+) -> (usize, usize, usize) {
+    let true_positives = expected.intersection(retrieved).count();
+    let false_positives = retrieved.difference(expected).count();
+    let false_negatives = expected.difference(retrieved).count();
+    (true_positives, false_positives, false_negatives)
+}
+
+fn precision(true_positives: usize, false_positives: usize, false_negatives: usize) -> f64 {
+    if true_positives + false_positives + false_negatives == 0 {
+        return 1.0;
+    }
+
+    let denominator = true_positives + false_positives;
+    if denominator == 0 {
+        1.0
+    } else {
+        true_positives as f64 / denominator as f64
+    }
+}
+
+fn recall(true_positives: usize, false_positives: usize, false_negatives: usize) -> f64 {
+    if true_positives + false_positives + false_negatives == 0 {
+        return 1.0;
+    }
+
+    let denominator = true_positives + false_negatives;
+    if denominator == 0 {
+        1.0
+    } else {
+        true_positives as f64 / denominator as f64
+    }
+}
+
+fn f1(true_positives: usize, false_positives: usize, false_negatives: usize) -> f64 {
+    let precision = precision(true_positives, false_positives, false_negatives);
+    let recall = recall(true_positives, false_positives, false_negatives);
+
+    if precision + recall == 0.0 {
+        0.0
+    } else {
+        2.0 * precision * recall / (precision + recall)
+    }
 }
 
 #[cfg(test)]
@@ -93,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn deletion_is_reachable_when_zero_based_excerpt_contains_diff_line() {
+    fn deletion_counts_deleted_old_line_as_true_positive() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
@@ -103,13 +268,11 @@ mod tests {
 
         let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 1..2)]);
 
-        assert_eq!(score.changed_lines_reachable, 1);
-        assert_eq!(score.total_changed_lines, 1);
-        assert_eq!(score.score, 1.0);
+        assert_eq!(score, EditableContextCoverage::new(1, 0, 0, 1, 0, 0));
     }
 
     #[test]
-    fn searches_all_excerpts_for_matching_path() {
+    fn retrieved_lines_outside_expected_edit_context_are_false_positives() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
@@ -122,13 +285,11 @@ mod tests {
             &[excerpt("src/main.rs", 0..1), excerpt("src/main.rs", 3..4)],
         );
 
-        assert_eq!(score.changed_lines_reachable, 1);
-        assert_eq!(score.total_changed_lines, 1);
-        assert_eq!(score.score, 1.0);
+        assert_eq!(score, EditableContextCoverage::new(1, 1, 0, 1, 0, 0));
     }
 
     #[test]
-    fn replacement_addition_is_reachable_at_deleted_line_boundary() {
+    fn replacement_counts_deleted_old_line_without_addition_anchor() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
@@ -141,31 +302,42 @@ mod tests {
 
         let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 1..2)]);
 
-        assert_eq!(score.changed_lines_reachable, 2);
-        assert_eq!(score.total_changed_lines, 2);
-        assert_eq!(score.score, 1.0);
+        assert_eq!(score, EditableContextCoverage::new(1, 0, 0, 1, 0, 0));
     }
 
     #[test]
-    fn insertion_is_reachable_at_excerpt_end_boundary() {
+    fn pure_insertion_counts_previous_and_next_old_lines_as_expected_context() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
             @@ -1,2 +1,3 @@
-             fn main() {
-            +    let value = 1;
-             }
+             line 1
+            +inserted
+             line 2
         "};
 
         let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 0..1)]);
 
-        assert_eq!(score.changed_lines_reachable, 1);
-        assert_eq!(score.total_changed_lines, 1);
-        assert_eq!(score.score, 1.0);
+        assert_eq!(score, EditableContextCoverage::new(1, 0, 1, 1, 0, 0));
     }
 
     #[test]
-    fn counts_unreachable_changed_lines() {
+    fn pure_insertion_at_file_boundary_uses_available_neighboring_context() {
+        let patch = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,1 +1,2 @@
+            +inserted
+             line 1
+        "};
+
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 0..1)]);
+
+        assert_eq!(score, EditableContextCoverage::new(1, 0, 0, 1, 0, 0));
+    }
+
+    #[test]
+    fn counts_false_negatives_and_file_false_positives() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
@@ -177,23 +349,39 @@ mod tests {
             +let last = 5;
         "};
 
-        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 0..1)]);
+        let score = editable_context_coverage(
+            patch,
+            &[excerpt("src/main.rs", 0..1), excerpt("src/lib.rs", 0..1)],
+        );
 
-        assert_eq!(score.changed_lines_reachable, 2);
-        assert_eq!(score.total_changed_lines, 4);
-        assert_eq!(score.score, 0.5);
+        assert_eq!(score, EditableContextCoverage::new(1, 1, 1, 1, 1, 0));
     }
 
     #[test]
-    fn empty_patch_has_perfect_reachability() {
+    fn overlapping_excerpts_are_counted_once() {
+        let patch = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -2,1 +2,0 @@
+            -let value = 1;
+        "};
+
+        let score = editable_context_coverage(
+            patch,
+            &[excerpt("src/main.rs", 0..2), excerpt("src/main.rs", 1..3)],
+        );
+
+        assert_eq!(score, EditableContextCoverage::new(1, 2, 0, 1, 0, 0));
+    }
+
+    #[test]
+    fn empty_patch_with_no_context_has_perfect_f1() {
         let score = editable_context_coverage(
             indoc! {"
             "},
             &[],
         );
 
-        assert_eq!(score.changed_lines_reachable, 0);
-        assert_eq!(score.total_changed_lines, 0);
-        assert_eq!(score.score, 1.0);
+        assert_eq!(score, EditableContextCoverage::new(0, 0, 0, 0, 0, 0));
     }
 }

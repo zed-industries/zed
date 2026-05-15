@@ -57,11 +57,29 @@ pub struct SummaryJson {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_discarded_chars: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub avg_editable_context_coverage: Option<f64>,
+    pub avg_editable_context_lines_precision: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub editable_context_changed_lines_reachable: Option<usize>,
+    pub avg_editable_context_lines_recall: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub editable_context_total_changed_lines: Option<usize>,
+    pub avg_editable_context_lines_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_lines_fn: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_precision: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_recall: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avg_editable_context_files_f1: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_tp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_fp: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editable_context_files_fn: Option<usize>,
 }
 
 pub fn compute_summary<'a>(
@@ -97,10 +115,19 @@ pub fn compute_summary<'a>(
     let mut discarded_chars_count: usize = 0;
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
-    let mut editable_context_coverage_sum: f64 = 0.0;
+    let mut editable_context_lines_precision_sum: f64 = 0.0;
+    let mut editable_context_lines_recall_sum: f64 = 0.0;
+    let mut editable_context_lines_f1_sum: f64 = 0.0;
+    let mut editable_context_files_precision_sum: f64 = 0.0;
+    let mut editable_context_files_recall_sum: f64 = 0.0;
+    let mut editable_context_files_f1_sum: f64 = 0.0;
     let mut editable_context_coverage_count: usize = 0;
-    let mut editable_context_changed_lines_reachable: usize = 0;
-    let mut editable_context_total_changed_lines: usize = 0;
+    let mut editable_context_lines_tp: usize = 0;
+    let mut editable_context_lines_fp: usize = 0;
+    let mut editable_context_lines_fn: usize = 0;
+    let mut editable_context_files_tp: usize = 0;
+    let mut editable_context_files_fp: usize = 0;
+    let mut editable_context_files_fn: usize = 0;
 
     for prediction in predictions {
         let score = prediction.score;
@@ -160,10 +187,19 @@ pub fn compute_summary<'a>(
             recall_rate_count += 1;
         }
         if let Some(coverage) = &score.editable_context_coverage {
-            editable_context_coverage_sum += coverage.score;
+            editable_context_lines_precision_sum += coverage.lines_precision;
+            editable_context_lines_recall_sum += coverage.lines_recall;
+            editable_context_lines_f1_sum += coverage.lines_f1;
+            editable_context_files_precision_sum += coverage.files_precision;
+            editable_context_files_recall_sum += coverage.files_recall;
+            editable_context_files_f1_sum += coverage.files_f1;
             editable_context_coverage_count += 1;
-            editable_context_changed_lines_reachable += coverage.changed_lines_reachable;
-            editable_context_total_changed_lines += coverage.total_changed_lines;
+            editable_context_lines_tp += coverage.lines_tp;
+            editable_context_lines_fp += coverage.lines_fp;
+            editable_context_lines_fn += coverage.lines_fn;
+            editable_context_files_tp += coverage.files_tp;
+            editable_context_files_fp += coverage.files_fp;
+            editable_context_files_fn += coverage.files_fn;
         }
 
         if let Some(exact_match) = score.cursor_exact_match {
@@ -268,18 +304,63 @@ pub fn compute_summary<'a>(
         None
     };
 
-    let avg_editable_context_coverage = if editable_context_coverage_count > 0 {
-        Some(editable_context_coverage_sum / editable_context_coverage_count as f64)
+    let avg_editable_context_lines_precision = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_precision_sum / editable_context_coverage_count as f64)
     } else {
         None
     };
-    let editable_context_changed_lines_reachable = if editable_context_coverage_count > 0 {
-        Some(editable_context_changed_lines_reachable)
+    let avg_editable_context_lines_recall = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_recall_sum / editable_context_coverage_count as f64)
     } else {
         None
     };
-    let editable_context_total_changed_lines = if editable_context_coverage_count > 0 {
-        Some(editable_context_total_changed_lines)
+    let avg_editable_context_lines_f1 = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_f1_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let editable_context_lines_tp = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_tp)
+    } else {
+        None
+    };
+    let editable_context_lines_fp = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_fp)
+    } else {
+        None
+    };
+    let editable_context_lines_fn = if editable_context_coverage_count > 0 {
+        Some(editable_context_lines_fn)
+    } else {
+        None
+    };
+    let avg_editable_context_files_precision = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_precision_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_files_recall = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_recall_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let avg_editable_context_files_f1 = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_f1_sum / editable_context_coverage_count as f64)
+    } else {
+        None
+    };
+    let editable_context_files_tp = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_tp)
+    } else {
+        None
+    };
+    let editable_context_files_fp = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_fp)
+    } else {
+        None
+    };
+    let editable_context_files_fn = if editable_context_coverage_count > 0 {
+        Some(editable_context_files_fn)
     } else {
         None
     };
@@ -321,8 +402,17 @@ pub fn compute_summary<'a>(
         total_kept_chars,
         total_correctly_deleted_chars,
         total_discarded_chars,
-        avg_editable_context_coverage,
-        editable_context_changed_lines_reachable,
-        editable_context_total_changed_lines,
+        avg_editable_context_lines_precision,
+        avg_editable_context_lines_recall,
+        avg_editable_context_lines_f1,
+        editable_context_lines_tp,
+        editable_context_lines_fp,
+        editable_context_lines_fn,
+        avg_editable_context_files_precision,
+        avg_editable_context_files_recall,
+        avg_editable_context_files_f1,
+        editable_context_files_tp,
+        editable_context_files_fp,
+        editable_context_files_fn,
     }
 }
