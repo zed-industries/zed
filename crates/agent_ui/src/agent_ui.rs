@@ -42,7 +42,7 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
@@ -552,32 +552,6 @@ pub fn init(
         );
     })
     .detach();
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(
-            |workspace: &mut Workspace,
-             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                // The banner is the only intended entry point and is
-                // gated on the skills flag, but dispatch from the
-                // command palette or a keybind is still possible — only
-                // open the explainer if the flag is enabled so it never
-                // surfaces outside its intended audience.
-                //
-                // Race note: `has_flag` returns false before server
-                // flags are received, so a dispatch during that brief
-                // window is a no-op even for users who genuinely have
-                // the flag. The banner itself has the same race — it
-                // stays hidden until flags arrive — so a user who can
-                // see the banner has, by definition, already passed it.
-                if cx.has_flag::<SkillsFeatureFlag>() {
-                    crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
-                }
-            },
-        );
-    })
-    .detach();
-
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(

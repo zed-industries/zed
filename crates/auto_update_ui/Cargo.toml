@@ -13,11 +13,13 @@ path = "src/auto_update_ui.rs"
 
 [dependencies]
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 auto_update.workspace = true
 client.workspace = true
 db.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 markdown_preview.workspace = true

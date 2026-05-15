@@ -333,8 +333,6 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
-    /// Errors emitted by the agent while loading SKILL.md files. Each one
-    /// renders as a clickable banner that opens the offending file.
     pub skill_loading_errors: Vec<SkillLoadingError>,
     /// Errors the user has explicitly dismissed. Each entry is matched against
     /// emitted errors by full equality; when an error no longer appears in the
