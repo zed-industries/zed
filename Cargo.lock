@@ -81,6 +81,7 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "gpui",
+ "indoc",
  "language",
  "log",
  "pretty_assertions",
