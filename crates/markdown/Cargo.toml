@@ -25,6 +25,7 @@ collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 html5ever.workspace = true
+katex.workspace = true
 language.workspace = true
 linkify.workspace = true
 log.workspace = true

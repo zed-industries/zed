@@ -8,15 +8,18 @@ use gpui::{
     StatefulInteractiveElement, Task, TextStyleRefinement, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownOptions, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
-use runtimelib::{JupyterMessage, JupyterMessageContent};
+use runtimelib::{
+    DisplayData, ExecuteResult, JupyterMessage, JupyterMessageContent, Stdio, StreamContent,
+};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::{CommonAnimationExt, IconButtonShape, prelude::*};
+use ui::{CommonAnimationExt, IconButtonShape, Tooltip, prelude::*};
 use util::ResultExt;
 
 use crate::{
+    kernels::KernelStatus,
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
     outputs::{Output, plain, plain::TerminalOutput, user_error::ErrorView},
     repl_settings::ReplSettings,
@@ -29,9 +32,11 @@ pub enum CellPosition {
     Last,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CellControlType {
     RunCell,
     RerunCell,
+    RunningCell,
     ClearCell,
     CellOptions,
     CollapseCell,
@@ -53,6 +58,7 @@ impl CellControlType {
         match self {
             CellControlType::RunCell => IconName::PlayFilled,
             CellControlType::RerunCell => IconName::ArrowCircle,
+            CellControlType::RunningCell => IconName::ArrowCircle,
             CellControlType::ClearCell => IconName::ListX,
             CellControlType::CellOptions => IconName::Ellipsis,
             CellControlType::CollapseCell => IconName::ChevronDown,
@@ -65,14 +71,87 @@ pub struct CellControl {
     button: IconButton,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct CellRunControlState {
+    control_type: CellControlType,
+    id: &'static str,
+    disabled: bool,
+    tooltip: String,
+}
+
+fn cell_run_control_state(
+    has_outputs: bool,
+    is_executing: bool,
+    kernel_status: KernelStatus,
+) -> CellRunControlState {
+    let kernel_available = kernel_status.is_connected();
+
+    if is_executing {
+        CellRunControlState {
+            control_type: CellControlType::RunningCell,
+            id: "running-cell",
+            disabled: true,
+            tooltip: "Cell is running".to_string(),
+        }
+    } else if !kernel_available {
+        CellRunControlState {
+            control_type: if has_outputs {
+                CellControlType::RerunCell
+            } else {
+                CellControlType::RunCell
+            },
+            id: if has_outputs {
+                "rerun-cell-disabled"
+            } else {
+                "run-cell-disabled"
+            },
+            disabled: true,
+            tooltip: format!("Kernel is {}", kernel_status.to_string().to_lowercase()),
+        }
+    } else if has_outputs {
+        CellRunControlState {
+            control_type: CellControlType::RerunCell,
+            id: "rerun-cell",
+            disabled: false,
+            tooltip: "Rerun Cell".to_string(),
+        }
+    } else {
+        CellRunControlState {
+            control_type: CellControlType::RunCell,
+            id: "run-cell",
+            disabled: false,
+            tooltip: "Run Cell".to_string(),
+        }
+    }
+}
+
 impl CellControl {
-    fn new(id: impl Into<SharedString>, control_type: CellControlType) -> Self {
+    fn new(
+        id: impl Into<SharedString>,
+        control_type: CellControlType,
+        disabled: bool,
+        tooltip: impl Into<SharedString>,
+    ) -> Self {
         let icon_name = control_type.icon_name();
         let id = id.into();
+        let tooltip = tooltip.into();
         let button = IconButton::new(id, icon_name)
-            .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square);
+            .icon_size(IconSize::Medium)
+            .shape(IconButtonShape::Square)
+            .disabled(disabled)
+            .when(
+                matches!(control_type, CellControlType::RunningCell),
+                |button| button.icon_color(Color::Warning),
+            )
+            .tooltip(move |window, cx| Tooltip::text(tooltip.clone())(window, cx));
         Self { button }
+    }
+}
+
+fn notebook_markdown_options() -> MarkdownOptions {
+    MarkdownOptions {
+        render_math: true,
+        ..Default::default()
     }
 }
 
@@ -107,10 +186,21 @@ fn convert_outputs(
     outputs: &Vec<nbformat::v4::Output>,
     window: &mut Window,
     cx: &mut App,
-) -> Vec<Output> {
+) -> Vec<NotebookCellOutput> {
     outputs
         .iter()
-        .map(|output| match output {
+        .map(|output| NotebookCellOutput::from_raw(output, window, cx))
+        .collect()
+}
+
+pub(super) struct NotebookCellOutput {
+    raw: nbformat::v4::Output,
+    rendered: Output,
+}
+
+impl NotebookCellOutput {
+    fn from_raw(output: &nbformat::v4::Output, window: &mut Window, cx: &mut App) -> Self {
+        let rendered = match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
@@ -126,8 +216,52 @@ fn convert_outputs(
                 traceback: cx
                     .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
             }),
-        })
-        .collect()
+        };
+
+        Self {
+            raw: output.clone(),
+            rendered,
+        }
+    }
+
+    fn from_message(raw: nbformat::v4::Output, rendered: Output) -> Self {
+        Self { raw, rendered }
+    }
+
+    fn to_nbformat(&self) -> nbformat::v4::Output {
+        self.raw.clone()
+    }
+
+    fn content(&self, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        self.rendered.content(window, cx)
+    }
+}
+
+fn stream_output_to_nbformat(stream: &StreamContent) -> nbformat::v4::Output {
+    let name = match stream.name {
+        Stdio::Stdout => "stdout",
+        Stdio::Stderr => "stderr",
+    };
+
+    nbformat::v4::Output::Stream {
+        name: name.to_string(),
+        text: nbformat::v4::MultilineString(stream.text.clone()),
+    }
+}
+
+fn display_data_to_nbformat(display_data: &DisplayData) -> nbformat::v4::Output {
+    nbformat::v4::Output::DisplayData(nbformat::v4::DisplayData {
+        data: display_data.data.clone(),
+        metadata: display_data.metadata.clone(),
+    })
+}
+
+fn execute_result_to_nbformat(execute_result: &ExecuteResult) -> nbformat::v4::Output {
+    nbformat::v4::Output::ExecuteResult(nbformat::v4::ExecuteResult {
+        execution_count: execute_result.execution_count,
+        data: execute_result.data.clone(),
+        metadata: execute_result.metadata.clone(),
+    })
 }
 
 impl Cell {
@@ -436,7 +570,15 @@ impl MarkdownCell {
             editor
         });
 
-        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.clone().into(),
+                None,
+                None,
+                notebook_markdown_options(),
+                cx,
+            )
+        });
 
         let editor_subscription =
             cx.subscribe(&editor, move |this, _editor, event, cx| match event {
@@ -651,13 +793,14 @@ pub struct CodeCell {
     execution_count: Option<i32>,
     source: String,
     editor: Entity<editor::Editor>,
-    outputs: Vec<Output>,
+    outputs: Vec<NotebookCellOutput>,
     selected: bool,
     cell_position: Option<CellPosition>,
     _language_task: Task<()>,
     execution_start_time: Option<Instant>,
     execution_duration: Option<Duration>,
     is_executing: bool,
+    kernel_status: KernelStatus,
 }
 
 impl EventEmitter<CellEvent> for CodeCell {}
@@ -668,12 +811,12 @@ pub(super) enum CellSource {
     /// Backed by an existing notebook cell
     Existing {
         execution_count: Option<i32>,
-        outputs: Vec<Output>,
+        outputs: Vec<NotebookCellOutput>,
     },
 }
 
 impl CellSource {
-    fn into_outputs(self) -> (Option<i32>, Vec<Output>) {
+    fn into_outputs(self) -> (Option<i32>, Vec<NotebookCellOutput>) {
         match self {
             CellSource::Existing {
                 execution_count,
@@ -749,6 +892,7 @@ impl CodeCell {
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            kernel_status: KernelStatus::Shutdown,
             _language_task: language_task,
         }
     }
@@ -786,7 +930,7 @@ impl CodeCell {
         let source = self.current_source(cx);
         let source_lines: Vec<String> = source.lines().map(|l| format!("{}\n", l)).collect();
 
-        let outputs = self.outputs_to_nbformat(cx);
+        let outputs = self.outputs_to_nbformat();
 
         nbformat::v4::Cell::Code {
             id: self.id.clone(),
@@ -797,10 +941,10 @@ impl CodeCell {
         }
     }
 
-    fn outputs_to_nbformat(&self, cx: &App) -> Vec<nbformat::v4::Output> {
+    fn outputs_to_nbformat(&self) -> Vec<nbformat::v4::Output> {
         self.outputs
             .iter()
-            .filter_map(|output| output.to_nbformat(cx))
+            .map(|output| output.to_nbformat())
             .collect()
     }
 
@@ -824,6 +968,15 @@ impl CodeCell {
             self.execution_duration = Some(start_time.elapsed());
         }
         self.is_executing = false;
+    }
+
+    pub fn cancel_execution(&mut self) {
+        self.execution_start_time = None;
+        self.is_executing = false;
+    }
+
+    pub fn set_kernel_status(&mut self, status: KernelStatus) {
+        self.kernel_status = status;
     }
 
     pub fn is_executing(&self) -> bool {
@@ -855,17 +1008,24 @@ impl CodeCell {
     ) {
         match &message.content {
             JupyterMessageContent::StreamContent(stream) => {
-                self.outputs.push(Output::Stream {
+                let rendered = Output::Stream {
                     content: cx.new(|cx| TerminalOutput::from(&stream.text, window, cx)),
-                });
+                };
+                let raw = stream_output_to_nbformat(stream);
+                self.outputs
+                    .push(NotebookCellOutput::from_message(raw, rendered));
             }
             JupyterMessageContent::DisplayData(display_data) => {
+                let rendered = Output::new(&display_data.data, None, window, cx);
+                let raw = display_data_to_nbformat(display_data);
                 self.outputs
-                    .push(Output::new(&display_data.data, None, window, cx));
+                    .push(NotebookCellOutput::from_message(raw, rendered));
             }
             JupyterMessageContent::ExecuteResult(execute_result) => {
+                let rendered = Output::new(&execute_result.data, None, window, cx);
+                let raw = execute_result_to_nbformat(execute_result);
                 self.outputs
-                    .push(Output::new(&execute_result.data, None, window, cx));
+                    .push(NotebookCellOutput::from_message(raw, rendered));
             }
             JupyterMessageContent::ExecuteInput(input) => {
                 self.execution_count = serde_json::to_value(&input.execution_count)
@@ -877,12 +1037,19 @@ impl CodeCell {
                 self.finish_execution();
             }
             JupyterMessageContent::ErrorOutput(error) => {
-                self.outputs.push(Output::ErrorOutput(ErrorView {
+                let rendered = Output::ErrorOutput(ErrorView {
                     ename: error.ename.clone(),
                     evalue: error.evalue.clone(),
                     traceback: cx
                         .new(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
-                }));
+                });
+                let raw = nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
+                    ename: error.ename.clone(),
+                    evalue: error.evalue.clone(),
+                    traceback: error.traceback.clone(),
+                });
+                self.outputs
+                    .push(NotebookCellOutput::from_message(raw, rendered));
             }
             _ => {}
         }
@@ -951,21 +1118,11 @@ impl RenderableCell for CodeCell {
     }
 
     fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
-        let control_type = if self.has_outputs() {
-            CellControlType::RerunCell
-        } else {
-            CellControlType::RunCell
-        };
-
-        let cell_control = CellControl::new(
-            if self.has_outputs() {
-                "rerun-cell"
-            } else {
-                "run-cell"
-            },
-            control_type,
-        )
-        .on_click(cx.listener(move |this, _, window, cx| this.run(window, cx)));
+        let state =
+            cell_run_control_state(self.has_outputs(), self.is_executing, self.kernel_status);
+        let cell_control =
+            CellControl::new(state.id, state.control_type, state.disabled, state.tooltip)
+                .on_click(cx.listener(move |this, _, window, cx| this.run(window, cx)));
 
         Some(cell_control)
     }
@@ -991,6 +1148,7 @@ impl RenderableCell for CodeCell {
     fn gutter(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_selected = self.selected();
         let execution_count = self.execution_count;
+        let is_executing = self.is_executing;
 
         div()
             .relative()
@@ -1025,14 +1183,25 @@ impl RenderableCell for CodeCell {
                         .justify_center()
                         .bg(cx.theme().colors().tab_bar_background)
                         .child(control.button)
-                        .when_some(execution_count, |this, count| {
+                        .when(is_executing, |this| {
                             this.child(
                                 div()
                                     .mt_1()
                                     .text_xs()
                                     .text_color(cx.theme().colors().text_muted)
-                                    .child(format!("{}", count)),
+                                    .child("*"),
                             )
+                        })
+                        .when(!is_executing, |this| {
+                            this.when_some(execution_count, |this, count| {
+                                this.child(
+                                    div()
+                                        .mt_1()
+                                        .text_xs()
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child(format!("{}", count)),
+                                )
+                            })
                         }),
                 )
             })
@@ -1041,7 +1210,9 @@ impl RenderableCell for CodeCell {
 
 impl RunnableCell for CodeCell {
     fn run(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(CellEvent::Run(self.id.clone()));
+        if !self.is_executing && self.kernel_status.is_connected() {
+            cx.emit(CellEvent::Run(self.id.clone()));
+        }
     }
 
     fn execution_count(&self) -> Option<i32> {
@@ -1309,5 +1480,212 @@ impl Render for RawCell {
             )
             // TODO: Move base cell render into trait impl so we don't have to repeat this
             .children(self.cell_position_spacer(false, window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::{Result, ensure};
+    use serde_json::{Value, json};
+
+    fn output_from_json(value: Value) -> Result<nbformat::v4::Output> {
+        Ok(serde_json::from_value(value)?)
+    }
+
+    fn normalized_output_json(value: Value) -> Result<Value> {
+        serde_json::to_value(output_from_json(value)?).map_err(Into::into)
+    }
+
+    fn saved_output_json(raw: nbformat::v4::Output) -> Result<Value> {
+        let output = NotebookCellOutput {
+            raw,
+            rendered: Output::Message("unsupported output".to_string()),
+        };
+        Ok(serde_json::to_value(output.to_nbformat())?)
+    }
+
+    #[test]
+    fn notebook_cell_output_preserves_rich_mime_bundle_on_save() -> Result<()> {
+        let raw_json = json!({
+            "output_type": "display_data",
+            "data": {
+                "text/plain": "plain text",
+                "text/markdown": "**markdown**",
+                "image/png": "iVBORw0KGgo=",
+                "image/jpeg": "/9j/4AAQSkZJRg==",
+                "image/svg+xml": "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+                "application/x-zed-test": { "preserve": true }
+            },
+            "metadata": {
+                "image/png": { "width": 10, "height": 5 },
+                "custom": { "nested": true }
+            }
+        });
+        let raw = output_from_json(raw_json.clone())?;
+        let saved_json = saved_output_json(raw)?;
+
+        assert_eq!(saved_json, normalized_output_json(raw_json)?);
+        ensure!(
+            saved_json
+                .pointer("/data/application~1x-zed-test/preserve")
+                .and_then(Value::as_bool)
+                == Some(true),
+            "unsupported MIME bundle was not preserved"
+        );
+        ensure!(
+            saved_json
+                .pointer("/metadata/custom/nested")
+                .and_then(Value::as_bool)
+                == Some(true),
+            "output metadata was not preserved"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn notebook_cell_output_preserves_stream_and_error_on_save() -> Result<()> {
+        for raw_json in [
+            json!({
+                "output_type": "stream",
+                "name": "stderr",
+                "text": "warning\n"
+            }),
+            json!({
+                "output_type": "error",
+                "ename": "NameError",
+                "evalue": "name 'value' is not defined",
+                "traceback": [
+                    "Traceback (most recent call last):",
+                    "NameError: name 'value' is not defined"
+                ]
+            }),
+        ] {
+            let raw = output_from_json(raw_json.clone())?;
+            assert_eq!(saved_output_json(raw)?, normalized_output_json(raw_json)?);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn notebook_cell_output_preserves_unsupported_mime_bundle_on_save() -> Result<()> {
+        let raw_json = json!({
+            "output_type": "display_data",
+            "data": {
+                "application/x-zed-test": {
+                    "columns": ["a", "b"],
+                    "rows": [[1, 2]]
+                }
+            },
+            "metadata": {
+                "application/x-zed-test": {
+                    "schema": 1
+                }
+            }
+        });
+        let raw = output_from_json(raw_json.clone())?;
+        let saved_json = saved_output_json(raw)?;
+
+        assert_eq!(saved_json, normalized_output_json(raw_json)?);
+        ensure!(
+            saved_json
+                .pointer("/data/application~1x-zed-test/rows/0/1")
+                .and_then(Value::as_i64)
+                == Some(2),
+            "unsupported MIME data was not preserved"
+        );
+        ensure!(
+            saved_json
+                .pointer("/metadata/application~1x-zed-test/schema")
+                .and_then(Value::as_i64)
+                == Some(1),
+            "unsupported MIME metadata was not preserved"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn execute_result_to_nbformat_preserves_data_and_removes_transient() -> Result<()> {
+        let execute_result = serde_json::from_value(json!({
+            "execution_count": 1,
+            "data": {
+                "text/plain": "42",
+                "application/x-zed-test": { "preserve": true }
+            },
+            "metadata": { "custom": true },
+            "transient": { "display_id": "display-id" }
+        }))?;
+        let output = execute_result_to_nbformat(&execute_result);
+
+        let output_json = serde_json::to_value(output)?;
+        ensure!(
+            output_json.get("output_type").and_then(Value::as_str) == Some("execute_result"),
+            "execute result output type was not preserved"
+        );
+        ensure!(
+            output_json
+                .pointer("/data/text~1plain")
+                .and_then(Value::as_array)
+                .is_some_and(|lines| lines.as_slice() == [Value::String("42".to_string())]),
+            "text/plain output was not preserved"
+        );
+        ensure!(
+            output_json
+                .pointer("/data/application~1x-zed-test/preserve")
+                .and_then(Value::as_bool)
+                == Some(true),
+            "unsupported MIME bundle was not preserved"
+        );
+        assert!(output_json.get("transient").is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn notebook_markdown_options_enable_math() {
+        assert!(notebook_markdown_options().render_math);
+        assert!(!MarkdownOptions::default().render_math);
+    }
+
+    #[test]
+    fn cell_run_control_state_reflects_outputs_running_and_kernel_status() {
+        assert_eq!(
+            cell_run_control_state(false, false, KernelStatus::Idle),
+            CellRunControlState {
+                control_type: CellControlType::RunCell,
+                id: "run-cell",
+                disabled: false,
+                tooltip: "Run Cell".to_string(),
+            }
+        );
+        assert_eq!(
+            cell_run_control_state(true, false, KernelStatus::Idle),
+            CellRunControlState {
+                control_type: CellControlType::RerunCell,
+                id: "rerun-cell",
+                disabled: false,
+                tooltip: "Rerun Cell".to_string(),
+            }
+        );
+        assert_eq!(
+            cell_run_control_state(true, true, KernelStatus::Busy),
+            CellRunControlState {
+                control_type: CellControlType::RunningCell,
+                id: "running-cell",
+                disabled: true,
+                tooltip: "Cell is running".to_string(),
+            }
+        );
+        assert_eq!(
+            cell_run_control_state(false, false, KernelStatus::Starting),
+            CellRunControlState {
+                control_type: CellControlType::RunCell,
+                id: "run-cell-disabled",
+                disabled: true,
+                tooltip: "Kernel is starting".to_string(),
+            }
+        );
     }
 }

@@ -22,6 +22,14 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_SUPERSCRIPT)
     .union(Options::ENABLE_SUBSCRIPT);
 
+fn parse_options(parse_math: bool) -> Options {
+    if parse_math {
+        PARSE_OPTIONS.union(Options::ENABLE_MATH)
+    } else {
+        PARSE_OPTIONS
+    }
+}
+
 #[derive(Default)]
 struct ParseState {
     events: Vec<(Range<usize>, MarkdownEvent)>,
@@ -154,6 +162,15 @@ pub(crate) fn parse_markdown_with_options(
     parse_html: bool,
     parse_heading_slugs: bool,
 ) -> ParsedMarkdownData {
+    parse_markdown_with_options_and_math(text, parse_html, parse_heading_slugs, false)
+}
+
+pub(crate) fn parse_markdown_with_options_and_math(
+    text: &str,
+    parse_html: bool,
+    parse_heading_slugs: bool,
+    parse_math: bool,
+) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
@@ -161,7 +178,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_link = false;
     let mut within_code_block = false;
     let mut within_metadata = false;
-    let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
+    let mut parser = Parser::new_ext(text, parse_options(parse_math))
         .into_offset_iter()
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
@@ -510,7 +527,16 @@ pub(crate) fn parse_markdown_with_options(
             pulldown_cmark::Event::TaskListMarker(checked) => {
                 state.push_event(range, MarkdownEvent::TaskListMarker(checked))
             }
-            pulldown_cmark::Event::InlineMath(_) | pulldown_cmark::Event::DisplayMath(_) => {}
+            pulldown_cmark::Event::InlineMath(math) => {
+                if parse_math {
+                    state.push_event(range, MarkdownEvent::InlineMath(math.to_string()));
+                }
+            }
+            pulldown_cmark::Event::DisplayMath(math) => {
+                if parse_math {
+                    state.push_event(range, MarkdownEvent::DisplayMath(math.to_string()));
+                }
+            }
         }
     }
 
@@ -628,6 +654,10 @@ pub enum MarkdownEvent {
     Rule,
     /// A task list marker, rendered as a checkbox in HTML. Contains a true when it is checked.
     TaskListMarker(bool),
+    /// An inline math node.
+    InlineMath(String),
+    /// A display math node.
+    DisplayMath(String),
     /// Start of a root-level block (a top-level structural element like a paragraph, heading, list, etc.).
     RootStart,
     /// End of a root-level block. Contains the root block index.
@@ -800,6 +830,37 @@ mod tests {
         assert_eq!(
             PARSE_OPTIONS.intersection(UNWANTED_OPTIONS),
             Options::empty()
+        );
+    }
+
+    #[test]
+    fn math_events_are_opt_in() {
+        let default = parse_markdown_with_options("$E = mc^2$", false, false);
+        assert!(
+            default
+                .events
+                .iter()
+                .all(|(_, event)| !matches!(event, InlineMath(_) | DisplayMath(_)))
+        );
+
+        let parsed = parse_markdown_with_options_and_math("$E = mc^2$", false, false, true);
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, InlineMath(math) if math == "E = mc^2"))
+        );
+    }
+
+    #[test]
+    fn display_math_events_are_preserved_when_enabled() {
+        let parsed =
+            parse_markdown_with_options_and_math("$$\\int_0^1 x^2 dx$$", false, false, true);
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(_, event)| matches!(event, DisplayMath(math) if math == "\\int_0^1 x^2 dx"))
         );
     }
 

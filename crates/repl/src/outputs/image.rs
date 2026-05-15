@@ -70,6 +70,22 @@ impl ImageView {
         })
     }
 
+    pub fn from_svg(svg_data: &str, cx: &mut App) -> Result<Self> {
+        let clipboard_image = Arc::new(Image::from_bytes(
+            ImageFormat::Svg,
+            svg_data.as_bytes().to_vec(),
+        ));
+        let image = clipboard_image.to_image_data(cx.svg_renderer())?;
+        let size = image.size(0);
+
+        Ok(ImageView {
+            clipboard_image,
+            height: size.height.into(),
+            width: size.width.into(),
+            image,
+        })
+    }
+
     fn scaled_size(
         &self,
         line_height: Pixels,

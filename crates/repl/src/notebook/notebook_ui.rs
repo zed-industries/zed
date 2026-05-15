@@ -65,9 +65,9 @@ pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
 pub(crate) const SMALL_SPACING_SIZE: f32 = 8.0;
 pub(crate) const MEDIUM_SPACING_SIZE: f32 = 12.0;
 pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
-pub(crate) const GUTTER_WIDTH: f32 = 19.0;
+pub(crate) const GUTTER_WIDTH: f32 = 28.0;
 pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
-pub(crate) const CONTROL_SIZE: f32 = 20.0;
+pub(crate) const CONTROL_SIZE: f32 = 24.0;
 
 pub fn init(cx: &mut App) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
@@ -449,6 +449,7 @@ impl NotebookEditor {
                     Err(err) => {
                         log::error!("Kernel failed to start: {:?}", err);
                         this.update(cx, |editor, cx| {
+                            editor.stop_pending_executions(cx);
                             editor.kernel = Kernel::ErroredLaunch(err.to_string());
                             cx.notify();
                         })
@@ -477,7 +478,7 @@ impl NotebookEditor {
             kernel.force_shutdown(window, cx).detach();
         }
 
-        self.execution_requests.clear();
+        self.stop_pending_executions(cx);
 
         self.launch_kernel_with_spec(spec, window, cx);
     }
@@ -488,6 +489,7 @@ impl NotebookEditor {
                 kernel.force_shutdown(window, cx).detach();
             }
 
+            self.stop_pending_executions(cx);
             self.kernel = Kernel::Restarting;
             cx.notify();
 
@@ -521,6 +523,24 @@ impl NotebookEditor {
             return;
         };
 
+        let Kernel::RunningKernel(kernel) = &mut self.kernel else {
+            return;
+        };
+
+        let request = ExecuteRequest {
+            code,
+            ..Default::default()
+        };
+        let message: JupyterMessage = request.into();
+        let msg_id = message.header.msg_id.clone();
+
+        if let Err(error) = kernel.request_tx().try_send(message) {
+            log::error!("failed to send notebook execute request: {:?}", error);
+            return;
+        }
+
+        self.execution_requests.insert(msg_id, cell_id.clone());
+
         if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
             cell.update(cx, |cell, cx| {
                 if cell.has_outputs() {
@@ -530,19 +550,30 @@ impl NotebookEditor {
                 cx.notify();
             });
         }
+    }
 
-        let request = ExecuteRequest {
-            code,
-            ..Default::default()
-        };
-        let message: JupyterMessage = request.into();
-        let msg_id = message.header.msg_id.clone();
-
-        self.execution_requests.insert(msg_id, cell_id.clone());
-
-        if let Kernel::RunningKernel(kernel) = &mut self.kernel {
-            kernel.request_tx().try_send(message).ok();
+    fn stop_pending_executions(&mut self, cx: &mut Context<Self>) {
+        for cell_id in self.execution_requests.values() {
+            if let Some(Cell::Code(cell)) = self.cell_map.get(cell_id) {
+                cell.update(cx, |cell, cx| {
+                    cell.cancel_execution();
+                    cx.notify();
+                });
+            }
         }
+        self.execution_requests.clear();
+    }
+
+    fn finish_pending_executions(&mut self, cx: &mut Context<Self>) {
+        for cell_id in self.execution_requests.values() {
+            if let Some(Cell::Code(cell)) = self.cell_map.get(cell_id) {
+                cell.update(cx, |cell, cx| {
+                    cell.finish_execution();
+                    cx.notify();
+                });
+            }
+        }
+        self.execution_requests.clear();
     }
 
     fn get_selected_cell(&self) -> Option<&Cell> {
@@ -1134,9 +1165,10 @@ impl NotebookEditor {
 
     fn render_kernel_status_bar(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let has_outputs = self.has_outputs(window, cx);
         let kernel_status = self.kernel.status();
         let kernel_name = self
             .kernel_specification
@@ -1178,46 +1210,155 @@ impl NotebookEditor {
         let worktree_id = self.worktree_id;
         let kernel_picker_handle = self.kernel_picker_handle.clone();
         let view = cx.entity().downgrade();
+        let kernel_connected = kernel_status.is_connected();
 
         h_flex()
             .w_full()
             .px_3()
-            .py_1()
+            .py_1p5()
             .gap_2()
             .items_center()
             .justify_between()
-            .bg(cx.theme().colors().status_bar_background)
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().tab_bar_background)
             .child(
-                KernelSelector::new(
-                    Box::new(move |spec: KernelSpecification, window, cx| {
-                        if let Some(view) = view.upgrade() {
-                            view.update(cx, |this, cx| {
-                                this.change_kernel(spec, window, cx);
-                            });
-                        }
-                    }),
-                    worktree_id,
-                    Button::new("kernel-selector", kernel_name.clone())
-                        .label_size(LabelSize::Small)
-                        .start_icon(
-                            Icon::new(status_icon)
-                                .size(IconSize::Small)
-                                .color(status_color),
-                        ),
-                    Tooltip::text(format!(
-                        "Kernel: {} ({}). Click to change.",
-                        kernel_name,
-                        kernel_status.to_string()
-                    )),
-                )
-                .with_handle(kernel_picker_handle),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .min_w_0()
+                    .child(
+                        KernelSelector::new(
+                            Box::new(move |spec: KernelSpecification, window, cx| {
+                                if let Some(view) = view.upgrade() {
+                                    view.update(cx, |this, cx| {
+                                        this.change_kernel(spec, window, cx);
+                                    });
+                                }
+                            }),
+                            worktree_id,
+                            Button::new("kernel-selector", kernel_name.clone())
+                                .label_size(LabelSize::Small)
+                                .truncate(true)
+                                .loading(is_spinning)
+                                .start_icon(
+                                    Icon::new(status_icon)
+                                        .size(IconSize::Small)
+                                        .color(status_color),
+                                ),
+                            Tooltip::text(format!(
+                                "Kernel: {} ({}). Click to change.",
+                                kernel_name,
+                                kernel_status.to_string()
+                            )),
+                        )
+                        .with_handle(kernel_picker_handle),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .items_center()
+                            .child(status_icon_element)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(kernel_status.to_string()),
+                            ),
+                    ),
             )
             .child(
                 h_flex()
                     .gap_1()
+                    .items_center()
+                    .child(
+                        Self::render_notebook_control(
+                            "run-all-cells",
+                            IconName::PlayFilled,
+                            window,
+                            cx,
+                        )
+                        .disabled(!kernel_connected)
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Execute all cells", &RunAll, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(RunAll), cx);
+                        }),
+                    )
+                    .child(
+                        Self::render_notebook_control(
+                            "clear-all-outputs",
+                            IconName::ListX,
+                            window,
+                            cx,
+                        )
+                        .disabled(!has_outputs)
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Clear all outputs", &ClearOutputs, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(ClearOutputs), cx);
+                        }),
+                    )
+                    .child(div().w(px(1.)).h_4().bg(cx.theme().colors().border))
+                    .child(
+                        Self::render_notebook_control("new-code-cell", IconName::Code, window, cx)
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Add code block", &AddCodeBlock, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(AddCodeBlock), cx);
+                            }),
+                    )
+                    .child(
+                        Self::render_notebook_control(
+                            "new-markdown-cell",
+                            IconName::Plus,
+                            window,
+                            cx,
+                        )
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Add markdown block", &AddMarkdownBlock, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(AddMarkdownBlock), cx);
+                        }),
+                    )
+                    .child(div().w(px(1.)).h_4().bg(cx.theme().colors().border))
+                    .child(
+                        Self::render_notebook_control(
+                            "move-cell-up",
+                            IconName::ArrowUp,
+                            window,
+                            cx,
+                        )
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Move cell up", &MoveCellUp, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(MoveCellUp), cx);
+                        }),
+                    )
+                    .child(
+                        Self::render_notebook_control(
+                            "move-cell-down",
+                            IconName::ArrowDown,
+                            window,
+                            cx,
+                        )
+                        .tooltip(move |window, cx| {
+                            Tooltip::for_action("Move cell down", &MoveCellDown, cx)
+                        })
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(MoveCellDown), cx);
+                        }),
+                    )
+                    .child(div().w(px(1.)).h_4().bg(cx.theme().colors().border))
                     .child(
                         IconButton::new("restart-kernel", IconName::RotateCw)
                             .icon_size(IconSize::Small)
+                            .disabled(self.kernel_specification.is_none())
                             .tooltip(|window, cx| {
                                 Tooltip::for_action("Restart Kernel", &RestartKernel, cx)
                             })
@@ -1272,9 +1413,11 @@ impl NotebookEditor {
 
         match cell {
             Cell::Code(cell) => {
+                let kernel_status = self.kernel.status();
                 cell.update(cx, |cell, _cx| {
                     cell.set_selected(is_selected)
                         .set_cell_position(cell_position);
+                    cell.set_kernel_status(kernel_status);
                 });
                 cell.clone().into_any_element()
             }
@@ -1444,16 +1587,14 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, action, window, cx| this.interrupt_kernel(action, window, cx)),
             )
+            .child(self.render_kernel_status_bar(window, cx))
             .child(
-                h_flex()
+                div()
                     .flex_1()
                     .w_full()
                     .h_full()
-                    .gap_2()
-                    .child(div().flex_1().h_full().child(self.cell_list(window, cx)))
-                    .child(self.render_notebook_controls(window, cx)),
+                    .child(self.cell_list(window, cx)),
             )
-            .child(self.render_kernel_status_bar(window, cx))
     }
 }
 
@@ -1870,6 +2011,11 @@ impl KernelSession for NotebookEditor {
         // Handle kernel status updates (these are broadcast to all)
         if let JupyterMessageContent::Status(status) = &message.content {
             self.kernel.set_execution_state(&status.execution_state);
+            if matches!(status.execution_state, runtimelib::ExecutionState::Idle)
+                && self.execution_requests.len() == 1
+            {
+                self.finish_pending_executions(cx);
+            }
             cx.notify();
         }
 
@@ -1889,11 +2035,14 @@ impl KernelSession for NotebookEditor {
 
         // Handle cell-specific messages
         if let Some(parent_header) = &message.parent_header {
-            if let Some(cell_id) = self.execution_requests.get(&parent_header.msg_id) {
-                if let Some(Cell::Code(cell)) = self.cell_map.get(cell_id) {
+            if let Some(cell_id) = self.execution_requests.get(&parent_header.msg_id).cloned() {
+                if let Some(Cell::Code(cell)) = self.cell_map.get(&cell_id) {
                     cell.update(cx, |cell, cx| {
                         cell.handle_message(message, window, cx);
                     });
+                }
+                if matches!(message.content, JupyterMessageContent::ExecuteReply(_)) {
+                    self.execution_requests.remove(&parent_header.msg_id);
                 }
             }
         }

@@ -43,6 +43,7 @@ use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown_with_options,
+    parse_markdown_with_options_and_math,
 };
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
@@ -343,6 +344,7 @@ pub struct MarkdownOptions {
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
+    pub render_math: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -431,6 +433,210 @@ impl EscapeAction {
 // sequences never contain ASCII-range bytes.
 struct MarkdownEscaper {
     in_leading_whitespace: bool,
+}
+
+fn render_latex_math_source(source: &str, display_mode: bool) -> Result<String, String> {
+    let options = katex::Opts::builder()
+        .display_mode(display_mode)
+        .build()
+        .map_err(|error| error.to_string())?;
+    katex::render_with_opts(source, &options).map_err(|error| error.to_string())?;
+
+    Ok(format_latex_math_source(source))
+}
+
+fn format_latex_math_source(source: &str) -> String {
+    let mut text = source.trim().to_string();
+    for (from, to) in [
+        ("\\operatorname{argmin}", "arg min"),
+        ("\\operatorname{argmax}", "arg max"),
+        ("\\operatorname{min}", "min"),
+        ("\\operatorname{max}", "max"),
+        ("\\argmin", "arg min"),
+        ("\\argmax", "arg max"),
+        ("\\min", "min"),
+        ("\\max", "max"),
+        ("\\sin", "sin"),
+        ("\\cos", "cos"),
+        ("\\tan", "tan"),
+        ("\\log", "log"),
+        ("\\ln", "ln"),
+        ("\\alpha", "α"),
+        ("\\beta", "β"),
+        ("\\gamma", "γ"),
+        ("\\delta", "δ"),
+        ("\\epsilon", "ϵ"),
+        ("\\theta", "θ"),
+        ("\\lambda", "λ"),
+        ("\\mu", "μ"),
+        ("\\pi", "π"),
+        ("\\sigma", "σ"),
+        ("\\phi", "φ"),
+        ("\\omega", "ω"),
+        ("\\infty", "∞"),
+        ("\\sum", "∑"),
+        ("\\prod", "∏"),
+        ("\\int", "∫"),
+        ("\\sqrt", "√"),
+        ("\\pm", "±"),
+        ("\\times", "×"),
+        ("\\cdot", "⋅"),
+        ("\\leq", "≤"),
+        ("\\le", "≤"),
+        ("\\geq", "≥"),
+        ("\\ge", "≥"),
+        ("\\neq", "≠"),
+        ("\\to", "→"),
+        ("\\quad", " "),
+        ("\\,", " "),
+        ("\\left", ""),
+        ("\\right", ""),
+    ] {
+        text = text.replace(from, to);
+    }
+
+    text = format_simple_scripts(&text, '^', superscript_char);
+    format_simple_scripts(&text, '_', subscript_char)
+}
+
+fn format_simple_scripts(source: &str, marker: char, convert: fn(char) -> Option<char>) -> String {
+    let mut output = String::new();
+    let mut chars = source.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != marker {
+            output.push(ch);
+            continue;
+        }
+
+        if chars.peek() == Some(&'{') {
+            chars.next();
+            let mut converted = String::new();
+            let mut supported = true;
+            for next in chars.by_ref() {
+                if next == '}' {
+                    break;
+                }
+                if let Some(converted_char) = convert(next) {
+                    converted.push(converted_char);
+                } else {
+                    supported = false;
+                    converted.push(next);
+                }
+            }
+            if supported {
+                output.push_str(&converted);
+            } else {
+                output.push(marker);
+                output.push('{');
+                output.push_str(&converted);
+                output.push('}');
+            }
+        } else if let Some(next) = chars.next() {
+            if next.is_ascii_alphanumeric() {
+                let mut converted = String::new();
+                let mut supported = true;
+                let mut consumed = String::new();
+
+                consumed.push(next);
+                if let Some(converted_char) = convert(next) {
+                    converted.push(converted_char);
+                } else {
+                    supported = false;
+                }
+
+                while let Some(peeked) = chars.peek().copied() {
+                    if !peeked.is_ascii_alphanumeric() {
+                        break;
+                    }
+                    chars.next();
+                    consumed.push(peeked);
+                    if let Some(converted_char) = convert(peeked) {
+                        converted.push(converted_char);
+                    } else {
+                        supported = false;
+                    }
+                }
+
+                if supported {
+                    output.push_str(&converted);
+                } else {
+                    output.push(marker);
+                    output.push_str(&consumed);
+                }
+            } else if let Some(converted) = convert(next) {
+                output.push(converted);
+            } else {
+                output.push(marker);
+                output.push(next);
+            }
+        } else {
+            output.push(marker);
+        }
+    }
+
+    output
+}
+
+fn superscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '⁰',
+        '1' => '¹',
+        '2' => '²',
+        '3' => '³',
+        '4' => '⁴',
+        '5' => '⁵',
+        '6' => '⁶',
+        '7' => '⁷',
+        '8' => '⁸',
+        '9' => '⁹',
+        '+' => '⁺',
+        '-' => '⁻',
+        '=' => '⁼',
+        '(' => '⁽',
+        ')' => '⁾',
+        'n' => 'ⁿ',
+        'i' => 'ⁱ',
+        _ => return None,
+    })
+}
+
+fn subscript_char(ch: char) -> Option<char> {
+    Some(match ch {
+        '0' => '₀',
+        '1' => '₁',
+        '2' => '₂',
+        '3' => '₃',
+        '4' => '₄',
+        '5' => '₅',
+        '6' => '₆',
+        '7' => '₇',
+        '8' => '₈',
+        '9' => '₉',
+        '+' => '₊',
+        '-' => '₋',
+        '=' => '₌',
+        '(' => '₍',
+        ')' => '₎',
+        'a' => 'ₐ',
+        'e' => 'ₑ',
+        'h' => 'ₕ',
+        'i' => 'ᵢ',
+        'j' => 'ⱼ',
+        'k' => 'ₖ',
+        'l' => 'ₗ',
+        'm' => 'ₘ',
+        'n' => 'ₙ',
+        'o' => 'ₒ',
+        'p' => 'ₚ',
+        'r' => 'ᵣ',
+        's' => 'ₛ',
+        't' => 'ₜ',
+        'u' => 'ᵤ',
+        'v' => 'ᵥ',
+        'x' => 'ₓ',
+        _ => return None,
+    })
 }
 
 impl MarkdownEscaper {
@@ -768,6 +974,7 @@ impl Markdown {
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
+        let should_render_math = self.options.render_math;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -789,8 +996,16 @@ impl Markdown {
                 );
             }
 
-            let parsed =
-                parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs);
+            let parsed = if should_render_math {
+                parse_markdown_with_options_and_math(
+                    &source,
+                    should_parse_html,
+                    should_parse_heading_slugs,
+                    true,
+                )
+            } else {
+                parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs)
+            };
             let events = parsed.events;
             let language_names = parsed.language_names;
             let paths = parsed.language_paths;
@@ -2173,6 +2388,35 @@ impl Element for MarkdownElement {
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                     builder.pop_text_style();
                 }
+                MarkdownEvent::InlineMath(source) => {
+                    let rendered = render_latex_math_source(source, false)
+                        .unwrap_or_else(|_| format!("${source}$"));
+                    builder.push_text_style(TextStyleRefinement {
+                        font_style: Some(FontStyle::Italic),
+                        color: Some(self.style.base_text_style.color),
+                        ..Default::default()
+                    });
+                    builder.push_text(&rendered, range.clone());
+                    builder.pop_text_style();
+                }
+                MarkdownEvent::DisplayMath(source) => {
+                    let rendered = render_latex_math_source(source, true)
+                        .unwrap_or_else(|_| format!("$${source}$$"));
+                    builder.push_text_style(TextStyleRefinement {
+                        font_style: Some(FontStyle::Italic),
+                        text_align: Some(TextAlign::Center),
+                        color: Some(self.style.base_text_style.color),
+                        ..Default::default()
+                    });
+                    builder.push_div(
+                        div().w_full().my_2().line_height(rems(1.5)).text_center(),
+                        &range,
+                        parsed_markdown.source.len(),
+                    );
+                    builder.push_text(&rendered, range.clone());
+                    builder.pop_div();
+                    builder.pop_text_style();
+                }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
                     if html.starts_with("<!--") {
@@ -3342,6 +3586,72 @@ mod tests {
             },
         );
         rendered.text
+    }
+
+    #[gpui::test]
+    fn test_inline_math_renders_when_enabled(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "$E = mc^2$",
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(rendered.text_for_range(0.."$E = mc^2$".len()), "E = mc²");
+    }
+
+    #[gpui::test]
+    fn test_display_math_renders_when_enabled(cx: &mut TestAppContext) {
+        let source = "$$\\int_0^1 x^2 dx$$";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(rendered.text_for_range(0..source.len()), "∫₀¹ x² dx");
+    }
+
+    #[gpui::test]
+    fn test_math_output_formats_common_operators(cx: &mut TestAppContext) {
+        let source = "$$\\min C_max = \\min(\\max_j L_j)$$";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(
+            rendered.text_for_range(0..source.len()),
+            "min Cₘₐₓ = min(maxⱼ Lⱼ)"
+        );
+    }
+
+    #[gpui::test]
+    fn test_invalid_math_falls_back_to_source(cx: &mut TestAppContext) {
+        let source = "$\\frac{$";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_math: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(rendered.text_for_range(0..source.len()), source);
     }
 
     #[gpui::test]

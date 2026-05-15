@@ -674,7 +674,7 @@ pub trait RunningKernel: Send + Debug {
     fn kill(&mut self);
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KernelStatus {
     Idle,
     Busy,

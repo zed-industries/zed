@@ -72,6 +72,8 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
         MimeType::Json(_) => 5,
         MimeType::Png(_) => 4,
         MimeType::Jpeg(_) => 3,
+        MimeType::Svg(_) => 3,
+        MimeType::Latex(_) => 3,
         MimeType::Markdown(_) => 2,
         MimeType::Plain(_) => 1,
         // All other media types are not supported in Zed at this time
@@ -137,47 +139,6 @@ pub enum Output {
         display_id: Option<String>,
     },
     ClearOutputWaitMarker,
-}
-
-impl Output {
-    pub fn to_nbformat(&self, cx: &App) -> Option<nbformat::v4::Output> {
-        match self {
-            Output::Stream { content } => {
-                let text = content.read(cx).full_text();
-                Some(nbformat::v4::Output::Stream {
-                    name: "stdout".to_string(),
-                    text: nbformat::v4::MultilineString(text),
-                })
-            }
-            Output::Plain { content, .. } => {
-                let text = content.read(cx).full_text();
-                let mut data = jupyter_protocol::media::Media::default();
-                data.content.push(jupyter_protocol::MediaType::Plain(text));
-                Some(nbformat::v4::Output::DisplayData(
-                    nbformat::v4::DisplayData {
-                        data,
-                        metadata: serde_json::Map::new(),
-                    },
-                ))
-            }
-            Output::ErrorOutput(error_view) => {
-                let traceback_text = error_view.traceback.read(cx).full_text();
-                let traceback_lines: Vec<String> =
-                    traceback_text.lines().map(|s| s.to_string()).collect();
-                Some(nbformat::v4::Output::Error(nbformat::v4::ErrorOutput {
-                    ename: error_view.ename.clone(),
-                    evalue: error_view.evalue.clone(),
-                    traceback: traceback_lines,
-                }))
-            }
-            Output::Image { .. }
-            | Output::Markdown { .. }
-            | Output::Table { .. }
-            | Output::Json { .. } => None,
-            Output::Message(_) => None,
-            Output::ClearOutputWaitMarker => None,
-        }
-    }
 }
 
 impl Output {
@@ -416,12 +377,26 @@ impl Output {
                     display_id,
                 }
             }
+            Some(MimeType::Latex(text)) => {
+                let content = cx.new(|cx| MarkdownView::from_latex(text.clone(), cx));
+                Output::Markdown {
+                    content,
+                    display_id,
+                }
+            }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => Output::Image {
                     content: cx.new(|_| view),
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
+            },
+            Some(MimeType::Svg(data)) => match ImageView::from_svg(data, cx) {
+                Ok(view) => Output::Image {
+                    content: cx.new(|_| view),
+                    display_id,
+                },
+                Err(error) => Output::Message(format!("Failed to load SVG: {}", error)),
             },
             Some(MimeType::DataTable(data)) => Output::Table {
                 content: cx.new(|cx| TableView::new(data, window, cx)),
@@ -861,6 +836,8 @@ mod tests {
         let json = MimeType::Json(serde_json::json!({}));
         let png = MimeType::Png(String::new());
         let jpeg = MimeType::Jpeg(String::new());
+        let svg = MimeType::Svg(String::new());
+        let latex = MimeType::Latex(String::new());
         let markdown = MimeType::Markdown(String::new());
         let plain = MimeType::Plain(String::new());
 
@@ -869,6 +846,8 @@ mod tests {
         assert_eq!(rank_mime_type(&json), 5);
         assert_eq!(rank_mime_type(&png), 4);
         assert_eq!(rank_mime_type(&jpeg), 3);
+        assert_eq!(rank_mime_type(&svg), 3);
+        assert_eq!(rank_mime_type(&latex), 3);
         assert_eq!(rank_mime_type(&markdown), 2);
         assert_eq!(rank_mime_type(&plain), 1);
 
@@ -876,17 +855,33 @@ mod tests {
         assert!(rank_mime_type(&html) > rank_mime_type(&json));
         assert!(rank_mime_type(&json) > rank_mime_type(&png));
         assert!(rank_mime_type(&png) > rank_mime_type(&jpeg));
+        assert!(rank_mime_type(&svg) > rank_mime_type(&markdown));
         assert!(rank_mime_type(&jpeg) > rank_mime_type(&markdown));
+        assert!(rank_mime_type(&latex) > rank_mime_type(&markdown));
         assert!(rank_mime_type(&markdown) > rank_mime_type(&plain));
+        assert!(rank_mime_type(&latex) > rank_mime_type(&plain));
     }
 
     #[test]
-    fn test_rank_mime_type_unsupported_returns_zero() {
+    fn test_rank_mime_type_only_unsupported_returns_zero() {
         let svg = MimeType::Svg(String::new());
-        let latex = MimeType::Latex(String::new());
+        let javascript = MimeType::Javascript(String::new());
 
-        assert_eq!(rank_mime_type(&svg), 0);
-        assert_eq!(rank_mime_type(&latex), 0);
+        assert_eq!(rank_mime_type(&svg), 3);
+        assert_eq!(rank_mime_type(&javascript), 0);
+    }
+
+    #[test]
+    fn test_rank_mime_type_prefers_latex_over_plain_text() {
+        let data = MimeBundle::new(vec![
+            MimeType::Plain("\\sum_i x_i".to_string()),
+            MimeType::Latex("\\sum_i x_i".to_string()),
+        ]);
+
+        assert!(matches!(
+            data.richest(rank_mime_type),
+            Some(MimeType::Latex(_))
+        ));
     }
 
     async fn init_test(
