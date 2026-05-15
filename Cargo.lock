@@ -6090,6 +6090,7 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme_settings",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
  "tree-sitter",
