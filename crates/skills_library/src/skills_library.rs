@@ -1,6 +1,6 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_NAME_LEN, SKILL_FILE_NAME,
-    SKILLS_DIR_NAME, SkillMetadata, global_skills_dir,
+    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, SKILL_FILE_NAME,
+    SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -37,45 +37,6 @@ actions!(
 );
 
 pub fn init(_cx: &mut App) {}
-
-/// Validates a skill name. Returns `Err` with a user-facing message when
-/// invalid; returns `Ok(())` on success.
-///
-/// Rules:
-/// * 1-64 chars
-/// * ASCII lowercase letters, digits, hyphens
-/// * Must not start or end with a hyphen
-fn validate_skill_name(name: &str) -> Result<(), &'static str> {
-    if name.is_empty() {
-        return Err("Name is required.");
-    }
-    if name.len() > MAX_SKILL_NAME_LEN {
-        return Err("Name must be at most 64 characters.");
-    }
-    if name.starts_with('-') || name.ends_with('-') {
-        return Err("Name must not start or end with a hyphen.");
-    }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-    {
-        return Err("Use only lowercase letters, numbers, and hyphens.");
-    }
-    Ok(())
-}
-
-const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
-
-fn validate_skill_description(description: &str) -> Result<(), &'static str> {
-    let trimmed = description.trim();
-    if trimmed.is_empty() {
-        return Err("Description is required.");
-    }
-    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
-        return Err("Description must be at most 1024 characters.");
-    }
-    Ok(())
-}
 
 #[derive(Clone, Debug)]
 enum ScopeChoice {
@@ -404,13 +365,13 @@ impl SkillsLibrary {
 
     fn recompute_name_error(&mut self, cx: &App) {
         let name = self.current_name(cx);
-        self.name_error = validate_skill_name(&name).err();
+        self.name_error = validate_name(&name).err();
     }
 
     fn recompute_description_error(&mut self, cx: &App) {
         let description = self.current_description(cx);
         self.description_length = description.len();
-        self.description_error = validate_skill_description(&description).err();
+        self.description_error = validate_description(&description).err();
     }
 
     fn recompute_body_error(&mut self, cx: &App) {
@@ -423,8 +384,8 @@ impl SkillsLibrary {
     }
 
     fn is_valid(&self, cx: &App) -> bool {
-        validate_skill_name(&self.current_name(cx)).is_ok()
-            && validate_skill_description(&self.current_description(cx)).is_ok()
+        validate_name(&self.current_name(cx)).is_ok()
+            && validate_description(&self.current_description(cx)).is_ok()
             && !self.current_body(cx).trim().is_empty()
             && self.selected_scope().is_some()
     }
@@ -627,7 +588,7 @@ impl SkillsLibrary {
                     .child(Self::render_hint(hint, has_error))
                     .child(
                         Label::new(format!(
-                            "{} / {MAX_SKILL_DESCRIPTION_LEN}",
+                            "{} / {MAX_SKILL_DESCRIPTION_LEN} bytes",
                             self.description_length
                         ))
                         .size(LabelSize::Small)
@@ -1010,57 +971,10 @@ mod tests {
     use fs::FakeFs;
     use std::path::Path;
 
-    #[test]
-    fn validate_skill_name_accepts_valid_names() {
-        assert!(validate_skill_name("draft-pr").is_ok());
-        assert!(validate_skill_name("a").is_ok());
-        assert!(validate_skill_name("abc123").is_ok());
-        assert!(validate_skill_name(&"a".repeat(64)).is_ok());
-    }
-
-    #[test]
-    fn validate_skill_name_rejects_empty() {
-        assert!(validate_skill_name("").is_err());
-    }
-
-    #[test]
-    fn validate_skill_name_rejects_uppercase() {
-        assert!(validate_skill_name("Draft-PR").is_err());
-    }
-
-    #[test]
-    fn validate_skill_name_rejects_leading_and_trailing_hyphens() {
-        assert!(validate_skill_name("-draft").is_err());
-        assert!(validate_skill_name("draft-").is_err());
-    }
-
-    #[test]
-    fn validate_skill_name_rejects_invalid_chars() {
-        assert!(validate_skill_name("draft_pr").is_err());
-        assert!(validate_skill_name("draft pr").is_err());
-        assert!(validate_skill_name("draft.pr").is_err());
-    }
-
-    #[test]
-    fn validate_skill_name_rejects_too_long() {
-        assert!(validate_skill_name(&"a".repeat(65)).is_err());
-    }
-
-    #[test]
-    fn validate_skill_description_accepts_valid() {
-        assert!(validate_skill_description("A useful skill").is_ok());
-    }
-
-    #[test]
-    fn validate_skill_description_rejects_empty_and_whitespace_only() {
-        assert!(validate_skill_description("").is_err());
-        assert!(validate_skill_description("   ").is_err());
-    }
-
-    #[test]
-    fn validate_skill_description_rejects_too_long() {
-        assert!(validate_skill_description(&"a".repeat(1025)).is_err());
-    }
+    // Name and description validation rules are unit-tested in
+    // `agent_skills`, which owns `validate_name` / `validate_description`
+    // / `MAX_SKILL_DESCRIPTION_LEN`. The tests below cover this crate's
+    // own surface area: SKILL.md formatting and disk-writing.
 
     #[test]
     fn format_skill_file_round_trips_through_parser() {
