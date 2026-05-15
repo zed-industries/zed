@@ -1705,6 +1705,135 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_mcp_tool_resource_content_response(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "tool_permissions": { "default": "allow" },
+                "profiles": {
+                    "test": {
+                        "name": "Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {}
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test".into()), cx)
+    });
+
+    let mut mcp_tool_calls = setup_context_server(
+        "github_server",
+        vec![context_server::types::Tool {
+            name: "get_file_contents".into(),
+            title: None,
+            description: Some("Get file contents from a repository".into()),
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Get the file contents"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "get_file_contents".into(),
+            raw_input: json!({}).to_string(),
+            input: json!({}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let _ = completion;
+
+    let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
+    assert_eq!(tool_call_params.name, "get_file_contents");
+
+    // Simulate the response from github-mcp-server: a text block plus a resource block
+    tool_call_response
+        .send(context_server::types::CallToolResponse {
+            content: vec![
+                context_server::types::ToolResponseContent::Text {
+                    text: "successfully downloaded text file".into(),
+                },
+                context_server::types::ToolResponseContent::Resource {
+                    resource: context_server::types::ResourceContentsType::Text(
+                        context_server::types::TextResourceContents {
+                            uri: url::Url::parse("repo://owner/repo/contents/path/to/file.py")
+                                .unwrap(),
+                            mime_type: Some("text/plain; charset=utf-8".into()),
+                            text: "def hello():\n    print(\"hello world\")\n".into(),
+                        },
+                    ),
+                },
+            ],
+            is_error: None,
+            meta: None,
+            structured_content: None,
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // Verify both the text and resource content are surfaced to the model
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result = completion
+        .messages
+        .last()
+        .unwrap()
+        .content
+        .iter()
+        .find_map(|c| match c {
+            MessageContent::ToolResult(r) => Some(r.clone()),
+            _ => None,
+        })
+        .expect("expected a tool result");
+    assert_eq!(tool_result.tool_use_id, "tool_1".into());
+    assert_eq!(tool_result.content.len(), 2);
+    assert_eq!(
+        tool_result.content[0],
+        language_model::LanguageModelToolResultContent::Text(Arc::from(
+            "successfully downloaded text file"
+        ))
+    );
+    assert_eq!(
+        tool_result.content[1],
+        language_model::LanguageModelToolResultContent::Text(Arc::from(
+            "def hello():\n    print(\"hello world\")\n"
+        ))
+    );
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
+#[gpui::test]
 async fn test_mcp_tool_result_displayed_when_server_disconnected(cx: &mut TestAppContext) {
     let ThreadTest {
         model,

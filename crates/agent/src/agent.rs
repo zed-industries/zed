@@ -5207,13 +5207,20 @@ fn mcp_message_content_to_acp_content_block(
         context_server::types::MessageContent::Resource {
             resource,
             annotations: _,
-        } => {
-            let mut link =
-                acp::ResourceLink::new(resource.uri.to_string(), resource.uri.to_string());
-            if let Some(mime_type) = resource.mime_type {
-                link = link.mime_type(mime_type);
+        } => match resource {
+            context_server::types::ResourceContentsType::Text(text_resource) => {
+                text_resource.text.into()
             }
-            acp::ContentBlock::ResourceLink(link)
-        }
+            context_server::types::ResourceContentsType::Blob(blob_resource) => {
+                let mut link = acp::ResourceLink::new(
+                    blob_resource.uri.to_string(),
+                    blob_resource.uri.to_string(),
+                );
+                if let Some(mime_type) = blob_resource.mime_type {
+                    link = link.mime_type(mime_type);
+                }
+                acp::ContentBlock::ResourceLink(link)
+            }
+        },
     }
 }

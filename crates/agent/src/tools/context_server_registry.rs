@@ -407,8 +407,21 @@ impl AnyAgentTool for ContextServerTool {
                     context_server::types::ToolResponseContent::Audio { .. } => {
                         log::warn!("Ignoring audio content from tool response");
                     }
-                    context_server::types::ToolResponseContent::Resource { .. } => {
-                        log::warn!("Ignoring resource content from tool response");
+                    context_server::types::ToolResponseContent::Resource { resource } => {
+                        match resource {
+                            context_server::types::ResourceContentsType::Text(text_resource) => {
+                                concatenated_text.push_str(&text_resource.text);
+                                llm_output.push(LanguageModelToolResultContent::Text(
+                                    text_resource.text.into(),
+                                ));
+                            }
+                            context_server::types::ResourceContentsType::Blob(blob_resource) => {
+                                concatenated_text.push_str(&blob_resource.blob);
+                                llm_output.push(LanguageModelToolResultContent::Text(
+                                    blob_resource.blob.into(),
+                                ));
+                            }
+                        }
                     }
                     context_server::types::ToolResponseContent::ResourceLink { .. } => {
                         log::warn!("Ignoring resource link content from tool response");
