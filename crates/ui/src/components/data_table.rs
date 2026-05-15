@@ -1030,10 +1030,12 @@ impl RenderOnce for Table {
             .clone()
             .and_then(|state| state.upgrade());
         let pinned_cols = self.pinned_cols;
+        let uses_pinned_layout = is_pinned_layout(pinned_cols, self.cols);
+        let resize_handle_pinned_cols = if uses_pinned_layout { pinned_cols } else { 0 };
 
         // Shared by every row's scrollable section so they scroll in lockstep, and read by
         // on_drag_move to compensate drag_x for the horizontal scroll offset.
-        let h_scroll_handle = if pinned_cols > 0 {
+        let h_scroll_handle = if uses_pinned_layout {
             interaction_state
                 .as_ref()
                 .map(|s| s.read(cx).horizontal_scroll_handle.clone())
@@ -1057,13 +1059,13 @@ impl RenderOnce for Table {
                 });
 
         // Pinned mode sizes each row internally, so no fixed table_width or h_scroll_container.
-        let table_width = if pinned_cols > 0 {
+        let table_width = if uses_pinned_layout {
             None
         } else {
             self.column_width_config.table_width(window, cx)
         };
 
-        let horizontal_sizing = if pinned_cols > 0 {
+        let horizontal_sizing = if uses_pinned_layout {
             ListHorizontalSizingBehavior::FitList
         } else {
             self.column_width_config.list_horizontal_sizing(window, cx)
@@ -1093,7 +1095,7 @@ impl RenderOnce for Table {
                         Some(entity.clone()),
                         Some(render_resize_handles_resizable(
                             entity,
-                            pinned_cols,
+                            resize_handle_pinned_cols,
                             h_scroll_handle.as_ref(),
                             window,
                             cx,
@@ -1237,7 +1239,7 @@ impl RenderOnce for Table {
             );
 
         if let Some(state) = interaction_state.as_ref() {
-            let content = if is_resizable && pinned_cols == 0 {
+            let content = if is_resizable && !uses_pinned_layout {
                 let mut h_scroll_container = div()
                     .id("table-h-scroll")
                     .overflow_x_scroll()
