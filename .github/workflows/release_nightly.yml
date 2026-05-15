@@ -9,7 +9,7 @@ on:
     tags:
     - nightly
   schedule:
-  - cron: 0 */6 * * *
+  - cron: 0 */4 * * *
 jobs:
   check_nightly_tag:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
