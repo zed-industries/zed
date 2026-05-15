@@ -342,6 +342,16 @@ impl MentionUri {
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Skill { name, .. } => name.clone(),
+        }
+    }
+
+    pub fn disambiguated_name(&self, needs_disambiguation: bool) -> String {
+        if !needs_disambiguation {
+            return self.name();
+        }
+
+        match self {
             MentionUri::Skill { name, source, .. } => {
                 if source.is_empty() {
                     format!("{} (global)", name)
@@ -349,6 +359,17 @@ impl MentionUri {
                     format!("{} ({})", name, source)
                 }
             }
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
+                let path = Path::new(abs_path);
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                match path.parent().and_then(|p| p.file_name()) {
+                    Some(parent) => {
+                        format!("{}/{}", parent.to_string_lossy(), file_name)
+                    }
+                    None => file_name.into_owned(),
+                }
+            }
+            _ => self.name(),
         }
     }
 

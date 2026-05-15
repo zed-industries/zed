@@ -2603,7 +2603,7 @@ fn completion_text_for_terminal_selections(
                     };
 
                     mention_set
-                        .update(cx, |mention_set, _| {
+                        .update(cx, |mention_set, cx| {
                             mention_set.insert_mention(
                                 crease_id,
                                 mention_uri.clone(),
@@ -2612,6 +2612,8 @@ fn completion_text_for_terminal_selections(
                                     tracked_buffers: vec![],
                                 }))
                                 .shared(),
+                                None,
+                                cx,
                             );
                         })
                         .ok();
