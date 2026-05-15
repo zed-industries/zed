@@ -907,12 +907,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 64 characters")
-        );
+        let expected = format!("at most {MAX_SKILL_NAME_LEN} characters");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]
@@ -1188,12 +1184,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 1024 bytes")
-        );
+        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]

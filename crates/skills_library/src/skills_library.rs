@@ -1,14 +1,15 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, SKILL_FILE_NAME,
-    SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, validate_description, validate_name,
+    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_NAME_LEN,
+    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, validate_description,
+    validate_name,
 };
 use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, EventEmitter, Focusable, Rems,
-    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, Focusable, Rems, Subscription, Task,
+    TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions,
+    actions, point, size,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
@@ -454,7 +455,6 @@ impl SkillsLibrary {
                                 );
                             });
                         }
-                        cx.emit(SkillsLibraryEvent::Saved);
                         window.remove_window();
                     }
                     Err(err) => {
@@ -551,8 +551,14 @@ impl SkillsLibrary {
         let hint: SharedString = if let Some(err) = self.name_error {
             err.into()
         } else {
-            "Lowercase letters, numbers, and hyphens (1\u{2013}64 chars). For example: draft-pr."
-                .into()
+            // The numeric bound is sourced from the validator's constant
+            // so that the hint, the validator's error message, and the
+            // loader's check all move together when the limit changes.
+            format!(
+                "Lowercase letters, numbers, and hyphens (1\u{2013}{MAX_SKILL_NAME_LEN} chars). \
+                 For example: draft-pr."
+            )
+            .into()
         };
         let has_error = self.name_error.is_some();
         v_flex()
@@ -842,12 +848,6 @@ impl SkillsLibrary {
             )
     }
 }
-
-pub enum SkillsLibraryEvent {
-    Saved,
-}
-
-impl EventEmitter<SkillsLibraryEvent> for SkillsLibrary {}
 
 impl Render for SkillsLibrary {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
