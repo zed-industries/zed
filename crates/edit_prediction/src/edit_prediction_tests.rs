@@ -5,7 +5,8 @@ use clock::FakeSystemClock;
 use clock::ReplicaId;
 use cloud_api_types::{
     CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
-    OrganizationEditPredictionConfiguration, OrganizationId,
+    OrganizationEditPredictionConfiguration, OrganizationId, SubmitEditPredictionSettledBody,
+    SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, RejectEditPredictionsBody,
@@ -2503,6 +2504,7 @@ struct RequestChannels {
         oneshot::Sender<PredictEditsV3Response>,
     )>,
     reject: mpsc::UnboundedReceiver<(RejectEditPredictionsBody, oneshot::Sender<()>)>,
+    settled: mpsc::UnboundedReceiver<SubmitEditPredictionSettledBody>,
 }
 
 fn init_test_with_fake_client(
@@ -2534,6 +2536,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
 
         let (predict_req_tx, predict_req_rx) = mpsc::unbounded();
         let (reject_req_tx, reject_req_rx) = mpsc::unbounded();
+        let (settled_req_tx, settled_req_rx) = mpsc::unbounded();
 
         let http_client = FakeHttpClient::create({
             move |req| {
@@ -2541,6 +2544,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                 let mut body = req.into_body();
                 let predict_req_tx = predict_req_tx.clone();
                 let reject_req_tx = reject_req_tx.clone();
+                let settled_req_tx = settled_req_tx.clone();
                 async move {
                     let resp = match uri.as_str() {
                         "/client/llm_tokens" => serde_json::to_string(&json!({
@@ -2566,6 +2570,13 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             reject_req_tx.unbounded_send((req, res_tx)).unwrap();
                             serde_json::to_string(&res_rx.await?).unwrap()
                         }
+                        "/predict_edits/settled" => {
+                            let mut buf = Vec::new();
+                            body.read_to_end(&mut buf).await.ok();
+                            let req = serde_json::from_slice(&buf).unwrap();
+                            settled_req_tx.unbounded_send(req).unwrap();
+                            serde_json::to_string(&SubmitEditPredictionSettledResponse {}).unwrap()
+                        }
                         _ => {
                             panic!("Unexpected path: {}", uri)
                         }
@@ -2589,6 +2600,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
             RequestChannels {
                 predict: predict_req_rx,
                 reject: reject_req_rx,
+                settled: settled_req_rx,
             },
         )
     })
@@ -3416,6 +3428,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             editable_region_a.clone(),
             &edit_preview_a,
             None,
+            None,
             Duration::from_secs(0),
             cx,
         );
@@ -3482,6 +3495,7 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
             editable_region_b.clone(),
             &edit_preview_b,
             None,
+            None,
             Duration::from_secs(0),
             cx,
         );
@@ -3529,6 +3543,84 @@ async fn test_edit_prediction_settled(cx: &mut TestAppContext) {
         );
         assert_eq!(events[1].0, EditPredictionId("prediction-b".into()));
     }
+}
+
+#[gpui::test]
+async fn test_edit_prediction_settled_omits_body_when_data_collection_is_disabled(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "sensitive source\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let edits: Arc<[(Range<Anchor>, Arc<str>)]> =
+        cx.update(|cx| to_completion_edits([(0..9, "replacement".into())], &buffer, cx).into());
+    let edit_preview = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(edits, cx))
+        .await;
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.enqueue_settled_prediction(
+            EditPredictionId("prediction-private".into()),
+            &project,
+            &buffer,
+            &snapshot,
+            0..snapshot.len(),
+            &edit_preview,
+            Some(ExampleSpec {
+                name: "test example".to_string(),
+                repository_url: "https://example.com/repo".to_string(),
+                revision: "rev".to_string(),
+                tags: Vec::new(),
+                reasoning: None,
+                uncommitted_diff: String::new(),
+                cursor_path: Path::new("foo.md").into(),
+                cursor_position: "0".to_string(),
+                edit_history: "sensitive edit history".to_string(),
+                expected_patches: vec!["sensitive patch".to_string()],
+                rejected_patch: None,
+                telemetry: None,
+                human_feedback: Vec::new(),
+                rating: None,
+            }),
+            Some("test-model".to_string()),
+            Duration::from_millis(42),
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .await
+        .expect("settled request should be sent");
+    assert!(!settled_request.can_collect_data);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert_eq!(settled_request.example, None);
 }
 
 #[gpui::test]

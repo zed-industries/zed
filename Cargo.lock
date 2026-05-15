@@ -344,6 +344,7 @@ name = "agent_skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "const_format",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -364,6 +365,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
@@ -3597,6 +3599,7 @@ dependencies = [
  "http_client",
  "log",
  "net",
+ "oauth_callback_server",
  "parking_lot",
  "pollster 0.4.0",
  "postage",
@@ -3608,7 +3611,6 @@ dependencies = [
  "sha2",
  "slotmap",
  "tempfile",
- "tiny_http",
  "url",
  "util",
 ]
@@ -9683,20 +9685,26 @@ dependencies = [
  "log",
  "menu",
  "mistral",
+ "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
  "opencode",
+ "parking_lot",
  "pretty_assertions",
+ "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
+ "sha2",
+ "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
+ "url",
  "util",
  "x_ai",
 ]
@@ -11510,6 +11518,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oauth_callback_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "log",
+ "tiny_http",
+ "url",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11877,6 +11896,7 @@ dependencies = [
  "gpui",
  "picker",
  "project",
+ "project_panel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12271,6 +12291,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
+ "const_format",
  "dirs",
  "ignore",
  "util",
@@ -13648,6 +13669,8 @@ dependencies = [
  "assets",
  "chrono",
  "collections",
+ "db",
+ "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -13660,6 +13683,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "tempfile",
  "text",
@@ -18205,6 +18229,7 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
+ "feature_flags",
  "fs",
  "git_ui",
  "gpui",

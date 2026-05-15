@@ -64,6 +64,11 @@ pub enum MentionUri {
     MergeConflict {
         file_path: String,
     },
+    Skill {
+        name: String,
+        source: String,
+        skill_file_path: PathBuf,
+    },
 }
 
 impl MentionUri {
@@ -261,6 +266,40 @@ impl MentionUri {
                 } else if path.starts_with("/agent/merge-conflict") {
                     let file_path = single_query_param(&url, "path")?.unwrap_or_default();
                     Ok(Self::MergeConflict { file_path })
+                } else if path.starts_with("/agent/skill") {
+                    let mut name = None;
+                    let mut source = None;
+                    let mut skill_file_path = None;
+
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "name" => {
+                                if name.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill name query parameter");
+                                }
+                            }
+                            "source" => {
+                                if source.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill source query parameter");
+                                }
+                            }
+                            "path" => {
+                                if skill_file_path
+                                    .replace(PathBuf::from(value.to_string()))
+                                    .is_some()
+                                {
+                                    bail!("duplicate skill file path query parameter");
+                                }
+                            }
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+
+                    Ok(Self::Skill {
+                        name: name.context("missing skill name")?,
+                        source: source.context("missing skill source")?,
+                        skill_file_path: skill_file_path.context("missing skill file path")?,
+                    })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -303,6 +342,13 @@ impl MentionUri {
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Skill { name, source, .. } => {
+                if source.is_empty() {
+                    format!("{} (global)", name)
+                } else {
+                    format!("{} ({})", name, source)
+                }
+            }
         }
     }
 
@@ -337,6 +383,9 @@ impl MentionUri {
                 )
                 .into(),
             ),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => Some(skill_file_path.to_string_lossy().into_owned().into()),
             _ => None,
         }
     }
@@ -358,6 +407,7 @@ impl MentionUri {
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
             MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
+            MentionUri::Skill { .. } => IconName::Sparkle.path().into(),
         }
     }
 
@@ -463,6 +513,19 @@ impl MentionUri {
             MentionUri::MergeConflict { file_path } => {
                 let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
                 url.query_pairs_mut().append_pair("path", file_path);
+                url
+            }
+            MentionUri::Skill {
+                name,
+                source,
+                skill_file_path,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/skill");
+                url.query_pairs_mut()
+                    .append_pair("name", name)
+                    .append_pair("source", source)
+                    .append_pair("path", &skill_file_path.to_string_lossy());
                 url
             }
         }
@@ -703,6 +766,20 @@ mod tests {
             _ => panic!("Expected Rule variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), rule_uri);
+    }
+
+    #[test]
+    fn test_parse_skill_uri_round_trip() {
+        let skill_uri = MentionUri::Skill {
+            name: "rust-best-practices".to_string(),
+            source: "my-personal-project".to_string(),
+            skill_file_path: PathBuf::from(path!("/path/to/skills/rust-best-practices/SKILL.md")),
+        };
+
+        let serialized = skill_uri.to_uri().to_string();
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
+
+        assert_eq!(parsed, skill_uri);
     }
 
     #[test]

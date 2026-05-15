@@ -14,8 +14,8 @@ use agent_ui::threads_archive_view::{
 };
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo,
-    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread,
-    TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
+    AgentThreadSource, ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE,
+    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
     import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -2684,7 +2684,7 @@ impl Sidebar {
                     Some(metadata.folder_paths().clone()),
                     metadata.title.clone(),
                     focus,
-                    "sidebar",
+                    AgentThreadSource::Sidebar,
                     window,
                     cx,
                 );
@@ -4763,7 +4763,7 @@ impl Sidebar {
         let draft_id = workspace.update(cx, |workspace, cx| {
             let panel = workspace.panel::<AgentPanel>(cx)?;
             let draft_id = panel.update(cx, |panel, cx| {
-                panel.activate_new_thread(true, "sidebar", window, cx);
+                panel.activate_new_thread(true, AgentThreadSource::Sidebar, window, cx);
                 panel.active_thread_id(cx)
             });
             workspace.focus_panel::<AgentPanel>(window, cx);
@@ -4800,7 +4800,7 @@ impl Sidebar {
         workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
-                    panel.new_terminal(Some(workspace), window, cx);
+                    panel.new_terminal(Some(workspace), AgentThreadSource::Sidebar, window, cx);
                 });
             }
             workspace.focus_panel::<AgentPanel>(window, cx);
