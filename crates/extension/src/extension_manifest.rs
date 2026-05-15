@@ -191,10 +191,6 @@ impl ExtensionManifest {
             || !self.debug_adapters.is_empty()
             || !self.debug_locators.is_empty()
     }
-
-    pub fn should_sync_to_remote(&self) -> bool {
-        !self.languages.is_empty() || self.allow_remote_load()
-    }
 }
 
 pub fn build_debug_adapter_schema_path(
@@ -577,41 +573,6 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
-    }
-
-    #[test]
-    fn test_should_sync_to_remote() {
-        assert!(!extension_manifest().should_sync_to_remote());
-
-        assert!(
-            ExtensionManifest {
-                languages: vec![rel_path_buf("languages/foo")],
-                ..extension_manifest()
-            }
-            .should_sync_to_remote()
-        );
-
-        assert!(
-            ExtensionManifest {
-                language_servers: BTreeMap::from_iter([(
-                    LanguageServerName::new_static("foo"),
-                    LanguageServerManifestEntry::default(),
-                )]),
-                ..extension_manifest()
-            }
-            .should_sync_to_remote()
-        );
-
-        assert!(
-            ExtensionManifest {
-                debug_adapters: BTreeMap::from_iter([(
-                    "foo".into(),
-                    DebugAdapterManifestEntry { schema_path: None },
-                )]),
-                ..extension_manifest()
-            }
-            .should_sync_to_remote()
-        );
     }
 
     #[test]

@@ -159,6 +159,49 @@ pub struct ExtensionIndex {
     pub languages: BTreeMap<LanguageName, ExtensionIndexLanguageEntry>,
 }
 
+impl ExtensionIndex {
+    fn extensions_to_sync_to_remote(&self) -> Vec<(Arc<str>, ExtensionIndexEntry)> {
+        self.extensions
+            .iter()
+            .filter(|(_, entry)| entry.manifest.allow_remote_load())
+            .fold((HashSet::default(), Vec::new()), |state, (id, _)| {
+                self.push_extension_to_sync(id, state)
+            })
+            .1
+    }
+
+    fn push_extension_to_sync(
+        &self,
+        id: &Arc<str>,
+        (mut synced_extensions, extensions): (
+            HashSet<Arc<str>>,
+            Vec<(Arc<str>, ExtensionIndexEntry)>,
+        ),
+    ) -> (HashSet<Arc<str>>, Vec<(Arc<str>, ExtensionIndexEntry)>) {
+        if !synced_extensions.insert(id.clone()) {
+            return (synced_extensions, extensions);
+        }
+
+        let Some(entry) = self.extensions.get(id) else {
+            return (synced_extensions, extensions);
+        };
+
+        let (synced_extensions, mut extensions) = entry
+            .manifest
+            .language_servers
+            .values()
+            .flat_map(|language_server_config| language_server_config.languages())
+            .filter_map(|language| self.languages.get(&language))
+            .fold((synced_extensions, extensions), |state, language_entry| {
+                self.push_extension_to_sync(&language_entry.extension, state)
+            });
+
+        extensions.push((id.clone(), entry.clone()));
+
+        (synced_extensions, extensions)
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexEntry {
     pub manifest: Arc<ExtensionManifest>,
@@ -1785,17 +1828,12 @@ impl ExtensionStore {
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
             this.extension_index
-                .extensions
-                .iter()
-                .filter_map(|(id, entry)| {
-                    if !entry.manifest.should_sync_to_remote() {
-                        return None;
-                    }
-                    Some(proto::Extension {
-                        id: id.to_string(),
-                        version: entry.manifest.version.to_string(),
-                        dev: entry.dev,
-                    })
+                .extensions_to_sync_to_remote()
+                .into_iter()
+                .map(|(id, entry)| proto::Extension {
+                    id: id.to_string(),
+                    version: entry.manifest.version.to_string(),
+                    dev: entry.dev,
                 })
                 .collect()
         })?;
