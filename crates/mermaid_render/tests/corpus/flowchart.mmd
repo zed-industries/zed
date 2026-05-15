@@ -1,0 +1,12 @@
+flowchart TD
+    A([Start]) --> B[/Read Input/]
+    B --> C{Valid Format?}
+    C -->|Yes| D[Parse Data]
+    C -->|No| E[Log Error]
+    E --> B
+    D --> F{Data Complete?}
+    F -->|Yes| G[(Save to DB)]
+    F -->|No| H[Request Missing Fields]
+    H --> B
+    G --> I[Send Confirmation]
+    I --> J([End])

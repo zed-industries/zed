@@ -1,0 +1,47 @@
+classDiagram
+    class Vehicle {
+        <<abstract>>
+        -String vin
+        #int year
+        +String make
+        +String model
+        +start() bool
+        +stop() void
+        +fuelLevel() float
+    }
+
+    class Car {
+        -int numDoors
+        -bool sunroof
+        +openTrunk() void
+        +setSeatPosition(int pos) void
+    }
+
+    class Truck {
+        -float payloadCapacity
+        -bool fourWheelDrive
+        +lowerTailgate() void
+        +towingCapacity() float
+    }
+
+    class Engine {
+        -float displacement
+        -int horsepower
+        -String fuelType
+        +ignite() bool
+        +shutdown() void
+        +rpm() int
+    }
+
+    class Fleet {
+        -String companyName
+        -List~Vehicle~ vehicles
+        +addVehicle(Vehicle v) void
+        +removeVehicle(String vin) bool
+        +totalVehicles() int
+    }
+
+    Vehicle <|-- Car : extends
+    Vehicle <|-- Truck : extends
+    Vehicle "1" *-- "1" Engine : has
+    Fleet "1" o-- "0..*" Vehicle : manages

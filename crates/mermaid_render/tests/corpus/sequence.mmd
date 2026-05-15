@@ -1,0 +1,26 @@
+sequenceDiagram
+    participant Browser
+    participant API
+    participant DB
+
+    Browser->>+API: POST /login (credentials)
+    API->>API: Validate input
+    API->>+DB: SELECT user WHERE email = ?
+    DB-->>-API: User record
+    alt User found
+        API->>API: Compare password hash
+        alt Password matches
+            API->>+DB: INSERT session token
+            DB-->>-API: OK
+            API-->>Browser: 200 OK + JWT
+        else Password wrong
+            API-->>Browser: 401 Unauthorized
+        end
+    else User not found
+        API-->>-Browser: 404 Not Found
+    end
+    Note over Browser,API: Subsequent requests use JWT
+    Browser->>+API: GET /profile (JWT)
+    API->>+DB: SELECT profile WHERE user_id = ?
+    DB-->>-API: Profile data
+    API-->>-Browser: 200 OK + profile JSON

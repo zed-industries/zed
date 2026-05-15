@@ -1,0 +1,35 @@
+erDiagram
+    CUSTOMER {
+        int id PK
+        string name
+        string email UK
+        date created_at
+    }
+
+    ORDER {
+        int id PK
+        int customer_id FK
+        date order_date
+        string status
+        float total_amount
+    }
+
+    ORDER_ITEM {
+        int id PK
+        int order_id FK
+        int product_id FK
+        int quantity
+        float unit_price
+    }
+
+    PRODUCT {
+        int id PK
+        string name
+        string category
+        float price
+        int stock_count
+    }
+
+    CUSTOMER ||--o{ ORDER : "places"
+    ORDER ||--|{ ORDER_ITEM : "contains"
+    PRODUCT ||--o{ ORDER_ITEM : "appears in"

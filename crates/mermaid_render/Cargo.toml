@@ -1,0 +1,27 @@
+[package]
+name = "mermaid_render"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/mermaid_render.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+merman = { version = "0.4", features = ["render"] }
+mermaid-rs-renderer.workspace = true
+quick-xml.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "mermaid_benchmark"
+harness = false

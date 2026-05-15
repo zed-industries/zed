@@ -1,0 +1,26 @@
+gantt
+    title Product Launch Timeline
+    dateFormat YYYY-MM-DD
+    axisFormat %b %d
+
+    section Research
+        Market analysis        :done,    r1, 2025-01-06, 14d
+        Competitor review      :done,    r2, after r1, 7d
+        User interviews        :done,    r3, 2025-01-13, 10d
+
+    section Design
+        Wireframes             :done,    d1, after r2, 10d
+        Visual design          :active,  d2, after d1, 14d
+        Prototype              :         d3, after d2, 7d
+        Usability testing      :         d4, after d3, 5d
+
+    section Development
+        Backend API            :         dev1, after d2, 21d
+        Frontend implementation:         dev2, after d3, 18d
+        Integration            :         dev3, after dev1, 7d
+        QA testing             :crit,    dev4, after dev3, 10d
+
+    section Launch
+        Staging deploy         :         l1, after dev4, 3d
+        Beta release           :         l2, after l1, 14d
+        Production deploy      :milestone, l3, after l2, 0d

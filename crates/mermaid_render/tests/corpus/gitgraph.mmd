@@ -1,0 +1,25 @@
+gitGraph
+    commit id: "init"
+    commit id: "add-readme"
+    branch feature/auth
+    checkout feature/auth
+    commit id: "auth-scaffold"
+    commit id: "login-endpoint"
+    commit id: "jwt-middleware"
+    checkout main
+    branch feature/database
+    checkout feature/database
+    commit id: "db-schema"
+    commit id: "migrations"
+    checkout main
+    merge feature/database id: "merge-db" tag: "v0.2.0"
+    checkout feature/auth
+    commit id: "auth-tests"
+    checkout main
+    merge feature/auth id: "merge-auth" tag: "v0.3.0"
+    commit id: "ci-pipeline"
+    branch hotfix/security
+    checkout hotfix/security
+    commit id: "patch-vuln"
+    checkout main
+    merge hotfix/security id: "merge-hotfix" tag: "v0.3.1"

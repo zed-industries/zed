@@ -1,0 +1,37 @@
+stateDiagram-v2
+    [*] --> Idle
+
+    state Idle {
+        [*] --> Waiting
+        Waiting --> Listening : sensor activated
+    }
+
+    Idle --> Processing : input received
+
+    state Processing {
+        [*] --> Validating
+        Validating --> Transforming : valid
+        Validating --> Error : invalid
+        Transforming --> Enriching
+        Enriching --> [*]
+    }
+
+    Processing --> Idle : reset
+    Processing --> Outputting : processing complete
+
+    state Outputting {
+        [*] --> Formatting
+        Formatting --> Delivering
+        Delivering --> [*]
+    }
+
+    Outputting --> Idle : done
+
+    state Error {
+        [*] --> Logging
+        Logging --> Retrying
+        Retrying --> [*]
+    }
+
+    Error --> Idle : recovered
+    Error --> [*] : fatal
