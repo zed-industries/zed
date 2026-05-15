@@ -540,15 +540,20 @@ fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> D
     base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
-fn render_cell(width: Option<Length>, disable_base_style: bool, use_ui_font: bool, cell: AnyElement, cx: &App) -> Div {
-    if disable_base_style {
+fn render_cell(
+    width: Option<Length>,
+    cell: AnyElement,
+    ctx: &TableRenderContext,
+    cx: &App,
+) -> Div {
+    if ctx.disable_base_cell_style {
         div()
             .when_some(width, |this, width| this.w(width))
             .when(width.is_none(), |this| this.flex_1())
             .overflow_hidden()
             .child(cell)
     } else {
-        base_cell_style_text(width, use_ui_font, cx)
+        base_cell_style_text(width, ctx.use_ui_font, cx)
             .px_1()
             .py_0p5()
             .child(cell)
@@ -600,11 +605,10 @@ pub fn render_table_row(
         None
     };
     let cols = items.cols();
-    let column_widths = table_context
-        .column_widths
-        .map_or(vec![None; cols].into_table_row(cols), |widths| {
-            widths.map(Some)
-        });
+    let column_widths = match &table_context.column_widths {
+        Some(widths) => widths.clone().map(Some),
+        None => vec![None; cols].into_table_row(cols),
+    };
 
     let mut row = div()
         // NOTE: `h_flex()` sneakily applies `items_center()` which is not default behavior for div element.
@@ -633,38 +637,29 @@ pub fn render_table_row(
         let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
 
         // Pinned section: cells in normal flow with flex_shrink_0 to maintain their widths
-        let pinned_section = {
-            let disable = table_context.disable_base_cell_style;
-            let use_ui_font = table_context.use_ui_font;
-            div().flex().flex_row().flex_shrink_0().children(
-                items_vec.into_iter().zip(widths_vec).map(|(cell, width)| {
-                    render_cell(width, disable, use_ui_font, cell, cx)
-                }),
-            )
-        };
+        let pinned_section = div().flex().flex_row().flex_shrink_0().children(
+            items_vec
+                .into_iter()
+                .zip(widths_vec)
+                .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
+        );
 
         // Scrollable section: overflow_x_scroll + track_scroll so GPUI handles the visual
         // shift natively without requiring per-scroll re-renders of list items.
         // restrict_scroll_to_axis lets vertical scroll events pass through to the list.
-        let mut scrollable_section = {
-            let disable = table_context.disable_base_cell_style;
-            let use_ui_font = table_context.use_ui_font;
-            div()
-                .id(("table-row-scrollable", row_index as u64))
-                .flex_grow()
-                .overflow_x_scroll()
-                .flex()
-                .child(
-                    div().flex().flex_row().children(
-                        scrollable_items
-                            .into_iter()
-                            .zip(scrollable_widths)
-                            .map(|(cell, width)| {
-                                render_cell(width, disable, use_ui_font, cell, cx)
-                            }),
-                    ),
-                )
-        };
+        let mut scrollable_section = div()
+            .id(("table-row-scrollable", row_index as u64))
+            .flex_grow()
+            .overflow_x_scroll()
+            .flex()
+            .child(
+                div().flex().flex_row().children(
+                    scrollable_items
+                        .into_iter()
+                        .zip(scrollable_widths)
+                        .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
+                ),
+            );
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
@@ -679,9 +674,7 @@ pub fn render_table_row(
                 .into_vec()
                 .into_iter()
                 .zip(column_widths.into_vec())
-                .map(|(cell, width)| {
-                    render_cell(width, table_context.disable_base_cell_style, table_context.use_ui_font, cell, cx)
-                }),
+                .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
         );
     }
 
