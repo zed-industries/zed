@@ -2559,7 +2559,12 @@ impl AgentPanel {
     ) {
         // When the Skills feature flag is on, the legacy Rules action is
         // rerouted to the Skills library so the existing keyboard
-        // shortcut and any persisted keymap entries keep working.
+        // shortcut (still bound to `OpenRulesLibrary` in the default
+        // keymaps) and any persisted user keymap entries keep working.
+        // The options-menu "Skills" entry already dispatches
+        // `OpenSkillsLibrary` directly, so this reroute only serves the
+        // key-press path and is intended to disappear once the keymaps
+        // migrate to `OpenSkillsLibrary` in the post-flag cleanup.
         if cx.has_flag::<SkillsFeatureFlag>() {
             self.deploy_skills_library(&OpenSkillsLibrary, window, cx);
             return;
@@ -4259,18 +4264,30 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator();
 
-                            // We deliberately bind the menu entry to
-                            // `OpenRulesLibrary` even when the label says
-                            // "Skills". The keymap still ships the
-                            // `cmd-alt-l` / `ctrl-alt-l` shortcut on
-                            // `OpenRulesLibrary`, and `deploy_rules_library`
-                            // reroutes to the skills library when the
-                            // feature flag is on. Pointing the menu at
-                            // `OpenRulesLibrary` lets the popover surface
-                            // that shortcut next to the label automatically.
-                            let library_label = if skills_enabled { "Skills" } else { "Rules" };
-                            menu =
-                                menu.action(library_label, Box::new(OpenRulesLibrary::default()));
+                            menu = if skills_enabled {
+                                // Clicking "Skills" dispatches `OpenSkillsLibrary`
+                                // directly so that observers, command-palette
+                                // filters, and telemetry see the correct
+                                // action firing. The display action stays as
+                                // `OpenRulesLibrary` purely for keystroke
+                                // lookup — the default keymaps still bind
+                                // `cmd-alt-l` / `ctrl-alt-l` / `shift-alt-l`
+                                // to `OpenRulesLibrary`, and
+                                // `deploy_rules_library` reroutes those key
+                                // presses to the skills library. When the
+                                // flag is removed and the keymaps migrate to
+                                // `OpenSkillsLibrary`, this can collapse
+                                // back to `menu.action(...)`.
+                                menu.entry(
+                                    "Skills",
+                                    Some(Box::new(OpenRulesLibrary::default())),
+                                    |window, cx| {
+                                        window.dispatch_action(Box::new(OpenSkillsLibrary), cx);
+                                    },
+                                )
+                            } else {
+                                menu.action("Rules", Box::new(OpenRulesLibrary::default()))
+                            };
 
                             menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
