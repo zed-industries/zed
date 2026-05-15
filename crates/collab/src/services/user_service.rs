@@ -1,10 +1,17 @@
-use std::sync::Arc;
-
+use anyhow::{Context as _, anyhow};
 use async_trait::async_trait;
+use cloud_api_types::internal_api::{
+    self, FuzzySearchChannelMembersByGithubLoginBody,
+    FuzzySearchChannelMembersByGithubLoginResponse, FuzzySearchUsersBody, FuzzySearchUsersResponse,
+    LookUpUserByGithubLoginBody, LookUpUserByGithubLoginResponse, LookUpUsersByLegacyIdBody,
+    LookUpUsersByLegacyIdResponse,
+};
+use reqwest::RequestBuilder;
 use rpc::proto;
+use serde::de::DeserializeOwned;
 
 use crate::Result;
-use crate::db::{Channel, Database, UserId};
+use crate::db::{Channel, UserId};
 use crate::entities::User;
 
 #[cfg(feature = "test-support")]
@@ -31,40 +38,117 @@ pub trait UserService: Send + Sync + 'static {
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)>;
 
     #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> Arc<FakeUserService> {
+    fn as_fake(&self) -> std::sync::Arc<FakeUserService> {
         panic!("called as_fake on a real `UserService`");
     }
 }
 
-/// A [`UserService`] implementation backed by the database.
-pub struct DatabaseUserService {
-    database: Arc<Database>,
+/// A [`UserService`] implementation backed by Cloud.
+pub struct CloudUserService {
+    http_client: reqwest::Client,
+    zed_cloud_url: String,
+    internal_api_key: String,
 }
 
-impl DatabaseUserService {
-    pub fn new(database: Arc<Database>) -> Self {
-        Self { database }
+impl CloudUserService {
+    pub fn new(
+        http_client: reqwest::Client,
+        zed_cloud_url: String,
+        internal_api_key: String,
+    ) -> Self {
+        Self {
+            http_client,
+            zed_cloud_url,
+            internal_api_key,
+        }
+    }
+
+    async fn send_request<T: DeserializeOwned + 'static>(
+        &self,
+        request: RequestBuilder,
+    ) -> Result<T> {
+        let request = request
+            .header("Content-Type", "application/json")
+            .header(
+                "Authorization",
+                format!("Bearer {}", &self.internal_api_key),
+            )
+            .build()
+            .context("failed to build request")?;
+
+        let response = self
+            .http_client
+            .execute(request)
+            .await
+            .context("failed to send request to Cloud")?;
+
+        let status = response.status();
+        match response.error_for_status() {
+            Ok(response) => {
+                let response_body: T = response
+                    .json()
+                    .await
+                    .context("failed to parse response body")?;
+
+                Ok(response_body)
+            }
+            Err(_err) => Err(anyhow!("request to Cloud failed with status {status}",))?,
+        }
     }
 }
 
 #[async_trait]
-impl UserService for DatabaseUserService {
+impl UserService for CloudUserService {
     async fn get_users_by_ids(&self, ids: Vec<UserId>) -> Result<Vec<User>> {
-        let users = self.database.get_users_by_ids(ids).await?;
+        let response_body: LookUpUsersByLegacyIdResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_legacy_id",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUsersByLegacyIdBody {
+                        legacy_user_ids: ids.into_iter().map(|id| id.0).collect(),
+                    }),
+            )
+            .await?;
 
-        Ok(users.into_iter().map(User::from).collect())
+        Ok(response_body.users.into_iter().map(User::from).collect())
     }
 
     async fn get_user_by_github_login(&self, github_login: &str) -> Result<Option<User>> {
-        let user = self.database.get_user_by_github_login(github_login).await?;
+        let response_body: LookUpUserByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/look_up_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&LookUpUserByGithubLoginBody {
+                        github_login: github_login.to_string(),
+                    }),
+            )
+            .await?;
 
-        Ok(user.map(User::from))
+        Ok(response_body.user.map(User::from))
     }
 
     async fn fuzzy_search_users(&self, query: &str, limit: u32) -> Result<Vec<User>> {
-        let users = self.database.fuzzy_search_users(query, limit).await?;
+        let response_body: FuzzySearchUsersResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/users/fuzzy_search",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&FuzzySearchUsersBody {
+                        query: query.to_string(),
+                        limit,
+                    }),
+            )
+            .await?;
 
-        Ok(users.into_iter().map(User::from).collect())
+        Ok(response_body.users.into_iter().map(User::from).collect())
     }
 
     async fn search_channel_members(
@@ -73,27 +157,77 @@ impl UserService for DatabaseUserService {
         query: &str,
         limit: u32,
     ) -> Result<(Vec<proto::ChannelMember>, Vec<User>)> {
-        let (members, users) = self
-            .database
-            .get_channel_participant_details(channel, query, limit as u64)
+        let response_body: FuzzySearchChannelMembersByGithubLoginResponse = self
+            .send_request(
+                self.http_client
+                    .post(format!(
+                        "{}/internal/channel_members/fuzzy_search_by_github_login",
+                        &self.zed_cloud_url
+                    ))
+                    .json(&FuzzySearchChannelMembersByGithubLoginBody {
+                        channel_id: channel.root_id().0,
+                        query: query.to_string(),
+                        limit,
+                    }),
+            )
             .await?;
 
-        Ok((
-            members
-                .into_iter()
-                .map(proto::ChannelMember::from)
-                .collect(),
-            users.into_iter().map(User::from).collect(),
-        ))
+        let members = response_body
+            .channel_members
+            .into_iter()
+            .map(channel_member_to_proto)
+            .collect::<Vec<_>>();
+        let users = response_body
+            .users
+            .into_iter()
+            .map(User::from)
+            .collect::<Vec<_>>();
+
+        Ok((members, users))
+    }
+}
+
+fn channel_member_to_proto(member: internal_api::ChannelMember) -> proto::ChannelMember {
+    let kind = match member.kind {
+        internal_api::ChannelMemberKind::Member => proto::channel_member::Kind::Member,
+        internal_api::ChannelMemberKind::Invitee => proto::channel_member::Kind::Invitee,
+    };
+    let role = match member.role {
+        internal_api::ChannelMemberRole::Admin => proto::ChannelRole::Admin,
+        internal_api::ChannelMemberRole::Member => proto::ChannelRole::Member,
+        internal_api::ChannelMemberRole::Talker => proto::ChannelRole::Talker,
+        internal_api::ChannelMemberRole::Guest => proto::ChannelRole::Guest,
+        internal_api::ChannelMemberRole::Banned => proto::ChannelRole::Banned,
+    };
+
+    proto::ChannelMember {
+        user_id: UserId(member.legacy_user_id).to_proto(),
+        kind: kind.into(),
+        role: role.into(),
+    }
+}
+
+impl From<internal_api::User> for User {
+    fn from(user: internal_api::User) -> Self {
+        Self {
+            id: UserId(user.legacy_user_id),
+            avatar_url: user.avatar_url,
+            github_login: user.github_login,
+            name: user.name,
+            admin: user.admin,
+            connected_once: user.connected_once,
+        }
     }
 }
 
 #[cfg(feature = "test-support")]
 mod fake_user_service {
-    use std::sync::Weak;
+    use std::sync::{Arc, Weak};
 
     use collections::HashMap;
     use tokio::sync::Mutex;
+
+    use crate::db::Database;
 
     use super::*;
 
@@ -147,8 +281,8 @@ mod fake_user_service {
                 user_id,
                 User {
                     id: user_id,
+                    avatar_url: format!("https://github.com/{}.png?size=128", params.github_login),
                     github_login: params.github_login,
-                    github_user_id: params.github_user_id,
                     name: name.map(|name| name.to_string()),
                     admin,
                     connected_once: false,

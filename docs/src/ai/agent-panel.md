@@ -34,14 +34,14 @@ The sections below cover what you can do from here.
 
 By default, the Agent Panel uses Zed's first-party agent.
 
-Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu via the `+` icon in the top-right of the panel toolbar (in the empty state, this menu is exposed as the agent selector button on the left). You can also open that menu with {#kb agent::ToggleNewThreadMenu}.
+Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu using the agent selector button on the left (in the empty state) or the `+` icon in the top-right of the panel toolbar. You can also open that menu with {#kb agent::ToggleNewThreadMenu}.
 
 From the "New Thread…" menu you can:
 
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
 
-{#action agent::NewExternalAgentThread} creates another thread with the currently selected agent.
+{#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
 
 You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 

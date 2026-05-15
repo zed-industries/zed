@@ -245,6 +245,16 @@ pub struct EditorSettingsContent {
     /// Default: left
     pub completion_detail_alignment: Option<CompletionDetailAlignment>,
 
+    /// How to display the LSP item kind (function, method, variable, etc.)
+    /// of each entry in the completions menu.
+    ///
+    /// - "off": do not display item kinds (default).
+    /// - "symbol": display a single-letter badge, colorized based on the
+    ///   active syntax theme.
+    ///
+    /// Default: off
+    pub completion_menu_item_kind: Option<CompletionMenuItemKind>,
+
     /// How to display diffs in the editor.
     ///
     /// Default: split
@@ -298,6 +308,27 @@ pub enum CompletionDetailAlignment {
     #[default]
     Left,
     Right,
+}
+
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMenuItemKind {
+    #[default]
+    Off,
+    Symbol,
 }
 
 impl RelativeLineNumbers {

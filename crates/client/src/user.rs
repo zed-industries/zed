@@ -30,7 +30,7 @@ use util::{ResultExt, TryFutureExt as _};
 
 const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
-pub type UserId = u64;
+pub type LegacyUserId = u64;
 
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
@@ -57,7 +57,7 @@ pub struct ParticipantIndex(pub u32);
 
 #[derive(Default, Debug)]
 pub struct User {
-    pub id: UserId,
+    pub legacy_id: LegacyUserId,
     pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
@@ -67,7 +67,7 @@ pub struct User {
 pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
-    pub user_id: UserId,
+    pub user_id: LegacyUserId,
     pub is_host: bool,
     pub committer_name: Option<String>,
     pub committer_email: Option<String>,
@@ -87,7 +87,7 @@ impl Ord for User {
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.github_login == other.github_login
+        self.legacy_id == other.legacy_id && self.github_login == other.github_login
     }
 }
 
@@ -240,7 +240,7 @@ impl UserStore {
 
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
-                                        id: user_id,
+                                        legacy_id: user_id,
                                         github_login: response.user.github_login.clone().into(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
@@ -404,7 +404,7 @@ impl UserStore {
                     this.update(cx, |this, cx| {
                         // Remove contacts
                         this.contacts
-                            .retain(|contact| !removed_contacts.contains(&contact.user.id));
+                            .retain(|contact| !removed_contacts.contains(&contact.user.legacy_id));
                         // Update existing contacts and insert new ones
                         for updated_contact in updated_contacts {
                             match this.contacts.binary_search_by_key(
@@ -418,7 +418,7 @@ impl UserStore {
 
                         // Remove incoming contact requests
                         this.incoming_contact_requests.retain(|user| {
-                            if removed_incoming_requests.contains(&user.id) {
+                            if removed_incoming_requests.contains(&user.legacy_id) {
                                 cx.emit(Event::Contact {
                                     user: user.clone(),
                                     kind: ContactEventKind::Cancelled,
@@ -442,7 +442,7 @@ impl UserStore {
 
                         // Remove outgoing contact requests
                         this.outgoing_contact_requests
-                            .retain(|user| !removed_outgoing_requests.contains(&user.id));
+                            .retain(|user| !removed_outgoing_requests.contains(&user.legacy_id));
                         // Update existing incoming requests and insert new ones
                         for request in outgoing_requests {
                             match this
@@ -483,7 +483,7 @@ impl UserStore {
     }
 
     pub fn is_contact_request_pending(&self, user: &User) -> bool {
-        self.pending_contact_requests.contains_key(&user.id)
+        self.pending_contact_requests.contains_key(&user.legacy_id)
     }
 
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
@@ -525,7 +525,7 @@ impl UserStore {
     pub fn has_incoming_contact_request(&self, user_id: u64) -> bool {
         self.incoming_contact_requests
             .iter()
-            .any(|user| user.id == user_id)
+            .any(|user| user.legacy_id == user_id)
     }
 
     pub fn respond_to_contact_request(
@@ -967,13 +967,13 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.id, user.clone())
+            if let Some(old) = self.users.insert(user.legacy_id, user.clone())
                 && old.github_login != user.github_login
             {
                 self.by_github_login.remove(&old.github_login);
             }
             self.by_github_login
-                .insert(user.github_login.clone(), user.id);
+                .insert(user.github_login.clone(), user.legacy_id);
             ret.push(user)
         }
         ret
@@ -1023,7 +1023,7 @@ impl UserStore {
 impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
-            id: message.id,
+            legacy_id: message.id,
             github_login: message.github_login.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
@@ -1055,7 +1055,7 @@ impl Collaborator {
         Ok(Self {
             peer_id: message.peer_id.context("invalid peer id")?,
             replica_id: ReplicaId::new(message.replica_id as u16),
-            user_id: message.user_id as UserId,
+            user_id: message.user_id as LegacyUserId,
             is_host: message.is_host,
             committer_name: message.committer_name,
             committer_email: message.committer_email,

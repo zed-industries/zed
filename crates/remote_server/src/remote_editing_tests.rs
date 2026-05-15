@@ -2624,6 +2624,115 @@ async fn test_remote_apply_code_action_skips_unadvertised_command(
     assert_eq!(transaction.0.len(), 0);
 }
 
+#[gpui::test]
+async fn test_remote_restore_unstaged_hunk_clears_diff(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        editor::init(cx);
+    });
+
+    use editor::Editor;
+    use gpui::VisualContext;
+
+    let base_text = "
+        fn one() -> usize {
+            1
+        }
+    "
+    .unindent();
+    let modified_text = "
+        fn one() -> usize {
+            100
+        }
+    "
+    .unindent();
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": modified_text
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(
+        Path::new(path!("/code/project1/.git")),
+        &[("src/lib.rs", base_text.clone())],
+    );
+    fs.set_head_for_repo(
+        Path::new(path!("/code/project1/.git")),
+        &[("src/lib.rs", base_text.clone())],
+        "deadbeef",
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let worktree_id = {
+        let (worktree, _) = project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/code/project1"), true, cx)
+            })
+            .await
+            .unwrap();
+        cx.update(|cx| worktree.read(cx).id())
+    };
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let cx = cx.add_empty_window();
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let hunks: Vec<_> = editor
+            .diff_hunks_in_ranges(
+                &[editor::Anchor::Min..editor::Anchor::Max],
+                &snapshot.buffer_snapshot(),
+            )
+            .collect();
+        assert!(!hunks.is_empty(), "should have diff hunks before restore");
+    });
+
+    cx.update_window_entity(&editor, |editor, window, cx| {
+        editor.select_all(&editor::actions::SelectAll, window, cx);
+        editor.git_restore(&git::Restore, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    editor.update_in(cx, |editor, _window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        assert_eq!(
+            snapshot.text(),
+            base_text,
+            "buffer text should match base after restoring all hunks"
+        );
+
+        let hunks: Vec<_> = editor
+            .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+            .collect();
+        assert!(hunks.is_empty(), "should have no diff hunks after restore");
+    });
+}
+
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,

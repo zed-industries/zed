@@ -864,6 +864,9 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+    /// When enabled, edit predictions are shown in Vim normal mode.
+    /// By default, edit predictions are only shown in insert and replace modes.
+    pub show_edit_predictions_in_normal_mode: Option<bool>,
 }
 
 #[derive(
