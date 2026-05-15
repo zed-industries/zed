@@ -549,12 +549,7 @@ fn base_cell_style_text(width: Option<Length>, use_ui_font: bool, cx: &App) -> D
     base_cell_style(width).when(use_ui_font, |el| el.text_ui(cx))
 }
 
-fn render_cell(
-    width: Option<Length>,
-    cell: AnyElement,
-    ctx: &TableRenderContext,
-    cx: &App,
-) -> Div {
+fn render_cell(width: Option<Length>, cell: AnyElement, ctx: &TableRenderContext, cx: &App) -> Div {
     if ctx.disable_base_cell_style {
         div()
             .when_some(width, |this, width| this.w(width))
@@ -738,23 +733,22 @@ pub fn render_table_header(
         let scrollable_headers: Vec<AnyElement> = headers_vec.drain(pinned_cols..).collect();
         let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
 
-        let pinned_section = div().flex().flex_row().flex_shrink_0().children(
-            headers_vec
-                .into_iter()
-                .enumerate()
-                .zip(widths_vec)
-                .map(|((header_idx, h), width)| {
-                    render_header_cell(
-                        h,
-                        width,
-                        header_idx,
-                        &shared_element_id,
-                        resize_info_ref,
-                        use_ui_font,
-                        cx,
-                    )
-                }),
-        );
+        let pinned_section =
+            div().flex().flex_row().flex_shrink_0().children(
+                headers_vec.into_iter().enumerate().zip(widths_vec).map(
+                    |((header_idx, h), width)| {
+                        render_header_cell(
+                            h,
+                            width,
+                            header_idx,
+                            &shared_element_id,
+                            resize_info_ref,
+                            use_ui_font,
+                            cx,
+                        )
+                    },
+                ),
+            );
 
         let inner = div().flex().flex_row().children(
             scrollable_headers
