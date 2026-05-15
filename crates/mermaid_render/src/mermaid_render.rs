@@ -158,8 +158,8 @@ fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
         .node .fork-join {{ fill: {line} !important; stroke: {line} !important; }}
         .node circle.state-end {{ fill: {border} !important; stroke: {background} !important; }}
         .end-state-inner {{ fill: {background} !important; }}
-        .node:not(.mindmap-node) rect, .node:not(.mindmap-node) path {{ fill: {primary} !important; stroke: {border} !important; }}
-        .node:not(.mindmap-node) polygon {{ fill: {primary} !important; stroke: {border} !important; }}
+        .node rect, .node path {{ fill: {primary} !important; stroke: {border} !important; }}
+        .node polygon {{ fill: {primary} !important; stroke: {border} !important; }}
         .label-container path {{ fill: {primary} !important; stroke: {border} !important; }}
         .statediagram-cluster rect {{ fill: {primary} !important; stroke: {border} !important; }}
         .statediagram-cluster.statediagram-cluster .inner {{ fill: {background} !important; }}
@@ -720,7 +720,71 @@ fn postprocess_merman_svg(
     }
 
     let svg = String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")?;
-    Ok(sanitize_nan_colors(&svg))
+    let svg = sanitize_nan_colors(&svg);
+    Ok(strip_unsupported_css(&svg))
+}
+
+/// Strip CSS rules that usvg's `simplecss` parser cannot handle:
+/// `@keyframes` blocks, `:root` declarations, and any remaining `:not()`
+/// selectors. These produce log warnings and are never applied.
+fn strip_unsupported_css(svg: &str) -> String {
+    let Some(style_start) = svg.find("<style>") else {
+        return svg.to_string();
+    };
+    let content_start = style_start + "<style>".len();
+    let Some(content_len) = svg[content_start..].find("</style>") else {
+        return svg.to_string();
+    };
+    let content_end = content_start + content_len;
+    let css = &svg[content_start..content_end];
+
+    let mut cleaned = String::with_capacity(css.len());
+    let bytes = css.as_bytes();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if css[i..].starts_with("@keyframes") {
+            i = skip_css_block(bytes, i);
+            continue;
+        }
+
+        let Some(brace_offset) = css[i..].find('{') else {
+            cleaned.push_str(&css[i..]);
+            break;
+        };
+        let selector = &css[i..i + brace_offset];
+        if selector.contains(":root") || selector.contains(":not(") {
+            i = skip_css_block(bytes, i);
+            continue;
+        }
+
+        let block_end = skip_css_block(bytes, i);
+        cleaned.push_str(&css[i..block_end]);
+        i = block_end;
+    }
+
+    let mut result = String::with_capacity(svg.len());
+    result.push_str(&svg[..content_start]);
+    result.push_str(&cleaned);
+    result.push_str(&svg[content_end..]);
+    result
+}
+
+fn skip_css_block(bytes: &[u8], start: usize) -> usize {
+    let mut depth = 0;
+    let mut i = start;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            depth += 1;
+        } else if bytes[i] == b'}' {
+            depth -= 1;
+            if depth == 0 {
+                return i + 1;
+            }
+        }
+        i += 1;
+    }
+    i
 }
 
 /// Replace any `hsl(…, NaN%)` values that merman's internal color derivation
