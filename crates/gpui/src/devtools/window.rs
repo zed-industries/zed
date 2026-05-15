@@ -14,8 +14,7 @@ use std::time::Duration;
 
 const FRAME_RATE_WINDOW: Duration = Duration::from_secs(1);
 const ANIMATION_EXPIRY: Duration = Duration::from_secs(1);
-const TOP_SOURCE_COUNT: usize = 3;
-const HUD_MAX_LINE_CHARS: usize = 96;
+const TOP_SOURCE_COUNT: usize = 15;
 const WINDOW_WIDTH: Pixels = px(760.);
 const WINDOW_HEIGHT: Pixels = px(360.);
 
@@ -169,7 +168,7 @@ impl GpuiDevtoolsWindow {
                         this.apply_action(action.kind, window, cx);
                     }))
             }))
-            .child(div().min_w_0().overflow_hidden().child(row.text))
+            .child(div().min_w_0().whitespace_nowrap().child(row.text))
             .into_any_element()
     }
 }
@@ -186,7 +185,7 @@ impl Render for GpuiDevtoolsWindow {
         div()
             .id("gpui-profiler-window")
             .size_full()
-            .overflow_hidden()
+            .overflow_scroll()
             .bg(rgba(0x111827ff))
             .text_color(hsla(0.58, 0.38, 0.92, 0.96))
             .font_family(".SystemUIFont")
@@ -426,7 +425,7 @@ impl DevtoolsRow {
 
     fn plain(text: impl Into<String>) -> Self {
         Self {
-            text: truncate_chars(&text.into(), HUD_MAX_LINE_CHARS),
+            text: text.into(),
             kind: DevtoolsRowKind::Data,
             actions: Vec::new(),
         }
@@ -692,19 +691,6 @@ fn file_name(path: &'static str) -> &'static str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        let mut truncated = text
-            .chars()
-            .take(max_chars.saturating_sub(3))
-            .collect::<String>();
-        truncated.push_str("...");
-        truncated
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::{CacheMissReasons, NotifyEvent, ViewRenderEvent, ViewRenderPhase};
@@ -740,7 +726,7 @@ mod tests {
     fn devtools_notify_sources_respect_limit() {
         let mut devtools = GpuiDevTools::new();
         let now = Instant::now();
-        for index in 0..4 {
+        for index in 0..20 {
             devtools.notifications.push(NotifyEvent {
                 entity_id: EntityId::from((index + 1) as u64),
                 entity_type: "Editor",
@@ -753,6 +739,9 @@ mod tests {
             });
         }
 
-        assert_eq!(top_notify_sources(&devtools, now, 3).len(), 3);
+        assert_eq!(
+            top_notify_sources(&devtools, now, TOP_SOURCE_COUNT).len(),
+            TOP_SOURCE_COUNT
+        );
     }
 }
