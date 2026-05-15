@@ -2705,6 +2705,63 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_detect_repository_created_after_project_open(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        path!("/project").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, Vec::<Arc<Path>>::new());
+
+    fs.create_dir(Path::new(path!("/project/.git")))
+        .await
+        .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    let repos = worktree.update(cx, |worktree, _| {
+        worktree.as_local().unwrap().repositories()
+    });
+    pretty_assertions::assert_eq!(repos, [Path::new(path!("/project")).into()]);
+}
+
+#[gpui::test]
 async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
