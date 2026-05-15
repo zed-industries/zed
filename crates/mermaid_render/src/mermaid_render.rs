@@ -561,15 +561,37 @@ fn postprocess_merman_svg(
                                 .try_get_attribute("width")?
                                 .map(|a| a.unescape_value().map(|v| v.to_string()))
                                 .transpose()?;
-                            if matches!(width_val.as_deref(), Some("")) {
+                            let height_val = e
+                                .try_get_attribute("height")?
+                                .map(|a| a.unescape_value().map(|v| v.to_string()))
+                                .transpose()?;
+                            let bad_width =
+                                matches!(width_val.as_deref(), Some("") | None);
+                            let bad_height =
+                                matches!(height_val.as_deref(), Some("") | None);
+                            if bad_width || bad_height {
                                 let mut ne = BytesStart::new("rect");
+                                let mut has_width = false;
+                                let mut has_height = false;
                                 for attr in e.attributes() {
                                     let attr = attr?;
-                                    if attr.key.local_name().as_ref() == b"width" {
-                                        ne.push_attribute(("width", "0"));
-                                    } else {
-                                        ne.push_attribute(attr);
+                                    match attr.key.local_name().as_ref() {
+                                        b"width" if bad_width => {
+                                            has_width = true;
+                                            ne.push_attribute(("width", "0"));
+                                        }
+                                        b"height" if bad_height => {
+                                            has_height = true;
+                                            ne.push_attribute(("height", "0"));
+                                        }
+                                        _ => ne.push_attribute(attr),
                                     }
+                                }
+                                if bad_width && !has_width {
+                                    ne.push_attribute(("width", "0"));
+                                }
+                                if bad_height && !has_height {
+                                    ne.push_attribute(("height", "0"));
                                 }
                                 Some(ne)
                             } else {
@@ -1039,6 +1061,22 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
             "pieLegendTextColor": theme.text_color,
             "pieStrokeColor": theme.primary_border_color,
             "pieOuterStrokeColor": theme.primary_border_color,
+
+            "quadrant1Fill": theme.primary_color,
+            "quadrant2Fill": theme.primary_color,
+            "quadrant3Fill": theme.primary_color,
+            "quadrant4Fill": theme.primary_color,
+            "quadrant1TextFill": theme.text_color,
+            "quadrant2TextFill": theme.text_color,
+            "quadrant3TextFill": theme.text_color,
+            "quadrant4TextFill": theme.text_color,
+            "quadrantPointFill": theme.line_color,
+            "quadrantPointTextFill": theme.text_color,
+            "quadrantTitleFill": theme.text_color,
+            "quadrantXAxisTextFill": theme.text_color,
+            "quadrantYAxisTextFill": theme.text_color,
+            "quadrantExternalBorderStrokeFill": theme.primary_border_color,
+            "quadrantInternalBorderStrokeFill": theme.primary_border_color,
         }
     }))
 }
