@@ -752,6 +752,9 @@ impl MessageEditor {
         agent_id: &AgentId,
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
+            if parsed_command.source_range.start != 0 {
+                return Ok(());
+            }
             if let Some(command_name) = parsed_command.command {
                 // Two acceptance paths:
                 //
@@ -794,12 +797,17 @@ impl MessageEditor {
                     });
 
                 if !direct_match && !scope_match {
-                    return Err(anyhow!(
-                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
-                        command_name,
-                        agent_id,
-                        Self::format_available_commands(available_commands, available_skills),
-                    ));
+                    return Err(anyhow!(indoc::formatdoc!(
+                        "/{command_name} is not a recognized command in {agent_id}. \
+                         Messages that start with `/` are interpreted as commands.
+
+                         If you are trying to send a message and not run a command, \
+                         try preceding the `/` with a space.
+
+                         Available commands for {agent_id}: {commands}",
+                        commands =
+                            Self::format_available_commands(available_commands, available_skills),
+                    )));
                 }
             }
         }
@@ -2260,6 +2268,24 @@ mod tests {
             err_message.contains("/help"),
             "error listing should still show bare MCP commands: {err_message}"
         );
+
+        // Slashes that appear mid-text (paths, URLs, pasted logs)
+        // should NOT be validated as commands.
+        MessageEditor::validate_slash_commands(
+            "check /docs for info",
+            &commands,
+            &skills,
+            &agent_id,
+        )
+        .expect("mid-text /docs should not be treated as a slash command");
+
+        MessageEditor::validate_slash_commands(
+            "see /usr/local/bin/foo",
+            &commands,
+            &skills,
+            &agent_id,
+        )
+        .expect("file paths containing slashes should not trigger validation");
     }
 
     #[test]
@@ -2502,8 +2528,8 @@ mod tests {
         // Should fail because available_commands is empty (no commands supported)
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Agent"));
-        assert!(error_message.contains("Available commands: none"));
+        assert!(error_message.contains("is not a recognized command in Claude Agent"));
+        assert!(error_message.contains("Available commands for Claude Agent: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
         session_capabilities
@@ -2521,9 +2547,9 @@ mod tests {
 
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Agent"));
+        assert!(error_message.contains("is not a recognized command in Claude Agent"));
         assert!(error_message.contains("/file"));
-        assert!(error_message.contains("Available commands: /help"));
+        assert!(error_message.contains("Available commands for Claude Agent: /help"));
 
         // Test that supported commands work fine
         editor.update_in(cx, |editor, window, cx| {
