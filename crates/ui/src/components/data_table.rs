@@ -555,6 +555,36 @@ fn render_cell(width: Option<Length>, disable_base_style: bool, use_ui_font: boo
     }
 }
 
+fn render_header_cell(
+    header: AnyElement,
+    width: Option<Length>,
+    header_idx: usize,
+    shared_element_id: &SharedString,
+    resize_info: Option<&HeaderResizeInfo>,
+    use_ui_font: bool,
+    cx: &App,
+) -> Stateful<Div> {
+    base_cell_style_text(width, use_ui_font, cx)
+        .px_1()
+        .py_0p5()
+        .child(header)
+        .id(ElementId::NamedInteger(
+            shared_element_id.clone(),
+            header_idx as u64,
+        ))
+        .when_some(resize_info.cloned(), |this, info| {
+            if info.resize_behavior[header_idx].is_resizable() {
+                this.on_click(move |event, window, cx| {
+                    if event.click_count() > 1 {
+                        info.reset_column(header_idx, window, cx);
+                    }
+                })
+            } else {
+                this
+            }
+        })
+}
+
 pub fn render_table_row(
     row_index: usize,
     items: TableRow<impl IntoElement>,
@@ -693,6 +723,9 @@ pub fn render_table_header(
         .border_b_1()
         .border_color(cx.theme().colors().border);
 
+    let use_ui_font = table_context.use_ui_font;
+    let resize_info_ref = resize_info.as_ref();
+
     if pinned_cols > 0 && pinned_cols < cols {
         let mut headers_vec: Vec<AnyElement> = headers
             .into_vec()
@@ -704,74 +737,47 @@ pub fn render_table_header(
         let scrollable_headers: Vec<AnyElement> = headers_vec.drain(pinned_cols..).collect();
         let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
 
-        // Pinned header section
-        let pinned_section = {
-            let use_ui_font = table_context.use_ui_font;
-            div().flex().flex_row().flex_shrink_0().children(
-                headers_vec.into_iter().enumerate().zip(widths_vec).map(
-                    |((header_idx, h), width)| {
-                        base_cell_style_text(width, use_ui_font, cx)
-                            .px_1()
-                            .py_0p5()
-                            .child(h)
-                            .id(ElementId::NamedInteger(
-                                shared_element_id.clone(),
-                                header_idx as u64,
-                            ))
-                            .when_some(resize_info.as_ref().cloned(), |this, info| {
-                                if info.resize_behavior[header_idx].is_resizable() {
-                                    this.on_click(move |event, window, cx| {
-                                        if event.click_count() > 1 {
-                                            info.reset_column(header_idx, window, cx);
-                                        }
-                                    })
-                                } else {
-                                    this
-                                }
-                            })
-                    },
-                ),
-            )
-        };
+        let pinned_section = div().flex().flex_row().flex_shrink_0().children(
+            headers_vec
+                .into_iter()
+                .enumerate()
+                .zip(widths_vec)
+                .map(|((header_idx, h), width)| {
+                    render_header_cell(
+                        h,
+                        width,
+                        header_idx,
+                        &shared_element_id,
+                        resize_info_ref,
+                        use_ui_font,
+                        cx,
+                    )
+                }),
+        );
 
-        // Scrollable header section: same overflow_x_scroll + track_scroll approach as data rows
-        let mut scrollable_section = {
-            let use_ui_font = table_context.use_ui_font;
-            let inner = div().flex().flex_row().children(
-                scrollable_headers
-                    .into_iter()
-                    .enumerate()
-                    .zip(scrollable_widths)
-                    .map(|((rel_idx, h), width)| {
-                        let header_idx = pinned_cols + rel_idx;
-                        base_cell_style_text(width, use_ui_font, cx)
-                            .px_1()
-                            .py_0p5()
-                            .child(h)
-                            .id(ElementId::NamedInteger(
-                                shared_element_id.clone(),
-                                header_idx as u64,
-                            ))
-                            .when_some(resize_info.as_ref().cloned(), |this, info| {
-                                if info.resize_behavior[header_idx].is_resizable() {
-                                    this.on_click(move |event, window, cx| {
-                                        if event.click_count() > 1 {
-                                            info.reset_column(header_idx, window, cx);
-                                        }
-                                    })
-                                } else {
-                                    this
-                                }
-                            })
-                    }),
-            );
-            div()
-                .id("table-header-scrollable")
-                .flex_grow()
-                .overflow_x_scroll()
-                .flex()
-                .child(inner)
-        };
+        let inner = div().flex().flex_row().children(
+            scrollable_headers
+                .into_iter()
+                .enumerate()
+                .zip(scrollable_widths)
+                .map(|((rel_idx, h), width)| {
+                    render_header_cell(
+                        h,
+                        width,
+                        pinned_cols + rel_idx,
+                        &shared_element_id,
+                        resize_info_ref,
+                        use_ui_font,
+                        cx,
+                    )
+                }),
+        );
+        let mut scrollable_section = div()
+            .id("table-header-scrollable")
+            .flex_grow()
+            .overflow_x_scroll()
+            .flex()
+            .child(inner);
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
@@ -791,25 +797,15 @@ pub fn render_table_header(
                     .enumerate()
                     .zip(column_widths.into_vec())
                     .map(|((header_idx, h), width)| {
-                        base_cell_style_text(width, table_context.use_ui_font, cx)
-                            .px_1()
-                            .py_0p5()
-                            .child(h)
-                            .id(ElementId::NamedInteger(
-                                shared_element_id.clone(),
-                                header_idx as u64,
-                            ))
-                            .when_some(resize_info.as_ref().cloned(), |this, info| {
-                                if info.resize_behavior[header_idx].is_resizable() {
-                                    this.on_click(move |event, window, cx| {
-                                        if event.click_count() > 1 {
-                                            info.reset_column(header_idx, window, cx);
-                                        }
-                                    })
-                                } else {
-                                    this
-                                }
-                            })
+                        render_header_cell(
+                            h.into_any_element(),
+                            width,
+                            header_idx,
+                            &shared_element_id,
+                            resize_info_ref,
+                            use_ui_font,
+                            cx,
+                        )
                     }),
             )
             .into_any_element()
