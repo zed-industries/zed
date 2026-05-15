@@ -5,7 +5,10 @@ use gh_workflow::{
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, CommonJobConditions, FluentBuilder as _, NamedJob, named, release_job},
+    steps::{
+        self, CommonJobConditions, FluentBuilder as _, NamedJob, UploadArtifactStep, named,
+        release_job,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -143,15 +146,9 @@ fn docs_deploy_steps(job: Job, project_name: &StepOutput) -> Job {
         .add_with(("command", "deploy .cloudflare/docs-proxy/src/worker.js"))
     }
 
-    fn upload_wrangler_logs() -> Step<Use> {
-        named::uses(
-            "actions",
-            "upload-artifact",
-            "ea165f8d65b6e75b540449e92b4886f43607fa02",
-        ) // v4
-        .if_condition(Expression::new("always()"))
-        .add_with(("name", "wrangler_logs"))
-        .add_with(("path", "/home/runner/.config/.wrangler/logs/"))
+    fn upload_wrangler_logs() -> UploadArtifactStep {
+        steps::upload_artifact("wrangler_logs", "/home/runner/.config/.wrangler/logs/")
+            .if_condition(Expression::new("always()"))
     }
 
     job.add_step(deploy_to_cf_pages(project_name))
