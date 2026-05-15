@@ -26,6 +26,7 @@ use rustc_middle::hir::nested_filter;
 use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
+mod blocking_io_on_foreground;
 mod entity_update_in_render;
 mod len_in_loop_condition;
 mod notify_in_render;
@@ -33,6 +34,7 @@ mod owned_string_into_shared;
 mod render_helpers;
 mod wrapped_doc_comment;
 
+use blocking_io_on_foreground::BLOCKING_IO_ON_FOREGROUND;
 use entity_update_in_render::ENTITY_UPDATE_IN_RENDER;
 use len_in_loop_condition::LEN_IN_LOOP_CONDITION;
 use notify_in_render::NOTIFY_IN_RENDER;
@@ -54,6 +56,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_lints(&[
         SHARED_STRING_FROM_STR_LITERAL,
         ASYNC_BLOCK_WITHOUT_AWAIT,
+        BLOCKING_IO_ON_FOREGROUND,
         ENTITY_UPDATE_IN_RENDER,
         LEN_IN_LOOP_CONDITION,
         NOTIFY_IN_RENDER,
@@ -62,6 +65,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     ]);
     lint_store.register_late_pass(|_| Box::new(SharedStringFromStrLiteral));
     lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
+    lint_store.register_late_pass(|_| Box::new(blocking_io_on_foreground::BlockingIoOnForeground));
     lint_store.register_late_pass(|_| Box::new(entity_update_in_render::EntityUpdateInRender));
     lint_store.register_late_pass(|_| Box::new(len_in_loop_condition::LenInLoopCondition));
     lint_store.register_late_pass(|_| Box::new(notify_in_render::NotifyInRender));
@@ -527,22 +531,43 @@ impl<'tcx> Visitor<'tcx> for AwaitVisitor<'_, 'tcx> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    /// Build the test-fixture `gpui` crate and return rustc flags that make
+    /// it available to standalone UI test files via `extern crate gpui`.
+    fn gpui_fixture_rustc_flags() -> Vec<String> {
+        let fixture_dir: PathBuf = [env!("CARGO_MANIFEST_DIR"), "test_fixture"]
+            .iter()
+            .collect();
+
+        let status = Command::new("cargo")
+            .args(["build", "--package", "gpui"])
+            .current_dir(&fixture_dir)
+            .status()
+            .expect("failed to run cargo build for gpui fixture");
+        assert!(status.success(), "gpui fixture build failed");
+
+        let rlib: PathBuf = fixture_dir.join("target/debug/libgpui.rlib");
+        let deps: PathBuf = fixture_dir.join("target/debug/deps");
+
+        vec![
+            "--edition=2021".to_string(),
+            format!("--extern=gpui={}", rlib.display()),
+            format!("-Ldependency={}", deps.display()),
+        ]
+    }
+
     #[test]
-    fn ui_async_block_without_await() {
+    fn ui() {
+        let flags = gpui_fixture_rustc_flags();
         dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), "ui")
-            .rustc_flags(["--edition=2021"])
+            .rustc_flags(flags)
             .run();
     }
 
     #[test]
     fn ui_shared_string() {
         dylint_testing::ui_test_examples(env!("CARGO_PKG_NAME"));
-    }
-
-    #[test]
-    fn ui_wrapped_doc_comment() {
-        dylint_testing::ui::Test::src_base(env!("CARGO_PKG_NAME"), "ui")
-            .rustc_flags(["--edition=2021"])
-            .run();
     }
 }

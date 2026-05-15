@@ -35,7 +35,8 @@ that the output contains only `owned_string_into_shared` diagnostics.
 
 ### 1. `crates/editor/src/editor.rs:4995`
 
-```crates/editor/src/editor.rs#L4992-4996
+crates/editor/src/editor.rs#L4992-4996:
+```rust
                 edits.push((
                     emoji_shortcode_start..selection.start,
                     "".to_string().into(),
@@ -49,7 +50,8 @@ refcounted destination after first allocating the `String`.
 
 ### 2. `crates/toolchain_selector/src/toolchain_selector.rs:867`
 
-```crates/toolchain_selector/src/toolchain_selector.rs#L867-L867
+crates/toolchain_selector/src/toolchain_selector.rs#L867-L867:
+```rust
         let placeholder_text = "Select a toolchain…".to_string().into();
 ```
 

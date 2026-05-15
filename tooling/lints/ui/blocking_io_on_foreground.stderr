@@ -1,0 +1,100 @@
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:16:13
+   |
+LL |     let _ = std::fs::read_to_string("config.toml");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(blocking_io_on_foreground)]` on by default
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:20:13
+   |
+LL |     let _ = std::fs::write("out.txt", b"data");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:24:5
+   |
+LL |     std::thread::sleep(std::time::Duration::from_millis(100));
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:28:13
+   |
+LL |     let _ = std::fs::read("data.bin");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:32:13
+   |
+LL |     let _ = std::fs::metadata("file.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:36:13
+   |
+LL |     let _ = std::fs::create_dir_all("some/path");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:40:13
+   |
+LL |     let _ = std::fs::remove_file("old.txt");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:44:13
+   |
+LL |     let _ = std::fs::canonicalize("./relative");
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:50:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").metadata();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:54:13
+   |
+LL |     let _ = std::path::Path::new("link").symlink_metadata();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:58:13
+   |
+LL |     let _ = std::path::Path::new("link").read_link();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:62:13
+   |
+LL |     let _ = std::path::Path::new("dir").read_dir();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:66:13
+   |
+LL |     let _ = std::path::Path::new("file.txt").exists();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:70:13
+   |
+LL |     let _ = std::path::Path::new("./relative").canonicalize();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:75:13
+   |
+LL |     let _ = std::path::PathBuf::from("file.txt").exists();
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: blocking IO call on the GPUI foreground thread
+  --> $DIR/blocking_io_on_foreground.rs:82:17
+   |
+LL |         let _ = std::fs::read_to_string("layout.toml");
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: 16 warnings emitted
+
