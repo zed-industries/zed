@@ -196,6 +196,15 @@ fn context_excerpts(
     context
 }
 
+fn retrieved_context_tokens(example: &Example) -> Option<f64> {
+    let prompt_inputs = example.prompt_inputs.as_ref()?;
+    let context_chars = context_excerpts(example, prompt_inputs)
+        .iter()
+        .map(|excerpt| excerpt.content.len())
+        .sum::<usize>();
+    Some(context_chars as f64 / 3.0)
+}
+
 pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     use crate::metrics::ClassificationMetrics;
@@ -255,11 +264,18 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
+    let mut retrieved_context_tokens_sum = 0.0;
+    let mut retrieved_context_tokens_count = 0;
 
     let mut printed_lines: usize = 0;
     let mut skipped_lines: usize = 0;
 
     for example in examples {
+        if let Some(tokens) = retrieved_context_tokens(example) {
+            retrieved_context_tokens_sum += tokens;
+            retrieved_context_tokens_count += 1;
+        }
+
         for (score_idx, score) in example.score.iter().enumerate() {
             let exact_lines = score.exact_lines_counts();
 
@@ -531,6 +547,13 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
                 recall_rate_count
             );
         }
+        if retrieved_context_tokens_count > 0 {
+            println!(
+                "Retrieved context size: {:.0} tokens avg ({} examples, chars / 3)",
+                retrieved_context_tokens_sum / retrieved_context_tokens_count as f64,
+                retrieved_context_tokens_count
+            );
+        }
         if editable_context_coverage_count > 0 {
             let count = editable_context_coverage_count as f64;
             println!(
@@ -645,10 +668,17 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
     let mut file_recall_sum = 0.0;
     let mut file_f1_sum = 0.0;
     let mut total_scores = 0;
+    let mut retrieved_context_tokens_sum = 0.0;
+    let mut retrieved_context_tokens_count = 0;
     let mut printed_lines = 0;
     let mut skipped_lines = 0;
 
     for example in examples {
+        if let Some(tokens) = retrieved_context_tokens(example) {
+            retrieved_context_tokens_sum += tokens;
+            retrieved_context_tokens_count += 1;
+        }
+
         for score in &example.score {
             let Some(coverage) = &score.editable_context_coverage else {
                 continue;
@@ -729,6 +759,13 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
             "Evaluated editable context coverage for {} examples",
             total_scores
         );
+        if retrieved_context_tokens_count > 0 {
+            println!(
+                "Retrieved context size: {:.0} tokens avg ({} examples, chars / 3)",
+                retrieved_context_tokens_sum / retrieved_context_tokens_count as f64,
+                retrieved_context_tokens_count
+            );
+        }
     }
 
     println!("\n");
