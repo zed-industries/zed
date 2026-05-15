@@ -1488,6 +1488,18 @@ impl MessageEditor {
         }
     }
 
+    pub(crate) fn insert_diagnostic_fix(
+        &mut self,
+        diagnostic_message: &str,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prompt = format!("Fix this diagnostic error:\n\n```\n{diagnostic_message}\n```\n\n");
+        self.insert_text(&prompt, window, cx);
+        self.insert_selections(selection, window, cx);
+    }
+
     pub fn add_images_from_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.session_capabilities.read().supports_images() {
             return;

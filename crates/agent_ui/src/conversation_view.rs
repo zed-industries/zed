@@ -2857,6 +2857,22 @@ impl ConversationView {
         }
     }
 
+    pub(crate) fn insert_diagnostic_fix(
+        &self,
+        diagnostic_message: &str,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active_thread) = self.active_thread() {
+            active_thread.update(cx, |thread, cx| {
+                thread.active_editor(cx).update(cx, |editor, cx| {
+                    editor.insert_diagnostic_fix(diagnostic_message, selection, window, cx);
+                })
+            });
+        }
+    }
+
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
         // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
