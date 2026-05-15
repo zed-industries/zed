@@ -1,10 +1,9 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use gpui::{FontFallbacks, FontRun, PlatformTextSystem, font, px};
 use gpui_wgpu::CosmicTextSystem;
 use std::borrow::Cow;
 
-const LILEX: &[u8] =
-    include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
+const LILEX: &[u8] = include_bytes!("../../../assets/fonts/lilex/Lilex-Regular.ttf");
 const IBM_PLEX: &[u8] =
     include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
 
@@ -51,9 +50,7 @@ fn bench_layout_line(c: &mut Criterion) {
 
     let font_id_with_fallback = {
         let mut f = font("Lilex");
-        f.fallbacks = Some(FontFallbacks::from_fonts(vec![
-            "IBM Plex Sans".to_string(),
-        ]));
+        f.fallbacks = Some(FontFallbacks::from_fonts(vec!["IBM Plex Sans".to_string()]));
         system.font_id(&f).unwrap()
     };
 

@@ -7,7 +7,8 @@ use cosmic_text::{
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
     LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
-    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
+    size,
 };
 
 use itertools::Itertools;
@@ -30,11 +31,7 @@ struct FontKey {
 }
 
 impl FontKey {
-    fn new(
-        family: SharedString,
-        features: FontFeatures,
-        fallbacks: Option<FontFallbacks>,
-    ) -> Self {
+    fn new(family: SharedString, features: FontFeatures, fallbacks: Option<FontFallbacks>) -> Self {
         Self {
             family,
             features,
@@ -895,10 +892,7 @@ mod tests {
         let primary = fid(0);
         let fb = chain(&[1]);
         let covers = |_: FontId, _: char| true;
-        assert_eq!(
-            pick_covering_slot('a', None, primary, &fb, &covers),
-            None
-        );
+        assert_eq!(pick_covering_slot('a', None, primary, &fb, &covers), None);
     }
 
     #[test]
@@ -931,10 +925,7 @@ mod tests {
         let primary = fid(0);
         let fb: SmallVec<[(FontId, SharedString); 4]> = SmallVec::new();
         let covers = |_: FontId, _: char| false;
-        assert_eq!(
-            pick_covering_slot('a', None, primary, &fb, &covers),
-            None
-        );
+        assert_eq!(pick_covering_slot('a', None, primary, &fb, &covers), None);
     }
 
     #[test]
