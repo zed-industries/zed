@@ -7367,6 +7367,7 @@ dependencies = [
  "project",
  "project_panel",
  "rand 0.9.4",
+ "release_channel",
  "remote_connection",
  "search",
  "serde_json",
