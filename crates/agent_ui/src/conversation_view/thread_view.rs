@@ -6446,7 +6446,6 @@ impl ThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
-                                        has_image_content,
                                         failed_or_canceled,
                                         focus_handle,
                                         window,
@@ -6578,7 +6577,6 @@ impl ThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
-                                        has_image_content,
                                         failed_or_canceled,
                                         focus_handle,
                                         window,
@@ -7570,7 +7568,6 @@ impl ThreadView {
         context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
-        is_image_tool_call: bool,
         has_failed: bool,
         focus_handle: &FocusHandle,
         window: &Window,
@@ -7589,14 +7586,14 @@ impl ThreadView {
                         window,
                         cx,
                     )
-                } else if let Some(image) = content.image() {
+                } else if let Some((image, dimensions)) = content.image() {
                     let location = tool_call.locations.first().cloned();
                     self.render_image_output(
                         entry_ix,
                         image.clone(),
+                        dimensions,
                         location,
                         card_layout,
-                        is_image_tool_call,
                         cx,
                     )
                 } else {
@@ -7778,30 +7775,26 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
-        show_dimensions: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let dimensions_label = if show_dimensions {
-            let format_name = match image.format() {
-                gpui::ImageFormat::Png => "PNG",
-                gpui::ImageFormat::Jpeg => "JPEG",
-                gpui::ImageFormat::Webp => "WebP",
-                gpui::ImageFormat::Gif => "GIF",
-                gpui::ImageFormat::Svg => "SVG",
-                gpui::ImageFormat::Bmp => "BMP",
-                gpui::ImageFormat::Tiff => "TIFF",
-                gpui::ImageFormat::Ico => "ICO",
-                gpui::ImageFormat::Pnm => "PNM",
-            };
-            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
-                .with_guessed_format()
-                .ok()
-                .and_then(|reader| reader.into_dimensions().ok());
-            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+        let format_name = match image.format() {
+            gpui::ImageFormat::Png => "PNG",
+            gpui::ImageFormat::Jpeg => "JPEG",
+            gpui::ImageFormat::Webp => "WebP",
+            gpui::ImageFormat::Gif => "GIF",
+            gpui::ImageFormat::Svg => "SVG",
+            gpui::ImageFormat::Bmp => "BMP",
+            gpui::ImageFormat::Tiff => "TIFF",
+            gpui::ImageFormat::Ico => "ICO",
+            gpui::ImageFormat::Pnm => "PNM",
+        };
+        let dimensions_label = if let Some(size) = dimensions {
+            format!("{}×{} {}", size.width, size.height, format_name)
         } else {
-            None
+            format_name.into()
         };
 
         v_flex()
@@ -7816,29 +7809,27 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .when(dimensions_label.is_some() || location.is_some(), |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .items_center()
-                        .children(dimensions_label.map(|label| {
-                            Label::new(label)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx)
-                        }))
-                        .when_some(location, |this, _loc| {
-                            this.child(
-                                Button::new(("go-to-file", entry_ix), "Go to File")
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_tool_call_location(entry_ix, 0, window, cx);
-                                    })),
-                            )
-                        }),
-                )
-            })
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new(dimensions_label)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .when_some(location, |this, _loc| {
+                        this.child(
+                            Button::new(("go-to-file", entry_ix), "Go to File")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_tool_call_location(entry_ix, 0, window, cx);
+                                })),
+                        )
+                    }),
+            )
             .child(
                 img(image)
                     .max_w_96()
