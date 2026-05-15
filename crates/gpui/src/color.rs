@@ -283,6 +283,32 @@ pub struct Hsla {
     pub a: f32,
 }
 
+#[cfg(feature = "proptest")]
+mod property {
+    use super::Hsla;
+    use proptest::prelude::*;
+
+    impl Hsla {
+        /// Proptest [`Strategy`] that produces opaque colors (i.e. alpha = 1).
+        ///
+        /// For truly arbitrary colors, use the [`Arbitrary`] implementation.
+        pub fn opaque_strategy() -> impl Strategy<Value = Self> {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0).prop_map(|(h, s, l)| Hsla { h, s, l, a: 1. })
+        }
+    }
+
+    impl Arbitrary for Hsla {
+        type Strategy = BoxedStrategy<Self>;
+        type Parameters = ();
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            (0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0, 0.0f32..=1.0)
+                .prop_map(|(h, s, l, a)| Hsla { h, s, l, a })
+                .boxed()
+        }
+    }
+}
+
 impl PartialEq for Hsla {
     fn eq(&self, other: &Self) -> bool {
         self.h

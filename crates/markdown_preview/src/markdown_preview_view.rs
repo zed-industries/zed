@@ -20,7 +20,7 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::Settings;
+use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -1108,7 +1108,7 @@ impl SearchableItem for MarkdownPreviewView {
 
     fn query_suggestion(
         &mut self,
-        _ignore_settings: bool,
+        _seed_query_override: Option<SeedQuerySetting>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {

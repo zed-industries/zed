@@ -1063,9 +1063,8 @@ impl ContextServerStore {
         // Start a loopback HTTP server on an ephemeral port. The redirect URI
         // includes this port so the browser sends the callback directly to our
         // process.
-        let (redirect_uri, callback_rx) = oauth::start_callback_server()
-            .await
-            .context("Failed to start OAuth callback server")?;
+        let (redirect_uri, callback_rx) =
+            oauth::start_callback_server().context("Failed to start OAuth callback server")?;
 
         let http_client = cx.update(|cx| cx.http_client());
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
@@ -1093,9 +1092,6 @@ impl ContextServerStore {
 
         let callback = callback_rx
             .await
-            .map_err(|_| {
-                anyhow::anyhow!("OAuth callback server was shut down before receiving a response")
-            })?
             .context("OAuth callback server received an invalid request")?;
 
         if callback.state != state_param {
