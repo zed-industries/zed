@@ -5,6 +5,8 @@ use std::{
 
 use crate::patch::{Patch, PatchLine};
 
+const LINE_RELEVANCE_WINDOW: u32 = 20;
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct Excerpt {
     pub path: String,
@@ -61,18 +63,47 @@ pub fn editable_context_coverage(
     context: &[Excerpt],
 ) -> EditableContextCoverage {
     let patch = Patch::parse_unified_diff(expected_patch);
-    let (expected_files, expected_lines) = expected_context(&patch);
+    let (expected_files, expected_anchor_lines, relevant_lines) = expected_context(&patch);
     let (retrieved_files, retrieved_lines) = retrieved_context(context);
 
-    let (lines_tp, lines_fp, lines_fn) = classify_rows(&expected_lines, &retrieved_lines);
+    let (lines_tp, lines_fp) = classify_retrieved_rows(&relevant_lines, &retrieved_lines);
+    let (lines_fn, expected_anchor_line_count) =
+        count_missing_rows(&expected_anchor_lines, &retrieved_lines);
     let (files_tp, files_fp, files_fn) = classify_values(&expected_files, &retrieved_files);
 
-    EditableContextCoverage::new(lines_tp, lines_fp, lines_fn, files_tp, files_fp, files_fn)
+    let lines_precision = precision(lines_tp, lines_fp, lines_fn);
+    let lines_recall = line_recall(expected_anchor_line_count, lines_fn);
+    let lines_f1 = f1_from_precision_and_recall(lines_precision, lines_recall);
+    let files_precision = precision(files_tp, files_fp, files_fn);
+    let files_recall = recall(files_tp, files_fp, files_fn);
+    let files_f1 = f1_from_precision_and_recall(files_precision, files_recall);
+
+    EditableContextCoverage {
+        lines_tp,
+        lines_fp,
+        lines_fn,
+        lines_precision,
+        lines_recall,
+        lines_f1,
+        files_tp,
+        files_fp,
+        files_fn,
+        files_precision,
+        files_recall,
+        files_f1,
+    }
 }
 
-fn expected_context(patch: &Patch) -> (BTreeSet<String>, BTreeMap<String, BTreeSet<u32>>) {
+fn expected_context(
+    patch: &Patch,
+) -> (
+    BTreeSet<String>,
+    BTreeMap<String, BTreeSet<u32>>,
+    BTreeMap<String, BTreeSet<u32>>,
+) {
     let mut expected_files = BTreeSet::new();
-    let mut expected_lines = BTreeMap::new();
+    let mut expected_anchor_lines = BTreeMap::new();
+    let mut relevant_lines = BTreeMap::new();
 
     for hunk in &patch.hunks {
         if hunk
@@ -116,15 +147,30 @@ fn expected_context(patch: &Patch) -> (BTreeSet<String>, BTreeMap<String, BTreeS
                     if deletion_rows.is_empty() {
                         if has_addition {
                             if let Some(row) = previous_context_row {
-                                insert_row(&mut expected_lines, &hunk.filename, row);
+                                insert_anchor_row(
+                                    &mut expected_anchor_lines,
+                                    &mut relevant_lines,
+                                    &hunk.filename,
+                                    row,
+                                );
                             }
                             if matches!(hunk.lines.get(index), Some(PatchLine::Context(_))) {
-                                insert_row(&mut expected_lines, &hunk.filename, old_row);
+                                insert_anchor_row(
+                                    &mut expected_anchor_lines,
+                                    &mut relevant_lines,
+                                    &hunk.filename,
+                                    old_row,
+                                );
                             }
                         }
                     } else {
                         for row in deletion_rows {
-                            insert_row(&mut expected_lines, &hunk.filename, row);
+                            insert_anchor_row(
+                                &mut expected_anchor_lines,
+                                &mut relevant_lines,
+                                &hunk.filename,
+                                row,
+                            );
                         }
                     }
 
@@ -137,7 +183,7 @@ fn expected_context(patch: &Patch) -> (BTreeSet<String>, BTreeMap<String, BTreeS
         }
     }
 
-    (expected_files, expected_lines)
+    (expected_files, expected_anchor_lines, relevant_lines)
 }
 
 fn retrieved_context(context: &[Excerpt]) -> (BTreeSet<String>, BTreeMap<String, BTreeSet<u32>>) {
@@ -155,6 +201,21 @@ fn retrieved_context(context: &[Excerpt]) -> (BTreeSet<String>, BTreeMap<String,
     (retrieved_files, retrieved_lines)
 }
 
+fn insert_anchor_row(
+    anchor_lines_by_file: &mut BTreeMap<String, BTreeSet<u32>>,
+    relevant_lines_by_file: &mut BTreeMap<String, BTreeSet<u32>>,
+    path: &str,
+    row: u32,
+) {
+    insert_row(anchor_lines_by_file, path, row);
+
+    let start = row.saturating_sub(LINE_RELEVANCE_WINDOW);
+    let end = row.saturating_add(LINE_RELEVANCE_WINDOW);
+    for relevant_row in start..=end {
+        insert_row(relevant_lines_by_file, path, relevant_row);
+    }
+}
+
 fn insert_row(lines_by_file: &mut BTreeMap<String, BTreeSet<u32>>, path: &str, row: u32) {
     lines_by_file
         .entry(path.to_string())
@@ -162,19 +223,18 @@ fn insert_row(lines_by_file: &mut BTreeMap<String, BTreeSet<u32>>, path: &str, r
         .insert(row);
 }
 
-fn classify_rows(
-    expected: &BTreeMap<String, BTreeSet<u32>>,
+fn classify_retrieved_rows(
+    relevant: &BTreeMap<String, BTreeSet<u32>>,
     retrieved: &BTreeMap<String, BTreeSet<u32>>,
-) -> (usize, usize, usize) {
+) -> (usize, usize) {
     let mut true_positives = 0;
     let mut false_positives = 0;
-    let mut false_negatives = 0;
 
     for (path, rows) in retrieved {
         for row in rows {
-            if expected
+            if relevant
                 .get(path)
-                .is_some_and(|expected_rows| expected_rows.contains(row))
+                .is_some_and(|relevant_rows| relevant_rows.contains(row))
             {
                 true_positives += 1;
             } else {
@@ -183,8 +243,19 @@ fn classify_rows(
         }
     }
 
+    (true_positives, false_positives)
+}
+
+fn count_missing_rows(
+    expected: &BTreeMap<String, BTreeSet<u32>>,
+    retrieved: &BTreeMap<String, BTreeSet<u32>>,
+) -> (usize, usize) {
+    let mut false_negatives = 0;
+    let mut expected_count = 0;
+
     for (path, rows) in expected {
         for row in rows {
+            expected_count += 1;
             if !retrieved
                 .get(path)
                 .is_some_and(|retrieved_rows| retrieved_rows.contains(row))
@@ -194,7 +265,7 @@ fn classify_rows(
         }
     }
 
-    (true_positives, false_positives, false_negatives)
+    (false_negatives, expected_count)
 }
 
 fn classify_values<T: Ord>(
@@ -233,10 +304,22 @@ fn recall(true_positives: usize, false_positives: usize, false_negatives: usize)
     }
 }
 
+fn line_recall(expected_anchor_line_count: usize, false_negatives: usize) -> f64 {
+    if expected_anchor_line_count == 0 {
+        1.0
+    } else {
+        (expected_anchor_line_count - false_negatives) as f64 / expected_anchor_line_count as f64
+    }
+}
+
 fn f1(true_positives: usize, false_positives: usize, false_negatives: usize) -> f64 {
     let precision = precision(true_positives, false_positives, false_negatives);
     let recall = recall(true_positives, false_positives, false_negatives);
 
+    f1_from_precision_and_recall(precision, recall)
+}
+
+fn f1_from_precision_and_recall(precision: f64, recall: f64) -> f64 {
     if precision + recall == 0.0 {
         0.0
     } else {
@@ -272,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn retrieved_lines_outside_expected_edit_context_are_false_positives() {
+    fn retrieved_lines_inside_relevance_window_are_true_positives() {
         let patch = indoc! {"
             --- a/src/main.rs
             +++ b/src/main.rs
@@ -285,7 +368,7 @@ mod tests {
             &[excerpt("src/main.rs", 0..1), excerpt("src/main.rs", 3..4)],
         );
 
-        assert_eq!(score, EditableContextCoverage::new(1, 1, 0, 1, 0, 0));
+        assert_eq!(score, EditableContextCoverage::new(2, 0, 0, 1, 0, 0));
     }
 
     #[test]
@@ -371,7 +454,42 @@ mod tests {
             &[excerpt("src/main.rs", 0..2), excerpt("src/main.rs", 1..3)],
         );
 
-        assert_eq!(score, EditableContextCoverage::new(1, 2, 0, 1, 0, 0));
+        assert_eq!(score, EditableContextCoverage::new(3, 0, 0, 1, 0, 0));
+    }
+
+    #[test]
+    fn nearby_lines_do_not_satisfy_line_recall_without_exact_anchor_lines() {
+        let patch = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,2 +1,3 @@
+             line 1
+            +inserted
+             line 2
+        "};
+
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 2..3)]);
+
+        assert_eq!(score.lines_tp, 1);
+        assert_eq!(score.lines_fp, 0);
+        assert_eq!(score.lines_fn, 2);
+        assert_eq!(score.lines_precision, 1.0);
+        assert_eq!(score.lines_recall, 0.0);
+        assert_eq!(score.lines_f1, 0.0);
+    }
+
+    #[test]
+    fn retrieved_lines_outside_relevance_window_are_false_positives() {
+        let patch = indoc! {"
+            --- a/src/main.rs
+            +++ b/src/main.rs
+            @@ -1,1 +1,0 @@
+            -line 1
+        "};
+
+        let score = editable_context_coverage(patch, &[excerpt("src/main.rs", 21..22)]);
+
+        assert_eq!(score, EditableContextCoverage::new(0, 1, 1, 1, 0, 0));
     }
 
     #[test]

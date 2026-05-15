@@ -915,7 +915,7 @@ mod tests {
         assert_eq!(report.actual_changed_lines, 0);
         assert_eq!(
             report.editable_context_coverage,
-            EditableContextCoverage::new(1, 2, 0, 1, 0, 0)
+            EditableContextCoverage::new(3, 0, 0, 1, 0, 0)
         );
     }
 
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(report.actual_changed_lines, 0);
         assert_eq!(
             report.editable_context_coverage,
-            EditableContextCoverage::new(1, 2, 0, 1, 0, 0)
+            EditableContextCoverage::new(3, 0, 0, 1, 0, 0)
         );
     }
 }

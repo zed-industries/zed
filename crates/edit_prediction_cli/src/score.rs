@@ -244,6 +244,12 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     let mut recall_rate_sum: f64 = 0.0;
     let mut recall_rate_count: usize = 0;
     let mut editable_context_coverage_count: usize = 0;
+    let mut editable_context_lines_precision_sum = 0.0;
+    let mut editable_context_lines_recall_sum = 0.0;
+    let mut editable_context_lines_f1_sum = 0.0;
+    let mut editable_context_files_precision_sum = 0.0;
+    let mut editable_context_files_recall_sum = 0.0;
+    let mut editable_context_files_f1_sum = 0.0;
     let mut total_editable_context_lines = ClassificationMetrics::default();
     let mut total_editable_context_files = ClassificationMetrics::default();
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
@@ -358,6 +364,12 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
             }
             if let Some(coverage) = &score.editable_context_coverage {
                 editable_context_coverage_count += 1;
+                editable_context_lines_precision_sum += coverage.lines_precision;
+                editable_context_lines_recall_sum += coverage.lines_recall;
+                editable_context_lines_f1_sum += coverage.lines_f1;
+                editable_context_files_precision_sum += coverage.files_precision;
+                editable_context_files_recall_sum += coverage.files_recall;
+                editable_context_files_f1_sum += coverage.files_f1;
                 total_editable_context_lines.accumulate(&ClassificationMetrics {
                     true_positives: coverage.lines_tp,
                     false_positives: coverage.lines_fp,
@@ -520,33 +532,26 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
             );
         }
         if editable_context_coverage_count > 0 {
-            let total_coverage = edit_prediction_metrics::EditableContextCoverage::new(
+            let count = editable_context_coverage_count as f64;
+            println!(
+                "Editable context lines: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
+                editable_context_lines_precision_sum / count * 100.0,
+                editable_context_lines_recall_sum / count * 100.0,
+                editable_context_lines_f1_sum / count * 100.0,
+                editable_context_coverage_count,
                 total_editable_context_lines.true_positives,
                 total_editable_context_lines.false_positives,
-                total_editable_context_lines.false_negatives,
+                total_editable_context_lines.false_negatives
+            );
+            println!(
+                "Editable context files: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
+                editable_context_files_precision_sum / count * 100.0,
+                editable_context_files_recall_sum / count * 100.0,
+                editable_context_files_f1_sum / count * 100.0,
+                editable_context_coverage_count,
                 total_editable_context_files.true_positives,
                 total_editable_context_files.false_positives,
-                total_editable_context_files.false_negatives,
-            );
-            println!(
-                "Editable context lines: P={:.1}%, R={:.1}%, F1={:.1}% ({} evaluated, TP={}, FP={}, FN={})",
-                total_coverage.lines_precision * 100.0,
-                total_coverage.lines_recall * 100.0,
-                total_coverage.lines_f1 * 100.0,
-                editable_context_coverage_count,
-                total_coverage.lines_tp,
-                total_coverage.lines_fp,
-                total_coverage.lines_fn
-            );
-            println!(
-                "Editable context files: P={:.1}%, R={:.1}%, F1={:.1}% ({} evaluated, TP={}, FP={}, FN={})",
-                total_coverage.files_precision * 100.0,
-                total_coverage.files_recall * 100.0,
-                total_coverage.files_f1 * 100.0,
-                editable_context_coverage_count,
-                total_coverage.files_tp,
-                total_coverage.files_fp,
-                total_coverage.files_fn
+                total_editable_context_files.false_negatives
             );
         }
 
@@ -633,6 +638,12 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
 
     let mut total_lines = ClassificationMetrics::default();
     let mut total_files = ClassificationMetrics::default();
+    let mut line_precision_sum = 0.0;
+    let mut line_recall_sum = 0.0;
+    let mut line_f1_sum = 0.0;
+    let mut file_precision_sum = 0.0;
+    let mut file_recall_sum = 0.0;
+    let mut file_f1_sum = 0.0;
     let mut total_scores = 0;
     let mut printed_lines = 0;
     let mut skipped_lines = 0;
@@ -666,6 +677,12 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
             }
 
             total_scores += 1;
+            line_precision_sum += coverage.lines_precision;
+            line_recall_sum += coverage.lines_recall;
+            line_f1_sum += coverage.lines_f1;
+            file_precision_sum += coverage.files_precision;
+            file_recall_sum += coverage.files_recall;
+            file_f1_sum += coverage.files_f1;
             total_lines.accumulate(&ClassificationMetrics {
                 true_positives: coverage.lines_tp,
                 false_positives: coverage.lines_fp,
@@ -690,29 +707,22 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
     println!("{}", separator);
 
     if total_scores > 0 {
-        let total_coverage = edit_prediction_metrics::EditableContextCoverage::new(
+        let count = total_scores as f64;
+        println!(
+            "{:<40} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5}",
+            "TOTAL / AVERAGE",
+            line_precision_sum / count * 100.0,
+            line_recall_sum / count * 100.0,
+            line_f1_sum / count * 100.0,
             total_lines.true_positives,
             total_lines.false_positives,
             total_lines.false_negatives,
+            file_precision_sum / count * 100.0,
+            file_recall_sum / count * 100.0,
+            file_f1_sum / count * 100.0,
             total_files.true_positives,
             total_files.false_positives,
-            total_files.false_negatives,
-        );
-        println!(
-            "{:<40} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5}",
-            "TOTAL",
-            total_coverage.lines_precision * 100.0,
-            total_coverage.lines_recall * 100.0,
-            total_coverage.lines_f1 * 100.0,
-            total_coverage.lines_tp,
-            total_coverage.lines_fp,
-            total_coverage.lines_fn,
-            total_coverage.files_precision * 100.0,
-            total_coverage.files_recall * 100.0,
-            total_coverage.files_f1 * 100.0,
-            total_coverage.files_tp,
-            total_coverage.files_fp,
-            total_coverage.files_fn
+            total_files.false_negatives
         );
         println!("{}", separator);
         println!(
