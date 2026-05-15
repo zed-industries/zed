@@ -39,7 +39,7 @@ use std::task::Poll;
 use std::time::Duration;
 use thiserror::Error;
 
-use anthropic::completion::{AnthropicEventMapper, into_anthropic};
+use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
     OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
@@ -53,8 +53,28 @@ pub trait CloudLlmTokenProvider: Send + Sync {
     type AuthContext: Clone + Send + 'static;
 
     fn auth_context(&self, cx: &impl AppContext) -> Self::AuthContext;
-    fn acquire_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+    fn cached_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
     fn refresh_token(&self, auth_context: Self::AuthContext) -> BoxFuture<'static, Result<String>>;
+}
+
+/// Sends an authenticated request to the Zed LLM service, retrying once with
+/// a refreshed token if the server signals that the cached LLM token is
+/// expired or otherwise rejected. Returns the raw response so callers can
+/// inspect headers and stream the body.
+pub async fn authenticated_llm_request<TP: CloudLlmTokenProvider>(
+    http_client: &HttpClientWithUrl,
+    token_provider: &TP,
+    auth_context: TP::AuthContext,
+    build_request: impl Fn(&str) -> Result<http_client::Request<AsyncBody>>,
+) -> Result<Response<AsyncBody>> {
+    let token = token_provider.cached_token(auth_context.clone()).await?;
+    let response = http_client.send(build_request(&token)?).await?;
+    if !needs_llm_token_refresh(&response) && response.status() != StatusCode::UNAUTHORIZED {
+        return Ok(response);
+    }
+    log::info!("LLM token rejected; refreshing and retrying request");
+    let token = token_provider.refresh_token(auth_context).await?;
+    http_client.send(build_request(&token)?).await
 }
 
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -99,55 +119,49 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         app_version: Option<Version>,
         body: CompletionBody,
     ) -> Result<PerformLlmCompletionResponse> {
-        let mut token = token_provider.acquire_token(auth_context.clone()).await?;
-        let mut refreshed_token = false;
+        let url = http_client.build_zed_llm_url("/completions", &[])?;
+        let body = serde_json::to_string(&body)?;
+        let mut response =
+            authenticated_llm_request(http_client, token_provider, auth_context, |token| {
+                Ok(http_client::Request::builder()
+                    .method(Method::POST)
+                    .uri(url.as_ref())
+                    .when_some(app_version.as_ref(), |builder, app_version| {
+                        builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    })
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
+                    .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
+                    .body(body.clone().into())?)
+            })
+            .await?;
 
-        loop {
-            let request = http_client::Request::builder()
-                .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
-                .when_some(app_version.as_ref(), |builder, app_version| {
-                    builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-                })
-                .header("Content-Type", "application/json")
-                .header("Authorization", format!("Bearer {token}"))
-                .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
-                .header(CLIENT_SUPPORTS_STATUS_STREAM_ENDED_HEADER_NAME, "true")
-                .body(serde_json::to_string(&body)?.into())?;
+        let status = response.status();
+        if status.is_success() {
+            let includes_status_messages = response
+                .headers()
+                .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
+                .is_some();
 
-            let mut response = http_client.send(request).await?;
-            let status = response.status();
-            if status.is_success() {
-                let includes_status_messages = response
-                    .headers()
-                    .get(SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME)
-                    .is_some();
-
-                return Ok(PerformLlmCompletionResponse {
-                    response,
-                    includes_status_messages,
-                });
-            }
-
-            if !refreshed_token && needs_llm_token_refresh(&response) {
-                token = token_provider.refresh_token(auth_context.clone()).await?;
-                refreshed_token = true;
-                continue;
-            }
-
-            if status == StatusCode::PAYMENT_REQUIRED {
-                return Err(anyhow!(PaymentRequiredError));
-            }
-
-            let mut body = String::new();
-            let headers = response.headers().clone();
-            response.body_mut().read_to_string(&mut body).await?;
-            return Err(anyhow!(ApiError {
-                status,
-                body,
-                headers
-            }));
+            return Ok(PerformLlmCompletionResponse {
+                response,
+                includes_status_messages,
+            });
         }
+
+        if status == StatusCode::PAYMENT_REQUIRED {
+            return Err(anyhow!(PaymentRequiredError));
+        }
+
+        let mut body = String::new();
+        let headers = response.headers().clone();
+        response.body_mut().read_to_string(&mut body).await?;
+        Err(anyhow!(ApiError {
+            status,
+            body,
+            headers
+        }))
     }
 }
 
@@ -405,6 +419,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     } else {
                         AnthropicModelMode::Default
                     },
+                    AnthropicPromptCacheMode::Automatic,
                 );
 
                 if enable_thinking && effort.is_some() {
@@ -460,7 +475,13 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let effort = request
                     .thinking_effort
                     .as_ref()
-                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok());
+                    .and_then(|effort| open_ai::ReasoningEffort::from_str(effort).ok())
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None);
+                let supports_none_reasoning_effort =
+                    self.model.supported_effort_levels.iter().any(|effort| {
+                        open_ai::ReasoningEffort::from_str(&effort.value)
+                            .is_ok_and(|effort| effort == open_ai::ReasoningEffort::None)
+                    });
 
                 let mut request = into_open_ai_response(
                     request,
@@ -469,6 +490,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     true,
                     None,
                     None,
+                    supports_none_reasoning_effort,
                 );
 
                 if enable_thinking && let Some(effort) = effort {
@@ -635,16 +657,16 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         token_provider: &TP,
         auth_context: TP::AuthContext,
     ) -> Result<ListModelsResponse> {
-        let token = token_provider.acquire_token(auth_context).await?;
-
-        let request = http_client::Request::builder()
-            .method(Method::GET)
-            .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
-            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
-            .header("Authorization", format!("Bearer {token}"))
-            .body(AsyncBody::empty())?;
-        let mut response = http_client
-            .send(request)
+        let url = http_client.build_zed_llm_url("/models", &[])?;
+        let mut response =
+            authenticated_llm_request(http_client, token_provider, auth_context, |token| {
+                Ok(http_client::Request::builder()
+                    .method(Method::GET)
+                    .header(CLIENT_SUPPORTS_X_AI_HEADER_NAME, "true")
+                    .uri(url.as_ref())
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(AsyncBody::empty())?)
+            })
             .await
             .context("failed to send list models request")?;
 

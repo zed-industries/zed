@@ -5,7 +5,7 @@ use deepseek::DEEPSEEK_API_URL;
 
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -450,6 +450,11 @@ pub fn into_deepseek(
             None
         },
         response_format: None,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => deepseek::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => deepseek::ToolChoice::Required,
+            LanguageModelToolChoice::None => deepseek::ToolChoice::None,
+        }),
         tools: request
             .tools
             .into_iter()

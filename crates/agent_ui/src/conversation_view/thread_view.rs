@@ -1,11 +1,13 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -13,9 +15,10 @@ use feature_flags::AcpBetaFeatureFlag;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::List;
+use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
-use settings::{SidebarSide, update_settings_file};
+use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
@@ -263,6 +266,7 @@ impl PermissionSelection {
 }
 
 pub struct ThreadView {
+    pub(crate) root_thread_id: ThreadId,
     pub session_id: acp::SessionId,
     pub parent_session_id: Option<acp::SessionId>,
     pub thread: Entity<AcpThread>,
@@ -329,6 +333,15 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
+    /// Errors emitted by the agent while loading SKILL.md files. Each one
+    /// renders as a clickable banner that opens the offending file.
+    pub skill_loading_errors: Vec<SkillLoadingError>,
+    /// Errors the user has explicitly dismissed. Each entry is matched against
+    /// emitted errors by full equality; when an error no longer appears in the
+    /// emitted list (i.e. the underlying file was fixed or removed), it's
+    /// dropped from this set so a future regression of the same kind would
+    /// re-show.
+    dismissed_skill_loading_errors: HashSet<SkillLoadingError>,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -352,6 +365,7 @@ pub struct TurnFields {
 
 impl ThreadView {
     pub(crate) fn new(
+        root_thread_id: ThreadId,
         thread: Entity<AcpThread>,
         conversation: Entity<super::Conversation>,
         server_view: WeakEntity<ConversationView>,
@@ -379,8 +393,8 @@ impl ThreadView {
         let session_id = thread.read(cx).session_id().clone();
         let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
-        let has_commands = !session_capabilities.read().available_commands().is_empty();
-        let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
+        let has_slash_completions = session_capabilities.read().has_slash_completions();
+        let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
         let mut should_auto_submit = false;
         let mut show_external_source_prompt_warning = false;
@@ -437,15 +451,17 @@ impl ThreadView {
             && agent_id.as_ref() == "Codex";
 
         let title_editor = {
-            let can_edit = thread.update(cx, |thread, cx| thread.can_set_title(cx));
+            let metadata = ThreadMetadataStore::try_global(cx)
+                .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
+            let initial_title = if parent_session_id.is_none() {
+                metadata.as_ref().and_then(|m| m.title())
+            } else {
+                thread.read(cx).title()
+            }
+            .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into());
             let editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                if let Some(title) = thread.read(cx).title() {
-                    editor.set_text(title, window, cx);
-                } else {
-                    editor.set_text(DEFAULT_THREAD_TITLE, window, cx);
-                }
-                editor.set_read_only(!can_edit);
+                editor.set_text(initial_title, window, cx);
                 editor
             });
             subscriptions.push(cx.subscribe_in(&editor, window, Self::handle_title_editor_event));
@@ -463,6 +479,42 @@ impl ThreadView {
             window,
             Self::handle_message_editor_event,
         ));
+
+        // If this thread is backed by a NativeAgent, listen for skill loading
+        // errors so we can surface them as banners. The agent emits a single
+        // replacement-style event per project refresh, so we overwrite our
+        // local list rather than appending — this also clears stale errors
+        // once a user resolves them.
+        if let Some(native_connection) = thread
+            .read(cx)
+            .connection()
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+        {
+            let project_id = thread.read(cx).project().entity_id();
+            subscriptions.push(cx.subscribe(
+                &native_connection.0,
+                move |this: &mut Self, _agent, event: &SkillLoadingErrorsUpdated, cx| {
+                    if event.project_id != project_id {
+                        return;
+                    }
+                    // Drop dismissals for errors that no longer appear in the emitted
+                    // list — the underlying file must have been fixed or removed, so a
+                    // future regression should re-show.
+                    this.dismissed_skill_loading_errors
+                        .retain(|dismissed| event.errors.contains(dismissed));
+
+                    // Show only errors that haven't been dismissed.
+                    this.skill_loading_errors = event
+                        .errors
+                        .iter()
+                        .filter(|e| !this.dismissed_skill_loading_errors.contains(e))
+                        .cloned()
+                        .collect();
+                    cx.notify();
+                },
+            ));
+        }
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
             let is_empty = editor.read(cx).text(cx).is_empty();
@@ -489,6 +541,7 @@ impl ThreadView {
         }));
 
         let mut this = Self {
+            root_thread_id,
             session_id,
             parent_session_id,
             focus_handle: cx.focus_handle(),
@@ -553,6 +606,8 @@ impl ThreadView {
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
+            skill_loading_errors: Vec::new(),
+            dismissed_skill_loading_errors: HashSet::default(),
         };
 
         this.sync_generating_indicator(cx);
@@ -609,6 +664,24 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The three skill-watcher trigger points all live here:
+        // - `Focus` fires when the user clicks into the input box.
+        // - `SlashAutocompleteOpened` fires when the completion
+        //   provider is asked for slash commands.
+        // - `Send` fires when the user submits the conversation.
+        // All three triggers are idempotent; firing the same one
+        // repeatedly is a no-op once a scan or watch is active.
+        if matches!(
+            event,
+            MessageEditorEvent::Focus
+                | MessageEditorEvent::SlashAutocompleteOpened
+                | MessageEditorEvent::Send
+        ) {
+            if let Some(connection) = self.as_native_connection(cx) {
+                connection.ensure_skills_scan_started(cx);
+            }
+        }
+
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
@@ -617,6 +690,7 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             MessageEditorEvent::LostFocus => {}
+            MessageEditorEvent::SlashAutocompleteOpened => {}
             MessageEditorEvent::InputAttempted { .. } => {}
         }
     }
@@ -755,6 +829,8 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Cancel) => {
                 self.cancel_editing(&Default::default(), window, cx);
+            }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -953,7 +1029,7 @@ impl ThreadView {
                     .read()
                     .available_commands()
                     .iter()
-                    .any(|command| command.name == "logout");
+                    .any(|available_command| available_command.name == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 self.clear_external_source_prompt_warning(cx);
@@ -1044,10 +1120,7 @@ impl ThreadView {
         })
         .detach();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
 
         let task = cx.spawn_in(window, async move |this, cx| {
             let Some((contents, tracked_buffers)) = contents_task.await? else {
@@ -1539,7 +1612,7 @@ impl ThreadView {
     pub fn move_queued_message_to_main_editor(
         &mut self,
         index: usize,
-        inserted_text: Option<&str>,
+        attempt: Option<InputAttempt>,
         cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1549,36 +1622,35 @@ impl ThreadView {
         };
         let queued_content = queued_message.content;
         let message_editor = self.message_editor.clone();
-        let inserted_text = inserted_text.map(ToOwned::to_owned);
 
         window.focus(&message_editor.focus_handle(cx), cx);
 
-        if message_editor.read(cx).is_empty(cx) {
+        let adjusted_cursor_offset = if message_editor.read(cx).is_empty(cx) {
             message_editor.update(cx, |editor, cx| {
                 editor.set_message(queued_content, window, cx);
-                if let Some(offset) = cursor_offset {
-                    editor.set_cursor_offset(offset, window, cx);
-                }
-                if let Some(inserted_text) = inserted_text.as_deref() {
-                    editor.insert_text(inserted_text, window, cx);
-                }
             });
-            cx.notify();
-            return true;
-        }
-
-        // Adjust cursor offset accounting for existing content
-        let existing_len = message_editor.read(cx).text(cx).len();
-        let separator = "\n\n";
+            cursor_offset
+        } else {
+            let existing_len = message_editor.read(cx).text(cx).len();
+            let separator = "\n\n";
+            message_editor.update(cx, |editor, cx| {
+                editor.append_message(queued_content, Some(separator), window, cx);
+            });
+            cursor_offset.map(|offset| existing_len + separator.len() + offset)
+        };
 
         message_editor.update(cx, |editor, cx| {
-            editor.append_message(queued_content, Some(separator), window, cx);
-            if let Some(offset) = cursor_offset {
-                let adjusted_offset = existing_len + separator.len() + offset;
-                editor.set_cursor_offset(adjusted_offset, window, cx);
+            if let Some(offset) = adjusted_cursor_offset {
+                editor.set_cursor_offset(offset, window, cx);
             }
-            if let Some(inserted_text) = inserted_text.as_deref() {
-                editor.insert_text(inserted_text, window, cx);
+            match attempt {
+                Some(InputAttempt::Text(text)) => {
+                    editor.insert_text(&text, window, cx);
+                }
+                Some(InputAttempt::Paste(clipboard)) => {
+                    editor.paste_item(&clipboard, window, cx);
+                }
+                None => {}
             }
         });
 
@@ -1647,11 +1719,23 @@ impl ThreadView {
                 }
 
                 let new_title = title_editor.read(cx).text(cx);
+                if new_title.is_empty() {
+                    return;
+                }
+                let title = SharedString::from(new_title);
+                if let Some(store) = ThreadMetadataStore::try_global(cx)
+                    && !self.is_subagent()
+                {
+                    let thread_id = self.root_thread_id;
+                    store.update(cx, |store, cx| {
+                        store.set_title_override(thread_id, title.clone(), cx);
+                    });
+                }
                 thread.update(cx, |thread, cx| {
-                    thread
-                        .set_title(new_title.into(), cx)
-                        .detach_and_log_err(cx);
-                })
+                    if thread.can_set_title(cx) {
+                        thread.set_title(title, cx).detach_and_log_err(cx);
+                    }
+                });
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
@@ -3213,6 +3297,7 @@ impl ThreadView {
             .child(
                 v_flex()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
+                    .when(max_content_width.is_none(), |this| this.w_full())
                     .when(fills_container, |this| this.h_full())
                     .flex_shrink()
                     .flex_grow_0()
@@ -4677,7 +4762,7 @@ impl ThreadView {
                                     }
 
                                     Some(
-                                        self.render_markdown(md.clone(), style.clone())
+                                        self.render_markdown(md.clone(), style.clone(), cx)
                                             .into_any_element(),
                                     )
                                 })
@@ -5638,6 +5723,7 @@ impl ThreadView {
                                 .child(self.render_markdown(
                                     chunk,
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    cx,
                                 )),
                         )
                         .when(is_constrained, |this| {
@@ -5903,12 +5989,12 @@ impl ThreadView {
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
-        let markdown_element =
-            self.render_markdown(command, style)
-                .code_block_renderer(CodeBlockRenderer::Default {
-                    copy_button_visibility: CopyButtonVisibility::Hidden,
-                    border: false,
-                });
+        let markdown_element = self
+            .render_markdown(command, style, cx)
+            .code_block_renderer(CodeBlockRenderer::Default {
+                copy_button_visibility: CopyButtonVisibility::Hidden,
+                border: false,
+            });
         let copy_button = CopyButton::new("copy-command", command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
@@ -6427,6 +6513,7 @@ impl ThreadView {
                                                     window,
                                                     cx,
                                                 ),
+                                                cx,
                                             )
                                         },
                                     ))
@@ -6470,6 +6557,7 @@ impl ThreadView {
                                         self.render_markdown(
                                             input,
                                             MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                            cx,
                                         ),
                                     )
                                 }))
@@ -7396,6 +7484,7 @@ impl ThreadView {
                                 ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
                                     .with_muted_text(cx)
                             },
+                            cx,
                         ),
                     )
                     .tooltip(Tooltip::text("Go to File"))
@@ -7409,6 +7498,7 @@ impl ThreadView {
                     .child(self.render_markdown(
                         tool_call.label.clone(),
                         MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        cx,
                     ))
                     .into_any()
             })
@@ -7665,6 +7755,7 @@ impl ThreadView {
             .child(self.render_markdown(
                 markdown,
                 MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                cx,
             ))
             .when(!card_layout, |this| {
                 this.child(
@@ -8561,7 +8652,7 @@ impl ThreadView {
         let markdown_style =
             MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx);
         let description = self
-            .render_markdown(markdown, markdown_style)
+            .render_markdown(markdown, markdown_style, cx)
             .into_any_element();
 
         Callout::new()
@@ -8587,11 +8678,13 @@ impl ThreadView {
             .dismiss_action(self.dismiss_error_button(cx))
     }
 
-    fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
-        let workspace = self.workspace.clone();
-        MarkdownElement::new(markdown, style).on_url_click(move |text, window, cx| {
-            open_link(text, &workspace, window, cx);
-        })
+    fn render_markdown(
+        &self,
+        markdown: Entity<Markdown>,
+        style: MarkdownStyle,
+        cx: &App,
+    ) -> MarkdownElement {
+        render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -8654,6 +8747,54 @@ impl ThreadView {
                         }
                     })),
             )
+    }
+
+    fn render_skill_loading_errors(&self, cx: &mut Context<Self>) -> Vec<Callout> {
+        self.skill_loading_errors
+            .iter()
+            .enumerate()
+            .map(|(index, error)| {
+                let abs_path = error.path.clone();
+                let workspace = self.workspace.clone();
+                let path_label = error.path.display().to_string();
+                let target = error.clone();
+                Callout::new()
+                    .icon(IconName::Warning)
+                    .severity(Severity::Warning)
+                    .title("Skill failed to load")
+                    .description(format!("{}\n{path_label}", error.message))
+                    .actions_slot(
+                        Button::new(("open-skill-file", index), "Open File").on_click(cx.listener(
+                            move |_, _, window, cx| {
+                                let abs_path = abs_path.clone();
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .open_abs_path(
+                                                abs_path,
+                                                workspace::OpenOptions::default(),
+                                                window,
+                                                cx,
+                                            )
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            },
+                        )),
+                    )
+                    .dismiss_action(
+                        IconButton::new(("dismiss-skill-error", index), IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Dismiss"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.skill_loading_errors.retain(|e| *e != target);
+                                this.dismissed_skill_loading_errors.insert(target.clone());
+                                cx.notify();
+                            })),
+                    )
+            })
+            .collect()
     }
 
     fn render_external_source_prompt_warning(&self, cx: &mut Context<Self>) -> Callout {
@@ -9143,6 +9284,7 @@ impl Render for ThreadView {
             .children(self.render_subagent_titlebar(cx))
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
+            .children(self.render_skill_loading_errors(cx))
             .children(self.render_activity_bar(window, cx))
             .when(self.show_external_source_prompt_warning, |this| {
                 this.child(self.render_external_source_prompt_warning(cx))
@@ -9267,6 +9409,21 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => {
+                workspace
+                    .open_abs_path(
+                        skill_file_path,
+                        workspace::OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            }
         })
     } else {
         cx.open_url(&url);

@@ -31,7 +31,7 @@ use settings::SettingsStore;
 use ui::prelude::*;
 use util::debug_panic;
 
-use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
+use crate::provider::anthropic::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copilot_chat");
@@ -354,6 +354,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     } else {
                         AnthropicModelMode::Default
                     },
+                    AnthropicPromptCacheMode::Legacy,
                 );
 
                 anthropic_request.temperature = None;

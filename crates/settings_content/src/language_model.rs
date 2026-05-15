@@ -65,8 +65,10 @@ pub struct AmazonBedrockSettingsContent {
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
     pub allow_global: Option<bool>,
-    /// Enable the 1M token extended context window beta for supported Anthropic models.
-    pub allow_extended_context: Option<bool>,
+    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    pub guardrail_identifier: Option<String>,
+    /// The guardrail version to use. Defaults to "DRAFT" if not specified.
+    pub guardrail_version: Option<String>,
 }
 
 #[with_fallible_options]
@@ -181,6 +183,9 @@ pub struct OpenCodeAvailableModel {
     pub custom_model_api_url: Option<String>,
     /// Supported reasoning effort levels, for example `["low", "medium", "high"].
     pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+    /// When using OpenAiChat protocol, whether thinking tokens are sent as a dedicated `reasoning_content` field or inline in message text.
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 #[with_fallible_options]

@@ -130,6 +130,13 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) paths: PathList,
+    /// The workspace's main worktree paths at the time this workspace was saved.
+    ///
+    /// These paths are used for grouping, deduping, and display in recent-workspace
+    /// UIs. They are not authoritative for reopening the workspace, because they may
+    /// become stale if the repository layout changes after the save. Use `paths` when
+    /// reopening the workspace.
+    pub(crate) identity_paths: Option<PathList>,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
