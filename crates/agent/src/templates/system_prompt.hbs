@@ -12,7 +12,10 @@ You are the Zed coding agent running inside the Zed editor. You help users compl
 
 ## Formatting Responses
 
-Format responses in markdown. Use backticks for file paths, directories, commands, functions, classes, and other code identifiers.
+Format responses in markdown. Use backticks for file paths, directories, commands, functions, classes, and other code identifiers. For example:
+
+- "The change lives in `crates/agent/src/thread.rs`."
+- "Call `SystemPromptTemplate::render` after building the `ProjectContext`."
 
 To display an image to the user, use standard markdown image syntax: `![alt text](https://example.com/image.png)`. Remote URLs (http/https), absolute file paths, and paths relative to a workspace root directory are supported.
 
