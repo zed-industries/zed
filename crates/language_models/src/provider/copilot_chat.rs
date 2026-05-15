@@ -761,10 +761,10 @@ impl CopilotResponsesEventMapper {
                         }
                     }
 
-                    if encrypted_content.is_some() {
-                        events.extend(self.capture_reasoning_item(
-                            reasoning_input_item_from_output(&id, encrypted_content),
-                        ));
+                    if let Some(reasoning_item) =
+                        reasoning_input_item_from_output(&id, encrypted_content)
+                    {
+                        events.extend(self.capture_reasoning_item(reasoning_item));
                     }
 
                     events
@@ -859,13 +859,10 @@ impl CopilotResponsesEventMapper {
                 encrypted_content,
             } = item
             {
-                if encrypted_content.is_some() {
-                    events.extend(
-                        self.capture_reasoning_item(reasoning_input_item_from_output(
-                            id,
-                            encrypted_content.clone(),
-                        )),
-                    );
+                if let Some(reasoning_item) =
+                    reasoning_input_item_from_output(&id, encrypted_content.clone())
+                {
+                    events.extend(self.capture_reasoning_item(reasoning_item));
                 }
             }
         }
@@ -914,12 +911,6 @@ struct CopilotResponseMessageMetadata {
     reasoning_items: Vec<copilot_responses::ResponseReasoningInputItem>,
 }
 
-fn response_message_metadata_from_details(
-    details: &serde_json::Value,
-) -> Option<CopilotResponseMessageMetadata> {
-    serde_json::from_value::<CopilotResponseMessageMetadata>(details.clone()).ok()
-}
-
 fn append_reasoning_details_to_response_items(
     reasoning_details: Option<&serde_json::Value>,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
@@ -929,44 +920,42 @@ fn append_reasoning_details_to_response_items(
         return;
     };
 
-    let Some(metadata) = response_message_metadata_from_details(reasoning_details) else {
+    let Some(metadata) =
+        serde_json::from_value::<CopilotResponseMessageMetadata>(reasoning_details.clone()).ok()
+    else {
         return;
     };
 
     for mut reasoning_item in metadata.reasoning_items {
         reasoning_item.summary.clear();
-        push_replayed_reasoning_item(reasoning_item, replayed_reasoning_item_indexes, input_items);
-    }
-}
+        if let Some(id) = reasoning_item.id.as_ref() {
+            if let Some(index) = replayed_reasoning_item_indexes.get(id) {
+                input_items[*index] =
+                    copilot_responses::ResponseInputItem::Reasoning(reasoning_item);
+                return;
+            }
 
-fn push_replayed_reasoning_item(
-    reasoning_item: copilot_responses::ResponseReasoningInputItem,
-    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
-    input_items: &mut Vec<copilot_responses::ResponseInputItem>,
-) {
-    if let Some(id) = reasoning_item.id.as_ref() {
-        if let Some(index) = replayed_reasoning_item_indexes.get(id) {
-            input_items[*index] = copilot_responses::ResponseInputItem::Reasoning(reasoning_item);
-            return;
+            replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
         }
 
-        replayed_reasoning_item_indexes.insert(id.clone(), input_items.len());
+        input_items.push(copilot_responses::ResponseInputItem::Reasoning(
+            reasoning_item,
+        ));
     }
-
-    input_items.push(copilot_responses::ResponseInputItem::Reasoning(
-        reasoning_item,
-    ));
 }
 
 fn reasoning_input_item_from_output(
     id: &str,
     encrypted_content: Option<String>,
-) -> copilot_responses::ResponseReasoningInputItem {
-    copilot_responses::ResponseReasoningInputItem {
+) -> Option<copilot_responses::ResponseReasoningInputItem> {
+    if encrypted_content.is_none() {
+        return None;
+    }
+    Some(copilot_responses::ResponseReasoningInputItem {
         id: Some(id.to_string()),
         summary: Vec::new(),
         encrypted_content,
-    }
+    })
 }
 
 fn into_copilot_chat(
