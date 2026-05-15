@@ -1,5 +1,5 @@
 use editor::{Editor, EditorSettings};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Action, Context, TaskExt, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
@@ -455,7 +455,11 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(true, window, cx) else {
+                let Some(query) = search_bar.query_suggestion(
+                    Some(settings::SeedQuerySetting::Always),
+                    window,
+                    cx,
+                ) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };

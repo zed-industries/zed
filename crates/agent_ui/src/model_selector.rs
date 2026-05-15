@@ -11,7 +11,7 @@ use futures::FutureExt;
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, FocusHandle, Subscription, Task,
-    WeakEntity,
+    TaskExt, WeakEntity,
 };
 use itertools::Itertools;
 use ordered_float::OrderedFloat;

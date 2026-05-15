@@ -18,7 +18,7 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, Settings};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
 use ui::{
     App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
@@ -504,6 +504,7 @@ impl SplittableEditor {
                 Editor::for_multibuffer(rhs_multibuffer.clone(), Some(project.clone()), window, cx);
             editor.set_expand_all_diff_hunks(cx);
             editor.disable_runnables();
+            editor.disable_code_lens(cx);
             editor.disable_inline_diagnostics();
             editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
@@ -583,8 +584,13 @@ impl SplittableEditor {
         };
         let project = workspace.read(cx).project().clone();
 
+        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            let mut multibuffer = if is_rhs_singleton {
+                MultiBuffer::without_headers(Capability::ReadOnly)
+            } else {
+                MultiBuffer::new(Capability::ReadOnly)
+            };
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
@@ -1280,6 +1286,18 @@ impl SplittableEditor {
             }
         }
     }
+
+    pub fn remove_excerpts_for_buffer(
+        &mut self,
+        buffer_id: BufferId,
+        cx: &mut Context<'_, SplittableEditor>,
+    ) {
+        let snapshot = self.rhs_multibuffer.read(cx).snapshot(cx);
+        let Some(path) = snapshot.path_for_buffer(buffer_id) else {
+            return;
+        };
+        self.remove_excerpts_for_path(path.clone(), cx);
+    }
 }
 
 #[cfg(test)]
@@ -1923,12 +1941,12 @@ impl SearchableItem for SplittableEditor {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
         self.focused_editor().update(cx, |editor, cx| {
-            editor.query_suggestion(ignore_settings, window, cx)
+            editor.query_suggestion(seed_query_override, window, cx)
         })
     }
 

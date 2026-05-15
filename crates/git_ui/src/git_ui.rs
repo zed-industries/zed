@@ -17,7 +17,7 @@ use git::{
 };
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    SharedString, Subscription, Task, Window,
+    SharedString, Subscription, Task, TaskExt, Window,
 };
 use menu::{Cancel, Confirm};
 use project::git_store::Repository;

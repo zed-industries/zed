@@ -261,7 +261,7 @@ impl DbThread {
                                 tool_use_id: tool_result.tool_use_id,
                                 tool_name: name.into(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content,
+                                content: vec![tool_result.content],
                                 output: tool_result.output,
                             },
                         );

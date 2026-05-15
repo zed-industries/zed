@@ -29,7 +29,7 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly. If you'd like to hotlink into an SSH project, use a link of the format: `zed://ssh/[<user>@]<host>[:<port>]/<path>`.
+For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly. The CLI also accepts the scp style `zed ssh://[<user>@]<host>:~/project` or `zed ssh://[<user>@]<host>:/absolute/path`. If you'd like to hotlink into an SSH project, use a link of the format: `zed://ssh/[<user>@]<host>[:<port>]/<path>`.
 
 ## Supported platforms
 
@@ -262,6 +262,9 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 - [Running & Testing](./running-testing.md): Run tasks, terminal commands, and
   debugger sessions while you work remotely.
+- [Git Worktrees](./git.md#git-worktrees): Create and switch between linked
+  Git worktrees. Zed supports the worktree picker in remote projects when the
+  remote connection is active.
 - [Configuring Zed](./configuring-zed.md): Manage shared and project settings,
   including `.zed/settings.json`.
 - [Agent Panel](./ai/agent-panel.md): Use AI workflows in remote projects.

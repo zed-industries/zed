@@ -123,6 +123,19 @@ pub fn open_thread_with_connection(
     cx.run_until_parked();
 }
 
+/// Opens a draft thread against a stub server so the panel's `draft_thread`
+/// pointer is populated for tests that care about draft UX.
+pub fn open_draft_with_connection(
+    panel: &Entity<AgentPanel>,
+    connection: StubAgentConnection,
+    cx: &mut VisualTestContext,
+) {
+    panel.update_in(cx, |panel, window, cx| {
+        panel.open_draft_with_server(Rc::new(StubAgentServer::new(connection)), window, cx);
+    });
+    cx.run_until_parked();
+}
+
 pub fn open_thread_with_custom_connection<C>(
     panel: &Entity<AgentPanel>,
     connection: C,
@@ -147,6 +160,20 @@ pub fn send_message(panel: &Entity<AgentPanel>, cx: &mut VisualTestContext) {
         editor.set_text("Hello", window, cx);
     });
     thread_view.update_in(cx, |view, window, cx| view.send(window, cx));
+    cx.run_until_parked();
+}
+
+pub fn type_draft_prompt(panel: &Entity<AgentPanel>, text: &str, cx: &mut VisualTestContext) {
+    let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+    let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+    message_editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(text, window, cx);
+    });
+    cx.run_until_parked();
+    // Drain the debounced draft-prompt persist task so the kvp write has
+    // landed by the time we return.
+    cx.executor()
+        .advance_clock(crate::conversation_view::DRAFT_PROMPT_PERSIST_DEBOUNCE * 2);
     cx.run_until_parked();
 }
 
