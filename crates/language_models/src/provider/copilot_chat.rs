@@ -761,9 +761,14 @@ impl CopilotResponsesEventMapper {
                         }
                     }
 
-                    events.extend(self.capture_reasoning_item(
-                        copilot_response_reasoning_input_item_from_output(&id, encrypted_content),
-                    ));
+                    if encrypted_content.is_some() {
+                        events.extend(self.capture_reasoning_item(
+                            copilot_response_reasoning_input_item_from_output(
+                                &id,
+                                encrypted_content,
+                            ),
+                        ));
+                    }
 
                     events
                 }
@@ -857,12 +862,14 @@ impl CopilotResponsesEventMapper {
                 encrypted_content,
             } = item
             {
-                events.extend(self.capture_reasoning_item(
-                    copilot_response_reasoning_input_item_from_output(
-                        id,
-                        encrypted_content.clone(),
-                    ),
-                ));
+                if encrypted_content.is_some() {
+                    events.extend(self.capture_reasoning_item(
+                        copilot_response_reasoning_input_item_from_output(
+                            id,
+                            encrypted_content.clone(),
+                        ),
+                    ));
+                }
             }
         }
         events
