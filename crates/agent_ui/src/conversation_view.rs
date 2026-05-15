@@ -38,7 +38,8 @@ use gpui::{
 use language::Buffer;
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{
-    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
+    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
+    MarkdownStyle, PathWithRange,
 };
 use parking_lot::RwLock;
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
@@ -3071,11 +3072,37 @@ fn render_agent_markdown(
                 .collect()
         })
         .unwrap_or_default();
+    let path_reference_workspace = workspace.clone();
     MarkdownElement::new(markdown, style)
         .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })
+        .on_path_reference_click(move |path_range, window, cx| {
+            open_path_reference(path_range, &path_reference_workspace, window, cx);
+        })
+}
+
+fn open_path_reference(
+    path_range: &PathWithRange,
+    workspace: &WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(workspace) = workspace.upgrade() else {
+        return;
+    };
+    workspace.update(cx, |workspace, cx| {
+        let project = workspace.project();
+        let Some(project_path) = project.update(cx, |project, cx| {
+            project.find_project_path(path_range.path.as_ref(), cx)
+        }) else {
+            return;
+        };
+        workspace
+            .open_path(project_path, None, true, window, cx)
+            .detach_and_log_err(cx);
+    });
 }
 
 fn plan_label_markdown_style(

@@ -55,6 +55,7 @@ use crate::parser::CodeBlockKind;
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
+type PathReferenceClickCallback = Rc<dyn Fn(&PathWithRange, &mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 pub struct BlockQuoteKindColors {
@@ -1063,6 +1064,7 @@ pub struct MarkdownElement {
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
+    on_path_reference_click: Option<PathReferenceClickCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
     show_root_block_markers: bool,
     autoscroll: AutoscrollBehavior,
@@ -1080,6 +1082,7 @@ impl MarkdownElement {
             on_url_click: None,
             on_source_click: None,
             on_checkbox_toggle: None,
+            on_path_reference_click: None,
             image_resolver: None,
             show_root_block_markers: false,
             autoscroll: AutoscrollBehavior::Propagate,
@@ -1133,6 +1136,17 @@ impl MarkdownElement {
         handler: impl Fn(Range<usize>, bool, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_checkbox_toggle = Some(Rc::new(handler));
+        self
+    }
+
+    /// Register a handler invoked when the user clicks a path-reference pill. A path-reference pill
+    /// is rendered in place of an otherwise-empty fenced code block whose info string is a project
+    /// path (e.g. ```` ```path/to/foo.rs#L1-1 ```` followed immediately by a closing fence).
+    pub fn on_path_reference_click(
+        mut self,
+        handler: impl Fn(&PathWithRange, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_path_reference_click = Some(Rc::new(handler));
         self
     }
 
@@ -1697,6 +1711,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut rendered_path_reference_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -1716,6 +1731,13 @@ impl Element for MarkdownElement {
             if rendered_mermaid_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
+                }
+                continue;
+            }
+
+            if rendered_path_reference_block {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
+                    rendered_path_reference_block = false;
                 }
                 continue;
             }
@@ -1803,7 +1825,7 @@ impl Element for MarkdownElement {
                                 markdown_end,
                             );
                         }
-                        MarkdownTag::CodeBlock { kind, .. } => {
+                        MarkdownTag::CodeBlock { kind, metadata } => {
                             if render_mermaid_diagrams
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
@@ -1830,6 +1852,26 @@ impl Element for MarkdownElement {
                                     ),
                                 );
                                 rendered_mermaid_block = true;
+                                continue;
+                            }
+
+                            if let CodeBlockKind::FencedSrc(path_range) = kind
+                                && let Some(on_click) = self.on_path_reference_click.clone()
+                                && parsed_markdown
+                                    .source
+                                    .get(metadata.content_range.clone())
+                                    .is_some_and(|content| content.trim().is_empty())
+                            {
+                                builder.push_sourced_element(
+                                    range.clone(),
+                                    render_path_reference_pill(
+                                        path_range.clone(),
+                                        on_click,
+                                        range.start,
+                                        cx,
+                                    ),
+                                );
+                                rendered_path_reference_block = true;
                                 continue;
                             }
 
@@ -2418,6 +2460,44 @@ fn apply_heading_style(
     }
 
     heading
+}
+
+fn render_path_reference_pill(
+    path_range: PathWithRange,
+    on_click: PathReferenceClickCallback,
+    element_id_seed: usize,
+    cx: &App,
+) -> AnyElement {
+    let display: SharedString = path_range.path.to_string().into();
+    let colors = cx.theme().colors();
+
+    h_flex()
+        .id(("markdown-path-ref", element_id_seed))
+        .my_1()
+        .flex_none()
+        .gap_1p5()
+        .px_1p5()
+        .py_0p5()
+        .rounded_md()
+        .border_1()
+        .border_color(colors.border_variant)
+        .bg(colors.element_background)
+        .hover(|this| this.bg(colors.element_hover))
+        .cursor_pointer()
+        .child(
+            Icon::new(IconName::File)
+                .size(IconSize::XSmall)
+                .color(Color::Muted),
+        )
+        .child(
+            Label::new(display)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .on_click(move |_event, window, cx| {
+            on_click(&path_range, window, cx);
+        })
+        .into_any_element()
 }
 
 fn render_copy_code_block_button(
