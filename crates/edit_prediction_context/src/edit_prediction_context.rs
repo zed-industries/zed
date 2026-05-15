@@ -25,6 +25,7 @@ mod edit_prediction_context_tests;
 mod editable_context;
 #[cfg(test)]
 mod fake_definition_lsp;
+mod git_log_context;
 
 pub use editable_context::{EditHistoryContextEntry, collect_editable_context};
 

@@ -1,16 +1,21 @@
 use collections::HashMap;
-use gpui::{App, AsyncApp, Entity, EntityId};
+use gpui::{App, AppContext as _, AsyncApp, Entity, EntityId};
 use language::{Buffer, BufferSnapshot, Point, ToPoint as _};
-use project::Project;
+use project::{Project, ProjectPath};
 use std::{ops::Range, path::Path, sync::Arc};
 use text::Anchor;
+use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
+
+use crate::git_log_context::build_git_log_index;
 
 /// This module contains collectors for editable context:
 /// excerpts in files that are likely to be edited.
 
 const CURSOR_CONTEXT_LINE_COUNT: u32 = 20;
 const EDIT_HISTORY_CONTEXT_LINE_COUNT: u32 = 20;
+const GIT_LOG_CONTEXT_LINE_COUNT: u32 = 10000;
+const GIT_LOG_CONTEXT_FILE_COUNT: usize = 10;
 
 type RangesByBuffer = HashMap<EntityId, (Entity<Buffer>, Vec<EditableContextRange>)>;
 
@@ -41,8 +46,14 @@ pub async fn collect_editable_context(
 ) -> anyhow::Result<Vec<RelatedFile>> {
     let mut ranges_by_buffer = RangesByBuffer::default();
 
-    collect_current_cursor_context(&mut ranges_by_buffer, active_buffer, cursor_position, cx);
+    collect_current_cursor_context(
+        &mut ranges_by_buffer,
+        active_buffer.clone(),
+        cursor_position,
+        cx,
+    );
     collect_edit_history_context(&mut ranges_by_buffer, edit_history, cx);
+    collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
 
     Ok(cx.update(|cx| {
         let project = project.read(cx);
@@ -105,6 +116,91 @@ fn collect_edit_history_context(
             edit_history_range,
             index + 1,
             ContextSource::EditHistory,
+        );
+    }
+}
+
+async fn collect_git_log_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    project: Entity<Project>,
+    active_buffer: Entity<Buffer>,
+    cx: &mut AsyncApp,
+) {
+    let Some((worktree_id, active_path, worktree_abs_path)) = cx.update(|cx| {
+        let buffer = active_buffer.read(cx);
+        let file = buffer.file()?;
+        let project = project.read(cx);
+        if !project.is_local() {
+            return None;
+        }
+        let worktree = project.worktree_for_id(file.worktree_id(cx), cx)?;
+        let worktree = worktree.read(cx);
+        if !worktree.is_local() {
+            return None;
+        }
+        Some((
+            file.worktree_id(cx),
+            file.path().clone(),
+            worktree.abs_path(),
+        ))
+    }) else {
+        return;
+    };
+
+    let index_result = cx
+        .background_spawn(async move { build_git_log_index(&worktree_abs_path) })
+        .await;
+    let index = match index_result {
+        Ok(index) => index,
+        Err(error) => {
+            log::debug!("failed to build git log context index: {error:#}");
+            return;
+        }
+    };
+
+    let next_order = ranges_by_buffer
+        .values()
+        .flat_map(|(_, ranges)| ranges.iter().map(|range| range.order))
+        .max()
+        .map_or(0, |order| order + 1);
+
+    for (index, related_path) in index
+        .get_related(active_path.as_std_path(), GIT_LOG_CONTEXT_FILE_COUNT)
+        .into_iter()
+        .enumerate()
+    {
+        let Ok(related_path) = RelPath::new(&related_path, PathStyle::Posix) else {
+            continue;
+        };
+        let project_path = ProjectPath {
+            worktree_id,
+            path: related_path.into_owned().into(),
+        };
+        let buffer = match project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+        {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                log::debug!("failed to open git log related buffer: {error:#}");
+                continue;
+            }
+        };
+
+        let range = buffer.read_with(cx, |buffer, _cx| {
+            let snapshot = buffer.snapshot();
+            let start = snapshot.anchor_before(Point::new(0, 0));
+            let end_row = GIT_LOG_CONTEXT_LINE_COUNT.min(snapshot.max_point().row);
+            let end = snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
+            start..end
+        });
+
+        push_context_range(
+            ranges_by_buffer,
+            buffer,
+            range,
+            next_order + index,
+            ContextSource::GitLog,
         );
     }
 }
@@ -245,5 +341,6 @@ fn context_source_order(context_source: ContextSource) -> usize {
         ContextSource::Lsp => 0,
         ContextSource::CurrentFile => 1,
         ContextSource::EditHistory => 2,
+        ContextSource::GitLog => 3,
     }
 }

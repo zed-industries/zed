@@ -17,9 +17,9 @@ use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum ContextRetrievalType {
-    #[default]
     Lsp,
     Editable,
+    #[default]
     All,
     None,
 }

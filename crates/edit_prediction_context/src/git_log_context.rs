@@ -110,6 +110,7 @@ pub fn build_git_log_index(worktree_dir: &Path) -> Result<GitLogIndex> {
     Ok(index)
 }
 
+#[allow(dead_code)]
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -120,6 +121,7 @@ fn main() -> ExitCode {
     }
 }
 
+#[allow(dead_code)]
 fn run() -> Result<()> {
     let mut arguments = env::args_os();
     let program_name = arguments
@@ -152,10 +154,12 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn print_usage(program_name: &str) {
     eprintln!("Usage: {program_name} <worktree-path> <query-path>");
 }
 
+#[allow(dead_code)]
 fn normalize_query_path(worktree_dir: &Path, query_path: &Path) -> PathBuf {
     if query_path.is_absolute() {
         query_path
@@ -180,7 +184,12 @@ fn parse_git_log(log: &str) -> Vec<Vec<PathBuf>> {
             while let Some(next) = lines.peek()
                 && !next.starts_with("@@COMMIT ")
             {
-                files.push(lines.next().expect("already peeked").into())
+                let Some(next) = lines.next() else {
+                    break;
+                };
+                if !next.is_empty() {
+                    files.push(next.into());
+                }
             }
             commits.push(files);
         }
