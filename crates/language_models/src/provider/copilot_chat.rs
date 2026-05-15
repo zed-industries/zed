@@ -761,12 +761,9 @@ impl CopilotResponsesEventMapper {
                         }
                     }
 
-                    let reasoning_item = copilot_responses::ResponseReasoningInputItem {
-                        id: Some(id),
-                        summary: summary.unwrap_or_default(),
-                        encrypted_content,
-                    };
-                    events.extend(self.capture_reasoning_item(reasoning_item));
+                    events.extend(self.capture_reasoning_item(
+                        copilot_response_reasoning_input_item_from_output(&id, encrypted_content),
+                    ));
 
                     events
                 }
@@ -856,14 +853,13 @@ impl CopilotResponsesEventMapper {
         for item in output {
             if let copilot_responses::ResponseOutputItem::Reasoning {
                 id,
-                summary,
+                summary: _,
                 encrypted_content,
             } = item
             {
                 events.extend(self.capture_reasoning_item(
                     copilot_response_reasoning_input_item_from_output(
                         id,
-                        summary.as_deref(),
                         encrypted_content.clone(),
                     ),
                 ));
@@ -933,7 +929,8 @@ fn append_reasoning_details_to_copilot_response_items(
         return;
     };
 
-    for reasoning_item in metadata.reasoning_items {
+    for mut reasoning_item in metadata.reasoning_items {
+        reasoning_item.summary.clear();
         push_replayed_copilot_reasoning_item(
             reasoning_item,
             replayed_reasoning_item_indexes,
@@ -963,12 +960,11 @@ fn push_replayed_copilot_reasoning_item(
 
 fn copilot_response_reasoning_input_item_from_output(
     id: &str,
-    summary: Option<&[copilot_responses::ResponseReasoningItem]>,
     encrypted_content: Option<String>,
 ) -> copilot_responses::ResponseReasoningInputItem {
     copilot_responses::ResponseReasoningInputItem {
         id: Some(id.to_string()),
-        summary: summary.map(<[_]>::to_vec).unwrap_or_default(),
+        summary: Vec::new(),
         encrypted_content,
     }
 }
@@ -1602,12 +1598,7 @@ mod tests {
                     "reasoning_items": [
                         {
                             "id": "r1",
-                            "summary": [
-                                {
-                                    "type": "summary_text",
-                                    "text": "Chain"
-                                }
-                            ],
+                            "summary": [],
                             "encrypted_content": "ENC"
                         }
                     ]
@@ -1655,12 +1646,7 @@ mod tests {
             Some(&json!({
                 "type": "reasoning",
                 "id": "r1",
-                "summary": [
-                    {
-                        "type": "summary_text",
-                        "text": "Chain"
-                    }
-                ],
+                "summary": [],
                 "encrypted_content": "ENC"
             }))
         );
