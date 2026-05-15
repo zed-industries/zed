@@ -104,10 +104,10 @@ fn source_with_accent_classdefs(source: &str, theme: &MermaidTheme) -> String {
     let mut full_source = source.to_string();
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let (fill, text) = accent_fill_and_text(&accent.background, theme.dark_mode);
+        let stroke = to_hex(&accent.stroke);
         write!(
             full_source,
-            "\nclassDef accent{i} fill:{fill},stroke:{},color:{text}",
-            accent.stroke,
+            "\nclassDef accent{i} fill:{fill},stroke:{stroke},color:{text}",
         )
         .ok();
     }
@@ -331,6 +331,7 @@ fn postprocess_merman_svg(
     let mut in_legend = false;
     let mut legend_color_idx: usize = 0;
     let mut foreign_object_depth: usize = 0;
+    let mut in_fallback_group = false;
 
     loop {
         let event = reader.read_event().context("SVG parse error")?.into_owned();
@@ -406,7 +407,29 @@ fn postprocess_merman_svg(
                                     in_legend = true;
                                 }
                             }
+                            if let Some(attr) = e.try_get_attribute("data-merman-foreignobject")? {
+                                if attr.unescape_value()?.as_ref() == "fallback" {
+                                    in_fallback_group = true;
+                                }
+                            }
                             None
+                        }
+
+                        b"rect" if in_fallback_group => {
+                            in_fallback_group = false;
+                            let mut ne = BytesStart::new("rect");
+                            for attr in e.attributes() {
+                                let attr = attr?;
+                                if attr.key.local_name().as_ref() == b"fill" {
+                                    ne.push_attribute((
+                                        "fill",
+                                        theme.edge_label_background.as_str(),
+                                    ));
+                                } else {
+                                    ne.push_attribute(attr);
+                                }
+                            }
+                            Some(ne)
                         }
 
                         b"rect" if in_legend => {
@@ -647,6 +670,11 @@ fn parse_rgb(color: &str) -> Option<(u8, u8, u8)> {
     None
 }
 
+fn to_hex(color: &str) -> String {
+    let (r, g, b) = parse_rgb(color).unwrap_or((128, 128, 128));
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
 fn luma(r: u8, g: u8, b: u8) -> f64 {
     fn linearize(c: f64) -> f64 {
         let c = c / 255.0;
@@ -689,7 +717,7 @@ fn accent_fill_and_text(background: &str, dark_mode: bool) -> (String, &'static 
     }
 
     let (fr, fg, fb) = hsl_to_rgb(h, s, l);
-    let fill = format!("rgb({fr}, {fg}, {fb})");
+    let fill = format!("#{fr:02x}{fg:02x}{fb:02x}");
     let text = if dark_mode { "#fff" } else { "#000" };
     (fill, text)
 }
