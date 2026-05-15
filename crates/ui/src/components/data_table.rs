@@ -636,7 +636,6 @@ pub fn render_table_row(
         let scrollable_items: Vec<AnyElement> = items_vec.drain(pinned_cols..).collect();
         let scrollable_widths: Vec<Option<Length>> = widths_vec.drain(pinned_cols..).collect();
 
-        // Pinned section: cells in normal flow with flex_shrink_0 to maintain their widths
         let pinned_section = div().flex().flex_row().flex_shrink_0().children(
             items_vec
                 .into_iter()
@@ -921,7 +920,6 @@ fn render_resize_handles_resizable(
     let pinned_cols = pinned_cols.min(n_cols);
 
     if pinned_cols == 0 {
-        // Non-pinned: original behavior, all handles in a single absolute overlay.
         let dividers = build_resize_dividers(
             columns_state,
             &widths,
@@ -949,7 +947,6 @@ fn render_resize_handles_resizable(
         .map(|w| w.to_pixels(rem_size))
         .fold(px(0.), |acc, x| acc + x);
 
-    // Pinned column handles: an absolute overlay covering the pinned section width.
     let pinned_dividers = build_resize_dividers(
         columns_state,
         &widths,
