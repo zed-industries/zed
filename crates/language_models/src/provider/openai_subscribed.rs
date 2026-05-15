@@ -475,9 +475,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             }
             true
         });
-        if !instructions.is_empty() {
-            responses_request.instructions = Some(instructions.join("\n\n"));
-        }
+        responses_request.instructions = Some(instructions.join("\n\n"));
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
