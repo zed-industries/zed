@@ -503,8 +503,9 @@ async fn test_snippets(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use cloud_api_types::ExtensionProvides;
+
+    use super::*;
 
     #[test]
     fn test_validate_empty_features() {
