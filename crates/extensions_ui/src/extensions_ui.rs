@@ -233,6 +233,9 @@ pub fn init(cx: &mut App) {
                     .collect::<Vec<_>>();
 
                 match dev_extensions.len() {
+                    0 => {
+                        workspace.show_error(&"No dev extensions are installed.", cx);
+                    }
                     1 => {
                         let extension_id = dev_extensions[0].id.clone();
                         ExtensionStore::global(cx).update(cx, |store, cx| {
