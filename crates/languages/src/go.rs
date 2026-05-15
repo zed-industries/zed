@@ -773,6 +773,13 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec!["test".into()],
                 cwd: package_cwd.clone(),
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["test".into()],
+                cwd: package_cwd.clone(),
                 tags: vec!["go-package-test".to_owned()],
                 ..TaskTemplate::default()
             },
