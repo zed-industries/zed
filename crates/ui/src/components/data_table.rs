@@ -865,6 +865,56 @@ impl TableRenderContext {
     }
 }
 
+/// Builds resize dividers for the given column range, positioned absolutely from `left: 0`.
+fn build_resize_dividers(
+    columns_state: &Entity<ResizableColumnsState>,
+    widths: &TableRow<AbsoluteLength>,
+    resize_behavior: &TableRow<TableResizeBehavior>,
+    range: Range<usize>,
+    rem_size: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<AnyElement> {
+    let entity_id = columns_state.entity_id();
+    let last = range.end.saturating_sub(1);
+    let mut dividers = Vec::with_capacity(range.end - range.start);
+    let mut accumulated = px(0.);
+
+    for col_idx in range {
+        accumulated = accumulated + widths[col_idx].to_pixels(rem_size);
+
+        // Add a resize divider after every column, including the last.
+        // For the last column the divider is pulled 1px inward so it isn't clipped
+        // by the overflow_hidden content container.
+        let divider_left = if col_idx == last {
+            accumulated - px(RESIZE_DIVIDER_WIDTH)
+        } else {
+            accumulated
+        };
+        let divider = div().id(col_idx).absolute().top_0().left(divider_left);
+        let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
+            let columns_state = columns_state.clone();
+            Rc::new(move |_window, cx| {
+                columns_state.update(cx, |state, cx| {
+                    state.reset_column_to_initial_width(col_idx);
+                    cx.notify();
+                });
+            })
+        };
+        dividers.push(render_column_resize_divider(
+            divider,
+            col_idx,
+            resize_behavior[col_idx].is_resizable(),
+            entity_id,
+            on_reset,
+            None,
+            window,
+            cx,
+        ));
+    }
+    dividers
+}
+
 fn render_resize_handles_resizable(
     columns_state: &Entity<ResizableColumnsState>,
     pinned_cols: usize,
@@ -878,10 +928,29 @@ fn render_resize_handles_resizable(
     };
 
     let rem_size = window.rem_size();
-    let resize_behavior = Rc::new(resize_behavior);
     let n_cols = widths.cols();
-
     let pinned_cols = pinned_cols.min(n_cols);
+
+    if pinned_cols == 0 {
+        // Non-pinned: original behavior, all handles in a single absolute overlay.
+        let dividers = build_resize_dividers(
+            columns_state,
+            &widths,
+            &resize_behavior,
+            0..n_cols,
+            rem_size,
+            window,
+            cx,
+        );
+        return div()
+            .id("resize-handles")
+            .absolute()
+            .inset_0()
+            .w_full()
+            .children(dividers)
+            .into_any_element();
+    }
+
     let pinned_width: Pixels = widths[..pinned_cols]
         .iter()
         .map(|w| w.to_pixels(rem_size))
@@ -891,168 +960,68 @@ fn render_resize_handles_resizable(
         .map(|w| w.to_pixels(rem_size))
         .fold(px(0.), |acc, x| acc + x);
 
-    if pinned_cols > 0 {
-        // Pinned column handles: an absolute overlay covering the pinned section width.
-        let mut pinned_dividers: Vec<AnyElement> = Vec::with_capacity(pinned_cols);
-        let mut pinned_accumulated = px(0.);
+    // Pinned column handles: an absolute overlay covering the pinned section width.
+    let pinned_dividers = build_resize_dividers(
+        columns_state,
+        &widths,
+        &resize_behavior,
+        0..pinned_cols,
+        rem_size,
+        window,
+        cx,
+    );
+    let pinned_overlay = div()
+        .id("resize-handles-pinned")
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left_0()
+        .w(pinned_width)
+        .children(pinned_dividers);
 
-        for col_idx in 0..pinned_cols {
-            let col_width_px = widths[col_idx].to_pixels(rem_size);
-            pinned_accumulated = pinned_accumulated + col_width_px;
+    // Scrollable column handles: placed inside an overflow_x_scroll container that tracks the
+    // same scroll handle as the row scrollable sections. Handles scroll in sync with cells,
+    // and are clipped when they scroll out of the visible area.
+    let scrollable_dividers = build_resize_dividers(
+        columns_state,
+        &widths,
+        &resize_behavior,
+        pinned_cols..n_cols,
+        rem_size,
+        window,
+        cx,
+    );
 
-            let divider_left = if col_idx + 1 == pinned_cols {
-                pinned_accumulated - px(RESIZE_DIVIDER_WIDTH)
-            } else {
-                pinned_accumulated
-            };
-            let divider = div().id(col_idx).absolute().top_0().left(divider_left);
-            let entity_id = columns_state.entity_id();
-            let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
-                let columns_state = columns_state.clone();
-                Rc::new(move |_window, cx| {
-                    columns_state.update(cx, |state, cx| {
-                        state.reset_column_to_initial_width(col_idx);
-                        cx.notify();
-                    });
-                })
-            };
-            pinned_dividers.push(render_column_resize_divider(
-                divider,
-                col_idx,
-                resize_behavior[col_idx].is_resizable(),
-                entity_id,
-                on_reset,
-                None,
-                window,
-                cx,
-            ));
-        }
+    // The inner div provides the scroll extent so the container can scroll.
+    // Handles are absolute within the inner div and scroll with it when the handle updates.
+    let inner = div()
+        .relative()
+        .w(total_scrollable_width)
+        .h_full()
+        .children(scrollable_dividers);
 
-        let pinned_overlay = div()
-            .id("resize-handles-pinned")
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left_0()
-            .w(pinned_width)
-            .children(pinned_dividers);
+    let mut overlay = div()
+        .id("resize-handles")
+        .absolute()
+        .top_0()
+        .bottom_0()
+        .left(pinned_width)
+        .right_0()
+        .overflow_x_scroll()
+        .child(inner);
 
-        // Scrollable column handles: placed inside an overflow_x_scroll container that tracks the
-        // same scroll handle as the row scrollable sections. Handles scroll in sync with cells,
-        // and are clipped when they scroll out of the visible area.
-        let mut scrollable_dividers: Vec<AnyElement> = Vec::with_capacity(n_cols - pinned_cols);
-        let mut scrollable_accumulated = px(0.);
-
-        for col_idx in pinned_cols..n_cols {
-            let col_width_px = widths[col_idx].to_pixels(rem_size);
-            scrollable_accumulated = scrollable_accumulated + col_width_px;
-
-            let divider_left = if col_idx + 1 == n_cols {
-                scrollable_accumulated - px(RESIZE_DIVIDER_WIDTH)
-            } else {
-                scrollable_accumulated
-            };
-            let divider = div().id(col_idx).absolute().top_0().left(divider_left);
-            let entity_id = columns_state.entity_id();
-            let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
-                let columns_state = columns_state.clone();
-                Rc::new(move |_window, cx| {
-                    columns_state.update(cx, |state, cx| {
-                        state.reset_column_to_initial_width(col_idx);
-                        cx.notify();
-                    });
-                })
-            };
-            scrollable_dividers.push(render_column_resize_divider(
-                divider,
-                col_idx,
-                resize_behavior[col_idx].is_resizable(),
-                entity_id,
-                on_reset,
-                None,
-                window,
-                cx,
-            ));
-        }
-
-        // The inner div provides the scroll extent so the container can scroll.
-        // Handles are absolute within the inner div and scroll with it when the handle updates.
-        let inner = div()
-            .relative()
-            .w(total_scrollable_width)
-            .h_full()
-            .children(scrollable_dividers);
-
-        let mut overlay = div()
-            .id("resize-handles")
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .left(pinned_width)
-            .right_0()
-            .overflow_x_scroll()
-            .child(inner);
-
-        if let Some(handle) = h_scroll_handle {
-            overlay = overlay.track_scroll(handle);
-        }
-        overlay.style().restrict_scroll_to_axis = Some(true);
-
-        div()
-            .id("resize-handles-wrapper")
-            .absolute()
-            .inset_0()
-            .child(pinned_overlay)
-            .child(overlay)
-            .into_any_element()
-    } else {
-        // Non-pinned: original behavior, all handles in a single absolute overlay
-        let mut dividers: Vec<AnyElement> = Vec::with_capacity(n_cols);
-        let mut accumulated_px = px(0.);
-
-        for col_idx in 0..n_cols {
-            let col_width_px = widths[col_idx].to_pixels(rem_size);
-            accumulated_px = accumulated_px + col_width_px;
-
-            // Add a resize divider after every column, including the last.
-            // For the last column the divider is pulled 1px inward so it isn't clipped
-            // by the overflow_hidden content container.
-            let divider_left = if col_idx + 1 == n_cols {
-                accumulated_px - px(RESIZE_DIVIDER_WIDTH)
-            } else {
-                accumulated_px
-            };
-            let divider = div().id(col_idx).absolute().top_0().left(divider_left);
-            let entity_id = columns_state.entity_id();
-            let on_reset: Rc<dyn Fn(&mut Window, &mut App)> = {
-                let columns_state = columns_state.clone();
-                Rc::new(move |_window, cx| {
-                    columns_state.update(cx, |state, cx| {
-                        state.reset_column_to_initial_width(col_idx);
-                        cx.notify();
-                    });
-                })
-            };
-            dividers.push(render_column_resize_divider(
-                divider,
-                col_idx,
-                resize_behavior[col_idx].is_resizable(),
-                entity_id,
-                on_reset,
-                None,
-                window,
-                cx,
-            ));
-        }
-
-        div()
-            .id("resize-handles")
-            .absolute()
-            .inset_0()
-            .w_full()
-            .children(dividers)
-            .into_any_element()
+    if let Some(handle) = h_scroll_handle {
+        overlay = overlay.track_scroll(handle);
     }
+    overlay.style().restrict_scroll_to_axis = Some(true);
+
+    div()
+        .id("resize-handles-wrapper")
+        .absolute()
+        .inset_0()
+        .child(pinned_overlay)
+        .child(overlay)
+        .into_any_element()
 }
 
 impl RenderOnce for Table {
