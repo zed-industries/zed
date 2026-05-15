@@ -712,7 +712,7 @@ impl Render for ActivityIndicator {
                                     has_cancellable_work = true;
                                     let language_server_id = work.language_server_id;
                                     let token = work.progress_token.clone();
-                                    let title = SharedString::from(title);
+                                    let title = SharedString::from(format!("Cancel {title}"));
                                     menu = menu.custom_entry(
                                         move |_, _| {
                                             h_flex()
@@ -720,7 +720,7 @@ impl Render for ActivityIndicator {
                                                 .gap_1()
                                                 .child(
                                                     Icon::new(IconName::Close)
-                                                        .color(Color::Error)
+                                                        .color(Color::Muted)
                                                         .size(IconSize::Small),
                                                 )
                                                 .child(Label::new(title.clone()))
