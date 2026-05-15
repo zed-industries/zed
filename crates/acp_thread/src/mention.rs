@@ -1091,4 +1091,56 @@ mod tests {
         let parsed_single = MentionUri::parse(single_line_uri, PathStyle::local()).unwrap();
         assert_eq!(parsed_single.name(), "Terminal (1 line)");
     }
+
+    #[test]
+    fn test_disambiguated_name() {
+        // Two files with the same name — should disambiguate with parent dir
+        let file_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/src/README.md")),
+        };
+        let file_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/docs/README.md")),
+        };
+        assert_eq!(file_a.name(), "README.md");
+        assert_eq!(file_b.name(), "README.md");
+        assert_eq!(file_a.disambiguated_name(false), "README.md");
+        assert_eq!(file_a.disambiguated_name(true), "src/README.md");
+        assert_eq!(file_b.disambiguated_name(true), "docs/README.md");
+
+        // Two skills with the same name — should disambiguate with source
+        let global_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "".into(),
+            skill_file_path: PathBuf::from("/global/create-skill/SKILL.md"),
+        };
+        let project_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "my-project".into(),
+            skill_file_path: PathBuf::from("/project/create-skill/SKILL.md"),
+        };
+        assert_eq!(global_skill.name(), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(false), "create-skill");
+        assert_eq!(
+            global_skill.disambiguated_name(true),
+            "create-skill (global)"
+        );
+        assert_eq!(
+            project_skill.disambiguated_name(true),
+            "create-skill (my-project)"
+        );
+
+        // A type without special disambiguation (Thread) — flag has no effect
+        let thread = MentionUri::Thread {
+            id: acp::SessionId::new("123"),
+            name: "My Thread".into(),
+        };
+        assert_eq!(thread.disambiguated_name(false), "My Thread");
+        assert_eq!(thread.disambiguated_name(true), "My Thread");
+
+        // Edge case: file at filesystem root has no parent to show
+        let root_file = MentionUri::File {
+            abs_path: PathBuf::from(path!("/README.md")),
+        };
+        assert_eq!(root_file.disambiguated_name(true), "README.md");
+    }
 }
