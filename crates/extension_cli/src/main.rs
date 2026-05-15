@@ -301,12 +301,30 @@ fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result
         bail!("extension does not provide any features");
     }
 
-    if provides.contains(&ExtensionProvides::Themes) && provides.len() != 1 {
+    let provides_single_feature = provides.len() == 1;
+
+    if provides.contains(&ExtensionProvides::Themes) && !provides_single_feature {
         bail!("extension must not provide other features along with themes");
     }
 
-    if provides.contains(&ExtensionProvides::IconThemes) && provides.len() != 1 {
+    if provides.contains(&ExtensionProvides::IconThemes) && !provides_single_feature {
         bail!("extension must not provide other features along with icon themes");
+    }
+
+    if provides.contains(&ExtensionProvides::SlashCommands) {
+        if provides_single_feature {
+            bail!(
+                "Slash commands have been deprecated and \
+                the slash command API support will be removed in a future release. \
+                Slash command extensions will no longer be accepted at this time."
+            );
+        } else {
+            bail!(
+                "Slash commands have been deprecated and \
+                the slash command API will be removed in a future release. \
+                Please remove any slash-command related code from your extension."
+            );
+        }
     }
 
     Ok(())
