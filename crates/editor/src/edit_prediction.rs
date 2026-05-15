@@ -13,13 +13,13 @@ pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
     }
 }
 
-pub(crate) enum EditDisplayMode {
+pub(super) enum EditDisplayMode {
     TabAccept,
     DiffPopover,
     Inline,
 }
 
-pub(crate) enum EditPrediction {
+pub(super) enum EditPrediction {
     Edit {
         // TODO could be a language::Anchor?
         edits: Vec<(Range<Anchor>, Arc<str>)>,
@@ -43,14 +43,14 @@ pub(crate) enum EditPrediction {
     },
 }
 
-pub(crate) struct EditPredictionState {
-    pub(crate) inlay_ids: Vec<InlayId>,
-    pub(crate) completion: EditPrediction,
-    pub(crate) completion_id: Option<SharedString>,
-    pub(crate) invalidation_range: Option<Range<Anchor>>,
+pub(super) struct EditPredictionState {
+    pub(super) inlay_ids: Vec<InlayId>,
+    pub(super) completion: EditPrediction,
+    pub(super) completion_id: Option<SharedString>,
+    pub(super) invalidation_range: Option<Range<Anchor>>,
 }
 
-pub(crate) enum EditPredictionSettings {
+pub(super) enum EditPredictionSettings {
     Disabled,
     Enabled {
         show_in_menu: bool,
@@ -58,12 +58,13 @@ pub(crate) enum EditPredictionSettings {
     },
 }
 
-pub enum MenuEditPredictionsPolicy {
+pub(super) enum MenuEditPredictionsPolicy {
+    #[cfg(any(test, feature = "test-support"))]
     Never,
     ByProvider,
 }
 
-pub enum EditPredictionPreview {
+pub(super) enum EditPredictionPreview {
     /// Modifier is not pressed
     Inactive { released_too_fast: bool },
     /// Modifier pressed
@@ -74,38 +75,41 @@ pub enum EditPredictionPreview {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub(crate) enum EditPredictionKeybindSurface {
+pub(super) enum EditPredictionKeybindSurface {
     Inline,
     CursorPopoverCompact,
     CursorPopoverExpanded,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum EditPredictionKeybindAction {
+pub(super) enum EditPredictionKeybindAction {
     Accept,
     Preview,
 }
 
-pub(crate) struct EditPredictionKeybindDisplay {
+pub(super) struct EditPredictionKeybindDisplay {
     #[cfg(test)]
-    pub(crate) accept_keystroke: Option<gpui::KeybindingKeystroke>,
+    pub(super) accept_keystroke: Option<gpui::KeybindingKeystroke>,
     #[cfg(test)]
-    pub(crate) preview_keystroke: Option<gpui::KeybindingKeystroke>,
-    pub(crate) displayed_keystroke: Option<gpui::KeybindingKeystroke>,
-    pub(crate) action: EditPredictionKeybindAction,
-    pub(crate) missing_accept_keystroke: bool,
-    pub(crate) show_hold_label: bool,
+    pub(super) preview_keystroke: Option<gpui::KeybindingKeystroke>,
+    pub(super) displayed_keystroke: Option<gpui::KeybindingKeystroke>,
+    pub(super) action: EditPredictionKeybindAction,
+    pub(super) missing_accept_keystroke: bool,
+    pub(super) show_hold_label: bool,
 }
 
 impl EditPredictionPreview {
-    pub fn released_too_fast(&self) -> bool {
+    pub(super) fn released_too_fast(&self) -> bool {
         match self {
             EditPredictionPreview::Inactive { released_too_fast } => *released_too_fast,
             EditPredictionPreview::Active { .. } => false,
         }
     }
 
-    pub fn set_previous_scroll_position(&mut self, scroll_position: Option<SharedScrollAnchor>) {
+    pub(super) fn set_previous_scroll_position(
+        &mut self,
+        scroll_position: Option<SharedScrollAnchor>,
+    ) {
         if let EditPredictionPreview::Active {
             previous_scroll_position,
             ..
@@ -116,201 +120,35 @@ impl EditPredictionPreview {
     }
 }
 
-pub(crate) struct RegisteredEditPredictionDelegate {
-    pub(crate) provider: Arc<dyn EditPredictionDelegateHandle>,
+pub(super) struct RegisteredEditPredictionDelegate {
+    pub(super) provider: Arc<dyn EditPredictionDelegateHandle>,
     _subscription: Subscription,
 }
 
-impl Editor {
-    fn accept_edit_prediction_keystroke(
-        &self,
-        granularity: EditPredictionGranularity,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<gpui::KeybindingKeystroke> {
-        let key_context = self.key_context_internal(true, window, cx);
-
-        let bindings =
-            match granularity {
-                EditPredictionGranularity::Word => window
-                    .bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context),
-                EditPredictionGranularity::Line => window
-                    .bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context),
-                EditPredictionGranularity::Full => {
-                    window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-                }
-            };
-
-        bindings
-            .into_iter()
-            .rev()
-            .find_map(|binding| match binding.keystrokes() {
-                [keystroke, ..] => Some(keystroke.clone()),
-                _ => None,
-            })
-    }
-
-    pub(super) fn preview_edit_prediction_keystroke(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<gpui::KeybindingKeystroke> {
-        let key_context = self.key_context_internal(true, window, cx);
-        let bindings = window.bindings_for_action_in_context(&AcceptEditPrediction, key_context);
-        bindings
-            .into_iter()
-            .rev()
-            .find_map(|binding| match binding.keystrokes() {
-                [keystroke, ..] if keystroke.modifiers().modified() => Some(keystroke.clone()),
-                _ => None,
-            })
-    }
-
-    fn edit_prediction_preview_modifiers_held(
-        &self,
-        modifiers: &Modifiers,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> bool {
-        let can_supersede_active_menu =
-            self.context_menu.borrow().as_ref().is_none_or(|menu| {
-                !menu.visible() || matches!(menu, CodeContextMenu::Completions(_))
-            });
-
-        if !can_supersede_active_menu {
-            return false;
-        }
-
-        let key_context = self.key_context_internal(true, window, cx);
-        let actions: [&dyn Action; 3] = [
-            &AcceptEditPrediction,
-            &AcceptNextWordEditPrediction,
-            &AcceptNextLineEditPrediction,
-        ];
-
-        actions.into_iter().any(|action| {
-            window
-                .bindings_for_action_in_context(action, key_context.clone())
-                .into_iter()
-                .rev()
-                .any(|binding| {
-                    binding.keystrokes().first().is_some_and(|keystroke| {
-                        keystroke.modifiers().modified() && keystroke.modifiers() == modifiers
-                    })
-                })
+pub(super) fn edit_prediction_edit_text(
+    current_snapshot: &BufferSnapshot,
+    edits: &[(Range<Anchor>, impl AsRef<str>)],
+    edit_preview: &EditPreview,
+    include_deletions: bool,
+    multibuffer_snapshot: &MultiBufferSnapshot,
+    cx: &App,
+) -> HighlightedText {
+    let edits = edits
+        .iter()
+        .filter_map(|(anchor, text)| {
+            Some((
+                multibuffer_snapshot
+                    .anchor_range_to_buffer_anchor_range(anchor.clone())?
+                    .1,
+                text,
+            ))
         })
-    }
+        .collect::<Vec<_>>();
 
-    fn edit_prediction_cursor_popover_prefers_preview(
-        &self,
-        completion: &EditPredictionState,
-        cx: &App,
-    ) -> bool {
-        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+    edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
+}
 
-        match &completion.completion {
-            EditPrediction::Edit {
-                edits, snapshot, ..
-            } => {
-                let mut start_row: Option<u32> = None;
-                let mut end_row: Option<u32> = None;
-
-                for (range, text) in edits {
-                    let Some((_, range)) =
-                        multibuffer_snapshot.anchor_range_to_buffer_anchor_range(range.clone())
-                    else {
-                        continue;
-                    };
-                    let edit_start_row = range.start.to_point(snapshot).row;
-                    let old_end_row = range.end.to_point(snapshot).row;
-                    let inserted_newline_count = text
-                        .as_ref()
-                        .chars()
-                        .filter(|character| *character == '\n')
-                        .count() as u32;
-                    let deleted_newline_count = old_end_row - edit_start_row;
-                    let preview_end_row = edit_start_row + inserted_newline_count;
-
-                    start_row =
-                        Some(start_row.map_or(edit_start_row, |row| row.min(edit_start_row)));
-                    end_row = Some(end_row.map_or(preview_end_row, |row| row.max(preview_end_row)));
-
-                    if deleted_newline_count > 1 {
-                        end_row = Some(end_row.map_or(old_end_row, |row| row.max(old_end_row)));
-                    }
-                }
-
-                start_row
-                    .zip(end_row)
-                    .is_some_and(|(start_row, end_row)| end_row > start_row)
-            }
-            EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => false,
-        }
-    }
-
-    pub(super) fn edit_prediction_keybind_display(
-        &self,
-        surface: EditPredictionKeybindSurface,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> EditPredictionKeybindDisplay {
-        let accept_keystroke =
-            self.accept_edit_prediction_keystroke(EditPredictionGranularity::Full, window, cx);
-        let preview_keystroke = self.preview_edit_prediction_keystroke(window, cx);
-
-        let action = match surface {
-            EditPredictionKeybindSurface::Inline
-            | EditPredictionKeybindSurface::CursorPopoverCompact => {
-                if self.edit_prediction_requires_modifier() {
-                    EditPredictionKeybindAction::Preview
-                } else {
-                    EditPredictionKeybindAction::Accept
-                }
-            }
-            EditPredictionKeybindSurface::CursorPopoverExpanded => self
-                .active_edit_prediction
-                .as_ref()
-                .filter(|completion| {
-                    self.edit_prediction_cursor_popover_prefers_preview(completion, cx)
-                })
-                .map_or(EditPredictionKeybindAction::Accept, |_| {
-                    EditPredictionKeybindAction::Preview
-                }),
-        };
-        #[cfg(test)]
-        let preview_copy = preview_keystroke.clone();
-        #[cfg(test)]
-        let accept_copy = accept_keystroke.clone();
-
-        let displayed_keystroke = match surface {
-            EditPredictionKeybindSurface::Inline => match action {
-                EditPredictionKeybindAction::Accept => accept_keystroke,
-                EditPredictionKeybindAction::Preview => preview_keystroke,
-            },
-            EditPredictionKeybindSurface::CursorPopoverCompact
-            | EditPredictionKeybindSurface::CursorPopoverExpanded => match action {
-                EditPredictionKeybindAction::Accept => accept_keystroke,
-                EditPredictionKeybindAction::Preview => {
-                    preview_keystroke.or_else(|| accept_keystroke.clone())
-                }
-            },
-        };
-
-        let missing_accept_keystroke = displayed_keystroke.is_none();
-
-        EditPredictionKeybindDisplay {
-            #[cfg(test)]
-            accept_keystroke: accept_copy,
-            #[cfg(test)]
-            preview_keystroke: preview_copy,
-            displayed_keystroke,
-            action,
-            missing_accept_keystroke,
-            show_hold_label: matches!(surface, EditPredictionKeybindSurface::CursorPopoverCompact)
-                && self.edit_prediction_preview.released_too_fast(),
-        }
-    }
-
+impl Editor {
     pub fn set_edit_prediction_provider<T>(
         &mut self,
         provider: Option<Entity<T>>,
@@ -347,10 +185,6 @@ impl Editor {
         }
     }
 
-    pub fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
-        self.menu_edit_predictions_policy = value;
-    }
-
     pub fn toggle_edit_predictions(
         &mut self,
         _: &ToggleEditPrediction,
@@ -379,27 +213,6 @@ impl Editor {
         } else {
             self.refresh_edit_prediction(false, true, window, cx);
         }
-    }
-
-    fn edit_predictions_disabled_in_scope(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> bool {
-        let snapshot = buffer.read(cx).snapshot();
-        let settings = snapshot.settings_at(buffer_position, cx);
-
-        let Some(scope) = snapshot.language_scope_at(buffer_position) else {
-            return false;
-        };
-
-        scope.override_name().is_some_and(|scope_name| {
-            settings
-                .edit_predictions_disabled_in
-                .iter()
-                .any(|s| s == scope_name)
-        })
     }
 
     pub fn refresh_edit_prediction(
@@ -443,27 +256,10 @@ impl Editor {
         Some(())
     }
 
-    pub(super) fn show_edit_predictions_in_menu(&self) -> bool {
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { show_in_menu, .. } => show_in_menu,
-        }
-    }
-
     pub fn edit_predictions_enabled(&self) -> bool {
         match self.edit_prediction_settings {
             EditPredictionSettings::Disabled => false,
             EditPredictionSettings::Enabled { .. } => true,
-        }
-    }
-
-    pub(super) fn edit_prediction_requires_modifier(&self) -> bool {
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled {
-                preview_requires_modifier,
-                ..
-            } => preview_requires_modifier,
         }
     }
 
@@ -490,48 +286,6 @@ impl Editor {
         }
     }
 
-    fn edit_prediction_settings_at_position(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> EditPredictionSettings {
-        if !self.mode.is_full()
-            || !self.show_edit_predictions_override.unwrap_or(true)
-            || self.edit_predictions_disabled_in_scope(buffer, buffer_position, cx)
-        {
-            return EditPredictionSettings::Disabled;
-        }
-
-        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
-            return EditPredictionSettings::Disabled;
-        };
-
-        let by_provider = matches!(
-            self.menu_edit_predictions_policy,
-            MenuEditPredictionsPolicy::ByProvider
-        );
-
-        let show_in_menu = by_provider
-            && self
-                .edit_prediction_provider
-                .as_ref()
-                .is_some_and(|provider| provider.provider.show_predictions_in_menu());
-
-        let file = buffer.read(cx).file();
-        let preview_requires_modifier =
-            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
-
-        EditPredictionSettings::Enabled {
-            show_in_menu,
-            preview_requires_modifier,
-        }
-    }
-
-    fn should_show_edit_predictions(&self) -> bool {
-        self.snippet_stack.is_empty() && self.edit_predictions_enabled()
-    }
-
     pub fn edit_prediction_preview_is_active(&self) -> bool {
         matches!(
             self.edit_prediction_preview,
@@ -548,34 +302,6 @@ impl Editor {
         } else {
             false
         }
-    }
-
-    pub fn supports_minimap(&self, cx: &App) -> bool {
-        !self.minimap_visibility.disabled() && self.buffer_kind(cx) == ItemBufferKind::Singleton
-    }
-
-    fn edit_predictions_enabled_in_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> bool {
-        maybe!({
-            if self.read_only(cx) || self.leader_id.is_some() {
-                return Some(false);
-            }
-            let provider = self.edit_prediction_provider()?;
-            if !provider.is_enabled(buffer, buffer_position, cx) {
-                return Some(false);
-            }
-            let buffer = buffer.read(cx);
-            let Some(file) = buffer.file() else {
-                return Some(true);
-            };
-            let settings = all_language_settings(Some(file), cx);
-            Some(settings.edit_predictions_enabled_for_file(file, cx))
-        })
-        .unwrap_or(false)
     }
 
     pub fn show_edit_prediction(
@@ -689,7 +415,10 @@ impl Editor {
                         // so the anchor tracks through the edit correctly
                         let fallback_cursor_target = {
                             let snapshot = self.buffer.read(cx).snapshot(cx);
-                            edits.last().unwrap().0.end.bias_right(&snapshot)
+                            let Some((last_edit_range, _)) = edits.last() else {
+                                return;
+                            };
+                            last_edit_range.end.bias_right(&snapshot)
                         };
 
                         self.buffer.update(cx, |buffer, cx| {
@@ -823,6 +552,125 @@ impl Editor {
         self.accept_partial_edit_prediction(EditPredictionGranularity::Full, window, cx);
     }
 
+    pub fn has_active_edit_prediction(&self) -> bool {
+        self.active_edit_prediction.is_some()
+    }
+
+    pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
+        if self.edit_prediction_preview_is_active()
+            || !self.show_edit_predictions_in_menu()
+            || !self.edit_predictions_enabled()
+        {
+            return false;
+        }
+
+        if self.has_visible_completions_menu() {
+            return true;
+        }
+
+        has_completion && self.edit_prediction_requires_modifier()
+    }
+
+    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionDelegateHandle>> {
+        Some(self.edit_prediction_provider.as_ref()?.provider.clone())
+    }
+
+    pub(super) fn preview_edit_prediction_keystroke(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<gpui::KeybindingKeystroke> {
+        let key_context = self.key_context_internal(true, window, cx);
+        let bindings = window.bindings_for_action_in_context(&AcceptEditPrediction, key_context);
+        bindings
+            .into_iter()
+            .rev()
+            .find_map(|binding| match binding.keystrokes() {
+                [keystroke, ..] if keystroke.modifiers().modified() => Some(keystroke.clone()),
+                _ => None,
+            })
+    }
+
+    pub(super) fn edit_prediction_keybind_display(
+        &self,
+        surface: EditPredictionKeybindSurface,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> EditPredictionKeybindDisplay {
+        let accept_keystroke =
+            self.accept_edit_prediction_keystroke(EditPredictionGranularity::Full, window, cx);
+        let preview_keystroke = self.preview_edit_prediction_keystroke(window, cx);
+
+        let action = match surface {
+            EditPredictionKeybindSurface::Inline
+            | EditPredictionKeybindSurface::CursorPopoverCompact => {
+                if self.edit_prediction_requires_modifier() {
+                    EditPredictionKeybindAction::Preview
+                } else {
+                    EditPredictionKeybindAction::Accept
+                }
+            }
+            EditPredictionKeybindSurface::CursorPopoverExpanded => self
+                .active_edit_prediction
+                .as_ref()
+                .filter(|completion| {
+                    self.edit_prediction_cursor_popover_prefers_preview(completion, cx)
+                })
+                .map_or(EditPredictionKeybindAction::Accept, |_| {
+                    EditPredictionKeybindAction::Preview
+                }),
+        };
+        #[cfg(test)]
+        let preview_copy = preview_keystroke.clone();
+        #[cfg(test)]
+        let accept_copy = accept_keystroke.clone();
+
+        let displayed_keystroke = match surface {
+            EditPredictionKeybindSurface::Inline => match action {
+                EditPredictionKeybindAction::Accept => accept_keystroke,
+                EditPredictionKeybindAction::Preview => preview_keystroke,
+            },
+            EditPredictionKeybindSurface::CursorPopoverCompact
+            | EditPredictionKeybindSurface::CursorPopoverExpanded => match action {
+                EditPredictionKeybindAction::Accept => accept_keystroke,
+                EditPredictionKeybindAction::Preview => {
+                    preview_keystroke.or_else(|| accept_keystroke.clone())
+                }
+            },
+        };
+
+        let missing_accept_keystroke = displayed_keystroke.is_none();
+
+        EditPredictionKeybindDisplay {
+            #[cfg(test)]
+            accept_keystroke: accept_copy,
+            #[cfg(test)]
+            preview_keystroke: preview_copy,
+            displayed_keystroke,
+            action,
+            missing_accept_keystroke,
+            show_hold_label: matches!(surface, EditPredictionKeybindSurface::CursorPopoverCompact)
+                && self.edit_prediction_preview.released_too_fast(),
+        }
+    }
+
+    pub(super) fn show_edit_predictions_in_menu(&self) -> bool {
+        match self.edit_prediction_settings {
+            EditPredictionSettings::Disabled => false,
+            EditPredictionSettings::Enabled { show_in_menu, .. } => show_in_menu,
+        }
+    }
+
+    pub(super) fn edit_prediction_requires_modifier(&self) -> bool {
+        match self.edit_prediction_settings {
+            EditPredictionSettings::Disabled => false,
+            EditPredictionSettings::Enabled {
+                preview_requires_modifier,
+                ..
+            } => preview_requires_modifier,
+        }
+    }
+
     pub(super) fn discard_edit_prediction(
         &mut self,
         reason: EditPredictionDiscardReason,
@@ -844,73 +692,6 @@ impl Editor {
         self.take_active_edit_prediction(reason == EditPredictionDiscardReason::Ignored, cx)
     }
 
-    fn report_edit_prediction_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
-        let Some(provider) = self.edit_prediction_provider() else {
-            return;
-        };
-
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some((position, _)) =
-            buffer_snapshot.anchor_to_buffer_anchor(self.selections.newest_anchor().head())
-        else {
-            return;
-        };
-        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
-            return;
-        };
-
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string()));
-
-        let event_type = match accepted {
-            true => "Edit Prediction Accepted",
-            false => "Edit Prediction Discarded",
-        };
-        telemetry::event!(
-            event_type,
-            provider = provider.name(),
-            prediction_id = id,
-            suggestion_accepted = accepted,
-            file_extension = extension,
-        );
-    }
-
-    fn open_editor_at_anchor(
-        snapshot: &language::BufferSnapshot,
-        target: language::Anchor,
-        workspace: &Entity<Workspace>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        workspace.update(cx, |workspace, cx| {
-            let path = snapshot.file().map(|file| file.full_path(cx));
-            let Some(path) =
-                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
-            else {
-                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
-            };
-            let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(path, None, true, window, cx);
-            window.spawn(cx, async move |cx| {
-                let Some(editor) = item.await?.downcast::<Editor>() else {
-                    return Ok(());
-                };
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.go_to_singleton_buffer_point(target, window, cx);
-                    })
-                    .ok();
-                anyhow::Ok(())
-            })
-        })
-    }
-
-    pub fn has_active_edit_prediction(&self) -> bool {
-        self.active_edit_prediction.is_some()
-    }
-
     pub(super) fn take_active_edit_prediction(
         &mut self,
         preserve_stale_in_menu: bool,
@@ -928,24 +709,6 @@ impl Editor {
         self.stale_edit_prediction_in_menu =
             preserve_stale_in_menu.then_some(active_edit_prediction);
         true
-    }
-
-    /// Returns true when we're displaying the edit prediction popover below the cursor
-    /// like we are not previewing and the LSP autocomplete menu is visible
-    /// or we are in `when_holding_modifier` mode.
-    pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.edit_prediction_preview_is_active()
-            || !self.show_edit_predictions_in_menu()
-            || !self.edit_predictions_enabled()
-        {
-            return false;
-        }
-
-        if self.has_visible_completions_menu() {
-            return true;
-        }
-
-        has_completion && self.edit_prediction_requires_modifier()
     }
 
     pub(super) fn update_edit_prediction_preview(
@@ -1117,11 +880,18 @@ impl Editor {
             Some((anchor, predicted.offset))
         });
 
-        let first_edit_start = edits.first().unwrap().0.start;
+        let Some((first_edit_range, _)) = edits.first() else {
+            return None;
+        };
+        let Some((last_edit_range, _)) = edits.last() else {
+            return None;
+        };
+
+        let first_edit_start = first_edit_range.start;
         let first_edit_start_point = first_edit_start.to_point(&multibuffer);
         let edit_start_row = first_edit_start_point.row.saturating_sub(2);
 
-        let last_edit_end = edits.last().unwrap().0.end;
+        let last_edit_end = last_edit_range.end;
         let last_edit_end_point = last_edit_end.to_point(&multibuffer);
         let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
 
@@ -1257,13 +1027,6 @@ impl Editor {
         Some(())
     }
 
-    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionDelegateHandle>> {
-        Some(self.edit_prediction_provider.as_ref()?.provider.clone())
-    }
-
-    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = px(24.);
-    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = px(2.);
-
     pub(super) fn render_edit_prediction_popover(
         &mut self,
         text_bounds: &Bounds<Pixels>,
@@ -1394,6 +1157,494 @@ impl Editor {
             }
         }
     }
+
+    pub(super) fn edit_prediction_cursor_popover_height(&self) -> Pixels {
+        px(30.)
+    }
+
+    pub(super) fn render_edit_prediction_cursor_popover(
+        &self,
+        min_width: Pixels,
+        max_width: Pixels,
+        cursor_point: Point,
+        style: &EditorStyle,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Option<AnyElement> {
+        let provider = self.edit_prediction_provider.as_ref()?;
+        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
+
+        let is_refreshing = provider.provider.is_refreshing(cx);
+
+        fn pending_completion_container(icon: IconName) -> Div {
+            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
+        }
+
+        let completion = match &self.active_edit_prediction {
+            Some(prediction) => {
+                if !self.has_visible_completions_menu() {
+                    const RADIUS: Pixels = px(6.);
+                    const BORDER_WIDTH: Pixels = px(1.);
+                    let keybind_display = self.edit_prediction_keybind_display(
+                        EditPredictionKeybindSurface::CursorPopoverCompact,
+                        window,
+                        cx,
+                    );
+
+                    return Some(
+                        h_flex()
+                            .elevation_2(cx)
+                            .border(BORDER_WIDTH)
+                            .border_color(cx.theme().colors().border)
+                            .when(keybind_display.missing_accept_keystroke, |el| {
+                                el.border_color(cx.theme().status().error)
+                            })
+                            .rounded(RADIUS)
+                            .rounded_tl(px(0.))
+                            .overflow_hidden()
+                            .child(div().px_1p5().child(match &prediction.completion {
+                                EditPrediction::MoveWithin { target, snapshot } => {
+                                    use text::ToPoint as _;
+                                    if target.text_anchor_in(&snapshot).to_point(snapshot).row
+                                        > cursor_point.row
+                                    {
+                                        Icon::new(icons.down)
+                                    } else {
+                                        Icon::new(icons.up)
+                                    }
+                                }
+                                EditPrediction::MoveOutside { .. } => {
+                                    // TODO [zeta2] custom icon for external jump?
+                                    Icon::new(icons.base)
+                                }
+                                EditPrediction::Edit { .. } => Icon::new(icons.base),
+                            }))
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .rounded_r(RADIUS - BORDER_WIDTH)
+                                    .border_l_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .when(keybind_display.show_hold_label, |el| {
+                                        el.child(
+                                            Label::new("Hold")
+                                                .size(LabelSize::Small)
+                                                .when(
+                                                    keybind_display.missing_accept_keystroke,
+                                                    |el| el.strikethrough(),
+                                                )
+                                                .line_height_style(LineHeightStyle::UiLabel),
+                                        )
+                                    })
+                                    .id("edit_prediction_cursor_popover_keybind")
+                                    .when(keybind_display.missing_accept_keystroke, |el| {
+                                        let status_colors = cx.theme().status();
+
+                                        el.bg(status_colors.error_background)
+                                            .border_color(status_colors.error.opacity(0.6))
+                                            .child(Icon::new(IconName::Info).color(Color::Error))
+                                            .cursor_default()
+                                            .hoverable_tooltip(move |_window, cx| {
+                                                cx.new(|_| MissingEditPredictionKeybindingTooltip)
+                                                    .into()
+                                            })
+                                    })
+                                    .when_some(
+                                        keybind_display.displayed_keystroke.as_ref(),
+                                        |el, compact_keystroke| {
+                                            el.child(self.render_edit_prediction_popover_keystroke(
+                                                compact_keystroke,
+                                                Color::Default,
+                                                cx,
+                                            ))
+                                        },
+                                    ),
+                            )
+                            .into_any(),
+                    );
+                }
+
+                self.render_edit_prediction_cursor_popover_preview(
+                    prediction,
+                    cursor_point,
+                    style,
+                    cx,
+                )?
+            }
+
+            None if is_refreshing => match &self.stale_edit_prediction_in_menu {
+                Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
+                    stale_completion,
+                    cursor_point,
+                    style,
+                    cx,
+                )?,
+
+                None => pending_completion_container(icons.base)
+                    .child(Label::new("...").size(LabelSize::Small)),
+            },
+
+            None => pending_completion_container(icons.base)
+                .child(Label::new("...").size(LabelSize::Small)),
+        };
+
+        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
+            completion
+                .with_animation(
+                    "loading-completion",
+                    Animation::new(Duration::from_secs(2))
+                        .repeat()
+                        .with_easing(pulsating_between(0.4, 0.8)),
+                    |label, delta| label.opacity(delta),
+                )
+                .into_any_element()
+        } else {
+            completion.into_any_element()
+        };
+
+        let has_completion = self.active_edit_prediction.is_some();
+        let keybind_display = self.edit_prediction_keybind_display(
+            EditPredictionKeybindSurface::CursorPopoverExpanded,
+            window,
+            cx,
+        );
+
+        Some(
+            h_flex()
+                .min_w(min_width)
+                .max_w(max_width)
+                .flex_1()
+                .elevation_2(cx)
+                .border_color(cx.theme().colors().border)
+                .child(
+                    div()
+                        .flex_1()
+                        .py_1()
+                        .px_2()
+                        .overflow_hidden()
+                        .child(completion),
+                )
+                .when_some(
+                    keybind_display.displayed_keystroke.as_ref(),
+                    |el, keystroke| {
+                        let key_color = if !has_completion {
+                            Color::Muted
+                        } else {
+                            Color::Default
+                        };
+
+                        if keybind_display.action == EditPredictionKeybindAction::Preview {
+                            el.child(
+                                h_flex()
+                                    .h_full()
+                                    .border_l_1()
+                                    .rounded_r_lg()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .child(self.render_edit_prediction_popover_keystroke(
+                                        keystroke, key_color, cx,
+                                    ))
+                                    .child(Label::new("Preview").into_any_element())
+                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
+                            )
+                        } else {
+                            el.child(
+                                h_flex()
+                                    .h_full()
+                                    .border_l_1()
+                                    .rounded_r_lg()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
+                                    .gap_1()
+                                    .py_1()
+                                    .px_2()
+                                    .child(self.render_edit_prediction_popover_keystroke(
+                                        keystroke, key_color, cx,
+                                    ))
+                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
+                            )
+                        }
+                    },
+                )
+                .into_any(),
+        )
+    }
+
+    fn accept_edit_prediction_keystroke(
+        &self,
+        granularity: EditPredictionGranularity,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<gpui::KeybindingKeystroke> {
+        let key_context = self.key_context_internal(true, window, cx);
+
+        let bindings =
+            match granularity {
+                EditPredictionGranularity::Word => window
+                    .bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context),
+                EditPredictionGranularity::Line => window
+                    .bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context),
+                EditPredictionGranularity::Full => {
+                    window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+                }
+            };
+
+        bindings
+            .into_iter()
+            .rev()
+            .find_map(|binding| match binding.keystrokes() {
+                [keystroke, ..] => Some(keystroke.clone()),
+                _ => None,
+            })
+    }
+
+    fn edit_prediction_preview_modifiers_held(
+        &self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let can_supersede_active_menu =
+            self.context_menu.borrow().as_ref().is_none_or(|menu| {
+                !menu.visible() || matches!(menu, CodeContextMenu::Completions(_))
+            });
+
+        if !can_supersede_active_menu {
+            return false;
+        }
+
+        let key_context = self.key_context_internal(true, window, cx);
+        let actions: [&dyn Action; 3] = [
+            &AcceptEditPrediction,
+            &AcceptNextWordEditPrediction,
+            &AcceptNextLineEditPrediction,
+        ];
+
+        actions.into_iter().any(|action| {
+            window
+                .bindings_for_action_in_context(action, key_context.clone())
+                .into_iter()
+                .rev()
+                .any(|binding| {
+                    binding.keystrokes().first().is_some_and(|keystroke| {
+                        keystroke.modifiers().modified() && keystroke.modifiers() == modifiers
+                    })
+                })
+        })
+    }
+
+    fn edit_prediction_cursor_popover_prefers_preview(
+        &self,
+        completion: &EditPredictionState,
+        cx: &App,
+    ) -> bool {
+        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
+
+        match &completion.completion {
+            EditPrediction::Edit {
+                edits, snapshot, ..
+            } => {
+                let mut start_row: Option<u32> = None;
+                let mut end_row: Option<u32> = None;
+
+                for (range, text) in edits {
+                    let Some((_, range)) =
+                        multibuffer_snapshot.anchor_range_to_buffer_anchor_range(range.clone())
+                    else {
+                        continue;
+                    };
+                    let edit_start_row = range.start.to_point(snapshot).row;
+                    let old_end_row = range.end.to_point(snapshot).row;
+                    let inserted_newline_count = text
+                        .as_ref()
+                        .chars()
+                        .filter(|character| *character == '\n')
+                        .count() as u32;
+                    let deleted_newline_count = old_end_row - edit_start_row;
+                    let preview_end_row = edit_start_row + inserted_newline_count;
+
+                    start_row =
+                        Some(start_row.map_or(edit_start_row, |row| row.min(edit_start_row)));
+                    end_row = Some(end_row.map_or(preview_end_row, |row| row.max(preview_end_row)));
+
+                    if deleted_newline_count > 1 {
+                        end_row = Some(end_row.map_or(old_end_row, |row| row.max(old_end_row)));
+                    }
+                }
+
+                start_row
+                    .zip(end_row)
+                    .is_some_and(|(start_row, end_row)| end_row > start_row)
+            }
+            EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => false,
+        }
+    }
+
+    fn edit_predictions_disabled_in_scope(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &App,
+    ) -> bool {
+        let snapshot = buffer.read(cx).snapshot();
+        let settings = snapshot.settings_at(buffer_position, cx);
+
+        let Some(scope) = snapshot.language_scope_at(buffer_position) else {
+            return false;
+        };
+
+        scope.override_name().is_some_and(|scope_name| {
+            settings
+                .edit_predictions_disabled_in
+                .iter()
+                .any(|s| s == scope_name)
+        })
+    }
+
+    fn edit_prediction_settings_at_position(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &App,
+    ) -> EditPredictionSettings {
+        if !self.mode.is_full()
+            || !self.show_edit_predictions_override.unwrap_or(true)
+            || self.edit_predictions_disabled_in_scope(buffer, buffer_position, cx)
+        {
+            return EditPredictionSettings::Disabled;
+        }
+
+        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
+            return EditPredictionSettings::Disabled;
+        };
+
+        let by_provider = matches!(
+            self.menu_edit_predictions_policy,
+            MenuEditPredictionsPolicy::ByProvider
+        );
+
+        let show_in_menu = by_provider
+            && self
+                .edit_prediction_provider
+                .as_ref()
+                .is_some_and(|provider| provider.provider.show_predictions_in_menu());
+
+        let file = buffer.read(cx).file();
+        let preview_requires_modifier =
+            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
+
+        EditPredictionSettings::Enabled {
+            show_in_menu,
+            preview_requires_modifier,
+        }
+    }
+
+    fn should_show_edit_predictions(&self) -> bool {
+        self.snippet_stack.is_empty() && self.edit_predictions_enabled()
+    }
+
+    fn edit_predictions_enabled_in_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &App,
+    ) -> bool {
+        maybe!({
+            if self.read_only(cx) || self.leader_id.is_some() {
+                return Some(false);
+            }
+            let provider = self.edit_prediction_provider()?;
+            if !provider.is_enabled(buffer, buffer_position, cx) {
+                return Some(false);
+            }
+            let buffer = buffer.read(cx);
+            let Some(file) = buffer.file() else {
+                return Some(true);
+            };
+            let settings = all_language_settings(Some(file), cx);
+            Some(settings.edit_predictions_enabled_for_file(file, cx))
+        })
+        .unwrap_or(false)
+    }
+
+    fn report_edit_prediction_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
+        let Some(provider) = self.edit_prediction_provider() else {
+            return;
+        };
+
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        let Some((position, _)) =
+            buffer_snapshot.anchor_to_buffer_anchor(self.selections.newest_anchor().head())
+        else {
+            return;
+        };
+        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
+            return;
+        };
+
+        let extension = buffer
+            .read(cx)
+            .file()
+            .and_then(|file| Some(file.path().extension()?.to_string()));
+
+        let event_type = match accepted {
+            true => "Edit Prediction Accepted",
+            false => "Edit Prediction Discarded",
+        };
+        telemetry::event!(
+            event_type,
+            provider = provider.name(),
+            prediction_id = id,
+            suggestion_accepted = accepted,
+            file_extension = extension,
+        );
+    }
+
+    fn open_editor_at_anchor(
+        snapshot: &language::BufferSnapshot,
+        target: language::Anchor,
+        workspace: &Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        workspace.update(cx, |workspace, cx| {
+            let path = snapshot.file().map(|file| file.full_path(cx));
+            let Some(path) =
+                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
+            else {
+                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
+            };
+            let target = text::ToPoint::to_point(&target, snapshot);
+            let item = workspace.open_path(path, None, true, window, cx);
+            window.spawn(cx, async move |cx| {
+                let Some(editor) = item.await?.downcast::<Editor>() else {
+                    return Ok(());
+                };
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.go_to_singleton_buffer_point(target, window, cx);
+                    })
+                    .ok();
+                anyhow::Ok(())
+            })
+        })
+    }
+
+    /// Returns true when we're displaying the edit prediction popover below the cursor
+
+    /// like we are not previewing and the LSP autocomplete menu is visible
+
+    /// or we are in `when_holding_modifier` mode.
+
+    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = px(24.);
+
+    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = px(2.);
 
     fn render_edit_prediction_modifier_jump_popover(
         &mut self,
@@ -1668,18 +1919,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let edit_start = edits
-            .first()
-            .unwrap()
-            .0
-            .start
-            .to_display_point(editor_snapshot);
-        let edit_end = edits
-            .last()
-            .unwrap()
-            .0
-            .end
-            .to_display_point(editor_snapshot);
+        let Some((first_edit_range, _)) = edits.first() else {
+            return None;
+        };
+        let Some((last_edit_range, _)) = edits.last() else {
+            return None;
+        };
+
+        let edit_start = first_edit_range.start.to_display_point(editor_snapshot);
+        let edit_end = last_edit_range.end.to_display_point(editor_snapshot);
 
         let is_visible = visible_row_range.contains(&edit_start.row())
             || visible_row_range.contains(&edit_end.row());
@@ -1848,10 +2096,6 @@ impl Editor {
 
         // Do not return an element, since it will already be drawn due to defer_draw.
         None
-    }
-
-    pub(super) fn edit_prediction_cursor_popover_height(&self) -> Pixels {
-        px(30.)
     }
 
     fn render_edit_prediction_inline_keystroke(
@@ -2074,6 +2318,7 @@ impl Editor {
         let editor_bg_color = cx.theme().colors().editor_background;
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
+
     fn get_prediction_provider_icons(
         provider: &Option<RegisteredEditPredictionDelegate>,
         cx: &App,
@@ -2082,220 +2327,6 @@ impl Editor {
             Some(provider) => provider.provider.icons(cx),
             None => edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict),
         }
-    }
-
-    pub(super) fn render_edit_prediction_cursor_popover(
-        &self,
-        min_width: Pixels,
-        max_width: Pixels,
-        cursor_point: Point,
-        style: &EditorStyle,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Option<AnyElement> {
-        let provider = self.edit_prediction_provider.as_ref()?;
-        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
-
-        let is_refreshing = provider.provider.is_refreshing(cx);
-
-        fn pending_completion_container(icon: IconName) -> Div {
-            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
-        }
-
-        let completion = match &self.active_edit_prediction {
-            Some(prediction) => {
-                if !self.has_visible_completions_menu() {
-                    const RADIUS: Pixels = px(6.);
-                    const BORDER_WIDTH: Pixels = px(1.);
-                    let keybind_display = self.edit_prediction_keybind_display(
-                        EditPredictionKeybindSurface::CursorPopoverCompact,
-                        window,
-                        cx,
-                    );
-
-                    return Some(
-                        h_flex()
-                            .elevation_2(cx)
-                            .border(BORDER_WIDTH)
-                            .border_color(cx.theme().colors().border)
-                            .when(keybind_display.missing_accept_keystroke, |el| {
-                                el.border_color(cx.theme().status().error)
-                            })
-                            .rounded(RADIUS)
-                            .rounded_tl(px(0.))
-                            .overflow_hidden()
-                            .child(div().px_1p5().child(match &prediction.completion {
-                                EditPrediction::MoveWithin { target, snapshot } => {
-                                    use text::ToPoint as _;
-                                    if target.text_anchor_in(&snapshot).to_point(snapshot).row
-                                        > cursor_point.row
-                                    {
-                                        Icon::new(icons.down)
-                                    } else {
-                                        Icon::new(icons.up)
-                                    }
-                                }
-                                EditPrediction::MoveOutside { .. } => {
-                                    // TODO [zeta2] custom icon for external jump?
-                                    Icon::new(icons.base)
-                                }
-                                EditPrediction::Edit { .. } => Icon::new(icons.base),
-                            }))
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .rounded_r(RADIUS - BORDER_WIDTH)
-                                    .border_l_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .when(keybind_display.show_hold_label, |el| {
-                                        el.child(
-                                            Label::new("Hold")
-                                                .size(LabelSize::Small)
-                                                .when(
-                                                    keybind_display.missing_accept_keystroke,
-                                                    |el| el.strikethrough(),
-                                                )
-                                                .line_height_style(LineHeightStyle::UiLabel),
-                                        )
-                                    })
-                                    .id("edit_prediction_cursor_popover_keybind")
-                                    .when(keybind_display.missing_accept_keystroke, |el| {
-                                        let status_colors = cx.theme().status();
-
-                                        el.bg(status_colors.error_background)
-                                            .border_color(status_colors.error.opacity(0.6))
-                                            .child(Icon::new(IconName::Info).color(Color::Error))
-                                            .cursor_default()
-                                            .hoverable_tooltip(move |_window, cx| {
-                                                cx.new(|_| MissingEditPredictionKeybindingTooltip)
-                                                    .into()
-                                            })
-                                    })
-                                    .when_some(
-                                        keybind_display.displayed_keystroke.as_ref(),
-                                        |el, compact_keystroke| {
-                                            el.child(self.render_edit_prediction_popover_keystroke(
-                                                compact_keystroke,
-                                                Color::Default,
-                                                cx,
-                                            ))
-                                        },
-                                    ),
-                            )
-                            .into_any(),
-                    );
-                }
-
-                self.render_edit_prediction_cursor_popover_preview(
-                    prediction,
-                    cursor_point,
-                    style,
-                    cx,
-                )?
-            }
-
-            None if is_refreshing => match &self.stale_edit_prediction_in_menu {
-                Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
-                    stale_completion,
-                    cursor_point,
-                    style,
-                    cx,
-                )?,
-
-                None => pending_completion_container(icons.base)
-                    .child(Label::new("...").size(LabelSize::Small)),
-            },
-
-            None => pending_completion_container(icons.base)
-                .child(Label::new("...").size(LabelSize::Small)),
-        };
-
-        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
-            completion
-                .with_animation(
-                    "loading-completion",
-                    Animation::new(Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(pulsating_between(0.4, 0.8)),
-                    |label, delta| label.opacity(delta),
-                )
-                .into_any_element()
-        } else {
-            completion.into_any_element()
-        };
-
-        let has_completion = self.active_edit_prediction.is_some();
-        let keybind_display = self.edit_prediction_keybind_display(
-            EditPredictionKeybindSurface::CursorPopoverExpanded,
-            window,
-            cx,
-        );
-
-        Some(
-            h_flex()
-                .min_w(min_width)
-                .max_w(max_width)
-                .flex_1()
-                .elevation_2(cx)
-                .border_color(cx.theme().colors().border)
-                .child(
-                    div()
-                        .flex_1()
-                        .py_1()
-                        .px_2()
-                        .overflow_hidden()
-                        .child(completion),
-                )
-                .when_some(
-                    keybind_display.displayed_keystroke.as_ref(),
-                    |el, keystroke| {
-                        let key_color = if !has_completion {
-                            Color::Muted
-                        } else {
-                            Color::Default
-                        };
-
-                        if keybind_display.action == EditPredictionKeybindAction::Preview {
-                            el.child(
-                                h_flex()
-                                    .h_full()
-                                    .border_l_1()
-                                    .rounded_r_lg()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .child(self.render_edit_prediction_popover_keystroke(
-                                        keystroke, key_color, cx,
-                                    ))
-                                    .child(Label::new("Preview").into_any_element())
-                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
-                            )
-                        } else {
-                            el.child(
-                                h_flex()
-                                    .h_full()
-                                    .border_l_1()
-                                    .rounded_r_lg()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .child(self.render_edit_prediction_popover_keystroke(
-                                        keystroke, key_color, cx,
-                                    ))
-                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
-                            )
-                        }
-                    },
-                )
-                .into_any(),
-        )
     }
 
     fn render_edit_prediction_cursor_popover_preview(
@@ -2435,27 +2466,45 @@ impl Editor {
     }
 }
 
-pub(crate) fn edit_prediction_edit_text(
-    current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, impl AsRef<str>)],
-    edit_preview: &EditPreview,
-    include_deletions: bool,
-    multibuffer_snapshot: &MultiBufferSnapshot,
-    cx: &App,
-) -> HighlightedText {
-    let edits = edits
-        .iter()
-        .filter_map(|(anchor, text)| {
-            Some((
-                multibuffer_snapshot
-                    .anchor_range_to_buffer_anchor_range(anchor.clone())?
-                    .1,
-                text,
-            ))
-        })
-        .collect::<Vec<_>>();
+#[cfg(any(test, feature = "test-support"))]
+impl Editor {
+    pub(super) fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
+        self.menu_edit_predictions_policy = value;
+    }
+}
 
-    edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
+struct MissingEditPredictionKeybindingTooltip;
+
+impl Render for MissingEditPredictionKeybindingTooltip {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::tooltip_container(cx, |container, cx| {
+            container
+                .flex_shrink_0()
+                .max_w_80()
+                .min_h(rems_from_px(124.))
+                .justify_between()
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .text_ui_sm(cx)
+                        .child(Label::new("Conflict with Accept Keybinding"))
+                        .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
+                )
+                .child(
+                    h_flex()
+                        .pb_1()
+                        .gap_1()
+                        .items_end()
+                        .w_full()
+                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
+                            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx)
+                        }))
+                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
+                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
+                        })),
+                )
+        })
+    }
 }
 
 fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
@@ -2511,38 +2560,4 @@ fn all_edits_insertions_or_deletions(
         }
     }
     all_insertions || all_deletions
-}
-
-struct MissingEditPredictionKeybindingTooltip;
-
-impl Render for MissingEditPredictionKeybindingTooltip {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(cx, |container, cx| {
-            container
-                .flex_shrink_0()
-                .max_w_80()
-                .min_h(rems_from_px(124.))
-                .justify_between()
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .text_ui_sm(cx)
-                        .child(Label::new("Conflict with Accept Keybinding"))
-                        .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
-                )
-                .child(
-                    h_flex()
-                        .pb_1()
-                        .gap_1()
-                        .items_end()
-                        .w_full()
-                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
-                            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx)
-                        }))
-                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
-                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
-                        })),
-                )
-        })
-    }
 }

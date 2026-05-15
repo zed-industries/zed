@@ -82,16 +82,14 @@ pub use display_map::{
     ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
     NavigationOverlayKey, SemanticTokenHighlight,
 };
+pub use edit_prediction::make_suggestion_styles;
 pub(crate) use edit_prediction::{
-    EditDisplayMode, EditPrediction, EditPredictionSettings, EditPredictionState,
-    RegisteredEditPredictionDelegate,
+    EditDisplayMode, EditPrediction, EditPredictionPreview, EditPredictionSettings,
+    EditPredictionState, MenuEditPredictionsPolicy, RegisteredEditPredictionDelegate,
 };
 #[cfg(test)]
 pub(crate) use edit_prediction::{
     EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
-};
-pub use edit_prediction::{
-    EditPredictionPreview, MenuEditPredictionsPolicy, make_suggestion_styles,
 };
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
@@ -8004,6 +8002,10 @@ impl Editor {
         _: &mut Context<Self>,
     ) {
         window.show_character_palette();
+    }
+
+    pub fn supports_minimap(&self, cx: &App) -> bool {
+        !self.minimap_visibility.disabled() && self.buffer_kind(cx) == ItemBufferKind::Singleton
     }
 
     pub fn toggle_minimap(
