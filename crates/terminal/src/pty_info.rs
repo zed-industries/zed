@@ -181,7 +181,6 @@ impl PtyProcessInfo {
                 .filter_map(|s| s.to_str().map(ToOwned::to_owned))
                 .collect(),
         };
-        *self.current.write() = Some(info.clone());
         Some(info)
     }
 
@@ -216,5 +215,43 @@ impl PtyProcessInfo {
 
     pub fn pid(&self) -> Option<Pid> {
         self.pid_getter.pid()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn process_refresh_kind() -> ProcessRefreshKind {
+        ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::Always)
+            .with_cwd(UpdateKind::Always)
+            .with_exe(UpdateKind::Always)
+    }
+
+    #[test]
+    fn load_does_not_update_cached_process_info() {
+        let refresh_kind = process_refresh_kind();
+        let info = PtyProcessInfo {
+            system: RwLock::new(System::new_with_specifics(
+                RefreshKind::nothing().with_processes(refresh_kind),
+            )),
+            refresh_kind,
+            pid_getter: ProcessIdGetter {
+                handle: -1,
+                fallback_pid: std::process::id(),
+            },
+            current: RwLock::new(Some(ProcessInfo {
+                name: "previous".to_string(),
+                cwd: PathBuf::from("previous-cwd"),
+                argv: Vec::new(),
+            })),
+            task: Mutex::new(None),
+        };
+
+        let loaded = info.load().expect("current process should load");
+
+        assert_ne!(loaded.name, "previous");
+        assert_eq!(info.current.read().as_ref().unwrap().name, "previous");
     }
 }
