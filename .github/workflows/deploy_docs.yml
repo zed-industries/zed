@@ -143,7 +143,7 @@ jobs:
         command: deploy .cloudflare/docs-proxy/src/worker.js
     - name: deploy_docs::docs_deploy_steps::upload_wrangler_logs
       if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: wrangler_logs
         path: /home/runner/.config/.wrangler/logs/

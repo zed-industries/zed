@@ -56,7 +56,7 @@ jobs:
       env:
         PREV_COMMIT: ${{ steps.prev-tag.outputs.prev_commit }}
     - id: list-repos
-      name: extension_workflow_rollout::fetch_extension_repos::get_repositories
+      name: get_repositories
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
         script: |
@@ -91,7 +91,7 @@ jobs:
       env:
         COMMIT_SHA: ${{ github.sha }}
     - name: extension_workflow_rollout::fetch_extension_repos::upload_workflow_files
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: extension-workflow-files
         path: extensions/workflows/**/*.yml
@@ -132,7 +132,7 @@ jobs:
         repository: zed-extensions/${{ matrix.repo }}
         token: ${{ steps.generate-token.outputs.token }}
     - name: extension_workflow_rollout::rollout_workflows_to_extension::download_workflow_files
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: extension-workflow-files
         path: workflow-files
