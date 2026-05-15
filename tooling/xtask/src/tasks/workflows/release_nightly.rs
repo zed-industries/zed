@@ -48,7 +48,7 @@ pub fn release_nightly() -> Workflow {
         .on(Event::default()
             // Fire 6 times a day
             .schedule([Schedule::new("0 */4 * * *")])
-            .push(Push::default().add_tag("nightly")))
+            .workflow_dispatch(WorkflowDispatch::default()))
         .concurrency(
             Concurrency::default()
                 .group("release-nightly")
