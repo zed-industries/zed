@@ -1,6 +1,6 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, MAX_SKILL_NAME_LEN, SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata,
-    global_skills_dir,
+    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_NAME_LEN, SKILL_FILE_NAME,
+    SKILLS_DIR_NAME, SkillMetadata, global_skills_dir,
 };
 use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
@@ -220,6 +220,11 @@ pub struct SkillsLibrary {
     body_error: Option<&'static str>,
     save_error: Option<SharedString>,
     saving: bool,
+    // Held so that dropping the entity (e.g. the window closing) cancels
+    // an in-flight save. Detaching the task instead would let
+    // `write_skill_to_disk` complete after the UI is gone, silently
+    // creating a SKILL.md on disk with no toast and no error feedback.
+    save_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -338,6 +343,7 @@ impl SkillsLibrary {
             body_error: None,
             save_error: None,
             saving: false,
+            save_task: None,
             _subscriptions: subscriptions,
         }
     }
@@ -457,7 +463,7 @@ impl SkillsLibrary {
         self.save_error = None;
         cx.notify();
 
-        cx.spawn_in(window, async move |this, cx| {
+        let task = cx.spawn_in(window, async move |this, cx| {
             let result = write_skill_to_disk(
                 fs.as_ref(),
                 &scope.skills_dir(),
@@ -470,6 +476,7 @@ impl SkillsLibrary {
 
             this.update_in(cx, |this, window, cx| {
                 this.saving = false;
+                this.save_task = None;
                 match result {
                     Ok(path) => {
                         if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
@@ -496,11 +503,20 @@ impl SkillsLibrary {
                 }
             })
             .log_err();
-        })
-        .detach();
+        });
+        self.save_task = Some(task);
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, _cx: &mut Context<Self>) {
+        // Block dismissal while a save is in flight. Otherwise the
+        // detached I/O could complete after the window is gone, leaving
+        // a SKILL.md on disk with no success or error feedback. The
+        // user can still force-close the window via the platform
+        // chrome, in which case dropping `self.save_task` cancels the
+        // pending write.
+        if self.saving {
+            return;
+        }
         window.remove_window();
     }
 
@@ -630,14 +646,14 @@ impl SkillsLibrary {
             }
             None => "Select a scope\u{2026}".into(),
         };
+        let sep = std::path::MAIN_SEPARATOR;
         let scope_hint: SharedString = match selected.as_ref() {
-            Some(ScopeChoice::Global) => {
-                "Saved to ~/.agents/skills/\u{2039}name\u{203A}/SKILL.md. \
+            Some(ScopeChoice::Global) => SharedString::from(format!(
+                "Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}. \
                  Available across every Zed project."
-                    .into()
-            }
+            )),
             Some(ScopeChoice::Project { root_name, .. }) => SharedString::from(format!(
-                "Saved to {root_name}/.agents/skills/\u{2039}name\u{203A}/SKILL.md. \
+                "Saved to {root_name}{sep}{AGENTS_DIR_NAME}{sep}{SKILLS_DIR_NAME}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}. \
                  Only available when this project is open."
             )),
             None => "Choose where this skill should live.".into(),
@@ -807,6 +823,7 @@ impl SkillsLibrary {
                     .child(
                         Button::new("cancel-skill", "Cancel")
                             .style(ButtonStyle::Subtle)
+                            .disabled(saving)
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Cancel), cx);
                             }),
