@@ -4229,8 +4229,8 @@ impl ThreadView {
                         }),
                 )
                 .item(
-                    ContextMenuEntry::new("Rules")
-                        .icon(IconName::Reader)
+                    ContextMenuEntry::new("Skills")
+                        .icon(IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::XSmall)
                         .handler({
@@ -4238,7 +4238,7 @@ impl ThreadView {
                             move |window, cx| {
                                 message_editor.focus_handle(cx).focus(window, cx);
                                 message_editor.update(cx, |editor, cx| {
-                                    editor.insert_context_type("rule", window, cx);
+                                    editor.insert_context_type("skill", window, cx);
                                 });
                             }
                         }),

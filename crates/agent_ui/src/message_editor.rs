@@ -100,7 +100,7 @@ impl SessionCapabilities {
             supported.extend(&[
                 PromptContextType::Diagnostics,
                 PromptContextType::Fetch,
-                PromptContextType::Rules,
+                PromptContextType::Skill,
                 PromptContextType::BranchDiff,
             ]);
         }
@@ -516,7 +516,6 @@ impl MessageEditor {
             },
             editor.downgrade(),
             mention_set.clone(),
-            prompt_store.clone(),
             workspace.clone(),
         ));
         editor.update(cx, |editor, _cx| {
