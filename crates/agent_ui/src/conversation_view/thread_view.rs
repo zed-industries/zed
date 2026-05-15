@@ -18,7 +18,7 @@ use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
-use gpui::{Bounds, List, ListOffset, Rems, Stateful, TaskExt};
+use gpui::{AvailableSpace, Bounds, List, ListOffset, Rems, Stateful, TaskExt};
 use heapless::Vec as ArrayVec;
 use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
@@ -33,8 +33,9 @@ use ui::{
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
+use super::UserMessageContentSegment;
 use super::sticky_user_message_preview::{
-    StickyUserMessageSegment, parse_sticky_user_message_preview,
+    parse_sticky_user_message_preview, render_sticky_user_message_preview,
 };
 use super::*;
 
@@ -50,7 +51,7 @@ struct ThreadFeedbackState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct StickyUserMessageState {
     pub(crate) message_index: usize,
-    message_segments: Vec<StickyUserMessageSegment>,
+    message_segments: Vec<UserMessageContentSegment>,
     pub(crate) has_more_message_content: bool,
     pub(crate) top_offset: Pixels,
 }
@@ -8476,6 +8477,10 @@ impl ThreadView {
             }))
     }
 
+    const STICKY_HEADER_OUTER_PADDING: Rems = rems(0.5);
+    const STICKY_HEADER_INNER_PADDING: Rems = rems(0.75);
+    const STICKY_HEADER_GAP: Rems = rems(0.75);
+
     fn sticky_user_message_header_height() -> Rems {
         rems_from_px(36.0)
     }
@@ -8598,6 +8603,7 @@ impl ThreadView {
     fn render_sticky_user_message(
         &self,
         state: StickyUserMessageState,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
@@ -8609,39 +8615,46 @@ impl ThreadView {
             top_offset,
         } = state;
 
-        let rendered_preview: Vec<AnyElement> = message_segments
-            .into_iter()
-            .enumerate()
-            .map(|(index, segment)| match segment {
-                StickyUserMessageSegment::Text(text) => Label::new(text)
-                    .size(LabelSize::Small)
-                    .color(Color::Default)
-                    .truncate()
-                    .into_any_element(),
-                StickyUserMessageSegment::Mention { uri, label } => h_flex()
-                    .id(("sticky-user-message-mention", index))
-                    .flex_none()
-                    .h_5()
-                    .px_1p5()
-                    .gap_1()
-                    .items_center()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().element_background)
-                    .child(
-                        Icon::from_path(uri.icon_path(cx))
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        Label::new(label)
-                            .size(LabelSize::Small)
-                            .color(Color::Default),
-                    )
-                    .into_any_element(),
-            })
-            .collect();
+        let render_jump_action = || {
+            h_flex()
+                .gap_1()
+                .items_center()
+                .flex_shrink_0()
+                .child(
+                    Label::new("Jump to Message")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Icon::new(IconName::ForwardArrowUp)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .into_any_element()
+        };
+
+        let mut jump_action_for_measure = render_jump_action();
+        let jump_action_width = window.with_rem_size(Some(agent_ui_font_size), |window| {
+            jump_action_for_measure
+                .layout_as_root(AvailableSpace::min_size(), window, cx)
+                .width
+        });
+        let reserved_width = jump_action_width
+            + Self::STICKY_HEADER_OUTER_PADDING.to_pixels(agent_ui_font_size) * 2.0
+            + Self::STICKY_HEADER_INNER_PADDING.to_pixels(agent_ui_font_size) * 2.0
+            + Self::STICKY_HEADER_GAP.to_pixels(agent_ui_font_size);
+        let header_width = max_content_width
+            .map(|max_width| max_width.min(self.list_state.viewport_bounds().size.width))
+            .unwrap_or_else(|| self.list_state.viewport_bounds().size.width);
+        let available_preview_width = (header_width - reserved_width - px(2.0)).max(px(0.0));
+        let rendered_preview = render_sticky_user_message_preview(
+            message_segments,
+            has_more_message_content,
+            available_preview_width,
+            agent_ui_font_size,
+            window,
+            cx,
+        );
 
         div()
             .absolute()
@@ -8656,7 +8669,7 @@ impl ThreadView {
                             .cursor_pointer()
                             .w_full()
                             .when_some(max_content_width, |this, max_w| this.max_w(max_w))
-                            .px_2()
+                            .px(Self::STICKY_HEADER_OUTER_PADDING)
                             .h(Self::sticky_user_message_header_height())
                             .child(
                                 h_flex()
@@ -8664,8 +8677,8 @@ impl ThreadView {
                                     .h_full()
                                     .items_center()
                                     .justify_between()
-                                    .gap_3()
-                                    .px_3()
+                                    .gap(Self::STICKY_HEADER_GAP)
+                                    .px(Self::STICKY_HEADER_INNER_PADDING)
                                     .rounded_b_md()
                                     .bg(cx.theme().colors().editor_background)
                                     .border_1()
@@ -8676,38 +8689,8 @@ impl ThreadView {
                                             cx.theme().colors().border_focused.opacity(0.8),
                                         )
                                     })
-                                    .child(
-                                        h_flex()
-                                            .min_w_0()
-                                            .flex_1()
-                                            .overflow_hidden()
-                                            .gap_1()
-                                            .items_center()
-                                            .children(rendered_preview)
-                                            .when(has_more_message_content, |this| {
-                                                this.child(
-                                                    Label::new("…")
-                                                        .size(LabelSize::Small)
-                                                        .color(Color::Muted),
-                                                )
-                                            }),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_1()
-                                            .items_center()
-                                            .flex_shrink_0()
-                                            .child(
-                                                Label::new("Jump to Message")
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            )
-                                            .child(
-                                                Icon::new(IconName::ForwardArrowUp)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Muted),
-                                            ),
-                                    ),
+                                    .child(rendered_preview)
+                                    .child(render_jump_action()),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.list_state.scroll_to(ListOffset {
@@ -10798,7 +10781,7 @@ impl Render for ThreadView {
         let list_state = self.list_state.clone();
         let sticky_user_message = self
             .sticky_user_message_state(cx)
-            .map(|state| self.render_sticky_user_message(state, cx));
+            .map(|state| self.render_sticky_user_message(state, window, cx));
 
         let conversation = v_flex()
             .when(self.resumed_without_history, |this| {
