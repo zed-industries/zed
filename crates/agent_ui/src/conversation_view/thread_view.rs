@@ -4227,8 +4227,8 @@ impl ThreadView {
                         }),
                 )
                 .item(
-                    ContextMenuEntry::new("Rules")
-                        .icon(IconName::Reader)
+                    ContextMenuEntry::new("Skills")
+                        .icon(IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::XSmall)
                         .handler({
@@ -4236,7 +4236,7 @@ impl ThreadView {
                             move |window, cx| {
                                 message_editor.focus_handle(cx).focus(window, cx);
                                 message_editor.update(cx, |editor, cx| {
-                                    editor.insert_context_type("rule", window, cx);
+                                    editor.insert_context_type("skill", window, cx);
                                 });
                             }
                         }),
@@ -9184,9 +9184,6 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(

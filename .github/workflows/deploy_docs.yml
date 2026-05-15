@@ -16,6 +16,9 @@ on:
       DOCS_AMPLITUDE_API_KEY:
         description: DOCS_AMPLITUDE_API_KEY
         required: true
+      DOCS_CONSENT_IO_INSTANCE:
+        description: DOCS_CONSENT_IO_INSTANCE
+        required: true
       CLOUDFLARE_API_TOKEN:
         description: CLOUDFLARE_API_TOKEN
         required: true
@@ -39,6 +42,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
       CC: clang
       CXX: clang++
     steps:
