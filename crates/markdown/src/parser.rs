@@ -244,6 +244,7 @@ pub(crate) fn parse_markdown_with_options_and_math(
                             metadata: CodeBlockMetadata {
                                 content_range: range.clone(),
                                 line_count: 1,
+                                is_fenced_closed: false,
                             },
                         }
                     }
@@ -260,9 +261,22 @@ pub(crate) fn parse_markdown_with_options_and_math(
                             .bytes()
                             .filter(|c| *c == b'\n')
                             .count();
+                        let is_fenced_closed = {
+                            let code_block_source = &text[range.clone()];
+                            code_block_source
+                                .trim_end()
+                                .lines()
+                                .last()
+                                .is_some_and(|line| {
+                                    let trimmed = line.trim_start();
+                                    trimmed.len() >= 3 && trimmed.chars().all(|c| c == '`')
+                                })
+                        };
+
                         let metadata = CodeBlockMetadata {
                             content_range,
                             line_count,
+                            is_fenced_closed,
                         };
 
                         let info = info.trim();
@@ -765,6 +779,7 @@ pub enum CodeBlockKind {
 pub struct CodeBlockMetadata {
     pub content_range: Range<usize>,
     pub line_count: usize,
+    pub is_fenced_closed: bool,
 }
 
 fn extract_code_content_range(text: &str) -> Range<usize> {
@@ -1013,7 +1028,8 @@ mod tests {
                             kind: CodeBlockKind::FencedLang("rust".into()),
                             metadata: CodeBlockMetadata {
                                 content_range: 8..34,
-                                line_count: 3
+                                line_count: 3,
+                                is_fenced_closed: true,
                             }
                         })
                     ),
@@ -1041,7 +1057,8 @@ mod tests {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
                                 content_range: 4..16,
-                                line_count: 1
+                                line_count: 1,
+                                is_fenced_closed: false,
                             }
                         })
                     ),

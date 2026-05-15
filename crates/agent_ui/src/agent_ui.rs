@@ -11,6 +11,7 @@ mod context;
 mod context_server_configuration;
 pub(crate) mod conversation_view;
 mod diagnostics;
+pub mod draft_prompt_store;
 mod entry_view_state;
 mod external_source_prompt;
 mod favorite_models;
@@ -41,9 +42,11 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
-use gpui::{Action, App, Context, Entity, SharedString, Window, actions};
+use gpui::{
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
+};
 use language::{
     LanguageRegistry,
     language_settings::{AllLanguageSettings, EditPredictionProvider},
@@ -52,11 +55,12 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, rules_to_skills_migration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
+use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -80,8 +84,60 @@ pub use thread_import::{
 use zed_actions;
 pub use zed_actions::{CreateWorktree, NewWorktreeBranchTarget, SwitchWorktree};
 
+pub(crate) fn resolve_agent_image(
+    dest_url: &str,
+    worktree_roots: &[PathBuf],
+) -> Option<ImageSource> {
+    if dest_url.starts_with("http://") || dest_url.starts_with("https://") {
+        return Some(ImageSource::Resource(Resource::Uri(SharedUri::from(
+            dest_url.to_string(),
+        ))));
+    }
+
+    let path = Path::new(dest_url);
+    if path.is_absolute() && path.exists() {
+        return Some(ImageSource::Resource(Resource::Path(Arc::from(path))));
+    }
+
+    for root in worktree_roots {
+        let absolute_path = root.join(dest_url);
+        if absolute_path.exists() {
+            return Some(ImageSource::Resource(Resource::Path(Arc::from(
+                absolute_path.as_path(),
+            ))));
+        }
+    }
+
+    None
+}
+
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentThreadSource {
+    AgentPanel,
+    GitPanel,
+    Sidebar,
+}
+
+impl AgentThreadSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentPanel => "agent_panel",
+            Self::GitPanel => "git_panel",
+            Self::Sidebar => "sidebar",
+        }
+    }
+}
+
+pub(crate) fn agent_sidebar_side(cx: &App) -> &'static str {
+    match AgentSettings::get_global(cx).sidebar_side() {
+        SidebarSide::Left => "left",
+        SidebarSide::Right => "right",
+    }
+}
+
 actions!(
     agent,
     [
@@ -149,8 +205,6 @@ actions!(
         ResetTrialEndUpsell,
         /// Opens the "Add Context" menu in the message editor.
         OpenAddContextMenu,
-        /// Continues the current thread.
-        ContinueThread,
         /// Interrupts the current generation and sends the message immediately.
         SendImmediately,
         /// Sends the next queued message immediately.
@@ -246,12 +300,33 @@ pub struct ToggleCommandPattern {
 pub struct NewThread;
 
 /// Creates a new external agent conversation thread.
-#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewExternalAgentThread {
-    /// Which agent to use for the conversation.
-    agent: Option<Agent>,
+    /// The agent id to use for the conversation.
+    #[serde(deserialize_with = "deserialize_external_agent_id")]
+    agent: AgentId,
+}
+
+fn deserialize_external_agent_id<'de, D>(deserializer: D) -> Result<AgentId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum AgentIdOrLegacyAgent {
+        LegacyAgent(Agent),
+        AgentId(AgentId),
+    }
+
+    match AgentIdOrLegacyAgent::deserialize(deserializer)? {
+        AgentIdOrLegacyAgent::AgentId(agent_id) => Ok(agent_id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Custom { id }) => Ok(id),
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::NativeAgent) => Ok(Agent::NativeAgent.id()),
+        #[cfg(any(test, feature = "test-support"))]
+        AgentIdOrLegacyAgent::LegacyAgent(Agent::Stub) => Ok(Agent::Stub.id()),
+    }
 }
 
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -280,10 +355,13 @@ pub enum Agent {
 impl From<AgentId> for Agent {
     fn from(id: AgentId) -> Self {
         if id.as_ref() == agent::ZED_AGENT_ID.as_ref() {
-            Self::NativeAgent
-        } else {
-            Self::Custom { id }
+            return Self::NativeAgent;
         }
+        #[cfg(any(test, feature = "test-support"))]
+        if id.as_ref() == "stub" {
+            return Self::Stub;
+        }
+        Self::Custom { id }
     }
 }
 
@@ -474,6 +552,32 @@ pub fn init(
         );
     })
     .detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                // The banner is the only intended entry point and is
+                // gated on the skills flag, but dispatch from the
+                // command palette or a keybind is still possible — only
+                // open the explainer if the flag is enabled so it never
+                // surfaces outside its intended audience.
+                //
+                // Race note: `has_flag` returns false before server
+                // flags are received, so a dispatch during that brief
+                // window is a no-op even for users who genuinely have
+                // the flag. The banner itself has the same race — it
+                // stays hidden until flags arrive — so a user who can
+                // see the banner has, by definition, already passed it.
+                if cx.has_flag::<SkillsFeatureFlag>() {
+                    crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
+                }
+            },
+        );
+    })
+    .detach();
+
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
@@ -501,6 +605,18 @@ pub fn init(
         update_command_palette_filter(cx);
     })
     .detach();
+
+    // Once the `skills` feature flag has resolved, kick off the one-time
+    // migration of non-Default Rules to global Skills. Idempotent and
+    // self-gated on the flag, so it's safe to call on every flag-ready
+    // notification (and a no-op for users without the flag).
+    {
+        let fs = fs.clone();
+        cx.on_flags_ready(move |_, cx| {
+            rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+        })
+        .detach();
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
@@ -535,6 +651,12 @@ fn update_command_palette_filter(cx: &mut App) {
         .edit_predictions
         .provider;
 
+    // The Skills feature flag is loaded asynchronously, so this value may
+    // be `false` before flags resolve. `update_command_palette_filter`
+    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
+    // filter is reapplied with the correct value once flags arrive.
+    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
             AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
@@ -550,6 +672,8 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<PreviousEditPrediction>(),
             TypeId::of::<ToggleEditPrediction>(),
         ];
+
+        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -598,6 +722,17 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
 
             filter.show_namespace("multi_workspace");
+        }
+
+        // Hide `assistant: open rules library` when Skills are enabled —
+        // Rules are surfaced through the Skills UI in that case. Applied
+        // after the disable-ai / agent-enabled branches so it overrides
+        // the `show_namespace("assistant")` call above without affecting
+        // the rest of that namespace's actions.
+        if !disable_ai && skills_enabled {
+            filter.hide_action_types(&open_rules_library_action);
+        } else {
+            filter.show_action_types(open_rules_library_action.iter());
         }
     });
 }
@@ -909,5 +1044,24 @@ mod tests {
                 id: "my-agent".into(),
             },
         );
+    }
+
+    #[test]
+    fn test_deserialize_new_external_agent_thread() {
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"gemini"}"#)
+            .expect("should deserialize agent id");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(
+            r#"{"agent":{"custom":{"name":"gemini"}}}"#,
+        )
+        .expect("should deserialize legacy custom agent payload");
+        assert_eq!(action.agent, AgentId::from("gemini"));
+
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"NativeAgent"}"#)
+            .expect("should deserialize legacy native agent payload");
+        assert_eq!(action.agent, Agent::NativeAgent.id());
+
+        assert!(serde_json::from_str::<NewExternalAgentThread>(r#"{}"#).is_err());
     }
 }

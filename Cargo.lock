@@ -81,6 +81,7 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "gpui",
+ "indoc",
  "language",
  "log",
  "pretty_assertions",
@@ -151,6 +152,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "async-channel 2.5.0",
  "async-io",
@@ -183,12 +185,12 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
- "open",
  "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
  "reqwest_client",
@@ -339,6 +341,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "const_format",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "util",
+]
+
+[[package]]
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
@@ -348,6 +366,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
@@ -3221,6 +3240,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -3580,6 +3600,7 @@ dependencies = [
  "http_client",
  "log",
  "net",
+ "oauth_callback_server",
  "parking_lot",
  "pollster 0.4.0",
  "postage",
@@ -3591,7 +3612,6 @@ dependencies = [
  "sha2",
  "slotmap",
  "tempfile",
- "tiny_http",
  "url",
  "util",
 ]
@@ -3648,7 +3668,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
- "semver",
  "serde",
  "serde_json",
  "settings",
@@ -6399,6 +6418,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "gpui",
+ "language",
  "menu",
  "open_path_prompt",
  "picker",
@@ -7427,6 +7447,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "task",
  "theme",
  "theme_settings",
  "time",
@@ -7985,6 +8006,7 @@ dependencies = [
  "bytemuck",
  "collections",
  "cosmic-text",
+ "criterion",
  "etagere",
  "gpui",
  "gpui_util",
@@ -7997,6 +8019,7 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "swash",
+ "unicode-segmentation",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -9753,20 +9776,26 @@ dependencies = [
  "log",
  "menu",
  "mistral",
+ "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
  "opencode",
+ "parking_lot",
  "pretty_assertions",
+ "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
+ "sha2",
+ "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
+ "url",
  "util",
  "x_ai",
 ]
@@ -9783,6 +9812,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "log",
  "open_ai",
  "schemars 1.0.4",
  "semver",
@@ -11590,6 +11620,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "oauth_callback_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "log",
+ "tiny_http",
+ "url",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11957,6 +11998,7 @@ dependencies = [
  "gpui",
  "picker",
  "project",
+ "project_panel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12351,6 +12393,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
+ "const_format",
  "dirs",
  "ignore",
  "util",
@@ -13723,10 +13766,13 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",
  "collections",
+ "db",
+ "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -13739,6 +13785,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "tempfile",
  "text",
@@ -14806,6 +14853,7 @@ dependencies = [
  "anyhow",
  "async-dispatcher",
  "async-task",
+ "async-trait",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -14838,6 +14886,7 @@ dependencies = [
  "settings",
  "shlex",
  "smol",
+ "task",
  "telemetry",
  "terminal",
  "terminal_view",
@@ -16135,6 +16184,19 @@ name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.11.4",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
 dependencies = [
  "indexmap 2.11.4",
  "itoa",
@@ -18287,6 +18349,7 @@ dependencies = [
  "client",
  "cloud_api_types",
  "db",
+ "feature_flags",
  "fs",
  "git_ui",
  "gpui",
@@ -22489,7 +22552,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

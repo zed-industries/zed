@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [ChatGPT Subscription](#chatgpt-subscription)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
@@ -154,6 +155,26 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
 
+#### Guardrails {#bedrock-guardrails}
+
+Some AWS environments enforce IAM policies that require a guardrail to be specified on every Bedrock API call. To apply a guardrail to all Bedrock requests, add `guardrail_identifier` to your Bedrock configuration:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "guardrail_identifier": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123",
+      "guardrail_version": "DRAFT"
+    }
+  }
+}
+```
+
+- `guardrail_identifier`: The ARN or ID of the guardrail to apply to every request.
+- `guardrail_version`: The version of the guardrail to use. Defaults to `"DRAFT"` if omitted.
+
+> **Note**: For more information, refer to the [AWS Bedrock Guardrails documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html).
+
 ### Anthropic {#anthropic}
 
 You can use Anthropic models by choosing them via the model dropdown in the Agent Panel.
@@ -181,11 +202,6 @@ You can add custom models to the Anthropic provider by adding the following to y
           "display_name": "Sonnet 2024-June",
           "max_tokens": 128000,
           "max_output_tokens": 2560,
-          "cache_configuration": {
-            "max_cache_anchors": 10,
-            "min_total_token": 10000,
-            "should_speculate": false
-          },
           "tool_override": "some-model-that-supports-toolcalling"
         }
       ]
@@ -209,6 +225,18 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### ChatGPT Subscription {#chatgpt-subscription}
+
+Use your existing ChatGPT Plus or Pro subscription to access OpenAI models directly in Zed — no separate API key required.
+
+1. Open the settings view ({#action agent::OpenSettings}) and go to the ChatGPT Subscription section
+2. Click **Sign in** and complete the OpenAI authentication in your browser
+3. Once signed in, models appear in the model dropdown, including GPT-5.5 and GPT-5.3 Codex
+
+To sign out, click **Sign Out** in the ChatGPT Subscription settings.
+
+> **Note:** Model availability depends on your ChatGPT subscription tier. Some models may require ChatGPT Pro.
 
 ### DeepSeek {#deepseek}
 
