@@ -3777,7 +3777,7 @@ impl ThreadView {
         let thread = self.as_native_thread(cx)?.read(cx);
 
         let (tooltip_label, color, icon) = if matches!(thread.speed(), Some(Speed::Fast)) {
-            ("Disable Fast Mode", Color::Muted, IconName::FastForward)
+            ("Disable Fast Mode", Color::Accent, IconName::FastForward)
         } else {
             (
                 "Enable Fast Mode",
