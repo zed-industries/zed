@@ -44,6 +44,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod solo_diff_view;
 pub mod stash_picker;
 pub mod text_diff_view;
 pub mod worktree_names;
