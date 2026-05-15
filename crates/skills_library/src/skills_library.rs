@@ -917,11 +917,34 @@ async fn write_skill_to_disk(
     disable_model_invocation: bool,
 ) -> Result<PathBuf> {
     let skill_dir = skills_dir.join(name);
-    if fs.is_dir(&skill_dir).await {
-        anyhow::bail!(
-            "A skill named \"{name}\" already exists at {}. Pick a different name.",
-            skill_dir.display()
-        );
+    match fs.metadata(&skill_dir).await {
+        Ok(Some(metadata)) if metadata.is_dir => {
+            anyhow::bail!(
+                "A skill named \"{name}\" already exists at {}. Pick a different name.",
+                skill_dir.display()
+            );
+        }
+        Ok(Some(_)) => {
+            // Something exists at this path, but it isn't a directory — e.g.
+            // a stray file the user (or another tool) left there. Without
+            // this branch we'd fall through to `create_dir`, which on the
+            // real fs returns a generic "File exists" IO error that gives
+            // the user no idea what's wrong or how to recover.
+            anyhow::bail!(
+                "A file (not a skill directory) already exists at {}. \
+                 Delete it or pick a different skill name.",
+                skill_dir.display()
+            );
+        }
+        Ok(None) => {}
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed to check whether {} already exists",
+                    skill_dir.display()
+                )
+            });
+        }
     }
 
     let content = format_skill_file(name, description, body, disable_model_invocation)?;
@@ -1070,6 +1093,41 @@ mod tests {
         assert!(
             err.to_string().contains("already exists"),
             "error message should mention the conflict, got: {err}"
+        );
+    }
+
+    #[gpui::test]
+    async fn write_skill_to_disk_rejects_non_directory_at_skill_path(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        // A *file* (not a directory) sitting at `/skills/draft-pr`. With the
+        // old `is_dir` check this slipped through and we ended up surfacing
+        // the underlying "File exists" OS error.
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({ "draft-pr": "i am a stray file" }),
+        )
+        .await;
+
+        let err = write_skill_to_disk(
+            fs.as_ref(),
+            Path::new("/skills"),
+            "draft-pr",
+            "Push a draft PR",
+            "Body of the skill.",
+            false,
+        )
+        .await
+        .expect_err("writing where a file already lives must fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("not a skill directory"),
+            "error should explain the conflict is a non-directory, got: {message}"
+        );
+        assert!(
+            message.contains("/skills/draft-pr"),
+            "error should include the conflicting path, got: {message}"
         );
     }
 }
