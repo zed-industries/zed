@@ -104,18 +104,15 @@ impl CachedMermaidDiagram {
         let render_image_clone = render_image.clone();
         let svg_renderer = cx.svg_renderer();
         let mermaid_theme = build_mermaid_theme(cx);
-        let accent_classdefs = build_accent_classdefs(cx);
 
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let options = mermaid_rs_renderer::RenderOptions {
-                        theme: mermaid_theme,
-                        layout: mermaid_rs_renderer::LayoutConfig::default(),
-                    };
-                    let full_source = format!("{}\n{}", contents.contents, accent_classdefs);
-                    let svg_string =
-                        mermaid_rs_renderer::render_with_options(&full_source, options)?;
+                    let svg_string = mermaid_render::render_to_svg(
+                        &contents.contents,
+                        &mermaid_theme,
+                        mermaid_render::MermaidBackend::Merman,
+                    )?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -153,128 +150,58 @@ impl CachedMermaidDiagram {
     }
 }
 
-/// Converts an HSLA color to a CSS hex string (e.g. `#1a2b3c`).
-fn hsla_to_hex(color: Hsla) -> String {
+/// Converts an HSLA color to a CSS `rgb()` string (e.g. `rgb(26, 43, 60)`).
+///
+/// We use `rgb()` rather than hex because merman's internal color derivation
+/// can produce `hsl(…, NaN%)` values when given hex inputs.
+fn hsla_to_rgb_string(color: Hsla) -> String {
     let rgba: Rgba = color.to_rgb();
     let r = (rgba.r * 255.0).round() as u8;
     let g = (rgba.g * 255.0).round() as u8;
     let b = (rgba.b * 255.0).round() as u8;
-    format!("#{r:02x}{g:02x}{b:02x}")
+    format!("rgb({r}, {g}, {b})")
 }
 
 fn mermaid_font_family(font_family: &str) -> &str {
     gpui::font_name_with_fallbacks(font_family, "system-ui")
 }
 
-fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
+fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
     let colors = cx.theme().colors();
     let theme_settings = ThemeSettings::get_global(cx);
-    let mut theme = mermaid_rs_renderer::Theme::modern();
-
-    theme.font_family = mermaid_font_family(theme_settings.ui_font.family.as_ref()).to_string();
-    theme.background = hsla_to_hex(colors.editor_background);
-    theme.primary_color = hsla_to_hex(colors.surface_background);
-    theme.primary_text_color = hsla_to_hex(colors.text);
-    theme.primary_border_color = hsla_to_hex(colors.border);
-    theme.line_color = hsla_to_hex(colors.border);
-    theme.secondary_color = hsla_to_hex(colors.element_background);
-    theme.tertiary_color = hsla_to_hex(colors.ghost_element_hover);
-    theme.edge_label_background = hsla_to_hex(colors.editor_background);
-    theme.cluster_background = hsla_to_hex(colors.panel_background);
-    theme.cluster_border = hsla_to_hex(colors.border_variant);
-    theme.text_color = hsla_to_hex(colors.text);
-    let accents = cx.theme().accents();
-    let pie_colors: [String; 12] =
-        std::array::from_fn(|i| hsla_to_hex(accents.color_for_index(i as u32)));
-    theme.pie_colors = pie_colors;
-    theme.pie_title_text_color = hsla_to_hex(colors.text);
-    theme.pie_section_text_color = "#fff".to_string();
-    theme.pie_legend_text_color = hsla_to_hex(colors.text);
-    theme.pie_stroke_color = hsla_to_hex(colors.border);
-    theme.pie_outer_stroke_color = hsla_to_hex(colors.border);
-
-    theme.sequence_actor_fill = hsla_to_hex(colors.element_background);
-    theme.sequence_actor_border = hsla_to_hex(colors.border);
-    theme.sequence_actor_line = hsla_to_hex(colors.border);
-    theme.sequence_note_fill = hsla_to_hex(colors.surface_background);
-    theme.sequence_note_border = hsla_to_hex(colors.border_variant);
-    theme.sequence_activation_fill = hsla_to_hex(colors.ghost_element_hover);
-    theme.sequence_activation_border = hsla_to_hex(colors.border);
+    let is_dark = !cx.theme().appearance.is_light();
 
     let players = cx.theme().players();
-    theme.git_colors = std::array::from_fn(|i| hsla_to_hex(players.0[i % players.0.len()].cursor));
-    theme.git_inv_colors =
-        std::array::from_fn(|i| hsla_to_hex(players.0[i % players.0.len()].background));
-    theme.git_branch_label_colors = std::array::from_fn(|_| "#fff".to_string());
-    theme.git_commit_label_color = hsla_to_hex(colors.text);
-    theme.git_commit_label_background = hsla_to_hex(colors.element_background);
-    theme.git_tag_label_color = hsla_to_hex(colors.text);
-    theme.git_tag_label_background = hsla_to_hex(colors.element_background);
-    theme.git_tag_label_border = hsla_to_hex(colors.border);
+    let git_branch_colors: [String; 8] =
+        std::array::from_fn(|i| hsla_to_rgb_string(players.0[i % players.0.len()].cursor));
+    let git_branch_label_colors: [String; 8] =
+        std::array::from_fn(|_| "rgb(255, 255, 255)".to_string());
 
-    theme
-}
-
-fn build_accent_classdefs(cx: &Context<Markdown>) -> String {
-    use std::fmt::Write;
-    let players = &cx.theme().players();
-    let is_light = cx.theme().appearance.is_light();
-    let mut defs = String::new();
-    for (i, player) in players.0.iter().enumerate() {
-        let (fill, text_color) = accent_fill_and_text(player.background, is_light);
-        let fill = hsla_to_hex(fill);
-        let stroke = hsla_to_hex(player.cursor);
-        let text_color = hsla_to_hex(text_color);
-        writeln!(
-            defs,
-            "classDef accent{i} fill:{fill},stroke:{stroke},color:{text_color}"
-        )
-        .ok();
+    mermaid_render::MermaidTheme {
+        dark_mode: is_dark,
+        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()).to_string(),
+        background: hsla_to_rgb_string(colors.editor_background),
+        primary_color: hsla_to_rgb_string(colors.surface_background),
+        primary_text_color: hsla_to_rgb_string(colors.text),
+        primary_border_color: hsla_to_rgb_string(colors.border),
+        secondary_color: hsla_to_rgb_string(colors.element_background),
+        tertiary_color: hsla_to_rgb_string(colors.ghost_element_hover),
+        line_color: hsla_to_rgb_string(colors.border),
+        text_color: hsla_to_rgb_string(colors.text),
+        edge_label_background: hsla_to_rgb_string(colors.editor_background),
+        cluster_background: hsla_to_rgb_string(colors.panel_background),
+        cluster_border: hsla_to_rgb_string(colors.border_variant),
+        note_background: hsla_to_rgb_string(colors.surface_background),
+        note_border: hsla_to_rgb_string(colors.border_variant),
+        actor_background: hsla_to_rgb_string(colors.element_background),
+        actor_border: hsla_to_rgb_string(colors.border),
+        activation_background: hsla_to_rgb_string(colors.ghost_element_hover),
+        activation_border: hsla_to_rgb_string(colors.border),
+        git_branch_colors,
+        git_branch_label_colors,
+        er_attr_bg_odd: hsla_to_rgb_string(colors.surface_background),
+        er_attr_bg_even: hsla_to_rgb_string(colors.element_background),
     }
-    defs
-}
-
-/// Adjusts an accent fill color to ensure readable text contrast.
-///
-/// On dark themes, darkens the fill and uses white text.
-/// On light themes, lightens the fill and uses black text.
-/// The fill is adjusted until it meets a minimum WCAG contrast ratio
-/// of ~4.5:1 against the chosen text color.
-fn accent_fill_and_text(color: Hsla, is_light: bool) -> (Hsla, Hsla) {
-    let mut fill = color;
-    if is_light {
-        // Lighten fill until luminance is high enough for black text.
-        // Target: relative luminance >= 0.35 → contrast ratio ~8:1 with black.
-        for _ in 0..50 {
-            if relative_luminance(fill) >= 0.35 {
-                break;
-            }
-            fill.l = (fill.l + 0.02).min(1.0);
-        }
-        (fill, gpui::black())
-    } else {
-        // Darken fill until luminance is low enough for white text.
-        // Target: relative luminance <= 0.18 → contrast ratio ~4.6:1 with white.
-        for _ in 0..50 {
-            if relative_luminance(fill) <= 0.18 {
-                break;
-            }
-            fill.l = (fill.l - 0.02).max(0.0);
-        }
-        (fill, gpui::white())
-    }
-}
-
-fn relative_luminance(color: Hsla) -> f32 {
-    let rgba: Rgba = color.to_rgb();
-    fn linearize(c: f32) -> f32 {
-        if c <= 0.04045 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    }
-    0.2126 * linearize(rgba.r) + 0.7152 * linearize(rgba.g) + 0.0722 * linearize(rgba.b)
 }
 
 fn parse_mermaid_info(info: &str) -> Option<u32> {
@@ -588,23 +515,11 @@ mod tests {
         MarkdownStyle,
     };
     use collections::HashMap;
-    use gpui::{Context, Hsla, IntoElement, Render, RenderImage, TestAppContext, Window, size};
+    use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
     use ui::prelude::*;
 
-    #[gpui::property_test]
-    fn accent_fill_and_text_sufficient_contrast(
-        #[strategy = Hsla::opaque_strategy()] color: Hsla,
-        light_mode: bool,
-    ) {
-        let (fill, text) = super::accent_fill_and_text(color, light_mode);
-        let fill_luminance = super::relative_luminance(fill);
-        let text_luminance = super::relative_luminance(text);
-        let lighter = fill_luminance.max(text_luminance);
-        let darker = fill_luminance.min(text_luminance);
-        let contrast_ratio = (lighter + 0.05) / (darker + 0.05);
-        assert!(contrast_ratio >= 4.5,);
-    }
+
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {

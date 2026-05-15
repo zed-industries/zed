@@ -101,6 +101,10 @@ fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
         .context("merman render failed")?
         .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
 
+    // Convert foreignObject labels to plain SVG <text> elements so that
+    // renderers like usvg (which don't support foreignObject) can display them.
+    let svg = merman::render::foreign_object_label_fallback_svg_text(&svg);
+
     let injected_css = format!(
         r#"
         /* text in foreignObject labels */
@@ -423,6 +427,31 @@ fn postprocess_merman_svg(
                             }
                         }
 
+                        b"text" => {
+                            let has_hardcoded_fill = e
+                                .try_get_attribute("fill")?
+                                .map(|a| a.unescape_value().map(|v| v == "#333"))
+                                .transpose()?
+                                .unwrap_or(false);
+                            if has_hardcoded_fill {
+                                let mut ne = BytesStart::new("text");
+                                for attr in e.attributes() {
+                                    let attr = attr?;
+                                    if attr.key.local_name().as_ref() == b"fill" {
+                                        ne.push_attribute((
+                                            "fill",
+                                            theme.text_color.as_str(),
+                                        ));
+                                    } else {
+                                        ne.push_attribute(attr);
+                                    }
+                                }
+                                Some(ne)
+                            } else {
+                                None
+                            }
+                        }
+
                         _ => None,
                     }
                 };
@@ -480,18 +509,59 @@ fn postprocess_merman_svg(
         }
     }
 
-    String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")
+    let svg = String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")?;
+    Ok(sanitize_nan_colors(&svg))
 }
 
-fn text_color_for_bg(hex: &str) -> &'static str {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() < 6 {
-        return "#000";
+/// Replace any `hsl(…, NaN%)` values that merman's internal color derivation
+/// can produce. These are unparseable by usvg and fall back to black.
+fn sanitize_nan_colors(svg: &str) -> String {
+    let mut result = String::with_capacity(svg.len());
+    let mut remaining = svg;
+    while let Some(start) = remaining.find("hsl(") {
+        let after_hsl = start + 4;
+        if let Some(end) = remaining[after_hsl..].find(')') {
+            let hsl_body = &remaining[after_hsl..after_hsl + end];
+            if hsl_body.contains("NaN") {
+                result.push_str(&remaining[..start]);
+                result.push_str("transparent");
+                remaining = &remaining[after_hsl + end + 1..];
+                continue;
+            }
+        }
+        result.push_str(&remaining[..after_hsl]);
+        remaining = &remaining[after_hsl..];
     }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f64;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f64;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f64;
-    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    result.push_str(remaining);
+    result
+}
+
+fn text_color_for_bg(color: &str) -> &'static str {
+    let (r, g, b) = if let Some(inner) = color
+        .strip_prefix("rgb(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
+        let parts: Vec<u8> = inner
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+        if parts.len() >= 3 {
+            (parts[0], parts[1], parts[2])
+        } else {
+            return "#000";
+        }
+    } else {
+        let hex = color.trim_start_matches('#');
+        if hex.len() < 6 {
+            return "#000";
+        }
+        (
+            u8::from_str_radix(&hex[0..2], 16).unwrap_or(0),
+            u8::from_str_radix(&hex[2..4], 16).unwrap_or(0),
+            u8::from_str_radix(&hex[4..6], 16).unwrap_or(0),
+        )
+    };
+    let luma = 0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64;
     if luma > 150.0 { "#000" } else { "#fff" }
 }
 

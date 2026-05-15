@@ -10877,7 +10877,7 @@ dependencies = [
  "linkify",
  "log",
  "markup5ever_rcdom",
- "mermaid-rs-renderer",
+ "mermaid_render",
  "node_runtime",
  "pulldown-cmark 0.13.0",
  "settings",
