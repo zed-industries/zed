@@ -651,6 +651,12 @@ fn update_command_palette_filter(cx: &mut App) {
         .edit_predictions
         .provider;
 
+    // The Skills feature flag is loaded asynchronously, so this value may
+    // be `false` before flags resolve. `update_command_palette_filter`
+    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
+    // filter is reapplied with the correct value once flags arrive.
+    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
             AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
@@ -666,6 +672,8 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<PreviousEditPrediction>(),
             TypeId::of::<ToggleEditPrediction>(),
         ];
+
+        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -714,6 +722,17 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
 
             filter.show_namespace("multi_workspace");
+        }
+
+        // Hide `assistant: open rules library` when Skills are enabled —
+        // Rules are surfaced through the Skills UI in that case. Applied
+        // after the disable-ai / agent-enabled branches so it overrides
+        // the `show_namespace("assistant")` call above without affecting
+        // the rest of that namespace's actions.
+        if !disable_ai && skills_enabled {
+            filter.hide_action_types(&open_rules_library_action);
+        } else {
+            filter.show_action_types(open_rules_library_action.iter());
         }
     });
 }

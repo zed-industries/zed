@@ -60,6 +60,7 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -4178,6 +4179,12 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
+                    // When the Skills feature flag is on, hide the legacy Rules menu entry.
+                    // The flag is read from a global store populated asynchronously, and
+                    // this menu builder runs on every open, so the latest resolved value is
+                    // reflected when the user clicks the ellipsis.
+                    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
@@ -4212,9 +4219,13 @@ impl AgentPanel {
                                     }),
                                 )
                                 .action("Add Custom Server…", Box::new(AddContextServer))
-                                .separator()
-                                .action("Rules", Box::new(OpenRulesLibrary::default()))
-                                .action("Profiles", Box::new(ManageProfiles::default()));
+                                .separator();
+
+                            if !skills_enabled {
+                                menu = menu.action("Rules", Box::new(OpenRulesLibrary::default()));
+                            }
+
+                            menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
                         menu = menu
