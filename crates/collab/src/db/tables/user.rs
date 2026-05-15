@@ -1,5 +1,4 @@
 use crate::db::UserId;
-use chrono::NaiveDateTime;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -15,7 +14,6 @@ pub struct Model {
     pub name: Option<String>,
     pub admin: bool,
     pub connected_once: bool,
-    pub created_at: NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
