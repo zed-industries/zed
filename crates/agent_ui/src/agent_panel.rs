@@ -1214,7 +1214,15 @@ impl AgentPanel {
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
-                if focus {
+                // If we're already viewing the draft as the base view but an
+                // overlay (e.g. Settings) is covering it, clear the overlay
+                // so the user actually sees the draft they asked for.
+                // Otherwise pressing "New Thread" from the Settings panel is
+                // a silent no-op because the early return below would leave
+                // the overlay on top of the draft.
+                if self.overlay_view.is_some() {
+                    self.clear_overlay(focus, window, cx);
+                } else if focus {
                     self.focus_handle(cx).focus(window, cx);
                 }
                 return;
@@ -4719,6 +4727,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
 
         let multi_workspace =
@@ -4735,6 +4744,63 @@ mod tests {
         });
 
         (panel, cx)
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_dismisses_settings_overlay(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        // Put the panel on its ephemeral new-draft view so the base view
+        // already contains the draft that `NewThread` would activate.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_draft(true, "agent_panel", window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_thread_is_draft(cx),
+                "precondition: base view should be the ephemeral draft"
+            );
+            assert!(!panel.is_overlay_open());
+        });
+
+        // Simulate the Settings overlay being open on top of the draft.
+        // We don't go through `open_configuration` here because it would
+        // build provider configuration views, which call into
+        // `LanguageModelProvider::configuration_view` — unimplemented for
+        // the fake provider used in tests. The bug being exercised lives
+        // entirely in the overlay/base-view bookkeeping, so toggling the
+        // overlay flag directly is sufficient.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.set_overlay(OverlayView::Configuration, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.is_overlay_open(),
+                "precondition: Settings overlay should be open"
+            );
+        });
+
+        // Dispatching `NewThread` while Settings is open must dismiss the
+        // overlay so the user actually sees the new thread. Previously
+        // this was a silent no-op: `activate_draft` early-returned without
+        // clearing the overlay because the base view already held the
+        // draft.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                !panel.is_overlay_open(),
+                "Settings overlay should be dismissed when invoking NewThread"
+            );
+            assert!(panel.active_thread_is_draft(cx));
+        });
     }
 
     #[gpui::test]
