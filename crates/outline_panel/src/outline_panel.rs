@@ -18,7 +18,7 @@ use gpui::{
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     InteractiveElement, IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
-    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task, TaskExt,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, point, px, size,
     uniform_list,
 };
@@ -4962,6 +4962,12 @@ impl Panel for OutlinePanel {
 
     fn activation_priority(&self) -> u32 {
         6
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.outline_panel.get_or_insert_default().button = Some(false);
+        }))
     }
 }
 

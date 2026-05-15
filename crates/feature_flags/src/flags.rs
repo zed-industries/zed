@@ -59,6 +59,30 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
 
+pub struct LspToolFeatureFlag;
+
+impl FeatureFlag for LspToolFeatureFlag {
+    const NAME: &'static str = "lsp-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(LspToolFeatureFlag);
+
+pub struct RenameToolFeatureFlag;
+
+impl FeatureFlag for RenameToolFeatureFlag {
+    const NAME: &'static str = "rename-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(RenameToolFeatureFlag);
+
 pub struct ProjectPanelUndoRedoFeatureFlag;
 
 impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
@@ -91,3 +115,23 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
     }
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
+
+pub struct AutoWatchFeatureFlag;
+
+impl FeatureFlag for AutoWatchFeatureFlag {
+    const NAME: &'static str = "auto-watch-screens";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(AutoWatchFeatureFlag);
+
+pub struct SkillsFeatureFlag;
+
+impl FeatureFlag for SkillsFeatureFlag {
+    const NAME: &'static str = "skills";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(SkillsFeatureFlag);

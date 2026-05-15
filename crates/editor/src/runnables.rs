@@ -310,7 +310,7 @@ impl Editor {
         let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
         cx.spawn_in(window, async move |_, cx| {
-            let context = task_context.await?;
+            let context = task_context.await.ok().flatten()?;
             let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
             let resolved = &mut resolved_task.resolved;
@@ -405,11 +405,12 @@ impl Editor {
             variables
         };
 
-        project.update(cx, |project, cx| {
+        let task = project.update(cx, |project, cx| {
             project.task_store().update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
-        })
+        });
+        cx.background_spawn(async move { task.await.ok().flatten() })
     }
 
     pub fn lsp_task_sources(
