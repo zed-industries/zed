@@ -171,6 +171,13 @@ pub trait Platform: 'static {
         &self,
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
+    fn prompt_for_paths_in_directory(
+        &self,
+        options: PathPromptOptions,
+        _initial_directory: Option<PathBuf>,
+    ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>> {
+        self.prompt_for_paths(options)
+    }
     fn prompt_for_new_path(
         &self,
         directory: &Path,

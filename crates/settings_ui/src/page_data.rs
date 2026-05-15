@@ -183,6 +183,24 @@ fn general_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Default Project Folder",
+                description: "The default folder shown when opening a new project. Accepts absolute or home-relative paths. Leave unset to use the platform default.",
+                field: Box::new(SettingField {
+                    json_path: Some("default_project_folder"),
+                    pick: |settings_content| {
+                        settings_content.workspace.default_project_folder.as_ref().or(DEFAULT_EMPTY_STRING)
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.default_project_folder = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("~/"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Use System Prompts",
                 description: "Use native OS dialogs for confirmations.",
                 field: Box::new(SettingField {

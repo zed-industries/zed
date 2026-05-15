@@ -200,11 +200,22 @@ impl OpenPathPrompt {
         _window: Option<&mut Window>,
         _: &mut Context<Workspace>,
     ) {
-        workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, false, None, tx, window, cx);
-            rx
-        }));
+        workspace.set_prompt_for_open_path(Box::new(
+            |workspace, lister, initial_directory, window, cx| {
+                let (tx, rx) = futures::channel::oneshot::channel();
+                Self::prompt_for_open_path(
+                    workspace,
+                    lister,
+                    initial_directory,
+                    false,
+                    None,
+                    tx,
+                    window,
+                    cx,
+                );
+                rx
+            },
+        ));
     }
 
     pub fn register_new_path(
@@ -224,6 +235,7 @@ impl OpenPathPrompt {
     fn prompt_for_open_path(
         workspace: &mut Workspace,
         lister: DirectoryLister,
+        initial_directory: Option<PathBuf>,
         creating_path: bool,
         suggested_name: Option<String>,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
@@ -234,7 +246,7 @@ impl OpenPathPrompt {
             let delegate =
                 OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
-            let mut query = lister.default_query(cx);
+            let mut query = lister.default_query(initial_directory.as_deref(), cx);
             if let Some(suggested_name) = suggested_name {
                 query.push_str(&suggested_name);
             }
@@ -251,7 +263,16 @@ impl OpenPathPrompt {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::prompt_for_open_path(workspace, lister, true, suggested_name, tx, window, cx);
+        Self::prompt_for_open_path(
+            workspace,
+            lister,
+            None,
+            true,
+            suggested_name,
+            tx,
+            window,
+            cx,
+        );
     }
 }
 

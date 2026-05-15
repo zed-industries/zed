@@ -2717,7 +2717,7 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
                     .ok();
@@ -2793,7 +2793,7 @@ mod tests {
 
         // Set up the prompt mock to return the new project path.
         workspace.update(cx, |workspace, _cx| {
-            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+            workspace.set_prompt_for_open_path(Box::new(|_, _, _, _, _| {
                 let (tx, rx) = futures::channel::oneshot::channel();
                 tx.send(Some(vec![PathBuf::from(path!("/new-project"))]))
                     .ok();

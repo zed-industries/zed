@@ -1327,6 +1327,7 @@ type PromptForOpenPath = Box<
     dyn Fn(
         &mut Workspace,
         DirectoryLister,
+        Option<PathBuf>,
         &mut Window,
         &mut Context<Workspace>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
@@ -2964,17 +2965,67 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        let default_path = lister
+            .is_local(cx)
+            .then(|| workspace_settings::default_open_path(self.app_state.fs.clone(), cx))
+            .flatten();
+        let (tx, rx) = oneshot::channel();
+        match default_path {
+            Some(task) => cx
+                .spawn_in(window, async move |workspace, cx| {
+                    let initial_directory = task.await;
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            workspace.dispatch_open_path_prompt(
+                                path_prompt_options,
+                                initial_directory,
+                                lister,
+                                tx,
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                })
+                .detach(),
+            None => self.dispatch_open_path_prompt(
+                path_prompt_options,
+                None,
+                lister,
+                tx,
+                window,
+                cx,
+            ),
+        }
+        rx
+    }
+
+    fn dispatch_open_path_prompt(
+        &mut self,
+        path_prompt_options: PathPromptOptions,
+        initial_directory: Option<PathBuf>,
+        lister: DirectoryLister,
+        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // TODO: If `on_prompt_for_open_path` is set, we should always use it
         // rather than gating on `use_system_path_prompts`. This would let tests
         // inject a mock without also having to disable the setting.
         if !lister.is_local(cx) || !WorkspaceSettings::get_global(cx).use_system_path_prompts {
             let prompt = self.on_prompt_for_open_path.take().unwrap();
-            let rx = prompt(self, lister, window, cx);
+            let inner_rx = prompt(self, lister, initial_directory, window, cx);
             self.on_prompt_for_open_path = Some(prompt);
-            rx
+            cx.spawn(async move |_, _| {
+                if let Ok(paths) = inner_rx.await {
+                    tx.send(paths).ok();
+                }
+            })
+            .detach();
         } else {
-            let (tx, rx) = oneshot::channel();
-            let abs_path = cx.prompt_for_paths(path_prompt_options);
+            let fallback_initial_directory = initial_directory.clone();
+            let abs_path =
+                cx.prompt_for_paths_in_directory(path_prompt_options, initial_directory);
 
             cx.spawn_in(window, async move |workspace, cx| {
                 let Ok(result) = abs_path.await else {
@@ -2986,14 +3037,20 @@ impl Workspace {
                         tx.send(result).ok();
                     }
                     Err(err) => {
-                        let rx = workspace.update_in(cx, |workspace, window, cx| {
+                        let inner_rx = workspace.update_in(cx, |workspace, window, cx| {
                             workspace.show_portal_error(err.to_string(), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(workspace, lister, window, cx);
+                            let inner_rx = prompt(
+                                workspace,
+                                lister,
+                                fallback_initial_directory,
+                                window,
+                                cx,
+                            );
                             workspace.on_prompt_for_open_path = Some(prompt);
-                            rx
+                            inner_rx
                         })?;
-                        if let Ok(path) = rx.await {
+                        if let Ok(path) = inner_rx.await {
                             tx.send(path).ok();
                         }
                     }
@@ -3001,8 +3058,6 @@ impl Workspace {
                 anyhow::Ok(())
             })
             .detach();
-
-            rx
         }
     }
 
