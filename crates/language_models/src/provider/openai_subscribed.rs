@@ -7,9 +7,9 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -323,15 +323,19 @@ impl ChatGptModel {
         true
     }
 
-    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+    fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
         // Codex bundled models all default to Medium reasoning effort.
         Some(ReasoningEffort::Medium)
     }
 
-    fn supports_none_reasoning_effort(&self) -> bool {
-        // The Codex backend's supported_reasoning_levels for every model in
-        // this list is low/medium/high/xhigh -- sending `none` is rejected.
-        false
+    fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        // The Codex backend's supported_reasoning_levels for every model in this list is low/medium/high/xhigh
+        &[
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ]
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -385,7 +389,32 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.reasoning_effort().is_some()
+        true
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let default_effort = self.model.default_reasoning_effort();
+        self.model
+            .supported_reasoning_efforts()
+            .iter()
+            .copied()
+            .filter_map(|effort| {
+                let (name, value) = match effort {
+                    ReasoningEffort::None => return None,
+                    ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                    ReasoningEffort::Low => ("Low", "low"),
+                    ReasoningEffort::Medium => ("Medium", "medium"),
+                    ReasoningEffort::High => ("High", "high"),
+                    ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                };
+
+                Some(LanguageModelEffortLevel {
+                    name: name.into(),
+                    value: value.into(),
+                    is_default: Some(effort) == default_effort,
+                })
+            })
+            .collect()
     }
 
     fn telemetry_id(&self) -> String {
@@ -423,8 +452,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             /*max_output_tokens*/ None,
-            self.model.reasoning_effort(),
-            self.model.supports_none_reasoning_effort(),
+            self.model.default_reasoning_effort(),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&ReasoningEffort::None),
         );
         responses_request.store = Some(false);
 
