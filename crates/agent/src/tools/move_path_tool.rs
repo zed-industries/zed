@@ -127,13 +127,18 @@ impl AgentTool for MovePathTool {
                     )
                 });
 
-            let sensitive_kind =
-                sensitive_settings_kind(Path::new(&input.source_path), fs.as_ref())
-                    .await
-                    .or(
-                        sensitive_settings_kind(Path::new(&input.destination_path), fs.as_ref())
-                            .await,
-                    );
+            let sensitive_kind = sensitive_settings_kind(
+                Path::new(&input.source_path),
+                &canonical_roots,
+                fs.as_ref(),
+            )
+            .await
+            .or(sensitive_settings_kind(
+                Path::new(&input.destination_path),
+                &canonical_roots,
+                fs.as_ref(),
+            )
+            .await);
 
             let needs_confirmation = matches!(decision, ToolPermissionDecision::Confirm)
                 || (matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some());

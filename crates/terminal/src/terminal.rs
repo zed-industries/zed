@@ -2741,10 +2741,7 @@ mod tests {
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
         );
-        assert_eq!(
-            terminal.update(cx, |term, _| term.get_content()).trim(),
-            "hello"
-        );
+        assert_content_eventually(&terminal, "hello", cx).await;
 
         // Inject additional output directly into the emulator (display-only path)
         terminal.update(cx, |term, cx| {

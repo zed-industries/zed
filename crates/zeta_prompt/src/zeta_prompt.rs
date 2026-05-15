@@ -840,7 +840,7 @@ pub fn format_prompt_with_budget_for_format(
     return Some(prompt);
 }
 
-fn format_active_buffer_diagnostics_with_budget(
+pub fn format_active_buffer_diagnostics_with_budget(
     diagnostics: &[ActiveBufferDiagnostic],
     cursor_buffer_row: Option<u32>,
     budget: usize,
@@ -870,16 +870,20 @@ fn format_active_buffer_diagnostics_with_budget(
         let diagnostic = &diagnostics[diagnostic_index];
         let snippet = clamp_text_to_token_count(&diagnostic.snippet, 256);
 
-        let diagnostic_section = format!(
-            "*{}*:\n```\n{}{}\n```\n",
-            diagnostic.message,
-            snippet,
-            if snippet.len() < diagnostic.snippet.len() {
-                "..."
-            } else {
-                ""
-            }
-        );
+        let diagnostic_section = if snippet.is_empty() {
+            format!("*{}*\n", diagnostic.message)
+        } else {
+            format!(
+                "*{}*:\n```\n{}{}\n```\n",
+                diagnostic.message,
+                snippet,
+                if snippet.len() < diagnostic.snippet.len() {
+                    "..."
+                } else {
+                    ""
+                }
+            )
+        };
         let diagnostic_tokens = estimate_tokens(diagnostic_section.len());
         if used_tokens + diagnostic_tokens > budget {
             break;
@@ -5299,13 +5303,22 @@ mod tests {
             vec![],
             vec![make_related_file("related.rs", "fn helper() {}\n")],
         );
-        input.active_buffer_diagnostics = vec![ActiveBufferDiagnostic {
-            severity: Some(1),
-            message: "missing semicolon".to_string(),
-            snippet: "let value = 1".to_string(),
-            snippet_buffer_row_range: 1..2,
-            diagnostic_range_in_snippet: 12..13,
-        }];
+        input.active_buffer_diagnostics = vec![
+            ActiveBufferDiagnostic {
+                severity: Some(1),
+                message: "missing semicolon".to_string(),
+                snippet: "let value = 1".to_string(),
+                snippet_buffer_row_range: 1..2,
+                diagnostic_range_in_snippet: 12..13,
+            },
+            ActiveBufferDiagnostic {
+                severity: Some(2),
+                message: "file-level warning".to_string(),
+                snippet: String::new(),
+                snippet_buffer_row_range: 0..0,
+                diagnostic_range_in_snippet: 0..0,
+            },
+        ];
 
         let prompt =
             format_prompt_with_budget_for_format(&input, ZetaFormat::V0420Diagnostics, 10000)
@@ -5321,6 +5334,7 @@ mod tests {
                 ```
                 let value = 1
                 ```
+                *file-level warning*
 
                 <filename>related.rs
                 fn helper() {}
