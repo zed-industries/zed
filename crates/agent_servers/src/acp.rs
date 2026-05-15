@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{any::Any, cell::RefCell, collections::VecDeque};
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
@@ -41,6 +42,8 @@ use crate::GEMINI_ID;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
+const ACP_RESPONSE_CHANNEL_CANCELLED: &str =
+    "response channel cancelled — connection may have dropped";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpDebugMessageDirection {
@@ -249,10 +252,8 @@ fn into_foreground_future<T: JsonRpcResponse>(
     });
     async move {
         spawn_result?;
-        rx.await.map_err(|_| {
-            acp::Error::internal_error()
-                .data("response channel cancelled — connection may have dropped")
-        })?
+        rx.await
+            .map_err(|_| acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED))?
     }
 }
 
@@ -413,6 +414,7 @@ fn enqueue_notification<Notif>(
 pub struct AcpConnection {
     id: AgentId,
     telemetry_id: SharedString,
+    agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
@@ -820,17 +822,23 @@ impl AcpConnection {
                 .context("Failed to receive ACP connection handle")
         }
         .boxed_local();
-        let status_fut = child.status().boxed_local();
+        let status_fut = child
+            .status()
+            .map({
+                let debug_log = debug_log.clone();
+                move |status| match status {
+                    Ok(status) => Ok(exited_load_error_with_stderr(status, &debug_log)),
+                    Err(err) => Err(anyhow!("failed to wait for agent server exit: {err}")),
+                }
+            })
+            .boxed_local();
         let (connection, status_fut) = match futures::future::select(connection_rx, status_fut)
             .await
         {
             futures::future::Either::Left((connection, status_fut)) => (connection?, status_fut),
-            futures::future::Either::Right((status, _connection_rx)) => match status {
-                Ok(status) => return Err(exited_load_error_with_stderr(status, &debug_log).into()),
-                Err(err) => {
-                    return Err(anyhow!("agent server exited before initialization: {err}"));
-                }
-            },
+            futures::future::Either::Right((load_error, _connection_rx)) => {
+                return Err(load_error?.into());
+            }
         };
 
         // Set up the foreground dispatch loop to process work items from handlers.
@@ -868,19 +876,34 @@ impl AcpConnection {
                     ),
             ),
         )
-        .map(|response| response.map_err(anyhow::Error::from))
         .boxed_local();
-        let (response, status_fut) = match futures::future::select(initialize_response, status_fut)
-            .await
-        {
-            futures::future::Either::Left((response, status_fut)) => (response?, status_fut),
-            futures::future::Either::Right((status, _initialize_response)) => match status {
-                Ok(status) => return Err(exited_load_error_with_stderr(status, &debug_log).into()),
-                Err(err) => {
-                    return Err(anyhow!("agent server exited before initialization: {err}"));
+        let (response, status_fut) =
+            match futures::future::select(initialize_response, status_fut).await {
+                futures::future::Either::Left((Ok(response), status_fut)) => (response, status_fut),
+                futures::future::Either::Left((Err(error), status_fut)) => {
+                    let response_channel_cancelled = error.code == ErrorCode::InternalError
+                        && error.data.as_ref().and_then(|data| data.as_str())
+                            == Some(ACP_RESPONSE_CHANNEL_CANCELLED);
+                    if !response_channel_cancelled {
+                        return Err(error.into());
+                    }
+
+                    let timer = cx
+                        .background_executor()
+                        .timer(Duration::from_millis(250))
+                        .boxed_local();
+                    if let futures::future::Either::Left((load_error, _timer)) =
+                        futures::future::select(status_fut, timer).await
+                    {
+                        return Err(load_error?.into());
+                    }
+
+                    return Err(error.into());
                 }
-            },
-        };
+                futures::future::Either::Right((load_error, _initialize_response)) => {
+                    return Err(load_error?.into());
+                }
+            };
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
@@ -888,24 +911,22 @@ impl AcpConnection {
 
         let wait_task = cx.spawn({
             let sessions = sessions.clone();
-            let debug_log = debug_log.clone();
             async move |cx| {
-                let status = status_fut.await?;
-                emit_load_error_to_all_sessions(
-                    &sessions,
-                    exited_load_error_with_stderr(status, &debug_log),
-                    cx,
-                );
+                let load_error = status_fut.await?;
+                emit_load_error_to_all_sessions(&sessions, load_error, cx);
                 anyhow::Ok(())
             }
         });
 
-        let telemetry_id = response
-            .agent_info
+        let agent_info = response.agent_info;
+        let telemetry_id = agent_info
+            .as_ref()
             // Use the one the agent provides if we have one
-            .map(|info| info.name.into())
+            .map(|info| SharedString::from(info.name.clone()))
             // Otherwise, just use the name
             .unwrap_or_else(|| agent_id.0.clone());
+        let agent_version = agent_info
+            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
 
         let session_list = if response
             .agent_capabilities
@@ -945,6 +966,7 @@ impl AcpConnection {
             agent_server_store,
             connection,
             telemetry_id,
+            agent_version,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
@@ -978,6 +1000,7 @@ impl AcpConnection {
         Self {
             id: AgentId::new("test"),
             telemetry_id: "test".into(),
+            agent_version: None,
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
@@ -1317,6 +1340,10 @@ impl AgentConnection for AcpConnection {
 
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
+    }
+
+    fn agent_version(&self) -> Option<SharedString> {
+        self.agent_version.clone()
     }
 
     fn new_session(
@@ -1982,6 +2009,10 @@ pub mod test_support {
 
         fn telemetry_id(&self) -> SharedString {
             self.inner.telemetry_id()
+        }
+
+        fn agent_version(&self) -> Option<SharedString> {
+            self.inner.agent_version()
         }
 
         fn new_session(
@@ -3345,6 +3376,7 @@ fn handle_request_permission(
                     thread.request_tool_call_authorization(
                         args.tool_call,
                         acp_thread::PermissionOptions::Flat(args.options),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                 })

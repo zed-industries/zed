@@ -4,6 +4,16 @@
 mod reliability;
 mod zed;
 
+// Ensure the binary name stays in sync with APP_NAME so that the paths used
+// at runtime (data dir, config dir, etc.) match what the binary is called.
+const _: () = assert!(
+    paths::APP_NAME_LOWERCASE
+        .as_bytes()
+        .eq_ignore_ascii_case(env!("CARGO_BIN_NAME").as_bytes()),
+    "paths::APP_NAME_LOWERCASE must match the binary name. \
+     Forks: update APP_NAME in crates/paths/src/paths.rs when renaming the binary.",
+);
+
 use agent::{SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_ui::AgentPanel;
@@ -709,6 +719,7 @@ fn main() {
             false,
             cx,
         );
+        zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -1015,16 +1026,35 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
-                    let (client, thread_store) =
-                        multi_workspace.update(cx, |_, _window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                let client = workspace.project().read(cx).client();
-                                let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
-                                    .panel::<AgentPanel>(cx)
-                                    .map(|panel| panel.read(cx).thread_store().clone());
-                                anyhow::Ok((client, thread_store))
-                            })
-                        })??;
+                    let import_state = multi_workspace.update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            if workspace.root_paths(cx).is_empty() {
+                                workspace.focus_panel::<AgentPanel>(window, cx);
+
+                                struct OpenProjectForSharedThreadToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<OpenProjectForSharedThreadToast>(),
+                                        "Open a project to import shared threads",
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+
+                                return anyhow::Ok(None);
+                            }
+
+                            let client = workspace.project().read(cx).client();
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
+                                .panel::<AgentPanel>(cx)
+                                .map(|panel| panel.read(cx).thread_store().clone());
+                            anyhow::Ok(Some((client, thread_store)))
+                        })
+                    })??;
+
+                    let Some((client, thread_store)) = import_state else {
+                        return Ok(());
+                    };
 
                     let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");
@@ -1289,7 +1319,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             .await?;
             for result in results.into_iter().flatten() {
                 if let Err(err) = result {
-                    log::error!("Error opening path: {err}",);
+                    log::error!("Error opening path: {err:#}");
                 }
             }
             anyhow::Ok(())
