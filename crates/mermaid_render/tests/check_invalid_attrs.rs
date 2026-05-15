@@ -41,10 +41,6 @@ const DIAGRAMS: &[(&str, &str)] = &[
         "gitgraph",
         "gitGraph\n    commit id: \"init\"\n    branch dev\n    commit id: \"feat\"\n    checkout main\n    merge dev",
     ),
-    (
-        "flowchart_accents",
-        "flowchart TD\n    A([Customer Places Order]):::accent0 --> B[Validate Cart]:::accent1\n    B --> C{Items In Stock?}:::accent2\n    C -- No --> D[Notify Customer]:::accent3\n    C -- Yes --> E[Charge Payment]:::accent4\n    E --> F{Payment OK?}:::accent2\n    F -- No --> D\n    F -- Yes --> G[Fulfill Order]:::accent5\n    G --> H[Ship Package]:::accent6\n    H --> I([Delivery Complete]):::accent7",
-    ),
 ];
 
 fn rgb_theme() -> MermaidTheme {
@@ -200,6 +196,37 @@ fn no_empty_attributes_or_nan_in_merman_output() {
             all_issues.join("\n")
         );
     }
+}
+
+#[test]
+fn accent_colors_auto_applied_to_nodes() {
+    let theme = rgb_theme();
+
+    // A plain state diagram with no :::accent syntax should get
+    // automatic accent colors applied to its node groups.
+    let source = "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing\n    Processing --> Done\n    Done --> [*]";
+
+    let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+        .expect("render failed");
+
+    // accent_fill_and_text darkens the background color for dark mode.
+    // The stroke colors are direct hex conversions of the accent rgb values.
+    // With 3 states (Idle, Processing, Done), we expect at least accent0 and
+    // accent1 stroke colors to appear.
+    let accent0_stroke = "#74ade8"; // rgb(116, 173, 232) -> hex
+    let accent1_stroke = "#be5046"; // rgb(190, 80, 70) -> hex
+
+    assert!(
+        svg.contains(accent0_stroke),
+        "Expected accent0 stroke color ({accent0_stroke}) in auto-colored state diagram SVG.\n\
+         This means auto-coloring did not apply accent colors to node groups.\n\
+         SVG snippet: {}...",
+        &svg[..svg.len().min(2000)]
+    );
+    assert!(
+        svg.contains(accent1_stroke),
+        "Expected accent1 stroke color ({accent1_stroke}) in auto-colored state diagram SVG."
+    );
 }
 
 #[test]

@@ -87,40 +87,12 @@ pub fn render_to_svg(
     }
 }
 
-fn source_with_accent_classdefs(source: &str, theme: &MermaidTheme) -> String {
-    if theme.accent_colors.is_empty() {
-        return source.to_string();
-    }
-
-    let trimmed = source.trim_start();
-    let supports_classdef = trimmed.starts_with("flowchart")
-        || trimmed.starts_with("graph")
-        || trimmed.starts_with("classDiagram");
-    if !supports_classdef {
-        return source.to_string();
-    }
-
-    use std::fmt::Write;
-    let mut full_source = source.to_string();
-    for (i, accent) in theme.accent_colors.iter().enumerate() {
-        let (fill, text) = accent_fill_and_text(&accent.background, theme.dark_mode);
-        let stroke = to_hex(&accent.stroke);
-        write!(
-            full_source,
-            "\nclassDef accent{i} fill:{fill},stroke:{stroke},color:{text}",
-        )
-        .ok();
-    }
-    full_source
-}
-
 fn render_with_mermaid_rs(source: &str, theme: &MermaidTheme) -> Result<String> {
-    let full_source = source_with_accent_classdefs(source, theme);
     let options = mermaid_rs_renderer::RenderOptions {
         theme: to_mermaid_rs_theme(theme),
         layout: mermaid_rs_renderer::LayoutConfig::default(),
     };
-    mermaid_rs_renderer::render_with_options(&full_source, options)
+    mermaid_rs_renderer::render_with_options(source, options)
 }
 
 fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
@@ -134,15 +106,27 @@ fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
         .with_vendored_text_measurer()
         .with_diagram_id(&diagram_id);
 
-    let full_source = source_with_accent_classdefs(source, theme);
     let svg = renderer
-        .render_svg_sync(&full_source)
+        .render_svg_sync(source)
         .context("merman render failed")?
         .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
+
+    // Merman doesn't interpret \n as a line break in labels — it passes
+    // the literal backslash-n through to the foreignObject HTML. Convert
+    // to <br/> so the fallback function can split them into separate lines.
+    let svg = svg.replace(r"\n", "<br/>");
 
     // Convert foreignObject labels to plain SVG <text> elements so that
     // renderers like usvg (which don't support foreignObject) can display them.
     let svg = merman::render::foreign_object_label_fallback_svg_text(&svg);
+
+    // Fix double-escaping in fallback text: merman's fallback strips HTML
+    // tags but preserves HTML entities (e.g. `&lt;`), then XML-escapes the
+    // result, turning `&lt;` into `&amp;lt;`. This matters for mermaid
+    // generics like `List~Animal~` which render as `List<Animal>`.
+    let svg = svg
+        .replace("&amp;lt;", "&lt;")
+        .replace("&amp;gt;", "&gt;");
 
     let injected_css = format!(
         r#"
@@ -333,6 +317,22 @@ fn postprocess_merman_svg(
     let mut foreign_object_depth: usize = 0;
     let mut in_fallback_group = false;
 
+    let accent_styles: Vec<AccentStyle> = theme
+        .accent_colors
+        .iter()
+        .map(|accent| {
+            let (fill, text) = accent_fill_and_text(&accent.background, theme.dark_mode);
+            let stroke = to_hex(&accent.stroke);
+            AccentStyle {
+                fill,
+                stroke,
+                text: text.to_string(),
+            }
+        })
+        .collect();
+    let mut accent_g_stack: Vec<Option<usize>> = Vec::new();
+    let mut node_accent_counter: usize = 0;
+
     loop {
         let event = reader.read_event().context("SVG parse error")?.into_owned();
         let is_start = matches!(&event, Event::Start(_));
@@ -397,6 +397,7 @@ fn postprocess_merman_svg(
                             if in_plot_group {
                                 plot_g_depth += 1;
                             }
+                            let mut g_accent_idx: Option<usize> = None;
                             if let Some(class_attr) = e.try_get_attribute("class")? {
                                 let class_val = class_attr.unescape_value()?;
                                 if class_val.as_ref() == "plot" {
@@ -406,11 +407,23 @@ fn postprocess_merman_svg(
                                 } else if class_val.as_ref() == "legend" {
                                     in_legend = true;
                                 }
+                                if !accent_styles.is_empty()
+                                    && has_class_token(&class_val, "node")
+                                    && !has_class_token(&class_val, "mindmap-node")
+                                {
+                                    let idx =
+                                        node_accent_counter % accent_styles.len();
+                                    node_accent_counter += 1;
+                                    g_accent_idx = Some(idx);
+                                }
                             }
                             if let Some(attr) = e.try_get_attribute("data-merman-foreignobject")? {
                                 if attr.unescape_value()?.as_ref() == "fallback" {
                                     in_fallback_group = true;
                                 }
+                            }
+                            if is_start {
+                                accent_g_stack.push(g_accent_idx);
                             }
                             None
                         }
@@ -569,6 +582,88 @@ fn postprocess_merman_svg(
                 };
 
                 let elem = new_elem.unwrap_or(e);
+
+                // Automatically apply accent colors to shapes and text
+                // inside node groups. The accent index is assigned
+                // round-robin from the theme's accent palette when
+                // entering a <g class="node ..."> group.
+                let elem = if !accent_styles.is_empty() {
+                    let (is_shape, is_text, tag_string) = {
+                        let tag = elem.name().local_name();
+                        let tag_bytes = tag.as_ref();
+                        (
+                            matches!(
+                                tag_bytes,
+                                b"rect"
+                                    | b"path"
+                                    | b"circle"
+                                    | b"polygon"
+                                    | b"ellipse"
+                            ),
+                            tag_bytes == b"text",
+                            String::from_utf8_lossy(tag_bytes).into_owned(),
+                        )
+                    };
+
+                    if is_shape || is_text {
+                        let accent_idx =
+                            accent_g_stack.iter().rev().find_map(|x| *x);
+
+                        if let Some(idx) = accent_idx {
+                            let style = &accent_styles[idx];
+                            let mut ne = BytesStart::new(tag_string);
+                            let mut had_fill = false;
+                            let mut had_stroke = false;
+
+                            for attr in elem.attributes() {
+                                let attr = attr.context("accent attr")?;
+                                match attr.key.local_name().as_ref() {
+                                    b"fill" => {
+                                        had_fill = true;
+                                        let color = if is_text {
+                                            &style.text
+                                        } else {
+                                            &style.fill
+                                        };
+                                        ne.push_attribute(("fill", color.as_str()));
+                                    }
+                                    b"stroke" if is_shape => {
+                                        had_stroke = true;
+                                        ne.push_attribute((
+                                            "stroke",
+                                            style.stroke.as_str(),
+                                        ));
+                                    }
+                                    _ => ne.push_attribute(attr),
+                                }
+                            }
+
+                            if !had_fill {
+                                let color = if is_text {
+                                    &style.text
+                                } else {
+                                    &style.fill
+                                };
+                                ne.push_attribute(("fill", color.as_str()));
+                            }
+                            if is_shape && !had_stroke {
+                                ne.push_attribute((
+                                    "stroke",
+                                    style.stroke.as_str(),
+                                ));
+                            }
+
+                            ne
+                        } else {
+                            elem
+                        }
+                    } else {
+                        elem
+                    }
+                } else {
+                    elem
+                };
+
                 if is_start {
                     writer.write_event(Event::Start(elem))?;
                 } else {
@@ -607,10 +702,13 @@ fn postprocess_merman_svg(
                     writer.get_mut().extend_from_slice(scoped_css.as_bytes());
                 }
 
-                if e.name().local_name().as_ref() == b"g" && in_plot_group {
-                    plot_g_depth -= 1;
-                    if plot_g_depth == 0 {
-                        in_plot_group = false;
+                if e.name().local_name().as_ref() == b"g" {
+                    accent_g_stack.pop();
+                    if in_plot_group {
+                        plot_g_depth -= 1;
+                        if plot_g_depth == 0 {
+                            in_plot_group = false;
+                        }
                     }
                 }
 
@@ -686,6 +784,16 @@ fn luma(r: u8, g: u8, b: u8) -> f64 {
 fn text_color_for_bg(color: &str) -> &'static str {
     let (r, g, b) = parse_rgb(color).unwrap_or((0, 0, 0));
     if luma(r, g, b) > 0.4 { "#000" } else { "#fff" }
+}
+
+fn has_class_token(class: &str, token: &str) -> bool {
+    class.split_whitespace().any(|t| t == token)
+}
+
+struct AccentStyle {
+    fill: String,
+    stroke: String,
+    text: String,
 }
 
 /// Derive a fill color and contrasting text color from an accent background.
