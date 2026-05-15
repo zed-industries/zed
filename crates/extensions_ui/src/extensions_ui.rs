@@ -66,12 +66,8 @@ pub struct RebuildDevExtension {
     pub extension_id: Option<String>,
 }
 
-fn update_rebuild_dev_extension_visibility(cx: &mut App) {
-    let has_dev_extensions = ExtensionStore::global(cx)
-        .read(cx)
-        .dev_extensions()
-        .next()
-        .is_some();
+fn update_rebuild_dev_extension_visibility(store: &Entity<ExtensionStore>, cx: &mut App) {
+    let has_dev_extensions = store.read(cx).dev_extensions().next().is_some();
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         if has_dev_extensions {
             filter.show_action_types(&[TypeId::of::<RebuildDevExtension>()]);
@@ -82,9 +78,10 @@ fn update_rebuild_dev_extension_visibility(cx: &mut App) {
 }
 
 pub fn init(cx: &mut App) {
-    update_rebuild_dev_extension_visibility(cx);
-    cx.observe(&ExtensionStore::global(cx), |_, cx| {
-        update_rebuild_dev_extension_visibility(cx);
+    let store = ExtensionStore::global(cx);
+    update_rebuild_dev_extension_visibility(&store, cx);
+    cx.observe(&store, |store, cx| {
+        update_rebuild_dev_extension_visibility(&store, cx);
     })
     .detach();
 
@@ -206,19 +203,23 @@ pub fn init(cx: &mut App) {
             })
             .register_action(move |workspace, action: &RebuildDevExtension, window, cx| {
                 if let Some(target_id) = action.extension_id.as_deref() {
-                    let found = ExtensionStore::global(cx)
+                    let extension_id = ExtensionStore::global(cx)
                         .read(cx)
                         .dev_extensions()
-                        .any(|m| m.id.as_ref() == target_id);
-
-                    if found {
-                        let extension_id = Arc::from(target_id);
+                        .find_map(|m| {
+                            if m.id.as_ref() == target_id {
+                                Some(m.id.clone())
+                            } else {
+                                None
+                            }
+                        });
+                    if let Some(extension_id) = extension_id {
                         ExtensionStore::global(cx).update(cx, |store, cx| {
                             store.rebuild_dev_extension(extension_id, cx);
                         });
                     } else {
                         workspace.show_error(
-                            &format!("Dev extension '{}' is not installed.", target_id),
+                            &format!("Dev extension '{target_id}' is not installed."),
                             cx,
                         );
                     }
@@ -1922,7 +1923,7 @@ impl PickerDelegate for DevExtensionRebuildPickerDelegate {
         let mat = self.matches.get(ix)?;
         let entry = self.entries.get(mat.candidate_id)?;
 
-        let item = ListItem::new(SharedString::from(format!("dev-extension-{}", entry.id)))
+        let item = ListItem::new(("dev-extension-list-item", mat.candidate_id))
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
             .toggle_state(selected)
