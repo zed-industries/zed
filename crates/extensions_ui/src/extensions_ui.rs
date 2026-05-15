@@ -38,6 +38,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
+    notifications::{NotificationId, simple_message_notification::MessageNotification},
 };
 use zed_actions::ExtensionCategoryFilter;
 
@@ -218,9 +219,27 @@ pub fn init(cx: &mut App) {
                             store.rebuild_dev_extension(extension_id, cx);
                         });
                     } else {
-                        workspace.show_error(
-                            &format!("Dev extension '{target_id}' is not installed."),
+                        struct DevExtensionNotInstalledNotification;
+                        workspace.show_notification(
+                            NotificationId::composite::<DevExtensionNotInstalledNotification>(
+                                SharedString::from(target_id),
+                            ),
                             cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new(
+                                        format!("Dev extension '{target_id}' is not installed."),
+                                        cx,
+                                    )
+                                    .primary_message("Install Dev Extension")
+                                    .primary_on_click(
+                                        move |window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(InstallDevExtension), cx);
+                                        },
+                                    )
+                                })
+                            },
                         );
                     }
                     return;
@@ -234,7 +253,21 @@ pub fn init(cx: &mut App) {
 
                 match dev_extensions.len() {
                     0 => {
-                        workspace.show_error(&"No dev extensions are installed.", cx);
+                        struct NoDevExtensionsInstalledNotification;
+                        workspace.show_notification(
+                            NotificationId::unique::<NoDevExtensionsInstalledNotification>(),
+                            cx,
+                            |cx| {
+                                cx.new(|cx| {
+                                    MessageNotification::new("No dev extensions are installed.", cx)
+                                        .primary_message("Install Dev Extension")
+                                        .primary_on_click(move |window, cx| {
+                                            window
+                                                .dispatch_action(Box::new(InstallDevExtension), cx);
+                                        })
+                                })
+                            },
+                        );
                     }
                     1 => {
                         let extension_id = dev_extensions[0].id.clone();
