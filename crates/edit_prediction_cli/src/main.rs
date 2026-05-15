@@ -265,10 +265,16 @@ impl Display for Command {
                 None => write!(f, "score"),
             },
             Command::Distill => write!(f, "distill"),
-            Command::Eval(args) => match &args.predict.provider {
-                Some(provider) => write!(f, "eval --provider={}", provider),
-                None => write!(f, "eval"),
-            },
+            Command::Eval(args) => {
+                write!(f, "eval")?;
+                if args.context_only {
+                    write!(f, " --context-only")?;
+                }
+                if let Some(provider) = &args.predict.provider {
+                    write!(f, " --provider={}", provider)?;
+                }
+                Ok(())
+            }
             Command::Synthesize(args) => {
                 write!(f, "synthesize --repos {}", args.repos.join(" "))
             }
@@ -321,6 +327,9 @@ struct PredictArgs {
 struct EvalArgs {
     #[clap(flatten)]
     predict: PredictArgs,
+    /// Only compute editable context coverage from expected patches and retrieved context.
+    #[clap(long)]
+    context_only: bool,
     /// Path to write summary scores as JSON
     #[clap(long)]
     summary_json: Option<PathBuf>,
@@ -1133,7 +1142,9 @@ fn main() {
                         predict::sync_batches(args.provider.as_ref()).await?;
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                        }
                     }
                     Command::Qa(args) => {
                         qa::sync_batches(args).await?;
@@ -1266,15 +1277,22 @@ fn main() {
                                             .await?;
                                         }
                                         Command::Eval(args) => {
-                                            run_scoring(
-                                                example,
-                                                &args.predict,
-                                                app_state.clone(),
-                                                &example_progress,
-                                                cx.clone(),
-                                                true,
-                                            )
-                                            .await?;
+                                            if args.context_only {
+                                                score::run_context_coverage_scoring(
+                                                    example,
+                                                    &example_progress,
+                                                )?;
+                                            } else {
+                                                run_scoring(
+                                                    example,
+                                                    &args.predict,
+                                                    app_state.clone(),
+                                                    &example_progress,
+                                                    cx.clone(),
+                                                    true,
+                                                )
+                                                .await?;
+                                            }
                                         }
                                         Command::Qa(args) => {
                                             qa::run_qa(example, args, &example_progress).await?;
@@ -1393,15 +1411,17 @@ fn main() {
                         }
                     }
                     Command::Eval(args) => {
-                        predict::sync_batches(args.predict.provider.as_ref()).await?;
-                        if args.predict.wait {
-                            predict::wait_for_batches(args.predict.provider.as_ref()).await?;
-                            let mut examples =
-                                std::mem::take(&mut *finished_examples.lock().unwrap());
-                            predict::reprocess_after_batch_wait(&mut examples, &args.predict)
-                                .await?;
-                            rewrite_output(&examples, write_path, is_markdown)?;
-                            *finished_examples.lock().unwrap() = examples;
+                        if !args.context_only {
+                            predict::sync_batches(args.predict.provider.as_ref()).await?;
+                            if args.predict.wait {
+                                predict::wait_for_batches(args.predict.provider.as_ref()).await?;
+                                let mut examples =
+                                    std::mem::take(&mut *finished_examples.lock().unwrap());
+                                predict::reprocess_after_batch_wait(&mut examples, &args.predict)
+                                    .await?;
+                                rewrite_output(&examples, write_path, is_markdown)?;
+                                *finished_examples.lock().unwrap() = examples;
+                            }
                         }
                     }
                     Command::Qa(args) => {

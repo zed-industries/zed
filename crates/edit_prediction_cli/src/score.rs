@@ -124,6 +124,35 @@ pub async fn run_scoring(
     Ok(())
 }
 
+pub fn run_context_coverage_scoring(
+    example: &mut Example,
+    example_progress: &ExampleProgress,
+) -> anyhow::Result<()> {
+    let progress = example_progress.start(Step::Score);
+
+    progress.set_substatus("computing context coverage");
+    let prompt_inputs = example
+        .prompt_inputs
+        .as_ref()
+        .context("prompt_inputs is required for context coverage scoring")?;
+    let context = context_excerpts(example, prompt_inputs);
+
+    let editable_context_coverage = example
+        .spec
+        .expected_patches_with_cursor_positions()
+        .iter()
+        .map(|(expected_patch, _)| {
+            edit_prediction_metrics::editable_context_coverage(expected_patch, &context)
+        })
+        .max_by(|left, right| left.score.total_cmp(&right.score));
+
+    let mut score = edit_prediction_metrics::PredictionScore::zero();
+    score.editable_context_coverage = editable_context_coverage;
+    example.score = vec![score];
+
+    Ok(())
+}
+
 fn context_excerpts(
     example: &Example,
     prompt_inputs: &zeta_prompt::ZetaPromptInput,
