@@ -763,10 +763,7 @@ impl CopilotResponsesEventMapper {
 
                     if encrypted_content.is_some() {
                         events.extend(self.capture_reasoning_item(
-                            copilot_response_reasoning_input_item_from_output(
-                                &id,
-                                encrypted_content,
-                            ),
+                            reasoning_input_item_from_output(&id, encrypted_content),
                         ));
                     }
 
@@ -863,12 +860,12 @@ impl CopilotResponsesEventMapper {
             } = item
             {
                 if encrypted_content.is_some() {
-                    events.extend(self.capture_reasoning_item(
-                        copilot_response_reasoning_input_item_from_output(
+                    events.extend(
+                        self.capture_reasoning_item(reasoning_input_item_from_output(
                             id,
                             encrypted_content.clone(),
-                        ),
-                    ));
+                        )),
+                    );
                 }
             }
         }
@@ -917,13 +914,13 @@ struct CopilotResponseMessageMetadata {
     reasoning_items: Vec<copilot_responses::ResponseReasoningInputItem>,
 }
 
-fn copilot_response_message_metadata_from_details(
+fn response_message_metadata_from_details(
     details: &serde_json::Value,
 ) -> Option<CopilotResponseMessageMetadata> {
     serde_json::from_value::<CopilotResponseMessageMetadata>(details.clone()).ok()
 }
 
-fn append_reasoning_details_to_copilot_response_items(
+fn append_reasoning_details_to_response_items(
     reasoning_details: Option<&serde_json::Value>,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     input_items: &mut Vec<copilot_responses::ResponseInputItem>,
@@ -932,21 +929,17 @@ fn append_reasoning_details_to_copilot_response_items(
         return;
     };
 
-    let Some(metadata) = copilot_response_message_metadata_from_details(reasoning_details) else {
+    let Some(metadata) = response_message_metadata_from_details(reasoning_details) else {
         return;
     };
 
     for mut reasoning_item in metadata.reasoning_items {
         reasoning_item.summary.clear();
-        push_replayed_copilot_reasoning_item(
-            reasoning_item,
-            replayed_reasoning_item_indexes,
-            input_items,
-        );
+        push_replayed_reasoning_item(reasoning_item, replayed_reasoning_item_indexes, input_items);
     }
 }
 
-fn push_replayed_copilot_reasoning_item(
+fn push_replayed_reasoning_item(
     reasoning_item: copilot_responses::ResponseReasoningInputItem,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     input_items: &mut Vec<copilot_responses::ResponseInputItem>,
@@ -965,7 +958,7 @@ fn push_replayed_copilot_reasoning_item(
     ));
 }
 
-fn copilot_response_reasoning_input_item_from_output(
+fn reasoning_input_item_from_output(
     id: &str,
     encrypted_content: Option<String>,
 ) -> copilot_responses::ResponseReasoningInputItem {
@@ -1316,7 +1309,7 @@ fn into_copilot_responses(
             }
 
             Role::Assistant => {
-                append_reasoning_details_to_copilot_response_items(
+                append_reasoning_details_to_response_items(
                     message.reasoning_details.as_ref(),
                     &mut replayed_reasoning_item_indexes,
                     &mut input_items,
