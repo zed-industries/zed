@@ -3908,9 +3908,9 @@ impl ThreadView {
                 .cloned()
         });
 
-        let label = selected
+        let active_effort = selected.clone().or(default_effort_level);
+        let label = active_effort
             .clone()
-            .or(default_effort_level)
             .map_or("Select Effort".into(), |effort| effort.name);
 
         let (label_color, icon) = if self.thinking_effort_menu_handle.is_deployed() {
@@ -3966,11 +3966,16 @@ impl ThreadView {
                 tooltip,
             )
             .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                Some(ContextMenu::build(window, cx, |mut menu, window, cx| {
                     menu = menu.header("Change Thinking Effort");
+                    let selected_index = active_effort.as_ref().and_then(|active_effort| {
+                        supported_effort_levels
+                            .iter()
+                            .position(|level| level.value == active_effort.value)
+                    });
 
                     for effort_level in supported_effort_levels.clone() {
-                        let is_selected = selected
+                        let is_selected = active_effort
                             .as_ref()
                             .is_some_and(|selected| selected.value == effort_level.value);
                         let entry = ContextMenuEntry::new(effort_level.name)
@@ -4025,6 +4030,13 @@ impl ThreadView {
                                     .ok();
                             }
                         }));
+                    }
+
+                    if let Some(selected_index) = selected_index {
+                        menu.select_first(&menu::SelectFirst, window, cx);
+                        for _ in 0..selected_index {
+                            menu.select_next(&menu::SelectNext, window, cx);
+                        }
                     }
 
                     menu
