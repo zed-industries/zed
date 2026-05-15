@@ -18,7 +18,6 @@ async fn test_add_contacts(db: &Arc<Database>) {
     for i in 0..3 {
         user_ids.push(
             db.create_user(
-                &format!("user{i}@example.com"),
                 false,
                 NewUserParams {
                     github_login: format!("user{i}"),
@@ -177,7 +176,6 @@ async fn test_project_count(db: &Arc<Database>) {
 
     let user1 = db
         .create_user(
-            "admin@example.com",
             true,
             NewUserParams {
                 github_login: "admin".into(),
@@ -188,7 +186,6 @@ async fn test_project_count(db: &Arc<Database>) {
         .unwrap();
     let user2 = db
         .create_user(
-            "user@example.com",
             false,
             NewUserParams {
                 github_login: "user".into(),

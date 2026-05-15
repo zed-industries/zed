@@ -13,7 +13,6 @@ test_both_dbs!(
 async fn test_channel_buffers(db: &Arc<Database>) {
     let a_id = db
         .create_user(
-            "user_a@example.com",
             false,
             NewUserParams {
                 github_login: "user_a".into(),
@@ -25,7 +24,6 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         .user_id;
     let b_id = db
         .create_user(
-            "user_b@example.com",
             false,
             NewUserParams {
                 github_login: "user_b".into(),
@@ -39,7 +37,6 @@ async fn test_channel_buffers(db: &Arc<Database>) {
     // This user will not be a part of the channel
     let c_id = db
         .create_user(
-            "user_c@example.com",
             false,
             NewUserParams {
                 github_login: "user_c".into(),
@@ -185,7 +182,6 @@ test_both_dbs!(
 async fn test_channel_buffers_last_operations(db: &Database) {
     let user_id = db
         .create_user(
-            "user_a@example.com",
             false,
             NewUserParams {
                 github_login: "user_a".into(),
@@ -197,7 +193,6 @@ async fn test_channel_buffers_last_operations(db: &Database) {
         .user_id;
     let observer_id = db
         .create_user(
-            "user_b@example.com",
             false,
             NewUserParams {
                 github_login: "user_b".into(),
