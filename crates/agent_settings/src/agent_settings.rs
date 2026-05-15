@@ -148,6 +148,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -238,6 +239,7 @@ pub fn language_model_to_selection(
                         .map(|effort| effort.value.to_string())
                 }),
             speed: current.speed.filter(|_| model.supports_fast_mode()),
+            include_project_rules: None,
         },
         None => LanguageModelSelection {
             provider,
@@ -247,6 +249,7 @@ pub fn language_model_to_selection(
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),
             speed: None,
+            include_project_rules: None,
         },
     }
 }
@@ -645,6 +648,11 @@ impl Settings for AgentSettings {
             inline_assistant_model: agent.inline_assistant_model,
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
+                .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_model
+                .as_ref()
+                .and_then(|model| model.include_project_rules)
                 .unwrap_or(true),
             commit_message_model: agent.commit_message_model,
             thread_summary_model: agent.thread_summary_model,

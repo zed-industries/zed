@@ -129,7 +129,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub inline_assistant_use_streaming_tools: Option<bool>,
-    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model and options to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -237,6 +237,7 @@ impl AgentSettingsContent {
             enable_thinking: false,
             effort: None,
             speed: None,
+            include_project_rules: None,
         });
     }
 
@@ -396,6 +397,11 @@ pub struct LanguageModelSelection {
     pub enable_thinking: bool,
     pub effort: Option<String>,
     pub speed: Option<language_model_core::Speed>,
+    /// Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    /// in the prompt when generating git commit messages.
+    ///
+    /// Default: true
+    pub include_project_rules: Option<bool>,
 }
 
 #[with_fallible_options]

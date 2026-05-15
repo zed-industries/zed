@@ -2022,6 +2022,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
                         enable_thinking,
                         effort,
                         speed,
+                        include_project_rules: None,
                     });
             },
         );
