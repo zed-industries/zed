@@ -100,7 +100,9 @@ secret-tool store --label='Zed: github_pat' \
 cmdkey /generic:zed://context_servers/github_pat /user:zed /pass:<token>
 ```
 
-If a referenced entry is missing, the server stays stopped and Zed logs a warning naming both the entry and the exact `security add-generic-password` invocation that would create it. Existing cleartext values keep working unchanged — the resolver only triggers on objects whose sole key is `$keychain` and whose value is a string. Objects with any extra keys are passed through untouched, so user data that happens to contain a `$keychain` field is never accidentally consumed.
+If a referenced entry is missing, the server stays stopped and Zed logs a warning naming both the entry and the provisioning command for each platform. After creating the entry, toggle the server (or save `settings.json`) so the resolver re-runs. Existing cleartext values keep working unchanged — the resolver only triggers on objects whose sole key is `$keychain` and whose value is a string. Objects with any extra keys are passed through untouched, so user data that happens to contain a `$keychain` field is never accidentally consumed.
+
+> Note: Keychain refs are currently resolved inside `settings` for extension-managed MCP servers only. Resolution inside the `headers` block of HTTP MCP servers is tracked separately ([zed#56870](https://github.com/zed-industries/zed/issues/56870)) and depends on a typed settings change.
 
 ## Using MCP Servers
 

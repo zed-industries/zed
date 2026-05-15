@@ -208,11 +208,13 @@ impl ContextServerConfiguration {
                     if let Some(missing) = err.downcast_ref::<keychain_refs::MissingKeychainEntry>()
                     {
                         log::warn!(
-                            "context server {id} references missing keychain entry `{}`. \
-                             Provision it (macOS) with: \
-                             security add-generic-password -s '{}' -a 'zed' -w <secret>",
-                            missing.name,
-                            missing.url,
+                            "context server {id} references missing keychain entry `{name}` \
+                             (storage URL: {url}). Provision it with one of:\n  \
+                             macOS:   security add-generic-password -s '{url}' -a 'zed' -w <secret>\n  \
+                             Linux:   secret-tool store --label='Zed: {name}' service 'zed://context_servers' account '{name}'\n  \
+                             Windows: cmdkey /generic:{url} /user:zed /pass:<secret>",
+                            name = missing.name,
+                            url = missing.url,
                         );
                     } else {
                         log::error!(
@@ -251,6 +253,10 @@ impl ContextServerConfiguration {
                 headers: auth,
                 timeout,
             } => {
+                // `$keychain` refs are not yet resolved in HTTP `headers` because the
+                // settings type is `HashMap<String, String>`. Extending support requires a
+                // typed `String | { "$keychain": "..." }` value at the settings layer;
+                // tracked in zed-industries/zed#56870.
                 let url = url::Url::parse(&url).log_err()?;
                 Some(ContextServerConfiguration::Http {
                     url,
