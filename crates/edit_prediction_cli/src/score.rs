@@ -161,8 +161,9 @@ fn context_excerpts(
 
     if let Some(excerpt_start_row) = prompt_inputs.excerpt_start_row {
         let row_count = prompt_inputs.cursor_excerpt.lines().count() as u32;
+
         context.push(Excerpt {
-            path: example.spec.cursor_path.to_string_lossy().to_string(),
+            path: prompt_inputs.cursor_path.to_string_lossy().to_string(),
             row_range: excerpt_start_row..excerpt_start_row.saturating_add(row_count),
             content: prompt_inputs.cursor_excerpt.to_string(),
         });
@@ -171,8 +172,16 @@ fn context_excerpts(
     if let Some(related_files) = &prompt_inputs.related_files {
         for related_file in related_files {
             for excerpt in &related_file.excerpts {
+                // First component is a project name which is not present in expected patch, skip it
+                let path = related_file
+                    .path
+                    .iter()
+                    .skip(1)
+                    .collect::<std::path::PathBuf>()
+                    .to_string_lossy()
+                    .to_string();
                 context.push(Excerpt {
-                    path: related_file.path.to_string_lossy().to_string(),
+                    path,
                     row_range: excerpt.row_range.clone(),
                     content: excerpt.text.to_string(),
                 });
