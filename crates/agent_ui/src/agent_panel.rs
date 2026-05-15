@@ -4088,7 +4088,9 @@ impl AgentPanel {
             .overflow_x_hidden()
             .child(content)
             .when(
-                self.has_open_project(cx) && !self.is_title_editor_focused(window, cx),
+                matches!(self.visible_surface(), VisibleSurface::AgentThread(_))
+                    && self.has_open_project(cx)
+                    && !self.is_title_editor_focused(window, cx),
                 |this| {
                     this.child(gradient_overlay).child(
                         h_flex()
