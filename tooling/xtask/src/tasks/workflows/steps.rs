@@ -1042,10 +1042,9 @@ pub(crate) fn create_ref(
     }
 }
 
-#[allow(unused)]
 pub(crate) fn update_ref(
     git_ref: GitRef,
-    sha: impl ToString,
+    sha: impl Into<RefSha>,
     token: &StepOutput,
     force: bool,
 ) -> impl Into<Step<Use>> {
