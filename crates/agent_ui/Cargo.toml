@@ -89,6 +89,7 @@ remote.workspace = true
 remote_connection.workspace = true
 rope.workspace = true
 rules_library.workspace = true
+skills_library.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -27,7 +27,7 @@ use zed_actions::{
         ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
         ReviewBranchDiff,
     },
-    assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
+    assistant::{FocusAgent, OpenRulesLibrary, OpenSkillsLibrary, Toggle, ToggleFocus},
 };
 
 use crate::ExpandMessageEditor;
@@ -75,6 +75,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
+use skills_library::open_skills_library;
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -262,6 +263,14 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
                             panel.deploy_rules_library(action, window, cx)
+                        });
+                    }
+                })
+                .register_action(|workspace, action: &OpenSkillsLibrary, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_skills_library(action, window, cx)
                         });
                     }
                 })
@@ -2545,15 +2554,37 @@ impl AgentPanel {
     fn deploy_rules_library(
         &mut self,
         action: &OpenRulesLibrary,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // When the Skills feature flag is on, the legacy Rules action is
+        // rerouted to the Skills library so the existing keyboard
+        // shortcut and any persisted keymap entries keep working.
+        if cx.has_flag::<SkillsFeatureFlag>() {
+            self.deploy_skills_library(&OpenSkillsLibrary, window, cx);
+            return;
+        }
         open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
             action
                 .prompt_to_select
                 .map(|uuid| UserPromptId(uuid).into()),
+            cx,
+        )
+        .detach_and_log_err(cx);
+    }
+
+    fn deploy_skills_library(
+        &mut self,
+        _action: &OpenSkillsLibrary,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        open_skills_library(
+            Some(self.workspace.clone()),
+            self.language_registry.clone(),
+            self.fs.clone(),
             cx,
         )
         .detach_and_log_err(cx);
@@ -4138,6 +4169,16 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
+        // Resolve menu shortcuts at the thread root; the active editor can
+        // shadow panel-level commands such as OpenRulesLibrary.
+        let menu_action_context = match &self.base_view {
+            BaseView::AgentThread { conversation_view } => conversation_view
+                .read(cx)
+                .active_thread()
+                .map(|thread| thread.read(cx).focus_handle.clone())
+                .unwrap_or_else(|| focus_handle.clone()),
+            _ => focus_handle.clone(),
+        };
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
         let conversation_view = match &self.base_view {
@@ -4179,14 +4220,14 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
-                    // When the Skills feature flag is on, hide the legacy Rules menu entry.
+                    // When the Skills feature flag is on, relabel the legacy Rules menu entry.
                     // The flag is read from a global store populated asynchronously, and
                     // this menu builder runs on every open, so the latest resolved value is
                     // reflected when the user clicks the ellipsis.
                     let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
 
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
-                        menu = menu.context(focus_handle.clone());
+                        menu = menu.context(menu_action_context.clone());
 
                         if can_regenerate_thread_title {
                             menu = menu.header("Current Thread");
@@ -4221,9 +4262,18 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator();
 
-                            if !skills_enabled {
-                                menu = menu.action("Rules", Box::new(OpenRulesLibrary::default()));
-                            }
+                            // We deliberately bind the menu entry to
+                            // `OpenRulesLibrary` even when the label says
+                            // "Skills". The keymap still ships the
+                            // `cmd-alt-l` / `ctrl-alt-l` shortcut on
+                            // `OpenRulesLibrary`, and `deploy_rules_library`
+                            // reroutes to the skills library when the
+                            // feature flag is on. Pointing the menu at
+                            // `OpenRulesLibrary` lets the popover surface
+                            // that shortcut next to the label automatically.
+                            let library_label = if skills_enabled { "Skills" } else { "Rules" };
+                            menu =
+                                menu.action(library_label, Box::new(OpenRulesLibrary::default()));
 
                             menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
@@ -4977,6 +5027,7 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_rules_library))
+            .on_action(cx.listener(Self::deploy_skills_library))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_options_menu))
             .on_action(cx.listener(Self::increase_font_size))
@@ -6700,6 +6751,61 @@ mod tests {
             assert!(panel.has_terminal(terminal_id));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
         });
+    }
+
+    #[gpui::test]
+    async fn test_skills_menu_entry_shows_rules_shortcut(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["skills".to_string()]);
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("MENU_ITEM-Skills").is_some(),
+            "Skills menu item should be visible when the skills flag is enabled"
+        );
+        assert!(
+            cx.debug_bounds("KEY_BINDING-l").is_some(),
+            "Skills menu item should show the OpenRulesLibrary shortcut"
+        );
     }
 
     #[gpui::test]
