@@ -5492,6 +5492,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "component",
  "convert_case 0.8.0",
  "criterion",
  "ctor",
