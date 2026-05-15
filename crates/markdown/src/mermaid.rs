@@ -201,6 +201,14 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
         git_branch_label_colors,
         er_attr_bg_odd: hsla_to_rgb_string(colors.surface_background),
         er_attr_bg_even: hsla_to_rgb_string(colors.element_background),
+        accent_colors: players
+            .0
+            .iter()
+            .map(|player| mermaid_render::AccentColor {
+                stroke: hsla_to_rgb_string(player.cursor),
+                background: hsla_to_rgb_string(player.background),
+            })
+            .collect(),
     }
 }
 

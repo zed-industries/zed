@@ -34,8 +34,8 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, img, point, quad,
+    StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -327,6 +327,8 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    _mermaid_theme_subscription: Option<Subscription>,
+    last_mermaid_theme_id: Option<String>,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -484,6 +486,15 @@ impl Markdown {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        let theme_subscription = if options.render_mermaid_diagrams {
+            Some(cx.observe_global::<settings::SettingsStore>(|this: &mut Self, cx| {
+                this.invalidate_mermaid_cache(cx);
+            }))
+        } else {
+            None
+        };
+
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -500,6 +511,8 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            _mermaid_theme_subscription: theme_subscription,
+            last_mermaid_theme_id: None,
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -537,15 +550,23 @@ impl Markdown {
             .retain(|id, _| ids.contains(id));
     }
 
-    /// Used in the agent panel to force a re-render when the theme changes
     pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
-        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        if !self.options.render_mermaid_diagrams
+            || self.parsed_markdown.mermaid_diagrams.is_empty()
         {
-            self.mermaid_state.clear();
-            let parsed_markdown = self.parsed_markdown.clone();
-            self.mermaid_state.update(&parsed_markdown, cx);
-            cx.notify();
+            return;
         }
+
+        let current_theme_id = cx.theme().id.clone();
+        if self.last_mermaid_theme_id.as_ref() == Some(&current_theme_id) {
+            return;
+        }
+        self.last_mermaid_theme_id = Some(current_theme_id);
+
+        self.mermaid_state.clear();
+        let parsed_markdown = self.parsed_markdown.clone();
+        self.mermaid_state.update(&parsed_markdown, cx);
+        cx.notify();
     }
 
     pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {

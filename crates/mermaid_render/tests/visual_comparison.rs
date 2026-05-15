@@ -47,6 +47,7 @@ fn one_dark_theme() -> MermaidTheme {
         git_branch_label_colors: std::array::from_fn(|_| "#fff".to_string()),
         er_attr_bg_odd: surface_background.to_string(),
         er_attr_bg_even: element_background.to_string(),
+        accent_colors: Vec::new(),
     }
 }
 

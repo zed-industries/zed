@@ -9,6 +9,14 @@ pub enum MermaidBackend {
 }
 
 #[derive(Debug, Clone)]
+pub struct AccentColor {
+    /// The accent stroke/border color (e.g. `"rgb(116, 173, 232)"`).
+    pub stroke: String,
+    /// The base background color from which fill and text colors are derived.
+    pub background: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct MermaidTheme {
     pub dark_mode: bool,
     pub font_family: String,
@@ -33,6 +41,7 @@ pub struct MermaidTheme {
     pub git_branch_label_colors: [String; 8],
     pub er_attr_bg_odd: String,
     pub er_attr_bg_even: String,
+    pub accent_colors: Vec<AccentColor>,
 }
 
 impl Default for MermaidTheme {
@@ -62,6 +71,7 @@ impl Default for MermaidTheme {
             git_branch_label_colors: theme.git_branch_label_colors,
             er_attr_bg_odd: theme.primary_border_color,
             er_attr_bg_even: theme.text_color,
+            accent_colors: Vec::new(),
         }
     }
 }
@@ -77,12 +87,40 @@ pub fn render_to_svg(
     }
 }
 
+fn source_with_accent_classdefs(source: &str, theme: &MermaidTheme) -> String {
+    if theme.accent_colors.is_empty() {
+        return source.to_string();
+    }
+
+    let trimmed = source.trim_start();
+    let supports_classdef = trimmed.starts_with("flowchart")
+        || trimmed.starts_with("graph")
+        || trimmed.starts_with("classDiagram");
+    if !supports_classdef {
+        return source.to_string();
+    }
+
+    use std::fmt::Write;
+    let mut full_source = source.to_string();
+    for (i, accent) in theme.accent_colors.iter().enumerate() {
+        let (fill, text) = accent_fill_and_text(&accent.background, theme.dark_mode);
+        write!(
+            full_source,
+            "\nclassDef accent{i} fill:{fill},stroke:{},color:{text}",
+            accent.stroke,
+        )
+        .ok();
+    }
+    full_source
+}
+
 fn render_with_mermaid_rs(source: &str, theme: &MermaidTheme) -> Result<String> {
+    let full_source = source_with_accent_classdefs(source, theme);
     let options = mermaid_rs_renderer::RenderOptions {
         theme: to_mermaid_rs_theme(theme),
         layout: mermaid_rs_renderer::LayoutConfig::default(),
     };
-    mermaid_rs_renderer::render_with_options(source, options)
+    mermaid_rs_renderer::render_with_options(&full_source, options)
 }
 
 fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
@@ -96,8 +134,9 @@ fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
         .with_vendored_text_measurer()
         .with_diagram_id(&diagram_id);
 
+    let full_source = source_with_accent_classdefs(source, theme);
     let svg = renderer
-        .render_svg_sync(source)
+        .render_svg_sync(&full_source)
         .context("merman render failed")?
         .ok_or_else(|| anyhow!("merman returned no SVG for the given input"))?;
 
@@ -291,13 +330,39 @@ fn postprocess_merman_svg(
     let mut pie_color_idx: usize = 0;
     let mut in_legend = false;
     let mut legend_color_idx: usize = 0;
+    let mut foreign_object_depth: usize = 0;
 
     loop {
         let event = reader.read_event().context("SVG parse error")?.into_owned();
         let is_start = matches!(&event, Event::Start(_));
 
+        // Skip everything inside <foreignObject> — usvg can't handle them
+        // and we already have <text> fallbacks from foreign_object_label_fallback_svg_text.
+        if foreign_object_depth > 0 {
+            match &event {
+                Event::Start(e) if e.name().local_name().as_ref() == b"foreignObject" => {
+                    foreign_object_depth += 1;
+                    continue;
+                }
+                Event::End(e) if e.name().local_name().as_ref() == b"foreignObject" => {
+                    foreign_object_depth -= 1;
+                    continue;
+                }
+                Event::Eof => break,
+                _ if foreign_object_depth > 0 => continue,
+                _ => {}
+            }
+        }
+
         match event {
             Event::Eof => break,
+
+            Event::Start(e) | Event::Empty(e) if e.name().local_name().as_ref() == b"foreignObject" => {
+                if is_start {
+                    foreign_object_depth = 1;
+                }
+                continue;
+            }
 
             Event::Start(e) | Event::Empty(e) => {
                 let new_elem: Option<BytesStart<'static>> = {
@@ -428,12 +493,15 @@ fn postprocess_merman_svg(
                         }
 
                         b"text" => {
-                            let has_hardcoded_fill = e
+                            let fill_val = e
                                 .try_get_attribute("fill")?
-                                .map(|a| a.unescape_value().map(|v| v == "#333"))
-                                .transpose()?
-                                .unwrap_or(false);
-                            if has_hardcoded_fill {
+                                .map(|a| a.unescape_value().map(|v| v.to_string()))
+                                .transpose()?;
+                            let needs_fix = matches!(
+                                fill_val.as_deref(),
+                                Some("#333") | Some("")
+                            );
+                            if needs_fix {
                                 let mut ne = BytesStart::new("text");
                                 for attr in e.attributes() {
                                     let attr = attr?;
@@ -442,6 +510,27 @@ fn postprocess_merman_svg(
                                             "fill",
                                             theme.text_color.as_str(),
                                         ));
+                                    } else {
+                                        ne.push_attribute(attr);
+                                    }
+                                }
+                                Some(ne)
+                            } else {
+                                None
+                            }
+                        }
+
+                        b"rect" if !in_plot_group && !in_legend => {
+                            let width_val = e
+                                .try_get_attribute("width")?
+                                .map(|a| a.unescape_value().map(|v| v.to_string()))
+                                .transpose()?;
+                            if matches!(width_val.as_deref(), Some("")) {
+                                let mut ne = BytesStart::new("rect");
+                                for attr in e.attributes() {
+                                    let attr = attr?;
+                                    if attr.key.local_name().as_ref() == b"width" {
+                                        ne.push_attribute(("width", "0"));
                                     } else {
                                         ne.push_attribute(attr);
                                     }
@@ -536,33 +625,116 @@ fn sanitize_nan_colors(svg: &str) -> String {
     result
 }
 
-fn text_color_for_bg(color: &str) -> &'static str {
-    let (r, g, b) = if let Some(inner) = color
-        .strip_prefix("rgb(")
-        .and_then(|s| s.strip_suffix(')'))
-    {
+fn parse_rgb(color: &str) -> Option<(u8, u8, u8)> {
+    if let Some(inner) = color.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
         let parts: Vec<u8> = inner
             .split(',')
             .filter_map(|s| s.trim().parse().ok())
             .collect();
         if parts.len() >= 3 {
-            (parts[0], parts[1], parts[2])
-        } else {
-            return "#000";
+            return Some((parts[0], parts[1], parts[2]));
         }
     } else {
         let hex = color.trim_start_matches('#');
-        if hex.len() < 6 {
-            return "#000";
+        if hex.len() >= 6 {
+            return Some((
+                u8::from_str_radix(&hex[0..2], 16).unwrap_or(0),
+                u8::from_str_radix(&hex[2..4], 16).unwrap_or(0),
+                u8::from_str_radix(&hex[4..6], 16).unwrap_or(0),
+            ));
         }
-        (
-            u8::from_str_radix(&hex[0..2], 16).unwrap_or(0),
-            u8::from_str_radix(&hex[2..4], 16).unwrap_or(0),
-            u8::from_str_radix(&hex[4..6], 16).unwrap_or(0),
-        )
+    }
+    None
+}
+
+fn luma(r: u8, g: u8, b: u8) -> f64 {
+    fn linearize(c: f64) -> f64 {
+        let c = c / 255.0;
+        if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+    }
+    0.2126 * linearize(r as f64) + 0.7152 * linearize(g as f64) + 0.0722 * linearize(b as f64)
+}
+
+fn text_color_for_bg(color: &str) -> &'static str {
+    let (r, g, b) = parse_rgb(color).unwrap_or((0, 0, 0));
+    if luma(r, g, b) > 0.4 { "#000" } else { "#fff" }
+}
+
+/// Derive a fill color and contrasting text color from an accent background.
+///
+/// On dark themes the fill is darkened until text contrast is sufficient;
+/// on light themes it is lightened. Returns `(fill_rgb_string, text_hex)`.
+fn accent_fill_and_text(background: &str, dark_mode: bool) -> (String, &'static str) {
+    let (r, g, b) = parse_rgb(background).unwrap_or((128, 128, 128));
+
+    // Convert to HSL for lightness adjustment.
+    let (h, s, mut l) = rgb_to_hsl(r, g, b);
+
+    if dark_mode {
+        for _ in 0..50 {
+            let (cr, cg, cb) = hsl_to_rgb(h, s, l);
+            if luma(cr, cg, cb) <= 0.18 {
+                break;
+            }
+            l = (l - 0.02).max(0.0);
+        }
+    } else {
+        for _ in 0..50 {
+            let (cr, cg, cb) = hsl_to_rgb(h, s, l);
+            if luma(cr, cg, cb) >= 0.35 {
+                break;
+            }
+            l = (l + 0.02).min(1.0);
+        }
+    }
+
+    let (fr, fg, fb) = hsl_to_rgb(h, s, l);
+    let fill = format!("rgb({fr}, {fg}, {fb})");
+    let text = if dark_mode { "#fff" } else { "#000" };
+    (fill, text)
+}
+
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let r = r as f64 / 255.0;
+    let g = g as f64 / 255.0;
+    let b = b as f64 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+    if (max - min).abs() < 1e-10 {
+        return (0.0, 0.0, l);
+    }
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let h = if (max - r).abs() < 1e-10 {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - g).abs() < 1e-10 {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
     };
-    let luma = 0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64;
-    if luma > 150.0 { "#000" } else { "#fff" }
+    (h, s, l)
+}
+
+fn hsl_to_rgb(h: f64, s: f64, l: f64) -> (u8, u8, u8) {
+    if s.abs() < 1e-10 {
+        let v = (l * 255.0).round() as u8;
+        return (v, v, v);
+    }
+    fn hue_to_rgb(p: f64, q: f64, mut t: f64) -> f64 {
+        if t < 0.0 { t += 1.0; }
+        if t > 1.0 { t -= 1.0; }
+        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+        if t < 1.0 / 2.0 { return q; }
+        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+        p
+    }
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+    let r = (hue_to_rgb(p, q, h + 1.0 / 3.0) * 255.0).round() as u8;
+    let g = (hue_to_rgb(p, q, h) * 255.0).round() as u8;
+    let b = (hue_to_rgb(p, q, h - 1.0 / 3.0) * 255.0).round() as u8;
+    (r, g, b)
 }
 
 fn mindmap_section_css(theme: &MermaidTheme) -> String {
