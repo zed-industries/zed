@@ -19,12 +19,14 @@ fn refresh_python_kernelspecs_for_buffer(
     cx: &mut App,
 ) {
     let buffer = buffer.read(cx);
-    let Some(language) = buffer.language() else {
+
+    if buffer
+        .language()
+        .is_none_or(|language| language.name() != "Python")
+    {
         return;
     };
-    if language.name() != "Python" {
-        return;
-    }
+
     let Some(project_path) = buffer.project_path(cx) else {
         return;
     };
@@ -127,7 +129,7 @@ pub fn init(cx: &mut App) {
                 // where language detection can complete after the editor is observed,
                 // still trigger a kernelspec refresh. Without this the REPL UI stays
                 // hidden until something else populates the global kernel list.
-                if let (Some(buffer), Some(project)) = (buffer, project) {
+                if let Some((buffer, project)) = buffer.zip(project) {
                     refresh_python_kernelspecs_for_buffer(&buffer, &project, cx);
 
                     cx.subscribe(&buffer, move |_editor, buffer, event, cx| {
