@@ -2529,7 +2529,7 @@ mod tests {
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
         assert!(error_message.contains("is not a recognized command in Claude Agent"));
-        assert!(error_message.contains("Available commands: none"));
+        assert!(error_message.contains("Available commands for Claude Agent: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
         session_capabilities
@@ -2549,7 +2549,7 @@ mod tests {
         let error_message = contents_result.unwrap_err().to_string();
         assert!(error_message.contains("is not a recognized command in Claude Agent"));
         assert!(error_message.contains("/file"));
-        assert!(error_message.contains("Available commands: /help"));
+        assert!(error_message.contains("Available commands for Claude Agent: /help"));
 
         // Test that supported commands work fine
         editor.update_in(cx, |editor, window, cx| {
