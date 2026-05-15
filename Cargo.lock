@@ -19417,6 +19417,7 @@ dependencies = [
  "log",
  "mach2 0.5.0",
  "nix 0.29.0",
+ "parking_lot",
  "percent-encoding",
  "pretty_assertions",
  "rand 0.9.4",

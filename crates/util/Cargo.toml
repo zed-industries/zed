@@ -42,6 +42,7 @@ url.workspace = true
 percent-encoding.workspace = true
 util_macros = { workspace = true, optional = true }
 gpui_util.workspace = true
+parking_lot.workspace = true
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 smol.workspace = true
