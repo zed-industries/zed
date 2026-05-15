@@ -59,7 +59,7 @@ pub(super) enum EditPredictionSettings {
 }
 
 pub(super) enum MenuEditPredictionsPolicy {
-    #[cfg(any(test, feature = "test-support"))]
+    #[cfg(test)]
     Never,
     ByProvider,
 }
@@ -556,6 +556,9 @@ impl Editor {
         self.active_edit_prediction.is_some()
     }
 
+    /// Returns true when we're displaying the edit prediction popover below the cursor
+    /// like we are not previewing and the LSP autocomplete menu is visible
+    /// or we are in `when_holding_modifier` mode.
     pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
         if self.edit_prediction_preview_is_active()
             || !self.show_edit_predictions_in_menu()
@@ -1636,12 +1639,6 @@ impl Editor {
         })
     }
 
-    /// Returns true when we're displaying the edit prediction popover below the cursor
-
-    /// like we are not previewing and the LSP autocomplete menu is visible
-
-    /// or we are in `when_holding_modifier` mode.
-
     const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = px(24.);
 
     const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = px(2.);
@@ -2466,7 +2463,7 @@ impl Editor {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(test)]
 impl Editor {
     pub(super) fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
         self.menu_edit_predictions_policy = value;
