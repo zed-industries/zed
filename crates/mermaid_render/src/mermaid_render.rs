@@ -766,10 +766,26 @@ fn strip_unsupported_css(svg: &str) -> String {
         i = block_end;
     }
 
+    // Strip CSS angle units (`deg`) from rotate() — usvg parses these as
+    // SVG transform values which use bare numbers, not CSS angle units.
+    let cleaned = strip_css_angle_units(&cleaned);
+
     let mut result = String::with_capacity(svg.len());
     result.push_str(&svg[..content_start]);
     result.push_str(&cleaned);
     result.push_str(&svg[content_end..]);
+    result
+}
+
+fn strip_css_angle_units(css: &str) -> String {
+    let mut result = String::with_capacity(css.len());
+    let mut remaining = css;
+    while let Some(pos) = remaining.find("deg)") {
+        result.push_str(&remaining[..pos]);
+        result.push(')');
+        remaining = &remaining[pos + 4..];
+    }
+    result.push_str(remaining);
     result
 }
 
