@@ -992,9 +992,6 @@ impl BufferStore {
             worktree_id: file.worktree_id(cx),
         });
         let is_remote = buffer.replica_id().is_remote();
-        let open_buffer = OpenBuffer::Complete {
-            buffer: buffer_entity.downgrade(),
-        };
 
         let handle = cx.entity().downgrade();
         buffer_entity.update(cx, move |_, cx| {
@@ -1008,6 +1005,11 @@ impl BufferStore {
             .detach()
         });
         let _expect_path_to_exist;
+
+        let open_buffer = OpenBuffer::Complete {
+            buffer: buffer_entity.downgrade(),
+        };
+
         match self.opened_buffers.entry(remote_id) {
             hash_map::Entry::Vacant(entry) => {
                 entry.insert(open_buffer);
