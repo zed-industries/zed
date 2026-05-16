@@ -316,6 +316,7 @@ fn postprocess_merman_svg(
     let mut legend_color_idx: usize = 0;
     let mut foreign_object_depth: usize = 0;
     let mut in_fallback_group = false;
+    let mut skip_element = false;
 
     let accent_styles: Vec<AccentStyle> = theme
         .accent_colors
@@ -570,30 +571,8 @@ fn postprocess_merman_svg(
                             let bad_height =
                                 matches!(height_val.as_deref(), Some("") | None);
                             if bad_width || bad_height {
-                                let mut ne = BytesStart::new("rect");
-                                let mut has_width = false;
-                                let mut has_height = false;
-                                for attr in e.attributes() {
-                                    let attr = attr?;
-                                    match attr.key.local_name().as_ref() {
-                                        b"width" if bad_width => {
-                                            has_width = true;
-                                            ne.push_attribute(("width", "0"));
-                                        }
-                                        b"height" if bad_height => {
-                                            has_height = true;
-                                            ne.push_attribute(("height", "0"));
-                                        }
-                                        _ => ne.push_attribute(attr),
-                                    }
-                                }
-                                if bad_width && !has_width {
-                                    ne.push_attribute(("width", "0"));
-                                }
-                                if bad_height && !has_height {
-                                    ne.push_attribute(("height", "0"));
-                                }
-                                Some(ne)
+                                skip_element = true;
+                                None
                             } else {
                                 None
                             }
@@ -686,7 +665,9 @@ fn postprocess_merman_svg(
                     elem
                 };
 
-                if is_start {
+                if skip_element {
+                    skip_element = false;
+                } else if is_start {
                     writer.write_event(Event::Start(elem))?;
                 } else {
                     writer.write_event(Event::Empty(elem))?;
