@@ -97,9 +97,11 @@ use workspace::{
     CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
+#[cfg(any(feature = "inspector", debug_assertions))]
+use zed_actions::OpenGpuiDevtools;
 use zed_actions::{
-    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenGpuiDevtools, OpenServerSettings,
-    OpenSettingsFile, OpenZedUrl, Quit,
+    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
+    OpenZedUrl, Quit,
 };
 
 pub struct CrashHandler(pub Arc<crashes::Client>);
@@ -857,11 +859,14 @@ fn register_actions(
     _: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    workspace.register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL));
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    workspace.register_action(|_, _: &OpenGpuiDevtools, window, cx| {
+        gpui::devtools::open(window, cx);
+    });
+
     workspace
-        .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
-        .register_action(|_, _: &OpenGpuiDevtools, window, cx| {
-            gpui::devtools::open(window, cx);
-        })
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,

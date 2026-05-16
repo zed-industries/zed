@@ -71,7 +71,8 @@ actions!(
         OpenTelemetryLog,
         /// Opens the performance profiler.
         OpenPerformanceProfiler,
-        /// Opens the GPUI devtools overlay.
+        /// Opens the GPUI devtools window.
+        #[cfg(any(feature = "inspector", debug_assertions))]
         OpenGpuiDevtools,
         /// Opens the onboarding view.
         OpenOnboarding,

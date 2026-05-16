@@ -171,13 +171,16 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
-                let animation = &self.animations[animation_ix];
-                window.record_animation_frame_request(
-                    &self.id,
-                    animation_ix,
-                    animation.duration,
-                    !animation.oneshot,
-                );
+                #[cfg(any(feature = "inspector", debug_assertions))]
+                {
+                    let animation = &self.animations[animation_ix];
+                    window.record_animation_frame_request(
+                        &self.id,
+                        animation_ix,
+                        animation.duration,
+                        !animation.oneshot,
+                    );
+                }
                 window.request_animation_frame();
             }
 

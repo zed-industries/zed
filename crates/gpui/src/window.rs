@@ -164,6 +164,7 @@ impl WindowInvalidator {
         self.inner.borrow().update_count
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn dirty_view_count(&self) -> usize {
         self.inner.borrow().dirty_views.len()
     }
@@ -806,6 +807,7 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) view_type_names: FxHashMap<EntityId, &'static str>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
@@ -853,6 +855,7 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
             view_type_names: FxHashMap::default(),
 
             #[cfg(any(test, feature = "test-support"))]
@@ -876,6 +879,7 @@ impl Frame {
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
+        #[cfg(any(feature = "inspector", debug_assertions))]
         self.view_type_names.clear();
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
@@ -1081,6 +1085,7 @@ impl InputRateTracker {
     }
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Clone, Copy, Debug)]
 struct FrameDiagnostics {
     reason: FrameDiagnosticsReason,
@@ -1091,6 +1096,7 @@ struct FrameDiagnostics {
     present_duration: Duration,
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Clone, Copy, Debug)]
 enum FrameDiagnosticsReason {
     Dirty,
@@ -1100,6 +1106,7 @@ enum FrameDiagnosticsReason {
     HighRateInput,
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 impl FrameDiagnosticsReason {
     fn as_str(self) -> &'static str {
         match self {
@@ -1112,22 +1119,27 @@ impl FrameDiagnosticsReason {
     }
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 fn frame_diagnostics_reason(
     force_render: bool,
     dirty: bool,
     require_presentation: bool,
     queued_presentation: bool,
+    high_rate_input: bool,
 ) -> FrameDiagnosticsReason {
-    if force_render {
-        FrameDiagnosticsReason::Forced
-    } else if dirty {
-        FrameDiagnosticsReason::Dirty
-    } else if require_presentation {
-        FrameDiagnosticsReason::RequiredPresentation
-    } else if queued_presentation {
-        FrameDiagnosticsReason::QueuedPresentation
-    } else {
-        FrameDiagnosticsReason::HighRateInput
+    match (
+        force_render,
+        dirty,
+        require_presentation,
+        queued_presentation,
+        high_rate_input,
+    ) {
+        (true, _, _, _, _) => FrameDiagnosticsReason::Forced,
+        (_, true, _, _, _) => FrameDiagnosticsReason::Dirty,
+        (_, _, true, _, _) => FrameDiagnosticsReason::RequiredPresentation,
+        (_, _, _, true, _) => FrameDiagnosticsReason::QueuedPresentation,
+        (_, _, _, _, true) => FrameDiagnosticsReason::HighRateInput,
+        (false, false, false, false, false) => FrameDiagnosticsReason::HighRateInput,
     }
 }
 
@@ -1457,12 +1469,14 @@ impl Window {
                     || queued_presentation
                     || high_rate_input;
                 let dirty_before_frame = invalidator.is_dirty();
+                #[cfg(any(feature = "inspector", debug_assertions))]
                 let frame_diagnostics = FrameDiagnostics {
                     reason: frame_diagnostics_reason(
                         request_frame_options.force_render,
                         dirty_before_frame,
                         request_frame_options.require_presentation,
                         queued_presentation,
+                        high_rate_input,
                     ),
                     dirty_before_frame,
                     dirty_view_count: invalidator.dirty_view_count(),
@@ -1475,7 +1489,9 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                #[cfg(any(feature = "inspector", debug_assertions))]
                                 let mut frame_diagnostics = frame_diagnostics;
+                                #[cfg(any(feature = "inspector", debug_assertions))]
                                 let draw_start = Instant::now();
                                 if request_frame_options.force_render {
                                     // Bypass cached view reuse so we don't replay stale
@@ -1483,11 +1499,18 @@ impl Window {
                                     window.refresh();
                                 }
                                 let arena_clear_needed = window.draw(cx);
-                                frame_diagnostics.draw_duration = Some(draw_start.elapsed());
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                {
+                                    frame_diagnostics.draw_duration = Some(draw_start.elapsed());
+                                }
+                                #[cfg(any(feature = "inspector", debug_assertions))]
                                 let present_start = Instant::now();
                                 window.present();
-                                frame_diagnostics.present_duration = present_start.elapsed();
-                                window.record_frame_diagnostics(frame_diagnostics);
+                                #[cfg(any(feature = "inspector", debug_assertions))]
+                                {
+                                    frame_diagnostics.present_duration = present_start.elapsed();
+                                    window.record_frame_diagnostics(frame_diagnostics);
+                                }
                                 arena_clear_needed.clear();
                             })
                             .log_err();
@@ -1495,11 +1518,16 @@ impl Window {
                 } else if needs_present {
                     handle
                         .update(&mut cx, |_, window, _| {
+                            #[cfg(any(feature = "inspector", debug_assertions))]
                             let mut frame_diagnostics = frame_diagnostics;
+                            #[cfg(any(feature = "inspector", debug_assertions))]
                             let present_start = Instant::now();
                             window.present();
-                            frame_diagnostics.present_duration = present_start.elapsed();
-                            window.record_frame_diagnostics(frame_diagnostics);
+                            #[cfg(any(feature = "inspector", debug_assertions))]
+                            {
+                                frame_diagnostics.present_duration = present_start.elapsed();
+                                window.record_frame_diagnostics(frame_diagnostics);
+                            }
                         })
                         .log_err();
                 }
@@ -2139,22 +2167,26 @@ impl Window {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
-    #[track_caller]
+    #[cfg_attr(any(feature = "inspector", debug_assertions), track_caller)]
     pub fn request_animation_frame(&self) {
         let entity = self.current_view();
-        if crate::devtools::enabled() {
-            let caller = std::panic::Location::caller();
-            let entity_type = self.devtools_view_type_name(entity);
-            crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
-                self.handle.window_id(),
-                entity,
-                entity_type,
-                caller,
-            ));
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if crate::devtools::enabled() {
+                let caller = std::panic::Location::caller();
+                let entity_type = self.devtools_view_type_name(entity);
+                crate::devtools::record_animation(crate::devtools::animation_frame_request_event(
+                    self.handle.window_id(),
+                    entity,
+                    entity_type,
+                    caller,
+                ));
+            }
         }
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) fn record_animation_frame_request(
         &self,
         element_id: &ElementId,
@@ -2179,6 +2211,7 @@ impl Window {
         ));
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn devtools_view_type_name(&self, entity: EntityId) -> &'static str {
         self.next_frame
             .view_type_names
@@ -2702,16 +2735,19 @@ impl Window {
 
     fn invalidate_entities(&mut self) {
         let mut views = self.invalidator.take_views();
-        let devtools_enabled = crate::devtools::enabled();
         for entity in views.drain() {
-            if devtools_enabled {
-                self.record_devtools_dirty_path(entity);
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                if crate::devtools::enabled() {
+                    self.record_devtools_dirty_path(entity);
+                }
             }
             self.mark_view_dirty(entity);
         }
         self.invalidator.replace_views(views);
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn record_devtools_dirty_path(&self, entity: EntityId) {
         let path_entity_ids = self
             .rendered_frame
@@ -2743,6 +2779,7 @@ impl Window {
         profiling::finish_frame!();
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     fn record_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
         if !crate::devtools::enabled() {
             return;
@@ -4206,6 +4243,7 @@ impl Window {
     }
 
     #[inline]
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) fn record_view_type_name(&mut self, id: EntityId, type_name: &'static str) {
         if !crate::devtools::enabled() {
             return;

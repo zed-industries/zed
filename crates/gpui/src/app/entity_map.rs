@@ -55,6 +55,7 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
     type_names: SecondaryMap<EntityId, &'static str>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
@@ -72,6 +73,7 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
             type_names: SecondaryMap::new(),
             accessed_entities: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
@@ -115,7 +117,8 @@ impl EntityMap {
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
     pub fn reserve<T: 'static>(&mut self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
-        self.type_names.insert(id, type_name::<T>());
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.type_names.insert(id, std::any::type_name::<T>());
         Slot(Entity::new(id, Arc::downgrade(&self.ref_counts)))
     }
 
@@ -128,11 +131,14 @@ impl EntityMap {
         accessed_entities.insert(slot.entity_id);
 
         let handle = slot.0;
-        self.type_names.insert(handle.entity_id, type_name::<T>());
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.type_names
+            .insert(handle.entity_id, std::any::type_name::<T>());
         self.entities.insert(handle.entity_id, Box::new(entity));
         handle
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) fn type_name(&self, entity_id: EntityId) -> Option<&'static str> {
         self.type_names.get(entity_id).copied()
     }
@@ -203,6 +209,7 @@ impl EntityMap {
                     "dropped an entity that was referenced"
                 );
                 accessed_entities.remove(&entity_id);
+                #[cfg(any(feature = "inspector", debug_assertions))]
                 self.type_names.remove(entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.

@@ -1638,6 +1638,7 @@ impl App {
                 if window.removed {
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
+                    #[cfg(any(feature = "inspector", debug_assertions))]
                     crate::devtools::forget_window(id);
                     if let Some(tracked) = cx.tracked_entities.remove(&id) {
                         for entity_id in tracked {
@@ -2360,7 +2361,7 @@ impl App {
     }
 
     /// Tell GPUI that an entity has changed and observers of it should be notified.
-    #[track_caller]
+    #[cfg_attr(any(feature = "inspector", debug_assertions), track_caller)]
     pub fn notify(&mut self, entity_id: EntityId) {
         let window_invalidators = mem::take(
             self.window_invalidators_by_entity
@@ -2382,16 +2383,19 @@ impl App {
             .map(|(_, invalidator)| invalidator.clone())
             .collect();
 
-        if crate::devtools::enabled() {
-            let caller = std::panic::Location::caller();
-            let entity_type = self.entities.type_name(entity_id).unwrap_or("<unknown>");
-            crate::devtools::record_notify(crate::devtools::NotifyEvent::new(
-                entity_id,
-                entity_type,
-                caller,
-                window_invalidators.len(),
-                live_invalidators.len(),
-            ));
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if crate::devtools::enabled() {
+                let caller = std::panic::Location::caller();
+                let entity_type = self.entities.type_name(entity_id).unwrap_or("<unknown>");
+                crate::devtools::record_notify(crate::devtools::NotifyEvent::new(
+                    entity_id,
+                    entity_type,
+                    caller,
+                    window_invalidators.len(),
+                    live_invalidators.len(),
+                ));
+            }
         }
 
         if live_invalidators.is_empty() {

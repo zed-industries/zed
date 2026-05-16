@@ -38,6 +38,7 @@ pub struct Scene {
     pub surfaces: Vec<PaintSurface>,
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 #[derive(Clone, Copy, Debug, Default)]
 #[expect(missing_docs)]
 pub struct SceneStats {
@@ -76,6 +77,7 @@ impl Scene {
         self.paint_operations.len()
     }
 
+    #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn stats(&self) -> SceneStats {
         let quad_area = self.quads.iter().map(|quad| bounds_area(quad.bounds)).sum();
         let clipped_quad_area = self
@@ -227,6 +229,7 @@ impl Scene {
     }
 }
 
+#[cfg(any(feature = "inspector", debug_assertions))]
 fn bounds_area(bounds: Bounds<ScaledPixels>) -> f32 {
     bounds.size.width.0.max(0.) * bounds.size.height.0.max(0.)
 }
