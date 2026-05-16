@@ -2,18 +2,59 @@
 
 set -euxo pipefail
 
-if [[ $# -gt 0 ]]; then
+# Function for displaying help info
+help_info() {
   echo "
-  Usage: ${0##*/}
-  Builds and installs zed onto your system into ~/.local, making it available as ~/.local/bin/zed.
+Usage: ${0##*/} [options]
+Builds and installs zed onto your system into ~/.local, making it available as ~/.local/bin/zed.
 
-  Before running this you should ensure you have all the build dependencies installed with `./script/linux`.
+Before running this you should ensure you have all the build dependencies installed with \`./script/linux\`.
+
+Options:
+  -h, --help     Display this help and exit.
+  --no-remote    Don't build or bundle remote_server
+  --no-licenses  Don't build licenses if the artifact already exists
   "
-  exit 1
-fi
+}
+
+bundle_args=()
+
+# Parse all arguments manually
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            help_info
+            exit 0
+            ;;
+        --no-remote)
+            bundle_args+=("--no-remote")
+            shift
+            ;;
+        --no-licenses)
+            bundle_args+=("--no-licenses")
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            help_info
+            exit 1
+            ;;
+        *)
+            echo "Error: Unexpected argument: $1" >&2
+            help_info
+            exit 1
+            ;;
+    esac
+done
+
 export ZED_CHANNEL=$(<crates/zed/RELEASE_CHANNEL)
 export ZED_UPDATE_EXPLANATION="You need to fetch and rebuild zed in $(pwd)"
-script/bundle-linux
+
+script/bundle-linux "${bundle_args[@]}"
 
 arch="$(uname -m)"
 commit=$(git rev-parse HEAD | cut -c 1-7)
