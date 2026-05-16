@@ -21,7 +21,7 @@ To have easier Zed's `main` branch merges, I am not really adding or modifying e
 AI is heavily used for pretty much every feature implemented. I use a mix of those models, all free:
 - Google's Gemini 3 Pro (https://aistudio.google.com/prompts/new_chat)
 - OpenCode (which often has free models)
-- Windsurf's SWE 1.5
+- Windsurf's free models (usually SWE)
 
 For anything more complicated, I use the Architect + Editor pattern (see https://aider.chat/2024/09/26/architect.html) with Gemini 3 Pro being the Architect and the other models being the Editor.
 
