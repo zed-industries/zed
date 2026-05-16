@@ -17270,6 +17270,7 @@ dependencies = [
  "gpui",
  "language",
  "multi_buffer",
+ "settings",
  "ui",
  "workspace",
  "zed_actions",

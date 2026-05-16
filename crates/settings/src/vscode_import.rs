@@ -764,6 +764,15 @@ impl VsCodeSettings {
             enable_preview_file_from_code_navigation: None,
             enable_keep_preview_on_code_navigation: self
                 .read_bool("workbench.editor.enablePreviewFromCodeNavigation"),
+            auto_preview: self
+                .read_bool("markdown.extension.preview.autoShowPreviewToSide")
+                .map(|enabled| {
+                    if enabled {
+                        AutoPreviewMode::ToSide
+                    } else {
+                        AutoPreviewMode::Off
+                    }
+                }),
         })
     }
 

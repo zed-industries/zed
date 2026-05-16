@@ -19,8 +19,8 @@ use language::Capability;
 pub use language::HighlightedText;
 use project::{Project, ProjectEntryId, ProjectPath};
 pub use settings::{
-    ActivateOnClose, ClosePosition, RegisterSetting, Settings, SettingsLocation, ShowCloseButton,
-    ShowDiagnostics,
+    ActivateOnClose, AutoPreviewMode, ClosePosition, RegisterSetting, Settings, SettingsLocation,
+    ShowCloseButton, ShowDiagnostics,
 };
 use smallvec::SmallVec;
 use std::{
@@ -72,6 +72,7 @@ pub struct PreviewTabsSettings {
     pub enable_preview_multibuffer_from_code_navigation: bool,
     pub enable_preview_file_from_code_navigation: bool,
     pub enable_keep_preview_on_code_navigation: bool,
+    pub auto_preview: AutoPreviewMode,
 }
 
 impl Settings for ItemSettings {
@@ -114,6 +115,7 @@ impl Settings for PreviewTabsSettings {
             enable_keep_preview_on_code_navigation: preview_tabs
                 .enable_keep_preview_on_code_navigation
                 .unwrap(),
+            auto_preview: preview_tabs.auto_preview.unwrap(),
         }
     }
 }
