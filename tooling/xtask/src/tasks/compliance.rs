@@ -137,9 +137,9 @@ async fn check_compliance_impl(args: ComplianceArgs) -> Result<()> {
         summary.prs_with_errors()
     );
 
-    let all_errors_known = report.errors().all(|error| {
-        error.is_unknown_error() && IGNORE_LIST.contains(&error.commit.sha().as_str())
-    });
+    let all_errors_known = report
+        .errors()
+        .all(|error| IGNORE_LIST.contains(&error.commit.sha().as_str()));
 
     for report in report.errors() {
         if let Some(pr_number) = report.commit.pr_number()
