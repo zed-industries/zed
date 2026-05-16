@@ -1559,12 +1559,19 @@ pub struct AvailableCodeAction {
 }
 
 #[derive(Clone)]
+pub struct FixDiagnosticInfo {
+    pub message: SharedString,
+    pub source: Option<SharedString>,
+    pub code: Option<SharedString>,
+}
+
+#[derive(Clone)]
 pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
     pub(crate) context: TaskContext,
-    pub(crate) fix_diagnostic: Option<SharedString>,
+    pub(crate) fix_diagnostic: Option<FixDiagnosticInfo>,
 }
 
 impl CodeActionContents {
@@ -1622,7 +1629,7 @@ impl CodeActionContents {
             .chain(
                 self.fix_diagnostic
                     .iter()
-                    .map(|msg| CodeActionsItem::FixDiagnostic(msg.clone())),
+                    .map(|info| CodeActionsItem::FixDiagnostic(info.clone())),
             )
     }
 
@@ -1649,7 +1656,7 @@ impl CodeActionContents {
         }
         index -= self.debug_scenarios.len();
         if index == 0 {
-            return self.fix_diagnostic.as_ref().map(|msg| CodeActionsItem::FixDiagnostic(msg.clone()));
+            return self.fix_diagnostic.as_ref().map(|info| CodeActionsItem::FixDiagnostic(info.clone()));
         }
         None
     }
@@ -1663,7 +1670,7 @@ pub enum CodeActionsItem {
         provider: Rc<dyn CodeActionProvider>,
     },
     DebugScenario(DebugScenario),
-    FixDiagnostic(SharedString),
+    FixDiagnostic(FixDiagnosticInfo),
 }
 
 impl CodeActionsItem {
@@ -1908,20 +1915,24 @@ mod tests {
     #[test]
     fn test_code_action_contents_fix_diagnostic_is_last() {
         let mut contents = CodeActionContents::new(None, None, vec![], TaskContext::default());
-        contents.fix_diagnostic = Some("type mismatch".into());
+        contents.fix_diagnostic = Some(FixDiagnosticInfo {
+            message: "type mismatch".into(),
+            source: Some("eslint".into()),
+            code: Some("2322".into()),
+        });
 
         assert!(!contents.is_empty());
 
         let items: Vec<_> = contents.iter().collect();
         assert_eq!(items.len(), 1);
         assert!(
-            matches!(&items[0], CodeActionsItem::FixDiagnostic(msg) if msg.as_ref() == "type mismatch"),
+            matches!(&items[0], CodeActionsItem::FixDiagnostic(info) if info.message.as_ref() == "type mismatch"),
             "FixDiagnostic should be the only (last) item"
         );
 
         let item = contents.get(0);
         assert!(
-            matches!(item, Some(CodeActionsItem::FixDiagnostic(msg)) if msg.as_ref() == "type mismatch")
+            matches!(item, Some(CodeActionsItem::FixDiagnostic(info)) if info.message.as_ref() == "type mismatch")
         );
         assert!(contents.get(1).is_none());
     }

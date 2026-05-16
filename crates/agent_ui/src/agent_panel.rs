@@ -18,7 +18,7 @@ use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelProviderSetting, LanguageModelSelection};
+use settings: :{LanguageModelProviderSetting, LanguageModelSelection};
 
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
@@ -541,6 +541,8 @@ pub fn init(cx: &mut App) {
                 .register_action(
                     |workspace: &mut Workspace, action: &FixDiagnosticWithAgent, window, cx| {
                         let diagnostic_message = action.diagnostic_message.clone();
+                        let diagnostic_source = action.source.clone();
+                        let diagnostic_code = action.code.clone();
 
                         let Some(active_editor) = workspace
                             .active_item(cx)
@@ -571,14 +573,12 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        let source =
-                            AgentContextSource::from_focused(workspace, window, cx)
-                                .or_else(|| {
-                                    let cached =
-                                        agent_panel.read(cx).last_context_source.clone()?;
-                                    cached.exists(workspace, cx).then_some(cached)
-                                })
-                                .or_else(|| AgentContextSource::from_active(workspace, cx));
+                        let source = AgentContextSource::from_focused(workspace, window, cx)
+                            .or_else(|| {
+                                let cached = agent_panel.read(cx).last_context_source.clone()?;
+                                cached.exists(workspace, cx).then_some(cached)
+                            })
+                            .or_else(|| AgentContextSource::from_active(workspace, cx));
 
                         let Some(source) = source else {
                             return;
@@ -600,6 +600,8 @@ pub fn init(cx: &mut App) {
                                     conversation_view.update(cx, |conversation_view, cx| {
                                         conversation_view.insert_diagnostic_fix(
                                             &diagnostic_message,
+                                            diagnostic_source.as_deref(),
+                                            diagnostic_code.as_deref(),
                                             selection,
                                             window,
                                             cx,
@@ -610,7 +612,7 @@ pub fn init(cx: &mut App) {
                         });
                     },
                 );
-    },
+        },
     )
     .detach();
 }
@@ -3878,7 +3880,11 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
-    pub(crate) fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn ensure_thread_initialized(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.base_view, BaseView::Uninitialized) {
             self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         }
@@ -9650,11 +9656,7 @@ mod tests {
         // Open a draft with a connection that hasn't completed yet (still loading).
         let connection = StubAgentConnection::new();
         panel.update_in(cx, |panel, window, cx| {
-            panel.open_draft_with_server(
-                Rc::new(StubAgentServer::new(connection)),
-                window,
-                cx,
-            );
+            panel.open_draft_with_server(Rc::new(StubAgentServer::new(connection)), window, cx);
         });
         // Do NOT run_until_parked — the draft ConversationView is still in Loading state.
 
@@ -9675,6 +9677,8 @@ mod tests {
 
         cx.dispatch_action(FixDiagnosticWithAgent {
             diagnostic_message: "mismatched types: expected `i32`, found `&str`".into(),
+            source: Some("rust-analyzer".into()),
+            code: Some("E0308".into()),
         });
 
         // Now let the connection complete and the thread view be created.
@@ -9686,7 +9690,7 @@ mod tests {
             let text = editor.text(cx);
             assert!(
                 text.starts_with(
-                    "Fix this diagnostic error:\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
+                    "Fix this diagnostic error (rust-analyzer E0308):\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
                 ),
                 "message editor should be pre-filled with fix prompt (loading path), got: {text:?}"
             );
@@ -9745,6 +9749,8 @@ mod tests {
 
         cx.dispatch_action(FixDiagnosticWithAgent {
             diagnostic_message: "mismatched types: expected `i32`, found `&str`".into(),
+            source: Some("rust-analyzer".into()),
+            code: Some("E0308".into()),
         });
 
         cx.run_until_parked();
@@ -9755,7 +9761,7 @@ mod tests {
             let text = editor.text(cx);
             assert!(
                 text.starts_with(
-                    "Fix this diagnostic error:\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
+                    "Fix this diagnostic error (rust-analyzer E0308):\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
                 ),
                 "message editor should be pre-filled with fix prompt, got: {text:?}"
             );

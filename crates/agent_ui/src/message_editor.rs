@@ -1491,11 +1491,20 @@ impl MessageEditor {
     pub(crate) fn insert_diagnostic_fix(
         &mut self,
         diagnostic_message: &str,
+        source: Option<&str>,
+        code: Option<&str>,
         selection: AgentContextSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let prompt = format!("Fix this diagnostic error:\n\n```\n{diagnostic_message}\n```\n\n");
+        let reporter = match (source, code) {
+            (Some(s), Some(c)) => format!(" ({s} {c})"),
+            (Some(s), None) => format!(" ({s})"),
+            (None, Some(c)) => format!(" ({c})"),
+            (None, None) => String::new(),
+        };
+        let prompt =
+            format!("Fix this diagnostic error{reporter}:\n\n```\n{diagnostic_message}\n```\n\n");
         self.insert_text(&prompt, window, cx);
         self.insert_selections(selection, window, cx);
     }
