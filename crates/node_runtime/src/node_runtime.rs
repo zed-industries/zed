@@ -316,6 +316,19 @@ impl NodeRuntime {
         Ok(())
     }
 
+    pub async fn npm_install_latest_packages(
+        &self,
+        directory: &Path,
+        package_names: &[&str],
+    ) -> Result<()> {
+        // Let npm apply user config such as `before` and `min-release-age` during resolution.
+        let packages = package_names
+            .iter()
+            .map(|package_name| (*package_name, "latest"))
+            .collect::<Vec<_>>();
+        self.npm_install_packages(directory, &packages).await
+    }
+
     pub async fn should_install_npm_package(
         &self,
         package_name: &str,
@@ -339,10 +352,17 @@ impl NodeRuntime {
             return true;
         };
 
-        match version_strategy {
-            VersionStrategy::Pin(pinned_version) => &installed_version != pinned_version,
-            VersionStrategy::Latest(latest_version) => &installed_version < latest_version,
-        }
+        should_install_npm_package_version(&installed_version, version_strategy)
+    }
+}
+
+fn should_install_npm_package_version(
+    installed_version: &Version,
+    version_strategy: VersionStrategy<'_>,
+) -> bool {
+    match version_strategy {
+        VersionStrategy::Pin(pinned_version) => installed_version != pinned_version,
+        VersionStrategy::Latest(latest_version) => installed_version < latest_version,
     }
 }
 
@@ -1033,7 +1053,10 @@ mod tests {
     use http_client::Url;
     use semver::Version;
 
-    use super::{NpmInfo, build_npm_command_args, proxy_argument, select_npm_package_version};
+    use super::{
+        NpmInfo, VersionStrategy, build_npm_command_args, proxy_argument,
+        select_npm_package_version, should_install_npm_package_version,
+    };
 
     // Map localhost to 127.0.0.1
     // NodeRuntime without environment information can not parse `localhost` correctly.
@@ -1115,6 +1138,26 @@ mod tests {
                 "--yes".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn test_latest_version_strategy_accepts_newer_installed_versions() -> Result<()> {
+        let target_version = Version::parse("2.0.0")?;
+
+        assert!(!should_install_npm_package_version(
+            &Version::parse("2.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+        assert!(should_install_npm_package_version(
+            &Version::parse("1.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+        assert!(!should_install_npm_package_version(
+            &Version::parse("3.0.0")?,
+            VersionStrategy::Latest(&target_version)
+        ));
+
+        Ok(())
     }
 
     #[test]
