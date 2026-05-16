@@ -34,13 +34,15 @@ use std::{
 };
 use task::TaskId;
 use terminal::{
-    Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, PasteText, ScrollLineDown,
-    ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette,
-    TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
+    Clear, Copy, Event, HintLabel, HoveredWord, MaybeNavigationTarget, Paste, PasteText,
+    ScrollLineDown, ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop,
+    ShowCharacterPalette, TaskState, TaskStatus, Terminal, TerminalBounds, TerminalHint,
+    TerminalHintState, ToggleViMode,
     alacritty_terminal::{
         index::Point as AlacPoint,
         term::{TermMode, point_to_viewport, search::RegexSearch},
     },
+    assign_hint_labels,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -91,6 +93,9 @@ actions!(
     [
         /// Reruns the last executed task in the terminal.
         RerunTask,
+        /// Activates hint mode: labels all visible URLs and paths with two-letter overlays.
+        /// Typing a label opens the target; Escape exits the mode.
+        ActivateHints,
     ]
 );
 
@@ -602,6 +607,7 @@ impl TerminalView {
                 term.try_keystroke(
                     &Keystroke::parse("ctrl-cmd-space").unwrap(),
                     TerminalSettings::get_global(cx).option_as_meta,
+                    cx,
                 )
             });
         } else {
@@ -622,6 +628,64 @@ impl TerminalView {
             .map(|task| terminal_rerun_override(&task.spawned_task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
+    }
+
+    fn activate_hints(&mut self, _: &ActivateHints, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal.read(cx).hint_mode_enabled() {
+            return;
+        }
+
+        self.set_hint_state(
+            Some(TerminalHintState {
+                hints: Vec::new(),
+                input: String::new(),
+                display_offset: 0,
+            }),
+            cx,
+        );
+        self.refresh_hints(cx);
+    }
+
+    fn refresh_hints(&mut self, cx: &mut Context<Self>) {
+        if !self.terminal.read(cx).hint_mode_enabled() {
+            return;
+        }
+
+        let raw = self
+            .terminal
+            .update(cx, |term, _| term.collect_visible_hint_targets());
+        if raw.is_empty() {
+            self.set_hint_state(None, cx);
+            cx.notify();
+            return;
+        }
+        let display_offset = self.terminal.read(cx).last_content().display_offset;
+        let labels = assign_hint_labels(raw.len());
+        let hints = labels
+            .into_iter()
+            .zip(raw)
+            .map(|(label, hyperlink)| TerminalHint { label, hyperlink })
+            .collect();
+        let input = self
+            .terminal
+            .read(cx)
+            .hint_state()
+            .map(|s| s.input.clone())
+            .unwrap_or_default();
+        self.set_hint_state(
+            Some(TerminalHintState {
+                hints,
+                input,
+                display_offset,
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    fn set_hint_state(&mut self, state: Option<TerminalHintState>, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |term, _| term.set_hint_state(state));
     }
 
     fn clear(&mut self, _: &Clear, _: &mut Window, cx: &mut Context<Self>) {
@@ -652,7 +716,6 @@ impl TerminalView {
 
     fn scroll_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let terminal_content = self.terminal.read(cx).last_content();
-
         if self.block_below_cursor.is_some() && terminal_content.display_offset == 0 {
             let line_height = terminal_content.terminal_bounds.line_height;
             let y_delta = event.delta.pixel_delta(line_height).y;
@@ -875,7 +938,12 @@ impl TerminalView {
         });
     }
 
-    fn send_keystroke(&mut self, text: &SendKeystroke, _: &mut Window, cx: &mut Context<Self>) {
+    fn send_keystroke(
+        &mut self,
+        text: &SendKeystroke,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.blink_manager.update(cx, BlinkManager::pause_blinking);
@@ -889,6 +957,10 @@ impl TerminalView {
 
         if self.terminal.read(cx).vi_mode_enabled() {
             dispatch_context.add("vi_mode");
+        }
+
+        if self.terminal.read(cx).hint_mode_enabled() {
+            dispatch_context.add("hint_mode");
         }
 
         let mode = self.terminal.read(cx).last_content.mode;
@@ -1111,13 +1183,9 @@ fn subscribe_for_terminal_events(
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
                     MaybeNavigationTarget::Url(url) => cx.open_url(url),
-                    MaybeNavigationTarget::PathLike(path_like_target) => open_path_like_target(
-                        &workspace,
-                        terminal_view,
-                        path_like_target,
-                        window,
-                        cx,
-                    ),
+                    MaybeNavigationTarget::PathLike(path_like_target) => {
+                        open_path_like_target(&workspace, path_like_target, window, cx)
+                    }
                 },
                 Event::BreadcrumbsChanged => cx.emit(ItemEvent::UpdateBreadcrumbs),
                 Event::CloseTerminal => cx.emit(ItemEvent::CloseItem),
@@ -1163,24 +1231,26 @@ impl TerminalView {
     /// updates the cursor locally without sending data to the shell, so there's no
     /// shell output to automatically trigger a re-render.
     fn process_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) -> bool {
-        let (handled, vi_mode_enabled) = self.terminal.update(cx, |term, cx| {
-            (
-                term.try_keystroke(keystroke, TerminalSettings::get_global(cx).option_as_meta),
-                term.vi_mode_enabled(),
-            )
+        let (handled, needs_refresh) = self.terminal.update(cx, |term, cx| {
+            let was_hint_mode = term.hint_mode_enabled();
+            let handled = term.try_keystroke(
+                keystroke,
+                TerminalSettings::get_global(cx).option_as_meta,
+                cx,
+            );
+            let needs_refresh = term.vi_mode_enabled() || was_hint_mode;
+            (handled, needs_refresh)
         });
 
-        if handled && vi_mode_enabled {
+        if handled && needs_refresh {
             cx.notify();
         }
-
         handled
     }
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.pause_cursor_blinking(window, cx);
-
         if self.process_keystroke(&event.keystroke, cx) {
             cx.stop_propagation();
         }
@@ -1236,6 +1306,7 @@ impl Render for TerminalView {
         let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
+        let hint_state = self.terminal.read(cx).hint_state().cloned();
 
         div()
             .id("terminal-view")
@@ -1243,23 +1314,36 @@ impl Render for TerminalView {
             .relative()
             .track_focus(&self.focus_handle(cx))
             .key_context(self.dispatch_context(cx))
-            .on_action(cx.listener(TerminalView::send_text))
-            .on_action(cx.listener(TerminalView::send_keystroke))
             .on_action(cx.listener(TerminalView::copy))
-            .on_action(cx.listener(TerminalView::paste))
-            .on_action(cx.listener(TerminalView::paste_text))
-            .on_action(cx.listener(TerminalView::clear))
-            .on_action(cx.listener(TerminalView::scroll_line_up))
-            .on_action(cx.listener(TerminalView::scroll_line_down))
-            .on_action(cx.listener(TerminalView::scroll_page_up))
-            .on_action(cx.listener(TerminalView::scroll_page_down))
-            .on_action(cx.listener(TerminalView::scroll_to_top))
-            .on_action(cx.listener(TerminalView::scroll_to_bottom))
-            .on_action(cx.listener(TerminalView::toggle_vi_mode))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_action(cx.listener(TerminalView::rerun_task))
             .on_action(cx.listener(TerminalView::rename_terminal))
+            .on_action(cx.listener(TerminalView::send_keystroke))
+            .when_else(
+                hint_state.is_some(),
+                |div| {
+                    div.on_action(cx.listener(|_, _: &zed_actions::buffer_search::Deploy, _, _| {}))
+                        .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
+                            this.set_hint_state(None, cx);
+                            cx.notify();
+                        }))
+                },
+                |div| {
+                    div.on_action(cx.listener(TerminalView::activate_hints))
+                        .on_action(cx.listener(TerminalView::scroll_line_up))
+                        .on_action(cx.listener(TerminalView::scroll_line_down))
+                        .on_action(cx.listener(TerminalView::scroll_page_up))
+                        .on_action(cx.listener(TerminalView::scroll_page_down))
+                        .on_action(cx.listener(TerminalView::scroll_to_top))
+                        .on_action(cx.listener(TerminalView::scroll_to_bottom))
+                        .on_action(cx.listener(TerminalView::toggle_vi_mode))
+                        .on_action(cx.listener(TerminalView::paste))
+                        .on_action(cx.listener(TerminalView::paste_text))
+                        .on_action(cx.listener(TerminalView::clear))
+                        .on_action(cx.listener(TerminalView::send_text))
+                },
+            )
             .on_key_down(cx.listener(Self::key_down))
             .on_mouse_down(
                 MouseButton::Right,
@@ -1315,6 +1399,33 @@ impl Render for TerminalView {
                         )
                     }),
             )
+            .when_some(hint_state.as_ref(), |el, state| {
+                let label = format!("Hints Mode [{} targets]", state.hints.len());
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .right(
+                            ui::ScrollbarStyle::Regular.to_pixels()
+                                + 2. * ui::SCROLLBAR_PADDING
+                                + px(4.),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .px_0p5()
+                                .border_x_1()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .rounded_b_lg()
+                                .bg(cx.theme().colors().element_background)
+                                .shadow_md()
+                                .child(
+                                    Label::new(label).color(Color::Muted).size(LabelSize::Small),
+                                ),
+                        ),
+                )
+            })
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()
@@ -2064,9 +2175,36 @@ mod tests {
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
+    use terminal::TerminalHyperlink;
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
     use workspace::item::test::{TestItem, TestProjectItem};
+
+    fn terminal_hint_sample_double(first: char, second: char) -> TerminalHint {
+        use terminal::alacritty_terminal::index::{Column, Line};
+        TerminalHint {
+            label: HintLabel::Double(first, second),
+            hyperlink: TerminalHyperlink {
+                text: "https://example.com".to_string(),
+                is_url: true,
+                match_range: AlacPoint::new(Line(0), Column(0))
+                    ..=AlacPoint::new(Line(0), Column(0)),
+            },
+        }
+    }
+
+    fn terminal_hint_sample_single(ch: char) -> TerminalHint {
+        use terminal::alacritty_terminal::index::{Column, Line};
+        TerminalHint {
+            label: HintLabel::Single(ch),
+            hyperlink: TerminalHyperlink {
+                text: "https://example.com".to_string(),
+                is_url: true,
+                match_range: AlacPoint::new(Line(0), Column(0))
+                    ..=AlacPoint::new(Line(0), Column(0)),
+            },
+        }
+    }
     use workspace::{AppState, MultiWorkspace, SelectedEntry};
 
     fn expected_drop_text(paths: &[PathBuf]) -> String {
@@ -2833,6 +2971,498 @@ mod tests {
                 !text.is_empty() && text.as_ref() != "   ",
                 "Tab should show terminal title, not whitespace; got: '{}'",
                 text
+            );
+        });
+    }
+
+    async fn setup_test_terminal_and_view(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::WindowHandle<MultiWorkspace>,
+        gpui::Entity<terminal::Terminal>,
+        gpui::Entity<TerminalView>,
+    ) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (terminal, terminal_view) = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let terminal = cx.new(|cx| {
+                    terminal::TerminalBuilder::new_display_only(
+                        CursorShape::default(),
+                        terminal::terminal_settings::AlternateScroll::On,
+                        None,
+                        0,
+                        cx.background_executor(),
+                        PathStyle::local(),
+                    )
+                    .unwrap()
+                    .subscribe(cx)
+                });
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal.clone(),
+                        workspace.downgrade(),
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_item_to_active_pane(
+                        Box::new(terminal_view.clone()),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                });
+                (terminal, terminal_view)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        (window_handle, terminal, terminal_view)
+    }
+
+    #[test]
+    fn test_hint_mode_label_assignment() {
+        assert_eq!(assign_hint_labels(0).len(), 0);
+        assert_eq!(assign_hint_labels(1).len(), 1);
+
+        let small = assign_hint_labels(26);
+        assert_eq!(small.len(), 26);
+        assert!(small.iter().all(|l| matches!(l, HintLabel::Single(_))));
+
+        let large = assign_hint_labels(27);
+        assert_eq!(large.len(), 27);
+        assert!(large.iter().all(|l| matches!(l, HintLabel::Double(_, _))));
+
+        let max_possible = assign_hint_labels(676);
+        assert_eq!(max_possible.len(), 676);
+        assert_eq!(assign_hint_labels(677).len(), 676);
+
+        let mut seen = std::collections::HashSet::new();
+        for label in &max_possible {
+            assert!(seen.insert(label), "duplicate label: {:?}", label);
+        }
+    }
+
+    #[test]
+    fn test_hint_mode_input_matching_and_visibility() {
+        let hints = vec![
+            terminal_hint_sample_double('j', 'j'),
+            terminal_hint_sample_double('j', 'f'),
+            terminal_hint_sample_double('f', 'j'),
+        ];
+        let mut state = TerminalHintState {
+            hints,
+            input: String::new(),
+            display_offset: 0,
+        };
+
+        // No input: all hints are visible
+        assert_eq!(state.visible_hints().len(), 3);
+
+        // Type 'j': only hints matching 'j' prefix are visible
+        state.input = "j".to_string();
+        let visible = state.visible_hints();
+        assert_eq!(visible.len(), 2);
+        assert!(
+            visible
+                .iter()
+                .all(|h| matches!(&h.label, HintLabel::Double(f, _) if *f == 'j'))
+        );
+
+        // Type 'jj': full match shows no pending hints (input is complete)
+        state.input = "jj".to_string();
+        assert_eq!(state.visible_hints().len(), 0);
+
+        // Backspace clears the input: all hints visible again
+        state.input.pop();
+        assert_eq!(state.input, "j");
+        assert_eq!(state.visible_hints().len(), 2);
+
+        state.input.pop();
+        assert_eq!(state.input, "");
+        assert_eq!(state.visible_hints().len(), 3);
+    }
+
+    #[test]
+    fn test_hint_mode_find_match() {
+        // Test matching with double-character labels
+        let double_hints = vec![
+            terminal_hint_sample_double('j', 'j'),
+            terminal_hint_sample_double('j', 'f'),
+            terminal_hint_sample_double('f', 'j'),
+        ];
+        let double_state = TerminalHintState {
+            hints: double_hints,
+            input: String::new(),
+            display_offset: 0,
+        };
+        assert!(double_state.find_match("jf").is_some());
+        assert!(double_state.find_match("jj").is_some());
+        assert!(double_state.find_match("zz").is_none());
+
+        // Test matching with single-character labels
+        let single_hints = vec![
+            terminal_hint_sample_single('j'),
+            terminal_hint_sample_single('f'),
+        ];
+        let single_state = TerminalHintState {
+            hints: single_hints,
+            input: String::new(),
+            display_offset: 0,
+        };
+        assert!(single_state.find_match("j").is_some());
+        assert!(single_state.find_match("f").is_some());
+        assert!(single_state.find_match("z").is_none());
+        assert!(
+            single_state.find_match("jf").is_none(),
+            "two chars must not match single-char label"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hint_mode_open_url(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+
+        let (window_handle, terminal, terminal_view) = setup_test_terminal_and_view(cx).await;
+
+        terminal.update(cx, |term, cx| {
+            term.write_output(b"https://example.com", cx);
+        });
+        cx.run_until_parked();
+
+        let opened_url: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&terminal, {
+                let opened_url = opened_url.clone();
+                move |_, event: &Event, _| {
+                    if let Event::Open(MaybeNavigationTarget::Url(url)) = event {
+                        *opened_url.borrow_mut() = Some(url.clone());
+                    }
+                }
+            })
+        });
+
+        cx.dispatch_action(window_handle.into(), ActivateHints);
+
+        let hint_char = terminal_view.read_with(cx, |view, cx| {
+            let state = view
+                .terminal
+                .read(cx)
+                .hint_state()
+                .expect("hint_state should be Some after ActivateHints");
+            assert_eq!(state.hints.len(), 1, "one URL should produce one hint");
+            match state.hints[0].label {
+                HintLabel::Single(ch) => ch,
+                HintLabel::Double(_, _) => panic!("one URL must produce a single-char label"),
+            }
+        });
+
+        // Single-char label: typing it should immediately match and emit Event::Open.
+        cx.simulate_keystrokes(window_handle.into(), &hint_char.to_string());
+
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_none(),
+                "hint_state should be cleared after typing single-char label"
+            );
+        });
+
+        assert_eq!(
+            *opened_url.borrow(),
+            Some("https://example.com".to_string()),
+            "URL should be opened via Event::Open"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hint_mode_open_file(cx: &mut TestAppContext) {
+        use std::cell::RefCell;
+        use std::io::Write;
+
+        let (window_handle, terminal, terminal_view) = setup_test_terminal_and_view(cx).await;
+
+        // Create a real file so collect_visible_navigation_targets can verify it exists.
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        temp_file.write_all(b"// hint test").unwrap();
+
+        // file:// URLs are matched by the URL regex and converted to PathLike by
+        // collect_visible_navigation_targets when the file exists on disk.
+        let file_url = format!("file://{}", temp_file.path().display());
+        terminal.update(cx, |term, cx| {
+            term.write_output(file_url.as_bytes(), cx);
+        });
+        cx.run_until_parked();
+
+        let opened_target: Rc<RefCell<Option<MaybeNavigationTarget>>> = Rc::new(RefCell::new(None));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&terminal, {
+                let opened_target = opened_target.clone();
+                move |_, event: &Event, _| {
+                    if let Event::Open(target) = event {
+                        *opened_target.borrow_mut() = Some(target.clone());
+                    }
+                }
+            })
+        });
+
+        cx.dispatch_action(window_handle.into(), ActivateHints);
+
+        let hint_char = terminal_view.read_with(cx, |view, cx| {
+            let state = view
+                .terminal
+                .read(cx)
+                .hint_state()
+                .expect("hint_state should be Some after ActivateHints");
+            assert_eq!(
+                state.hints.len(),
+                1,
+                "one file path should produce one hint"
+            );
+            match state.hints[0].label {
+                HintLabel::Single(ch) => ch,
+                HintLabel::Double(_, _) => panic!("one file must produce a single-char label"),
+            }
+        });
+
+        // Single-char label: typing it should immediately match and emit Event::Open.
+        cx.simulate_keystrokes(window_handle.into(), &hint_char.to_string());
+
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_none(),
+                "hint_state should be cleared after typing the single-char label"
+            );
+        });
+
+        let expected_path = temp_file.path().to_string_lossy().into_owned();
+        let target = opened_target.borrow();
+        match target.as_ref().expect("Event::Open should be emitted") {
+            MaybeNavigationTarget::PathLike(path_like) => {
+                assert_eq!(path_like.maybe_path, expected_path);
+            }
+            MaybeNavigationTarget::Url(url) => {
+                panic!("expected PathLike target, got Url: {url}");
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_hint_mode_keyboard_controls(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, ScrollDelta};
+
+        let (_window_handle, _terminal, terminal_view) = setup_test_terminal_and_view(cx).await;
+
+        // Inject 27 double-char hints directly so the test doesn't depend on URL detection
+        // or viewport size. assign_hint_labels(27) produces Double variants since 27 > 26.
+        let (first_char, hint_count) = terminal_view.update(cx, |view, cx| {
+            let labels = assign_hint_labels(27);
+            assert!(
+                labels.iter().all(|l| matches!(l, HintLabel::Double(_, _))),
+                "assign_hint_labels(27) must produce double-char labels"
+            );
+            let first_char = match labels[0] {
+                HintLabel::Double(f, _) => f,
+                HintLabel::Single(_) => unreachable!(),
+            };
+            let hint_count = labels.len();
+            view.set_hint_state(
+                Some(TerminalHintState {
+                    hints: labels
+                        .into_iter()
+                        .map(|label| {
+                            use terminal::alacritty_terminal::index::{Column, Line};
+                            TerminalHint {
+                                label,
+                                hyperlink: TerminalHyperlink {
+                                    text: "https://example.com".to_string(),
+                                    is_url: true,
+                                    match_range: AlacPoint::new(Line(0), Column(0))
+                                        ..=AlacPoint::new(Line(0), Column(0)),
+                                },
+                            }
+                        })
+                        .collect(),
+                    input: String::new(),
+                    display_offset: 0,
+                }),
+                cx,
+            );
+            (first_char, hint_count)
+        });
+
+        // Type the first char: hint mode must stay active, only matching hints visible.
+        terminal_view.update(cx, |view, cx| {
+            view.process_keystroke(
+                &Keystroke {
+                    key: first_char.to_string(),
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        terminal_view.read_with(cx, |view, cx| {
+            let state = view.terminal.read(cx).hint_state().unwrap();
+            assert_eq!(state.input.len(), 1, "one char should be recorded in input");
+            let visible_count = state.visible_hints().len();
+            assert!(
+                visible_count > 0 && visible_count < hint_count,
+                "visible hints should be a filtered subset after typing first char"
+            );
+        });
+
+        // ctrl-f must be consumed (returns true) without exiting hint mode or advancing input.
+        let ctrl_f_handled = terminal_view.update(cx, |view, cx| {
+            view.process_keystroke(
+                &Keystroke {
+                    key: "f".to_string(),
+                    modifiers: Modifiers {
+                        control: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(ctrl_f_handled, "ctrl-f must be blocked in hint mode");
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_some(),
+                "hint mode must survive ctrl-f"
+            );
+            assert_eq!(
+                view.terminal.read(cx).hint_state().unwrap().input.len(),
+                1,
+                "ctrl-f must not advance input"
+            );
+        });
+
+        // shift+pageup must be consumed without scrolling or exiting hint mode.
+        let shift_pageup_handled = terminal_view.update(cx, |view, cx| {
+            view.process_keystroke(
+                &Keystroke {
+                    key: "pageup".to_string(),
+                    modifiers: Modifiers {
+                        shift: true,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        assert!(
+            shift_pageup_handled,
+            "shift+pageup must be blocked in hint mode"
+        );
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_some(),
+                "hint mode must survive shift+pageup"
+            );
+        });
+
+        // Mouse scroll must not change terminal state while in hint mode.
+        terminal_view.update(cx, |view, cx| {
+            view.scroll_wheel(
+                &ScrollWheelEvent {
+                    delta: ScrollDelta::Lines(Point::new(0.0, -3.0)),
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_some(),
+                "hint mode must survive mouse scroll"
+            );
+        });
+
+        // Backspace clears the last typed char; all hints become visible again.
+        terminal_view.update(cx, |view, cx| {
+            view.process_keystroke(
+                &Keystroke {
+                    key: "backspace".to_string(),
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        terminal_view.read_with(cx, |view, cx| {
+            let state = view.terminal.read(cx).hint_state().unwrap();
+            assert!(
+                state.input.is_empty(),
+                "backspace should clear the recorded input"
+            );
+            assert_eq!(
+                state.visible_hints().len(),
+                state.hints.len(),
+                "all hints should be visible after input is cleared"
+            );
+        });
+
+        // Escape exits hint mode entirely.
+        terminal_view.update(cx, |view, cx| {
+            view.process_keystroke(
+                &Keystroke {
+                    key: "escape".to_string(),
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+        assert!(
+            terminal_view.read_with(cx, |v, cx| v.terminal.read(cx).hint_state().is_none()),
+            "escape should exit hint mode"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_hint_mode_clears_on_resize(cx: &mut TestAppContext) {
+        let (window_handle, terminal, terminal_view) = setup_test_terminal_and_view(cx).await;
+
+        terminal.update(cx, |term, cx| {
+            term.write_output(b"https://example.com", cx);
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_action(window_handle.into(), ActivateHints);
+
+        // 1. Verify hints state is active and has 1 hint.
+        terminal_view.read_with(cx, |view, cx| {
+            let state = view
+                .terminal
+                .read(cx)
+                .hint_state()
+                .expect("hint_state should be Some after ActivateHints");
+            assert_eq!(state.hints.len(), 1, "one URL should produce one hint");
+        });
+
+        // 2. Perform a grid resize.
+        window_handle
+            .update(cx, |_, window, cx| {
+                terminal.update(cx, |term, cx| {
+                    let mut new_bounds = term.last_content().terminal_bounds;
+                    new_bounds.bounds.size.height += Pixels::from(100.);
+                    new_bounds.bounds.size.width += Pixels::from(100.);
+                    term.set_size(new_bounds);
+                    term.sync(window, cx);
+                });
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        // 3. Hint state should be cleared after resize so stale typed input doesn't hide hints.
+        terminal_view.read_with(cx, |view, cx| {
+            assert!(
+                view.terminal.read(cx).hint_state().is_none(),
+                "hint_state should be cleared after resize"
             );
         });
     }

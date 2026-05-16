@@ -4,6 +4,7 @@ pub use alacritty_terminal;
 
 mod pty_info;
 mod terminal_hyperlinks;
+pub use terminal_hyperlinks::TerminalHyperlink;
 pub mod terminal_settings;
 
 use alacritty_terminal::{
@@ -51,7 +52,10 @@ use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{paths::PathStyle, truncate_and_trailoff};
+use util::{
+    paths::{PathStyle, PathWithPosition},
+    truncate_and_trailoff,
+};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -426,6 +430,7 @@ impl TerminalBuilder {
             path_style,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            hint_state: None,
         };
 
         Ok(TerminalBuilder {
@@ -660,6 +665,7 @@ impl TerminalBuilder {
                 path_style,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                hint_state: None,
             };
 
             if !activation_script.is_empty() && no_task {
@@ -844,6 +850,87 @@ pub enum SelectionPhase {
     Ended,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum HintLabel {
+    Single(char),
+    Double(char, char),
+}
+
+/// Characters used for hint labels, ordered by ergonomics (home-row first).
+const HINT_CHARS: &[char] = &[
+    'j', 'f', 'k', 'd', 'l', 's', 'a', 'h', 'g', 'u', 'r', 'i', 'e', 'o', 'w', 'p', 'q', 't', 'y',
+    'z', 'n', 'v', 'm', 'c', 'x', 'b',
+];
+
+pub fn assign_hint_labels(count: usize) -> Vec<HintLabel> {
+    let n = HINT_CHARS.len();
+    if count <= n {
+        HINT_CHARS[..count]
+            .iter()
+            .map(|&c| HintLabel::Single(c))
+            .collect()
+    } else {
+        let cap = count.min(n * n);
+        // Column-major order: vary the first letter first so small sets of hints get
+        // maximally distinct first chars (e.g. 4 hints → jj, fj, kj, dj rather than
+        // all starting with 'j').
+        (0..cap)
+            .map(|i| HintLabel::Double(HINT_CHARS[i % n], HINT_CHARS[i / n]))
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHint {
+    pub label: HintLabel,
+    pub hyperlink: TerminalHyperlink,
+}
+
+impl TerminalHint {
+    pub fn position(&self) -> AlacPoint {
+        *self.hyperlink.match_range.start()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHintState {
+    pub hints: Vec<TerminalHint>,
+    pub input: String,
+    pub display_offset: usize,
+}
+
+impl TerminalHintState {
+    /// Returns hints that are still visible given the current typed input.
+    pub fn visible_hints(&self) -> Vec<&TerminalHint> {
+        match self.input.len() {
+            0 => self.hints.iter().collect(),
+            1 => {
+                let first = self.input.chars().next().unwrap();
+                self.hints
+                    .iter()
+                    .filter(|h| matches!(&h.label, HintLabel::Double(f, _) if *f == first))
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Returns the hint whose label exactly matches `input`, if any.
+    pub fn find_match(&self, input: &str) -> Option<&TerminalHint> {
+        let mut chars = input.chars();
+        let first = chars.next()?;
+        match chars.next() {
+            None => self
+                .hints
+                .iter()
+                .find(|h| matches!(&h.label, HintLabel::Single(c) if *c == first)),
+            Some(second) => self.hints.iter().find(
+                |h| matches!(&h.label, HintLabel::Double(f, s) if *f == first && *s == second),
+            ),
+        }
+    }
+}
+
 enum TerminalType {
     Pty {
         pty_tx: Notifier,
@@ -887,6 +974,7 @@ pub struct Terminal {
     path_style: PathStyle,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    hint_state: Option<TerminalHintState>,
 }
 
 struct CopyTemplate {
@@ -1040,6 +1128,7 @@ impl Terminal {
                 }
 
                 term.resize(new_bounds);
+                self.hint_state = None;
                 // If there are matches we need to emit a wake up event to
                 // invalidate the matches and recalculate their locations
                 // in the new terminal layout
@@ -1592,7 +1681,58 @@ impl Terminal {
         }
     }
 
-    pub fn try_keystroke(&mut self, keystroke: &Keystroke, option_as_meta: bool) -> bool {
+    fn hint_mode_keystroke(&mut self, keystroke: &Keystroke, cx: &mut Context<Self>) {
+        if !self.hint_mode_enabled() {
+            return;
+        }
+        if keystroke.modifiers.control || keystroke.modifiers.alt || keystroke.modifiers.platform {
+            return;
+        }
+
+        match keystroke.key.as_str() {
+            "escape" => self.set_hint_state(None),
+            "backspace" => {
+                if let Some(state) = self.hint_state_mut() {
+                    state.input.pop();
+                }
+            }
+            _ => {
+                if keystroke.key.chars().count() != 1 {
+                    return;
+                }
+                let ch = keystroke.key.chars().next().expect("must be just one char");
+                let state = self.hint_state_mut().expect("hint mode must be active");
+
+                state.input.push(ch);
+                if let Some(matched) = state.find_match(&state.input).cloned() {
+                    self.set_hint_state(None);
+                    let hyperlink = (
+                        matched.hyperlink.text,
+                        matched.hyperlink.is_url,
+                        matched.hyperlink.match_range,
+                    );
+                    self.process_hyperlink(hyperlink, true, cx);
+                    return;
+                }
+                if state.input.len() >= 2 || state.visible_hints().is_empty() {
+                    self.set_hint_state(None);
+                }
+            }
+        }
+        return;
+    }
+
+    pub fn try_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        option_as_meta: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.hint_mode_enabled() {
+            self.hint_mode_keystroke(keystroke, cx);
+            return true;
+        }
+
         if self.vi_mode_enabled {
             self.vi_motion(keystroke);
             return true;
@@ -1648,7 +1788,9 @@ impl Terminal {
             self.process_terminal_event(&e, &mut terminal, window, cx)
         }
 
-        self.last_content = Self::make_content(&terminal, &self.last_content);
+        if !self.hint_mode_enabled() {
+            self.last_content = Self::make_content(&terminal, &self.last_content);
+        }
     }
 
     fn make_content(term: &Term<ZedListener>, last_content: &TerminalContent) -> TerminalContent {
@@ -1682,6 +1824,38 @@ impl Terminal {
             scrolled_to_top: content.display_offset == term.history_size(),
             scrolled_to_bottom: content.display_offset == 0,
         }
+    }
+
+    /// Collects hint targets (URLs and paths) visible in the current viewport.
+    pub fn collect_visible_hint_targets(&mut self) -> Vec<TerminalHyperlink> {
+        let term = self.term.lock_unfair();
+        let terminal_dir = self.working_directory();
+        let raw = terminal_hyperlinks::find_visible_hint_targets(
+            &term,
+            &mut self.hyperlink_regex_searches,
+            self.path_style,
+        );
+        drop(term);
+        raw.into_iter()
+            .filter_map(|hyperlink| {
+                if hyperlink.is_url {
+                    Some(hyperlink)
+                } else {
+                    let base_path = PathWithPosition::parse_str(&hyperlink.text).path;
+                    let resolved = if base_path.is_absolute() {
+                        base_path
+                    } else if let Some(dir) = &terminal_dir {
+                        dir.join(base_path)
+                    } else {
+                        return None;
+                    };
+                    if !resolved.exists() {
+                        return None;
+                    }
+                    Some(hyperlink)
+                }
+            })
+            .collect()
     }
 
     pub fn get_content(&self) -> String {
@@ -2333,6 +2507,22 @@ impl Terminal {
         self.vi_mode_enabled
     }
 
+    pub fn hint_mode_enabled(&self) -> bool {
+        self.hint_state().is_some()
+    }
+
+    pub fn hint_state(&self) -> Option<&TerminalHintState> {
+        self.hint_state.as_ref()
+    }
+
+    fn hint_state_mut(&mut self) -> Option<&mut TerminalHintState> {
+        self.hint_state.as_mut()
+    }
+
+    pub fn set_hint_state(&mut self, state: Option<TerminalHintState>) {
+        self.hint_state = state;
+    }
+
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
@@ -2807,12 +2997,12 @@ mod tests {
 
         let first_event = event_rx.recv().await.expect("No wakeup event received");
 
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false);
+        terminal.update(cx, |terminal, cx| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-c").unwrap(), false, cx);
             assert!(success, "Should have registered ctrl-c sequence");
         });
-        terminal.update(cx, |terminal, _| {
-            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false);
+        terminal.update(cx, |terminal, cx| {
+            let success = terminal.try_keystroke(&Keystroke::parse("ctrl-d").unwrap(), false, cx);
             assert!(success, "Should have registered ctrl-d sequence");
         });
 

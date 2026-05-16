@@ -421,6 +421,121 @@ fn path_match<T>(
     None
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHyperlink {
+    pub text: String,
+    pub is_url: bool,
+    pub match_range: Match,
+}
+
+/// Scans the currently visible viewport for URLs and path-like strings.
+/// Returns `TerminalHyperlink` elements with precise text, URL flag, and match bounds.
+pub(super) fn find_visible_hint_targets<T: EventListener>(
+    term: &Term<T>,
+    regex_searches: &mut RegexSearches,
+    path_style: PathStyle,
+) -> Vec<TerminalHyperlink> {
+    let mut results: Vec<TerminalHyperlink> = Vec::new();
+
+    let display_offset = term.grid().display_offset();
+    let screen_lines = term.screen_lines();
+    let last_column = term.last_column();
+
+    // Only search lines that are currently visible in the viewport.
+    // In Alacritty grid coordinates: viewport_line = grid_line + display_offset,
+    // so visible lines run from -(display_offset) to (screen_lines - 1 - display_offset).
+    let first_visible = alacritty_terminal::index::Line(-(display_offset as i32));
+    let last_visible =
+        alacritty_terminal::index::Line(screen_lines as i32 - 1 - display_offset as i32);
+
+    for line in first_visible.0..=last_visible.0 {
+        let line = alacritty_terminal::index::Line(line);
+        let line_start = AlacPoint::new(line, Column(0));
+        let line_end = AlacPoint::new(line, last_column);
+
+        // Scan for URLs on this line.
+        let url_iter = RegexIter::new(
+            line_start,
+            line_end,
+            AlacDirection::Right,
+            term,
+            &mut regex_searches.url_regex,
+        );
+        for url_match in url_iter {
+            let url_text = term.bounds_to_string(*url_match.start(), *url_match.end());
+            let (url_text, sanitized_match) = sanitize_url_punctuation(url_text, url_match, term);
+            if url_text.is_empty() {
+                continue;
+            }
+            // Convert file:// URLs to paths.
+            let (final_text, is_url) = if url_text.starts_with("file://") {
+                if let Ok(url) = Url::parse(&url_text) {
+                    if let Ok(path) = url.to_file_path_ext(path_style) {
+                        (path.to_string_lossy().into_owned(), false)
+                    } else if let Some(path) = try_osc8_url_to_path(url)
+                        && path_style.is_posix()
+                    {
+                        (path, false)
+                    } else {
+                        let path = url_text
+                            .strip_prefix("file://")
+                            .unwrap_or(&url_text)
+                            .to_string();
+                        (path, false)
+                    }
+                } else {
+                    (url_text, true)
+                }
+            } else {
+                (url_text, true)
+            };
+            results.push(TerminalHyperlink {
+                text: final_text,
+                is_url,
+                match_range: sanitized_match,
+            });
+        }
+
+        // Scan for path-like strings on this line using configured regexes.
+        if regex_searches.path_hyperlink_regexes.is_empty() {
+            continue;
+        }
+        let line_text = term.bounds_to_string(line_start, line_end);
+        let line_text = line_text.trim_ascii_end();
+        if line_text.is_empty() {
+            continue;
+        }
+        for regex in &regex_searches.path_hyperlink_regexes {
+            for m in regex.find_iter(line_text) {
+                let trimmed_start = m.as_str().trim_start();
+                let leading_whitespace_chars =
+                    m.as_str().chars().count() - trimmed_start.chars().count();
+                let trimmed = trimmed_start.trim_end();
+                let path_text = trimmed.to_string();
+                if path_text.is_empty() {
+                    continue;
+                }
+                // Count Unicode scalar values before the match start to get the terminal
+                // column. Using byte offset directly would miscount multi-byte chars (e.g.
+                // the fish prompt '❯' is 3 bytes but occupies 1 column).
+                // Wide chars (2 columns each) are still approximated as 1 here.
+                let start_col =
+                    Column(line_text[..m.start()].chars().count() + leading_whitespace_chars);
+                let len = path_text.chars().count();
+                let end_col = Column(start_col.0 + len.saturating_sub(1));
+                let match_range = AlacPoint::new(line, start_col)..=AlacPoint::new(line, end_col);
+                results.push(TerminalHyperlink {
+                    text: path_text,
+                    is_url: false,
+                    match_range,
+                });
+            }
+        }
+    }
+
+    results
+}
+
 #[cfg(test)]
 mod tests {
     use crate::terminal_settings::TerminalSettings;

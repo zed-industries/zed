@@ -78,22 +78,20 @@ fn possible_hover_target(
 
 pub(super) fn open_path_like_target(
     workspace: &WeakEntity<Workspace>,
-    terminal_view: &mut TerminalView,
     path_like_target: &PathLikeTarget,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
 ) {
     #[cfg(not(test))]
     {
-        possibly_open_target(workspace, terminal_view, path_like_target, window, cx)
-            .detach_and_log_err(cx)
+        possibly_open_target(workspace, path_like_target.clone(), window, cx).detach_and_log_err(cx)
     }
+
     #[cfg(test)]
     {
         possibly_open_target(
             workspace,
-            terminal_view,
-            path_like_target,
+            path_like_target.clone(),
             window,
             cx,
             BackgroundFsChecks::Enabled,
@@ -102,19 +100,14 @@ pub(super) fn open_path_like_target(
     }
 }
 
-fn possibly_open_target(
+pub(super) fn possibly_open_target(
     workspace: &WeakEntity<Workspace>,
-    terminal_view: &mut TerminalView,
-    path_like_target: &PathLikeTarget,
+    path_like_target: PathLikeTarget,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
     #[cfg(test)] background_fs_checks: BackgroundFsChecks,
 ) -> Task<Result<Option<OpenTarget>>> {
-    if terminal_view.hover.is_none() {
-        return Task::ready(Ok(None));
-    }
     let workspace = workspace.clone();
-    let path_like_target = path_like_target.clone();
     cx.spawn_in(window, async move |terminal_view, cx| {
         let Some(open_target) = terminal_view
             .update(cx, |_, cx| {
@@ -295,18 +288,16 @@ mod tests {
                 terminal_view.read_with(cx, |terminal_view, _| terminal_view.hover.clone());
 
             let open_target = terminal_view
-                .update_in(cx, |terminal_view, window, cx| {
-                    possibly_open_target(
+                .update(cx, |_, cx| {
+                    possible_open_target_with_fs_checks(
                         &workspace.downgrade(),
-                        terminal_view,
-                        &path_like_target,
-                        window,
+                        &path_like_target.maybe_path,
+                        path_like_target.terminal_dir.as_deref(),
                         cx,
                         background_fs_checks,
                     )
                 })
-                .await
-                .expect("Failed to possibly open target");
+                .await;
 
             (hover_target, open_target)
         }

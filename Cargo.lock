@@ -17944,6 +17944,7 @@ dependencies = [
  "settings",
  "shellexpand",
  "task",
+ "tempfile",
  "terminal",
  "theme",
  "theme_settings",

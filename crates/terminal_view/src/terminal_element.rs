@@ -6,7 +6,7 @@ use gpui::{
     IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
     Point, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
     UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
-    size,
+    rgb, size,
 };
 use itertools::Itertools;
 use language::CursorShape;
@@ -35,7 +35,10 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
-use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
+use crate::{
+    BlockContext, BlockProperties, ContentMode, HintLabel, TerminalHintState, TerminalMode,
+    TerminalView,
+};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -53,6 +56,7 @@ pub struct LayoutState {
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
     content_mode: ContentMode,
+    hint_state: Option<TerminalHintState>,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -746,8 +750,9 @@ impl TerminalElement {
                 move |e, window, cx| {
                     terminal_view
                         .update(cx, |terminal_view, cx| {
-                            if matches!(terminal_view.mode, TerminalMode::Standalone)
-                                || terminal_view.focus_handle.is_focused(window)
+                            if (matches!(terminal_view.mode, TerminalMode::Standalone)
+                                || terminal_view.focus_handle.is_focused(window))
+                                && !terminal_view.terminal.read(cx).hint_mode_enabled()
                             {
                                 terminal_view.scroll_wheel(e, cx);
                                 cx.notify();
@@ -1263,6 +1268,17 @@ impl Element for TerminalElement {
                     None
                 };
 
+                let view = self.terminal_view.read(cx);
+                let hint_state =
+                    view.terminal
+                        .read(cx)
+                        .hint_state()
+                        .map(|s| crate::TerminalHintState {
+                            hints: s.hints.clone(),
+                            input: s.input.clone(),
+                            display_offset: s.display_offset,
+                        });
+
                 LayoutState {
                     hitbox,
                     batched_text_runs,
@@ -1278,6 +1294,7 @@ impl Element for TerminalElement {
                     block_below_cursor_element,
                     base_text_style: text_style,
                     content_mode,
+                    hint_state,
                 }
             },
         )
@@ -1390,6 +1407,10 @@ impl Element for TerminalElement {
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
+                    if let Some(hint_state) = &layout.hint_state {
+                        paint_hint_overlays(hint_state, &layout, origin, window, cx);
+                    }
+
                     if let Some(text_to_mark) = &marked_text_cloned
                         && !text_to_mark.is_empty()
                         && let Some(ime_bounds) = layout.ime_cursor_bounds
@@ -1468,6 +1489,143 @@ impl IntoElement for TerminalElement {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+fn paint_hint_overlays(
+    hint_state: &TerminalHintState,
+    layout: &LayoutState,
+    origin: gpui::Point<Pixels>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let yellow = Hsla::from(rgb(0xffe167));
+    let red = Hsla::from(rgb(0xac4242));
+    let black = Hsla::from(rgb(0x000000));
+    let font_size = layout
+        .base_text_style
+        .font_size
+        .to_pixels(window.rem_size());
+    let font = layout.base_text_style.font();
+    let cell_width = layout.dimensions.cell_width;
+    let line_height = layout.dimensions.line_height;
+
+    let visible = hint_state.visible_hints();
+    for hint in visible {
+        let position = hint.position();
+        let viewport_line = position.line.0 + hint_state.display_offset as i32;
+        if viewport_line < 0 || viewport_line as usize >= layout.dimensions.num_lines() {
+            continue;
+        }
+        let col = position.column.0;
+        let box_x = origin.x + col as f32 * cell_width;
+        let box_y = origin.y + viewport_line as f32 * line_height;
+
+        match (&hint.label, hint_state.input.len()) {
+            (HintLabel::Single(ch), _) => {
+                let bounds = gpui::Bounds::new(
+                    gpui::point(box_x, box_y),
+                    gpui::size(cell_width, line_height),
+                );
+                window.paint_quad(fill(bounds, yellow));
+                let text_runs = &[TextRun {
+                    len: ch.len_utf8(),
+                    font: font.clone(),
+                    color: black,
+                    ..TextRun::default()
+                }];
+                let shaped = window.text_system().shape_line(
+                    ch.to_string().into(),
+                    font_size,
+                    text_runs,
+                    None,
+                );
+                shaped
+                    .paint(
+                        gpui::point(box_x, box_y),
+                        line_height,
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err();
+            }
+            (HintLabel::Double(first, second), 0) => {
+                // First cell: yellow background.
+                let first_bounds = gpui::Bounds::new(
+                    gpui::point(box_x, box_y),
+                    gpui::size(cell_width, line_height),
+                );
+                window.paint_quad(fill(first_bounds, yellow));
+                // Second cell: red background.
+                let second_bounds = gpui::Bounds::new(
+                    gpui::point(box_x + cell_width, box_y),
+                    gpui::size(cell_width, line_height),
+                );
+                window.paint_quad(fill(second_bounds, red));
+                let label: String = [*first, *second].iter().collect();
+                let text_runs = &[
+                    TextRun {
+                        len: first.len_utf8(),
+                        font: font.clone(),
+                        color: black,
+                        ..TextRun::default()
+                    },
+                    TextRun {
+                        len: second.len_utf8(),
+                        font: font.clone(),
+                        color: black,
+                        ..TextRun::default()
+                    },
+                ];
+                let shaped =
+                    window
+                        .text_system()
+                        .shape_line(label.into(), font_size, text_runs, None);
+                shaped
+                    .paint(
+                        gpui::point(box_x, box_y),
+                        line_height,
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err();
+            }
+            (HintLabel::Double(_, second), 1) => {
+                // First char matched — show only second char with yellow background at hint position.
+                let bounds = gpui::Bounds::new(
+                    gpui::point(box_x, box_y),
+                    gpui::size(cell_width, line_height),
+                );
+                window.paint_quad(fill(bounds, yellow));
+                let text_runs = &[TextRun {
+                    len: second.len_utf8(),
+                    font: font.clone(),
+                    color: black,
+                    ..TextRun::default()
+                }];
+                let shaped = window.text_system().shape_line(
+                    second.to_string().into(),
+                    font_size,
+                    text_runs,
+                    None,
+                );
+                shaped
+                    .paint(
+                        gpui::point(box_x, box_y),
+                        line_height,
+                        gpui::TextAlign::Left,
+                        None,
+                        window,
+                        cx,
+                    )
+                    .log_err();
+            }
+            (HintLabel::Double(_, _), _) => {}
+        }
     }
 }
 

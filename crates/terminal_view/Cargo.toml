@@ -55,6 +55,7 @@ remote = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+tempfile.workspace = true
 terminal = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 
