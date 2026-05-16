@@ -520,8 +520,9 @@ impl ConversationView {
     }
 
     pub fn supports_logout(&self, cx: &App) -> bool {
-        self.as_connected()
-            .is_some_and(|connected| connected.connection.supports_logout(cx))
+        self.as_connected().is_some_and(|connected| {
+            connected.auth_state.is_ok() && connected.connection.supports_logout(cx)
+        })
     }
 
     pub fn active_thread(&self) -> Option<&Entity<ThreadView>> {
@@ -3841,13 +3842,17 @@ pub(crate) mod tests {
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        conversation_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
             assert!(
                 !connected.auth_state.is_ok(),
                 "Auth state should be Unauthenticated"
+            );
+            assert!(
+                !view.supports_logout(cx),
+                "Logout should be hidden while unauthenticated"
             );
             assert!(
                 connected.active_id.is_none(),
@@ -3885,6 +3890,10 @@ pub(crate) mod tests {
                 .expect("Should still be in Connected state after auth");
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
+                view.supports_logout(cx),
+                "Logout should be available after authentication"
+            );
+            assert!(
                 connected.active_id.is_some(),
                 "There should be an active thread after successful auth"
             );
@@ -3900,6 +3909,23 @@ pub(crate) mod tests {
             assert!(
                 active.read(cx).thread_error.is_none(),
                 "The new thread should have no errors"
+            );
+        });
+
+        conversation_view.update_in(cx, |view, window, cx| view.logout(window, cx));
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let connected = view
+                .as_connected()
+                .expect("Should still be in Connected state after logout");
+            assert!(
+                !connected.auth_state.is_ok(),
+                "Auth state should be Unauthenticated after logout"
+            );
+            assert!(
+                !view.supports_logout(cx),
+                "Logout should be hidden after logout"
             );
         });
     }
@@ -4961,6 +4987,15 @@ pub(crate) mod tests {
             } else {
                 Task::ready(Err(anyhow::anyhow!("Unknown auth method")))
             }
+        }
+
+        fn supports_logout(&self, _cx: &App) -> bool {
+            true
+        }
+
+        fn logout(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+            *self.authenticated.lock() = false;
+            Task::ready(Ok(()))
         }
 
         fn prompt(
