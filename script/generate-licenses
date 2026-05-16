@@ -5,17 +5,30 @@ set -euo pipefail
 CARGO_ABOUT_VERSION="0.8.2"
 OUTPUT_FILE="${1:-$(pwd)/assets/licenses.md}"
 TEMPLATE_FILE="script/licenses/template.md.hbs"
+OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
+TEMP_OUTPUT=$(mktemp "${OUTPUT_DIR}/licenses.md.tmp.XXXXXX")
+
+cleanup() {
+    rm -f "$TEMP_OUTPUT" "${TEMP_OUTPUT}.bak"
+}
+
+trap cleanup EXIT
 
 fail_on_stderr() {
     local tmpfile=$(mktemp)
-    "$@" 2> >(tee "$tmpfile" >&2)
+    set +e
+    "$@" 2>"$tmpfile"
     local rc=$?
-    [ -s "$tmpfile" ] && rc=1
+    set -e
+    if [ -s "$tmpfile" ]; then
+        cat "$tmpfile" >&2
+        rc=1
+    fi
     rm "$tmpfile"
     return $rc
 }
 
-echo -n "" >"$OUTPUT_FILE"
+echo -n "" >"$TEMP_OUTPUT"
 
 {
     echo -e "# ###### THEME LICENSES ######\n"
@@ -25,7 +38,7 @@ echo -n "" >"$OUTPUT_FILE"
     cat assets/icons/LICENSES
 
     echo -e "\n# ###### CODE LICENSES ######\n"
-} >>"$OUTPUT_FILE"
+} >>"$TEMP_OUTPUT"
 
 if ! cargo about --version | grep "cargo-about $CARGO_ABOUT_VERSION" &>/dev/null; then
     echo "Installing cargo-about@$CARGO_ABOUT_VERSION..."
@@ -41,16 +54,24 @@ set -x
 $WRAPPER cargo about generate \
     $FAIL_FLAG \
     -c script/licenses/zed-licenses.toml \
-    "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
+    "$TEMPLATE_FILE" >>"$TEMP_OUTPUT"
 set +x
 
-sed -i.bak 's/&quot;/"/g' "$OUTPUT_FILE"
-sed -i.bak 's/&#x27;/'\''/g' "$OUTPUT_FILE" # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
-sed -i.bak 's/&#x3D;/=/g' "$OUTPUT_FILE"
-sed -i.bak 's/&#x60;/`/g' "$OUTPUT_FILE"
-sed -i.bak 's/&lt;/</g' "$OUTPUT_FILE"
-sed -i.bak 's/&gt;/>/g' "$OUTPUT_FILE"
+sed -i.bak 's/&quot;/"/g' "$TEMP_OUTPUT"
+sed -i.bak 's/&#x27;/'\''/g' "$TEMP_OUTPUT" # The ` '\'' ` thing ends the string, appends a single quote, and re-opens the string
+sed -i.bak 's/&#x3D;/=/g' "$TEMP_OUTPUT"
+sed -i.bak 's/&#x60;/`/g' "$TEMP_OUTPUT"
+sed -i.bak 's/&lt;/</g' "$TEMP_OUTPUT"
+sed -i.bak 's/&gt;/>/g' "$TEMP_OUTPUT"
 
-rm -rf "${OUTPUT_FILE}.bak"
+rm -f "${TEMP_OUTPUT}.bak"
 
-echo "generate-licenses completed. See $OUTPUT_FILE"
+if [[ -f "$OUTPUT_FILE" ]] && cmp -s "$TEMP_OUTPUT" "$OUTPUT_FILE"; then
+    echo "licenses unchanged. Keeping $OUTPUT_FILE"
+else
+    mv "$TEMP_OUTPUT" "$OUTPUT_FILE"
+    echo "licenses updated. See $OUTPUT_FILE"
+fi
+
+trap - EXIT
+cleanup

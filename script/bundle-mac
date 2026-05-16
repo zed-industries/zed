@@ -91,6 +91,7 @@ cargo build ${build_flag} --package zed --package cli --target $target_triple
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
 cargo build ${build_flag} --package remote_server --target $target_triple
+export CARGO_BUNDLE_SKIP_BUILD=true
 
 echo "Creating application bundle"
 pushd crates/zed
