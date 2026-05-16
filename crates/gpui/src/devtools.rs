@@ -378,6 +378,10 @@ impl CacheMissReasons {
         self.0 |= Self::WINDOW_REFRESHING;
     }
 
+    pub(crate) fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
     fn labels(self) -> Vec<&'static str> {
         let mut labels = Vec::new();
         if self.0 & Self::MISSING_CACHE != 0 {

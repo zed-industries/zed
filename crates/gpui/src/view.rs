@@ -201,52 +201,54 @@ impl Element for AnyView {
                 |element_state, window| {
                     let content_mask = window.content_mask();
                     let text_style = window.text_style();
-                    let mut cache_miss = false;
+                    let reuse_prepaint =
+                        |window: &mut Window,
+                         cx: &mut App,
+                         mut element_state: AnyViewState|
+                         -> (Option<AnyElement>, AnyViewState) {
+                            let prepaint_start = window.prepaint_index();
+                            window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities
+                                .extend_accessed(&element_state.accessed_entities);
+                            let prepaint_end = window.prepaint_index();
+                            element_state.prepaint_range = prepaint_start..prepaint_end;
+
+                            (None, element_state)
+                        };
+
                     #[cfg(any(feature = "inspector", debug_assertions))]
-                    let mut cache_miss_reasons = crate::devtools::CacheMissReasons::empty();
+                    let mut cache_miss_reasons = {
+                        let mut cache_miss_reasons = crate::devtools::CacheMissReasons::empty();
 
-                    if let Some(element_state) = element_state.as_ref() {
-                        if element_state.cache_key.bounds != bounds {
-                            cache_miss = true;
-                            #[cfg(any(feature = "inspector", debug_assertions))]
-                            cache_miss_reasons.insert_bounds_changed();
+                        if let Some(element_state) = element_state.as_ref() {
+                            if element_state.cache_key.bounds != bounds {
+                                cache_miss_reasons.insert_bounds_changed();
+                            }
+                            if element_state.cache_key.content_mask != content_mask {
+                                cache_miss_reasons.insert_content_mask_changed();
+                            }
+                            if element_state.cache_key.text_style != text_style {
+                                cache_miss_reasons.insert_text_style_changed();
+                            }
+                        } else {
+                            cache_miss_reasons.insert_missing_cache();
                         }
-                        if element_state.cache_key.content_mask != content_mask {
-                            cache_miss = true;
-                            #[cfg(any(feature = "inspector", debug_assertions))]
-                            cache_miss_reasons.insert_content_mask_changed();
+                        if window.dirty_views.contains(&self.entity_id()) {
+                            cache_miss_reasons.insert_view_dirty();
                         }
-                        if element_state.cache_key.text_style != text_style {
-                            cache_miss = true;
-                            #[cfg(any(feature = "inspector", debug_assertions))]
-                            cache_miss_reasons.insert_text_style_changed();
+                        if window.refreshing {
+                            cache_miss_reasons.insert_window_refreshing();
                         }
-                    } else {
-                        cache_miss = true;
-                        #[cfg(any(feature = "inspector", debug_assertions))]
-                        cache_miss_reasons.insert_missing_cache();
-                    }
-                    if window.dirty_views.contains(&self.entity_id()) {
-                        cache_miss = true;
-                        #[cfg(any(feature = "inspector", debug_assertions))]
-                        cache_miss_reasons.insert_view_dirty();
-                    }
-                    if window.refreshing {
-                        cache_miss = true;
-                        #[cfg(any(feature = "inspector", debug_assertions))]
-                        cache_miss_reasons.insert_window_refreshing();
-                    }
 
-                    if !cache_miss && let Some(mut element_state) = element_state {
-                        let prepaint_start = window.prepaint_index();
-                        #[cfg(any(feature = "inspector", debug_assertions))]
+                        cache_miss_reasons
+                    };
+
+                    #[cfg(any(feature = "inspector", debug_assertions))]
+                    if cache_miss_reasons.is_empty()
+                        && let Some(element_state) = element_state
+                    {
                         let reuse_start = crate::devtools::enabled().then(Instant::now);
-                        window.reuse_prepaint(element_state.prepaint_range.clone());
-                        cx.entities
-                            .extend_accessed(&element_state.accessed_entities);
-                        let prepaint_end = window.prepaint_index();
-                        element_state.prepaint_range = prepaint_start..prepaint_end;
-                        #[cfg(any(feature = "inspector", debug_assertions))]
+                        let result = reuse_prepaint(window, cx, element_state);
                         if let Some(reuse_start) = reuse_start {
                             crate::devtools::record_view_render(crate::devtools::ViewRenderEvent {
                                 window_id: window.handle.window_id(),
@@ -261,7 +263,18 @@ impl Element for AnyView {
                             });
                         }
 
-                        return (None, element_state);
+                        return result;
+                    }
+
+                    #[cfg(not(any(feature = "inspector", debug_assertions)))]
+                    if let Some(element_state) = element_state
+                        && element_state.cache_key.bounds == bounds
+                        && element_state.cache_key.content_mask == content_mask
+                        && element_state.cache_key.text_style == text_style
+                        && !window.dirty_views.contains(&self.entity_id())
+                        && !window.refreshing
+                    {
+                        return reuse_prepaint(window, cx, element_state);
                     }
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
