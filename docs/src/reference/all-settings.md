@@ -3222,7 +3222,8 @@ Examples:
     "enable_preview_from_multibuffer": true,
     "enable_preview_multibuffer_from_code_navigation": false,
     "enable_preview_file_from_code_navigation": true,
-    "enable_keep_preview_on_code_navigation": false
+    "enable_keep_preview_on_code_navigation": false,
+    "auto_preview": "off"
   }
 }
 ```
@@ -3286,6 +3287,18 @@ Examples:
 **Options**
 
 `boolean` values
+
+### Auto preview
+
+- Description: Whether to automatically open a preview when opening previewable files (Markdown, SVG, and CSV).
+- Setting: `auto_preview`
+- Default: `off`
+
+**Options**
+
+1. `off` (default): Do not automatically open previews.
+2. `same_pane`: Open the preview in the same pane, replacing the editor tab.
+3. `to_side`: Open the preview in an adjacent pane to the side.
 
 ## File Finder
 

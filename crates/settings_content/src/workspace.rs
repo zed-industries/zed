@@ -195,6 +195,36 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: false
     pub enable_keep_preview_on_code_navigation: Option<bool>,
+    /// Whether to automatically open a preview when opening previewable files
+    /// (Markdown, SVG, and CSV).
+    ///
+    /// Default: off
+    pub auto_preview: Option<AutoPreviewMode>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoPreviewMode {
+    /// Do not automatically open previews.
+    #[default]
+    Off,
+    /// Open the preview in the same pane, replacing the editor tab.
+    SamePane,
+    /// Open the preview in an adjacent pane to the side.
+    ToSide,
 }
 
 #[derive(

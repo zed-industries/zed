@@ -136,7 +136,7 @@ impl SvgPreviewView {
         cx.notify();
     }
 
-    fn find_existing_preview_item_idx(
+    pub(crate) fn find_existing_preview_item_idx(
         pane: &Pane,
         buffer: &Entity<MultiBuffer>,
         cx: &App,
@@ -162,7 +162,7 @@ impl SvgPreviewView {
             .filter(|buffer| Self::is_svg_file(&buffer, cx))
     }
 
-    fn create_svg_view(
+    pub(crate) fn create_svg_view(
         mode: SvgPreviewMode,
         workspace: &mut Workspace,
         buffer: Entity<MultiBuffer>,

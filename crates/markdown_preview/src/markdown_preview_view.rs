@@ -137,7 +137,7 @@ impl MarkdownPreviewView {
         });
     }
 
-    fn find_existing_independent_preview_item_idx(
+    pub(crate) fn find_existing_independent_preview_item_idx(
         pane: &Pane,
         editor: &Entity<Editor>,
         cx: &App,
@@ -169,7 +169,7 @@ impl MarkdownPreviewView {
         None
     }
 
-    fn create_markdown_view(
+    pub(crate) fn create_markdown_view(
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -1210,6 +1210,9 @@ mod tests {
     use util::test::TempTree;
     use workspace::{AppState, MultiWorkspace, SaveIntent, Workspace, open_paths};
 
+    use gpui::UpdateGlobal as _;
+    use settings::SettingsStore;
+
     use super::{MarkdownPreviewView, resolve_preview_path};
 
     #[test]
@@ -1449,6 +1452,160 @@ mod tests {
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn auto_preview_same_pane_opens_preview_for_markdown(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "readme.md": "# Hello\n\nWorld",
+                    "main.rs": "fn main() {}"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.preview_tabs.get_or_insert_default().auto_preview =
+                        Some(settings::AutoPreviewMode::SamePane);
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project/readme.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let has_preview = multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items_of_type::<MarkdownPreviewView>()
+                    .next()
+                    .is_some()
+            })
+            .unwrap();
+
+        assert!(
+            has_preview,
+            "Opening a markdown file with auto_preview=same_pane should create a preview"
+        );
+    }
+
+    #[gpui::test]
+    async fn auto_preview_off_does_not_open_preview(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "readme.md": "# Hello"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project/readme.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let has_preview = multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items_of_type::<MarkdownPreviewView>()
+                    .next()
+                    .is_some()
+            })
+            .unwrap();
+
+        assert!(
+            !has_preview,
+            "With auto_preview=off (default), no preview should be created"
+        );
+    }
+
+    #[gpui::test]
+    async fn auto_preview_does_not_trigger_for_non_markdown(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "main.rs": "fn main() {}"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.preview_tabs.get_or_insert_default().auto_preview =
+                        Some(settings::AutoPreviewMode::SamePane);
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/project/main.rs"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let has_preview = multi_workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                let workspace = multi_workspace.workspace().read(cx);
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items_of_type::<MarkdownPreviewView>()
+                    .next()
+                    .is_some()
+            })
+            .unwrap();
+
+        assert!(
+            !has_preview,
+            "Auto preview should not trigger for non-markdown files"
         );
     }
 
