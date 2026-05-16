@@ -179,6 +179,7 @@ pub enum HighlightKey {
     InputComposition,
     MatchingBracket,
     NavigationOverlay(NavigationOverlayKey),
+    NavigationOverlayDimmedText(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
     Rename,

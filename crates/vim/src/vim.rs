@@ -22,15 +22,15 @@ mod visual;
 use crate::normal::paste::Paste as VimPaste;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, MultiBufferOffset, NavigationOverlayKey,
-    NavigationTargetOverlay, SelectionEffects,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HighlightKey, MultiBufferOffset,
+    NavigationOverlayKey, NavigationTargetOverlay, SelectionEffects,
     actions::Paste,
     display_map::ToDisplayPoint,
     movement::{self, FindRange},
 };
 use gpui::{
-    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, KeyContext,
-    KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
+    Action, App, AppContext, Axis, Context, Entity, EventEmitter, Focusable, HighlightStyle,
+    KeyContext, KeystrokeEvent, Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -51,6 +51,7 @@ use state::{
 };
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
+use theme::ActiveTheme as _;
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
 use vim_mode_setting::HelixModeSetting;
@@ -1753,18 +1754,34 @@ impl Vim {
     fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, move |_, editor, cx| {
             editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
+            editor.clear_highlights(
+                HighlightKey::NavigationOverlayDimmedText(HELIX_JUMP_OVERLAY_KEY),
+                cx,
+            );
         });
     }
 
     fn apply_helix_jump_ui(
         &mut self,
         overlays: Vec<NavigationTargetOverlay>,
+        dimmed_text_range: Option<Range<Anchor>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         self.clear_helix_jump_ui(window, cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
+            if let Some(dimmed_text_range) = dimmed_text_range {
+                editor.highlight_text(
+                    HighlightKey::NavigationOverlayDimmedText(HELIX_JUMP_OVERLAY_KEY),
+                    vec![dimmed_text_range],
+                    HighlightStyle {
+                        color: Some(cx.theme().colors().text_muted.grayscale()),
+                        ..Default::default()
+                    },
+                    cx,
+                );
+            }
         })
         .is_some()
     }
@@ -2286,6 +2303,7 @@ struct VimSettings {
     pub gdefault: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
+    pub helix_jump_dim_non_label_text: bool,
     pub cursor_shape: CursorShapeSettings,
     pub show_edit_predictions_in_normal_mode: bool,
 }
@@ -2374,6 +2392,7 @@ impl Settings for VimSettings {
             gdefault: vim.gdefault.unwrap(),
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
+            helix_jump_dim_non_label_text: vim.helix_jump_dim_non_label_text.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
             show_edit_predictions_in_normal_mode: vim.show_edit_predictions_in_normal_mode.unwrap(),
         }

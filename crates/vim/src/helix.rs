@@ -7,7 +7,7 @@ mod surround;
 
 use editor::display_map::{DisplayRow, DisplaySnapshot};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
+    Anchor, DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
@@ -24,7 +24,7 @@ use workspace::searchable::{self, Direction, FilteredSearchRange};
 use crate::motion::{self, MotionKind};
 use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
-    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
+    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim, VimSettings,
     motion::{Motion, right},
 };
 use std::ops::Range;
@@ -1014,7 +1014,7 @@ impl Vim {
             return;
         }
 
-        if !self.apply_helix_jump_ui(data.overlays, window, cx) {
+        if !self.apply_helix_jump_ui(data.overlays, data.dimmed_text_range, window, cx) {
             return;
         }
 
@@ -1057,7 +1057,7 @@ impl Vim {
             let font_size = style.text.font_size.to_pixels(window.rem_size());
             let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
 
-            Self::build_helix_jump_ui_data(
+            let mut data = Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 start_offset,
                 end_offset,
@@ -1067,7 +1067,14 @@ impl Vim {
                 window.text_system(),
                 font,
                 font_size,
-            )
+            );
+            if VimSettings::get_global(cx).helix_jump_dim_non_label_text {
+                data.dimmed_text_range = Some(
+                    buffer_snapshot.anchor_after(start_offset)
+                        ..buffer_snapshot.anchor_after(end_offset),
+                );
+            }
+            data
         })
     }
 
@@ -1187,7 +1194,11 @@ impl Vim {
             });
         }
 
-        HelixJumpUiData { labels, overlays }
+        HelixJumpUiData {
+            labels,
+            overlays,
+            dimmed_text_range: None,
+        }
     }
 
     fn collect_jump_candidates(
@@ -1707,6 +1718,7 @@ impl HiddenPrefixFitState {
 struct HelixJumpUiData {
     labels: Vec<HelixJumpLabel>,
     overlays: Vec<NavigationTargetOverlay>,
+    dimmed_text_range: Option<Range<Anchor>>,
 }
 
 #[cfg(test)]
@@ -1714,7 +1726,7 @@ mod test {
     use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
+    use gpui::{Hsla, KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::{CursorShape, Point};
     use project::FakeFs;
@@ -1801,6 +1813,33 @@ mod test {
                 Some("vim_mode == normal || vim_mode == visual"),
             )])
         });
+    }
+
+    fn enable_helix_jump_dim_non_label_text(cx: &mut VimTestContext) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .vim
+                        .get_or_insert_default()
+                        .helix_jump_dim_non_label_text = Some(true);
+                });
+            });
+        });
+    }
+
+    fn active_helix_jump_dimmed_text(cx: &mut VimTestContext) -> Option<(Option<Hsla>, usize)> {
+        cx.update_editor(|editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            snapshot
+                .text_highlight_ranges(HighlightKey::NavigationOverlayDimmedText(
+                    HELIX_JUMP_OVERLAY_KEY,
+                ))
+                .map(|ranges| {
+                    let (style, ranges) = ranges.as_ref();
+                    (style.color, ranges.len())
+                })
+        })
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -3527,6 +3566,78 @@ mod test {
         cx.update_editor(|editor, _, _| {
             assert_eq!(editor.cursor_shape(), CursorShape::Bar);
         });
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_dim_non_label_text_is_disabled_by_default(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("g z");
+
+        assert_eq!(active_helix_jump_dimmed_text(&mut cx), None);
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_dim_non_label_text_dims_visible_text(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        enable_helix_jump_dim_non_label_text(&mut cx);
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("g z");
+
+        let expected_dimmed_text_color =
+            cx.update(|_, cx| cx.theme().colors().text_muted.grayscale());
+        assert_eq!(
+            active_helix_jump_dimmed_text(&mut cx),
+            Some((Some(expected_dimmed_text_color), 1))
+        );
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_dim_non_label_text_preserves_covered_text_hiding(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        enable_helix_jump_dim_non_label_text(&mut cx);
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("g z");
+
+        let (covered_text_range_count, label_count) = active_helix_jump_overlay_counts(&mut cx);
+        assert_eq!(
+            active_helix_jump_dimmed_text(&mut cx).map(|(_, count)| count),
+            Some(1)
+        );
+        assert_eq!(covered_text_range_count, label_count);
+        assert!(label_count > 0);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_dim_non_label_text_clears_after_jump(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        enable_helix_jump_dim_non_label_text(&mut cx);
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "two");
+
+        cx.assert_state("one ˇtwo three", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+        assert_eq!(active_helix_jump_dimmed_text(&mut cx), None);
     }
 
     #[gpui::test]
