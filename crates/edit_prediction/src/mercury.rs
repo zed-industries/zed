@@ -223,7 +223,9 @@ impl Mercury {
                 );
             }
 
-            anyhow::Ok((id, edits, snapshot, inputs))
+            let editable_range = snapshot.anchor_range_inside(editable_offset_range);
+
+            anyhow::Ok((id, edits, snapshot, inputs, editable_range))
         });
 
         cx.spawn(async move |ep_store, cx| {
@@ -241,7 +243,7 @@ impl Mercury {
                 cx.notify();
             })?;
 
-            let (id, edits, old_snapshot, inputs) = result?;
+            let (id, edits, old_snapshot, inputs, editable_range) = result?;
             anyhow::Ok(Some(
                 EditPredictionResult::new(
                     EditPredictionId(id.into()),
@@ -249,6 +251,7 @@ impl Mercury {
                     &old_snapshot,
                     edits.into(),
                     None,
+                    Some(editable_range),
                     inputs,
                     None,
                     cx.background_executor().now() - request_start,

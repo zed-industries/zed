@@ -14,8 +14,6 @@ use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
-use crate::Agent;
-
 #[derive(IntoElement)]
 pub struct MentionCrease {
     id: ElementId,
@@ -182,6 +180,11 @@ fn open_mention_uri(
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
+        MentionUri::Skill {
+            skill_file_path, ..
+        } => {
+            open_skill_file(workspace, skill_file_path, window, cx);
+        }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
@@ -192,6 +195,25 @@ fn open_mention_uri(
         | MentionUri::GitDiff { .. }
         | MentionUri::MergeConflict { .. } => {}
     });
+}
+
+fn open_skill_file(
+    workspace: &mut Workspace,
+    skill_file_path: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .open_abs_path(
+            skill_file_path,
+            OpenOptions {
+                focus: Some(true),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
 }
 
 fn open_file(
@@ -271,24 +293,30 @@ fn open_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    use crate::AgentPanel;
+    use crate::{Agent, AgentPanel, AgentThreadSource, thread_metadata_store::ThreadMetadataStore};
 
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
 
-    // Right now we only support loading threads in the native agent
+    // Right now we only support loading threads in the native agent.
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(
-            Agent::NativeAgent,
-            id,
-            None,
-            Some(name.into()),
-            true,
-            "agent_panel",
-            window,
-            cx,
-        )
+        let thread_id = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry_by_session(&id).map(|m| m.thread_id));
+        if let Some(thread_id) = thread_id {
+            panel.load_agent_thread(
+                Agent::NativeAgent,
+                thread_id,
+                None,
+                Some(name.into()),
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        } else {
+            panel.open_thread(id, None, Some(name.into()), window, cx);
+        }
     });
 }
 

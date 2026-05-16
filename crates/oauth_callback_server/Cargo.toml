@@ -1,0 +1,23 @@
+[package]
+name = "oauth_callback_server"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+description = "Loopback OAuth 2.0 callback server and shared HTML response page for Zed sign-in flows"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/oauth_callback_server.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+futures.workspace = true
+log.workspace = true
+tiny_http.workspace = true
+url.workspace = true
