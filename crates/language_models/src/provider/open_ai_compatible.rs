@@ -289,6 +289,7 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                vec![],
             );
             let response = request.await?;
             Ok(response)
@@ -397,7 +398,10 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.model.capabilities.parallel_tool_calls,
                 self.model.capabilities.prompt_cache_key,
                 self.max_output_tokens(),
-                self.model.reasoning_effort,
+                self.model
+                    .reasoning_effort
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
             );
             let completions = self.stream_response(request, cx);
             async move {

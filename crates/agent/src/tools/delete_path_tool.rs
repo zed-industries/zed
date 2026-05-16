@@ -100,7 +100,8 @@ impl AgentTool for DeletePathTool {
                     .map(|(_, target)| target)
             });
 
-            let settings_kind = sensitive_settings_kind(Path::new(&path), fs.as_ref()).await;
+            let settings_kind =
+                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref()).await;
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {

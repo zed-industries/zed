@@ -455,7 +455,11 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(true, window, cx) else {
+                let Some(query) = search_bar.query_suggestion(
+                    Some(settings::SeedQuerySetting::Always),
+                    window,
+                    cx,
+                ) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };
