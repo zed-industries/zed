@@ -1759,6 +1759,22 @@ impl AgentConnection for AcpConnection {
         })
     }
 
+    fn supports_logout(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.auth.logout.is_some()
+    }
+
+    fn logout(&self, cx: &mut App) -> Task<Result<()>> {
+        if !self.supports_logout(cx) {
+            return Task::ready(Err(anyhow!("Logout is not supported by this agent.")));
+        }
+
+        let conn = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            into_foreground_future(conn.send_request(acp::LogoutRequest::new())).await?;
+            Ok(())
+        })
+    }
+
     fn prompt(
         &self,
         _id: acp_thread::UserMessageId,
@@ -2026,6 +2042,7 @@ pub mod test_support {
         pub connection: Rc<AcpConnection>,
         pub load_session_count: Arc<AtomicUsize>,
         pub close_session_count: Arc<AtomicUsize>,
+        pub logout_count: Arc<AtomicUsize>,
         pub keep_agent_alive: Task<anyhow::Result<()>>,
     }
 
@@ -2119,6 +2136,14 @@ pub mod test_support {
             self.inner.authenticate(method, cx)
         }
 
+        fn supports_logout(&self, cx: &App) -> bool {
+            self.inner.supports_logout(cx)
+        }
+
+        fn logout(&self, cx: &mut App) -> Task<Result<()>> {
+            self.inner.logout(cx)
+        }
+
         fn prompt(
             &self,
             user_message_id: UserMessageId,
@@ -2201,6 +2226,7 @@ pub mod test_support {
     ) -> Result<FakeAcpConnectionHarness> {
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
+        let logout_count = Arc::new(AtomicUsize::new(0));
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
@@ -2265,6 +2291,16 @@ pub mod test_support {
                     async move |_req: acp::CloseSessionRequest, responder, _cx| {
                         close_session_count.fetch_add(1, Ordering::SeqCst);
                         responder.respond(acp::CloseSessionResponse::new())
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                {
+                    let logout_count = logout_count.clone();
+                    async move |_req: acp::LogoutRequest, responder, _cx| {
+                        logout_count.fetch_add(1, Ordering::SeqCst);
+                        responder.respond(acp::LogoutResponse::new())
                     }
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -2341,6 +2377,7 @@ pub mod test_support {
             connection: Rc::new(connection),
             load_session_count,
             close_session_count,
+            logout_count,
             keep_agent_alive,
         })
     }
@@ -2373,6 +2410,7 @@ mod tests {
     use feature_flags::FeatureFlag as _;
 
     use super::*;
+    use gpui::UpdateGlobal as _;
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
@@ -2639,6 +2677,75 @@ mod tests {
                 .expect("deleted sessions lock should not be poisoned")
                 .is_empty()
         );
+    }
+    
+    async fn logout_is_gated_by_beta_flag_and_agent_capability(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            settings::SettingsStore::update_global(cx, |store, _| {
+                store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            });
+            feature_flags::FeatureFlagStore::init(cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, _| {
+                store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            });
+            feature_flags::FeatureFlagStore::init(cx);
+        });
+
+        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
+        let unsupported_logout = cx.update(|cx| harness.connection.logout(cx));
+        let error = unsupported_logout
+            .await
+            .expect_err("logout should be rejected when the agent does not advertise support");
+        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
+
+        Rc::get_mut(&mut harness.connection)
+            .expect("test harness should own the only ACP connection handle")
+            .agent_capabilities
+            .auth = acp::AgentAuthCapabilities::new().logout(acp::LogoutCapabilities::new());
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("acp-beta".to_string(), "off".to_string());
+                });
+            });
+        });
+        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
+        let disabled_logout = cx.update(|cx| harness.connection.logout(cx));
+        let error = disabled_logout
+            .await
+            .expect_err("logout should be rejected when acp-beta is disabled");
+        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("acp-beta".to_string(), "on".to_string());
+                });
+            });
+        });
+        assert!(cx.update(|cx| harness.connection.supports_logout(cx)));
+        cx.update(|cx| harness.connection.logout(cx))
+            .await
+            .expect("logout should be sent when the agent advertises support");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 1);
     }
 
     #[cfg(not(windows))]
