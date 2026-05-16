@@ -110,6 +110,19 @@ impl BranchDiff {
         &self.diff_base
     }
 
+    pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
+        if self.diff_base == diff_base {
+            return;
+        }
+
+        self.diff_base = diff_base;
+        self.tree_diff = None;
+        self.base_commit = None;
+        self.head_commit = None;
+        cx.emit(BranchDiffEvent::FileListChanged);
+        *self.update_needed.borrow_mut() = ();
+    }
+
     pub fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
         self.repo = repo;
         self.tree_diff = None;
@@ -256,20 +269,39 @@ impl BranchDiff {
                 this.tree_diff.take();
                 return None;
             };
+            let repo_id = repo.read(cx).id;
             repo.update(cx, |repo, cx| {
-                Some(repo.diff_tree(
-                    DiffTreeType::MergeBase {
-                        base: base_ref,
-                        head: "HEAD".into(),
+                Some((
+                    repo_id,
+                    DiffBase::Merge {
+                        base_ref: base_ref.clone(),
                     },
-                    cx,
+                    repo.diff_tree(
+                        DiffTreeType::MergeBase {
+                            base: base_ref,
+                            head: "HEAD".into(),
+                        },
+                        cx,
+                    ),
                 ))
             })
         })?;
         let Some(task) = task else { return Ok(()) };
 
-        let diff = task.await??;
+        let (repo_id, diff_base, diff) = {
+            let (repo_id, diff_base, diff) = task;
+            (repo_id, diff_base, diff.await??)
+        };
         this.update(cx, |this, cx| {
+            let is_stale = this.diff_base != diff_base
+                || this
+                    .repo
+                    .as_ref()
+                    .is_none_or(|repo| repo.read(cx).id != repo_id);
+            if is_stale {
+                return;
+            }
+
             this.tree_diff = Some(diff);
             cx.emit(BranchDiffEvent::FileListChanged);
             cx.notify();
