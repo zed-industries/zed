@@ -55,8 +55,8 @@ impl AlacMouseButton {
     fn from_button(e: MouseButton) -> Self {
         match e {
             gpui::MouseButton::Left => AlacMouseButton::LeftButton,
-            gpui::MouseButton::Right => AlacMouseButton::MiddleButton,
-            gpui::MouseButton::Middle => AlacMouseButton::RightButton,
+            gpui::MouseButton::Right => AlacMouseButton::RightButton,
+            gpui::MouseButton::Middle => AlacMouseButton::MiddleButton,
             gpui::MouseButton::Navigate(_) => AlacMouseButton::Other,
         }
     }
@@ -102,7 +102,7 @@ pub fn scroll_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{ScrollDelta, TouchPhase, point};
+    use gpui::{MouseButton, ScrollDelta, TouchPhase, point};
 
     #[test]
     fn scroll_report_repeats_for_negative_scroll_lines() {
@@ -138,6 +138,26 @@ mod tests {
             .collect();
 
         assert_eq!(reports.len(), 3);
+    }
+
+    #[test]
+    fn mouse_button_report_uses_terminal_button_codes() {
+        let grid_point = AlacPoint::new(GridLine(0), GridCol(0));
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        let modifiers = Modifiers::default();
+
+        assert_eq!(
+            mouse_button_report(grid_point, MouseButton::Left, modifiers, true, mode),
+            Some(b"\x1b[<0;1;1M".to_vec())
+        );
+        assert_eq!(
+            mouse_button_report(grid_point, MouseButton::Middle, modifiers, true, mode),
+            Some(b"\x1b[<1;1;1M".to_vec())
+        );
+        assert_eq!(
+            mouse_button_report(grid_point, MouseButton::Right, modifiers, true, mode),
+            Some(b"\x1b[<2;1;1M".to_vec())
+        );
     }
 }
 
