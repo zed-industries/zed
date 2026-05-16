@@ -1,8 +1,7 @@
 use crate::tools::edit_file_tool::*;
 use crate::{
-    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ListDirectoryTool,
-    ListDirectoryToolInput, ReadFileTool, ReadFileToolInput, Template, Templates, Thread,
-    ToolCallEventStream, ToolInput,
+    AgentTool, ContextServerRegistry, EditFileTool, GrepTool, GrepToolInput, ReadFileTool,
+    ReadFileToolInput, Template, Templates, Thread, ToolCallEventStream, ToolInput,
 };
 use Role::*;
 use anyhow::{Context as _, Result};
@@ -15,9 +14,8 @@ use language::language_settings::FormatOnSave;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    Role, SelectedModel,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, Role, SelectedModel,
 };
 use project::Project;
 use prompt_store::{ProjectContext, WorktreeContext};
@@ -125,20 +123,6 @@ impl EvalAssertion {
         EvalAssertion(Arc::new(f))
     }
 
-    fn assert_eq(expected: impl Into<String>) -> Self {
-        let expected = expected.into();
-        Self::new(async move |sample, _judge, _cx| {
-            Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
-                    100
-                } else {
-                    0
-                },
-                message: None,
-            })
-        })
-    }
-
     fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
         let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
         Self::new(async move |sample, _judge, _cx| {
@@ -218,12 +202,12 @@ impl EvalAssertion {
 }
 
 #[derive(Clone)]
-struct StreamingEditEvalOutput {
+struct EditEvalOutput {
     sample: EvalSample,
     assertion: EvalAssertionOutcome,
 }
 
-impl Display for StreamingEditEvalOutput {
+impl Display for EditEvalOutput {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "Score: {:?}", self.assertion.score)?;
         if let Some(message) = self.assertion.message.as_ref() {
@@ -241,7 +225,7 @@ struct EvalAssertionOutcome {
     message: Option<String>,
 }
 
-struct StreamingEditToolTest {
+struct EditToolTest {
     fs: Arc<FakeFs>,
     project: Entity<Project>,
     model: Arc<dyn LanguageModel>,
@@ -249,7 +233,7 @@ struct StreamingEditToolTest {
     model_thinking_effort: Option<String>,
 }
 
-impl StreamingEditToolTest {
+impl EditToolTest {
     async fn new(cx: &mut TestAppContext) -> Self {
         cx.executor().allow_parking();
 
@@ -349,29 +333,7 @@ impl StreamingEditToolTest {
         }))
     }
 
-    /// Build the tool definitions for the model, replacing `edit_file` with the
-    /// streaming edit file tool schema. In production the streaming tool is
-    /// exposed under the name `"edit_file"` (see `Thread::enabled_tools`), so
-    /// the model has never seen the name `"streaming_edit_file"`.
-    fn build_tools() -> Vec<LanguageModelRequestTool> {
-        let mut tools: Vec<LanguageModelRequestTool> = crate::built_in_tools()
-            .filter(|tool| tool.name != EditFileTool::NAME)
-            .collect();
-        tools.push(LanguageModelRequestTool {
-            name: EditFileTool::NAME.to_string(),
-            description: EditFileTool::description().to_string(),
-            input_schema: EditFileTool::input_schema(LanguageModelToolSchemaFormat::JsonSchema)
-                .to_value(),
-            use_input_streaming: EditFileTool::supports_input_streaming(),
-        });
-        tools
-    }
-
-    async fn eval(
-        &self,
-        mut eval: EvalInput,
-        cx: &mut TestAppContext,
-    ) -> Result<StreamingEditEvalOutput> {
+    async fn eval(&self, mut eval: EvalInput, cx: &mut TestAppContext) -> Result<EditEvalOutput> {
         eval.conversation
             .last_mut()
             .context("Conversation must not be empty")?
@@ -391,7 +353,7 @@ impl StreamingEditToolTest {
             cx.run_until_parked();
         }
 
-        let tools = Self::build_tools();
+        let tools = crate::built_in_tools().collect::<Vec<_>>();
 
         let system_prompt = {
             let worktrees = vec![WorktreeContext {
@@ -408,6 +370,8 @@ impl StreamingEditToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -440,7 +404,7 @@ impl StreamingEditToolTest {
         };
 
         // The model will call the tool as "edit_file" (the production-visible
-        // name), but the schema is from StreamingEditFileTool.
+        // name), but the schema is from EditFileTool.
         let tool_input =
             retry_on_rate_limit(async || self.extract_tool_use(request.clone(), cx).await).await?;
 
@@ -505,12 +469,11 @@ impl StreamingEditToolTest {
             .run(&sample, self.judge_model.clone(), cx)
             .await?;
 
-        Ok(StreamingEditEvalOutput { assertion, sample })
+        Ok(EditEvalOutput { assertion, sample })
     }
 
     /// Stream the model completion and extract the first complete tool use
-    /// whose name matches `EditFileTool::NAME` (the production-visible name
-    /// for the streaming edit tool), parsed as `StreamingEditFileToolInput`.
+    /// whose name matches `EditFileTool::NAME`, parsed as `EditFileToolInput`.
     async fn extract_tool_use(
         &self,
         request: LanguageModelRequest,
@@ -538,7 +501,7 @@ impl StreamingEditToolTest {
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
                     let input: EditFileToolInput = serde_json::from_value(tool_use.input)
-                        .context("Failed to parse tool input as StreamingEditFileToolInput")?;
+                        .context("Failed to parse tool input as EditFileToolInput")?;
                     return Ok(input);
                 }
                 Ok(LanguageModelCompletionEvent::Text(text)) => {
@@ -586,33 +549,25 @@ impl StreamingEditToolTest {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = StreamingEditToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: if output.assertion.score < 80 {
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = EditToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
+        },
+        |output| {
+            if output.assertion.score < 80 {
                 eval_utils::OutcomeKind::Failed
             } else {
                 eval_utils::OutcomeKind::Passed
-            },
-            metadata: (),
+            }
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+    )
 }
 
 fn message(
@@ -1520,49 +1475,6 @@ fn eval_add_overwrite_test() {
             EvalAssertion::judge_diff(
                 "A new test for overwritten files was created, without changing any previous test",
             ),
-        ))
-    });
-}
-
-#[test]
-#[cfg_attr(not(feature = "unit-eval"), ignore)]
-fn eval_create_empty_file() {
-    let input_file_path = "root/TODO3";
-    let input_file_content = None;
-    let expected_output_content = String::new();
-
-    eval_utils::eval(100, 0.99, eval_utils::NoProcessor, move || {
-        run_eval(EvalInput::new(
-            vec![
-                message(User, [text("Create a second empty todo file ")]),
-                message(
-                    Assistant,
-                    [
-                        text(indoc::formatdoc! {"
-                            I'll help you create a second empty todo file.
-                            First, let me examine the project structure to see if there's already a todo file, which will help me determine the appropriate name and location for the second one.
-                            "}),
-                        tool_use(
-                            "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                            ListDirectoryTool::NAME,
-                            ListDirectoryToolInput {
-                                path: "root".to_string(),
-                            },
-                        ),
-                    ],
-                ),
-                message(
-                    User,
-                    [tool_result(
-                        "toolu_01GAF8TtsgpjKxCr8fgQLDgR",
-                        ListDirectoryTool::NAME,
-                        "root/TODO\nroot/TODO2\nroot/new.txt\n",
-                    )],
-                ),
-            ],
-            input_file_path,
-            input_file_content.clone(),
-            EvalAssertion::assert_eq(expected_output_content.clone()),
         ))
     });
 }

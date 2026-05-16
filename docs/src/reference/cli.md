@@ -9,7 +9,7 @@ Use Zed's command-line interface (CLI) to open files and directories, integrate 
 
 ## Installation
 
-**macOS:** Run the `cli: install` command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
+**macOS:** Run the {#action cli::InstallCliBinary} command from the command palette ({#kb command_palette::Toggle}) to install the `zed` CLI to `/usr/local/bin/zed`.
 
 **Linux:** The CLI is included with Zed packages. The binary name may vary by distribution (commonly `zed` or `zeditor`).
 
@@ -85,6 +85,8 @@ Reuse an existing window, replacing its current workspace with the new paths:
 zed -r ~/projects/different-project
 ```
 
+By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
+
 ### `--diff <OLD_PATH> <NEW_PATH>`
 
 Open a diff view comparing two files. Can be specified multiple times:
@@ -154,11 +156,15 @@ This creates a temporary file with the stdin content and opens it in Zed.
 
 ## URL Handling
 
-The CLI can open `zed://`, `http://`, and `https://` URLs:
+The CLI can open `zed://`, `file://`, and `ssh://` URLs:
 
 ```sh
 zed zed://settings
-zed https://github.com/zed-industries/zed
+zed file:///Users/whatever/.zshrc
+zed ssh://me@example.com/abs/path
+zed ssh://me@example.com:/abs/path
+zed ssh://me@example.com/~/project
+zed ssh://me@example.com:~/project
 ```
 
 ## Using Zed as Your Default Editor

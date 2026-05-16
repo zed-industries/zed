@@ -8,7 +8,7 @@ use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Element, ElementId, Entity,
     GlobalElementId, Hitbox, InspectorElementId, InteractiveElement, Interactivity, IntoElement,
     IsZero, LayoutId, ListSizingBehavior, Overflow, Pixels, Point, ScrollHandle, Size,
-    StyleRefinement, Styled, Window, point, size,
+    StyleRefinement, Styled, Window, point, px, size,
 };
 use smallvec::SmallVec;
 use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
@@ -234,6 +234,18 @@ impl UniformListScrollHandle {
         } else {
             false
         }
+    }
+
+    /// Whether the list is scrolled to the end, or `None` if the list is
+    /// not scrollable.
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        let state = self.0.borrow();
+        let max_offset = state.base_handle.max_offset();
+        if max_offset.y <= px(0.) {
+            return None;
+        }
+        let offset = state.base_handle.offset();
+        Some(-offset.y >= max_offset.y)
     }
 
     /// Scroll to the bottom of the list.

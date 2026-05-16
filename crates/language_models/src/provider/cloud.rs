@@ -7,7 +7,7 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task};
+use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
@@ -42,7 +42,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         })
     }
 
-    fn acquire_token(
+    fn cached_token(
         &self,
         organization_id: Self::AuthContext,
     ) -> BoxFuture<'static, Result<String>> {
@@ -50,7 +50,7 @@ impl CloudLlmTokenProvider for ClientTokenProvider {
         let llm_api_token = self.llm_api_token.clone();
         Box::pin(async move {
             client
-                .acquire_llm_token(&llm_api_token, organization_id)
+                .cached_llm_token(&llm_api_token, organization_id)
                 .await
         })
     }

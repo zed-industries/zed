@@ -12,7 +12,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace, pane};
 
-use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes};
+use crate::branch_picker::{self, BranchList, DeleteBranch, FilterRemotes, ForceDeleteBranch};
 use crate::stash_picker::{self, DropStashItem, ShowStashItem, StashList};
 
 actions!(git_picker, [ActivateBranchesTab, ActivateStashTab,]);
@@ -295,6 +295,19 @@ impl GitPicker {
         }
     }
 
+    fn handle_force_delete_branch(
+        &mut self,
+        _: &ForceDeleteBranch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(branch_list) = &self.branch_list {
+            branch_list.update(cx, |list, cx| {
+                list.handle_force_delete(&ForceDeleteBranch, window, cx);
+            });
+        }
+    }
+
     fn handle_filter_remotes(
         &mut self,
         _: &FilterRemotes,
@@ -407,6 +420,7 @@ impl Render for GitPicker {
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(self.tab == GitPickerTab::Branches, |el| {
                 el.on_action(cx.listener(Self::handle_delete_branch))
+                    .on_action(cx.listener(Self::handle_force_delete_branch))
                     .on_action(cx.listener(Self::handle_filter_remotes))
             })
             .when(self.tab == GitPickerTab::Stash, |el| {

@@ -3,8 +3,8 @@ use client::Client;
 use db::kvp::KeyValueStore;
 use futures_lite::StreamExt;
 use gpui::{
-    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, Window,
-    actions,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, Context, Entity, Global, Task, TaskExt,
+    Window, actions,
 };
 use http_client::{HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -42,6 +42,7 @@ impl std::fmt::Display for MissingDependencyError {
 
 impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
 #[cfg(target_os = "linux")]
@@ -81,6 +82,11 @@ fn linux_rsync_install_hint() -> &'static str {
             || distribution_id == "almalinux"
     }) {
         Some("Install it with: sudo dnf install rsync")
+    } else if distribution_ids
+        .iter()
+        .any(|distribution_id| distribution_id == "nixos")
+    {
+        Some("Install pkgs.rsync from nixpkgs")
     } else {
         None
     };
@@ -414,6 +420,12 @@ impl AutoUpdater {
     }
 
     pub fn start_polling(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let poll_interval =
+            ReleaseChannel::try_global(cx).map_or(POLL_INTERVAL, |channel| match channel {
+                ReleaseChannel::Nightly => NIGHTLY_POLL_INTERVAL,
+                _ => POLL_INTERVAL,
+            });
+
         cx.spawn(async move |this, cx| {
             if cfg!(target_os = "windows") {
                 use util::ResultExt;
@@ -426,7 +438,7 @@ impl AutoUpdater {
 
             loop {
                 this.update(cx, |this, cx| this.poll(UpdateCheckType::Automatic, cx))?;
-                cx.background_executor().timer(POLL_INTERVAL).await;
+                cx.background_executor().timer(poll_interval).await;
             }
         })
     }
@@ -1104,8 +1116,7 @@ async fn install_release_windows(downloaded_installer: &Path) -> Result<Option<P
     let mut cmd = new_command(downloaded_installer);
     cmd.arg("/verysilent")
         .arg("/update=true")
-        .arg("!desktopicon")
-        .arg("!quicklaunchicon");
+        .arg("/MERGETASKS=!desktopicon");
     let output = cmd.output().await?;
     anyhow::ensure!(
         output.status.success(),

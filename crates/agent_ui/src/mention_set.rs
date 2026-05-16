@@ -140,6 +140,9 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => self.confirm_mention_for_skill(skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -170,12 +173,26 @@ impl MentionSet {
         self.mentions.keys().cloned().collect()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.mentions.is_empty()
+    }
+
     pub fn mentions(&self) -> HashSet<MentionUri> {
         self.mentions.values().map(|(uri, _)| uri.clone()).collect()
     }
 
     pub fn mention_uri_for_crease(&self, crease_id: &CreaseId) -> Option<MentionUri> {
         self.mentions.get(crease_id).map(|(uri, _)| uri.clone())
+    }
+
+    /// Returns the resolved mention for a crease, if any.
+    pub fn resolved_mention_for_crease(
+        &self,
+        crease_id: &CreaseId,
+    ) -> Option<(MentionUri, Option<Mention>)> {
+        let (uri, task) = self.mentions.get(crease_id)?;
+        let mention = task.clone().now_or_never().and_then(|result| result.ok());
+        Some((uri.clone(), mention))
     }
 
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
@@ -275,6 +292,9 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => self.confirm_mention_for_skill(skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -423,6 +443,26 @@ impl MentionSet {
                 }
             });
             Ok(mention)
+        })
+    }
+
+    fn confirm_mention_for_skill(
+        &self,
+        skill_file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        cx.background_spawn(async move {
+            let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
+                anyhow!(
+                    "Failed to read skill file {}: {}",
+                    skill_file_path.display(),
+                    e
+                )
+            })?;
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
+            })
         })
     }
 

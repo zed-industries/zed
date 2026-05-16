@@ -59,6 +59,9 @@ pub struct ThemeSettings {
     /// The font family to use for rendering in the markdown preview.
     /// Falls back to the UI font family if unset.
     markdown_preview_font_family: Option<SharedString>,
+    /// The font family to use for code in the markdown preview.
+    /// Falls back to the buffer font family if unset.
+    markdown_preview_code_font_family: Option<SharedString>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
@@ -415,6 +418,14 @@ impl ThemeSettings {
             .unwrap_or(&self.ui_font.family)
     }
 
+    /// Returns the font family to use for code in the markdown preview,
+    /// falling back to the buffer font family when unset.
+    pub fn markdown_preview_code_font_family(&self) -> &SharedString {
+        self.markdown_preview_code_font_family
+            .as_ref()
+            .unwrap_or(&self.buffer_font.family)
+    }
+
     /// Returns the buffer font size, read from the settings.
     ///
     /// The real buffer font size is stored in-memory, to support temporary font size changes.
@@ -476,10 +487,12 @@ impl ThemeSettings {
         }
         let status_color_refinement = status_colors_refinement(&theme_overrides.status);
 
-        base_theme.styles.colors.refine(&theme_colors_refinement(
+        let theme_color_refinement = theme_colors_refinement(
             &theme_overrides.colors,
             &status_color_refinement,
-        ));
+            base_theme.appearance.is_light(),
+        );
+        base_theme.styles.colors.refine(&theme_color_refinement);
         base_theme.styles.status.refine(&status_color_refinement);
         merge_player_colors(&mut base_theme.styles.player, &theme_overrides.players);
         merge_accent_colors(&mut base_theme.styles.accents, &theme_overrides.accents);
@@ -647,6 +660,10 @@ impl settings::Settings for ThemeSettings {
             agent_buffer_font_size: content.agent_buffer_font_size.map(|s| s.into_gpui()),
             markdown_preview_font_family: content
                 .markdown_preview_font_family
+                .as_ref()
+                .map(|f| f.0.clone().into()),
+            markdown_preview_code_font_family: content
+                .markdown_preview_code_font_family
                 .as_ref()
                 .map(|f| f.0.clone().into()),
             markdown_preview_theme: content
