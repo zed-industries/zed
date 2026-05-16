@@ -279,7 +279,12 @@ impl NodeRuntime {
             .context("getting npm before config")
             .log_err()
             .flatten();
-        select_npm_package_version(name, info, before.as_deref())
+        let latest_dist_tag = info.dist_tags.latest.clone();
+        let selected_version = select_npm_package_version(name, info, before.as_deref())?;
+        log::debug!(
+            "selected latest npm package version package={name:?} before={before:?} dist_tag_latest={latest_dist_tag:?} selected={selected_version}"
+        );
+        Ok(selected_version)
     }
 
     pub async fn npm_install_packages(
@@ -290,6 +295,11 @@ impl NodeRuntime {
         if packages.is_empty() {
             return Ok(());
         }
+
+        log::debug!(
+            "installing npm packages directory={} packages={packages:?}",
+            directory.display()
+        );
 
         let packages: Vec<_> = packages
             .iter()
@@ -322,6 +332,10 @@ impl NodeRuntime {
         package_names: &[&str],
     ) -> Result<()> {
         // Let npm apply user config such as `before` and `min-release-age` during resolution.
+        log::debug!(
+            "installing latest npm packages directory={} packages={package_names:?}",
+            directory.display()
+        );
         let packages = package_names
             .iter()
             .map(|package_name| (*package_name, "latest"))
@@ -340,6 +354,10 @@ impl NodeRuntime {
         // or in the instances where we fail to parse package.json data,
         // we attempt to install the package.
         if fs::metadata(local_executable_path).await.is_err() {
+            log::debug!(
+                "npm package cache miss package={package_name:?} reason=missing-executable executable={}",
+                local_executable_path.display()
+            );
             return true;
         }
 
@@ -349,10 +367,23 @@ impl NodeRuntime {
             .log_err()
             .flatten()
         else {
+            log::debug!(
+                "npm package cache miss package={package_name:?} reason=missing-installed-version package_dir={}",
+                local_package_directory.display()
+            );
             return true;
         };
 
-        should_install_npm_package_version(&installed_version, version_strategy)
+        let version_strategy_label = match &version_strategy {
+            VersionStrategy::Pin(version) => format!("pin:{version}"),
+            VersionStrategy::Latest(version) => format!("latest:{version}"),
+        };
+        let should_install =
+            should_install_npm_package_version(&installed_version, version_strategy);
+        log::debug!(
+            "npm package cache check package={package_name:?} installed={installed_version} strategy={version_strategy_label} should_install={should_install}"
+        );
+        should_install
     }
 }
 
