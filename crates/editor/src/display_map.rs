@@ -179,7 +179,6 @@ pub enum HighlightKey {
     InputComposition,
     MatchingBracket,
     NavigationOverlay(NavigationOverlayKey),
-    NavigationOverlayDimmedText(NavigationOverlayKey),
     PendingInput,
     ProjectSearchView,
     Rename,
@@ -187,6 +186,7 @@ pub enum HighlightKey {
     SelectedTextHighlight,
     SyntaxTreeView(usize),
     VimExchange,
+    VimHelixJumpDimmedText,
 }
 
 pub trait ToDisplayPoint {

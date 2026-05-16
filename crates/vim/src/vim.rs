@@ -1754,10 +1754,7 @@ impl Vim {
     fn clear_helix_jump_ui(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.update_editor(cx, move |_, editor, cx| {
             editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
-            editor.clear_highlights(
-                HighlightKey::NavigationOverlayDimmedText(HELIX_JUMP_OVERLAY_KEY),
-                cx,
-            );
+            editor.clear_highlights(HighlightKey::VimHelixJumpDimmedText, cx);
         });
     }
 
@@ -1773,7 +1770,7 @@ impl Vim {
             editor.set_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, overlays, cx);
             if let Some(dimmed_text_range) = dimmed_text_range {
                 editor.highlight_text(
-                    HighlightKey::NavigationOverlayDimmedText(HELIX_JUMP_OVERLAY_KEY),
+                    HighlightKey::VimHelixJumpDimmedText,
                     vec![dimmed_text_range],
                     HighlightStyle {
                         color: Some(cx.theme().colors().text_muted.grayscale()),

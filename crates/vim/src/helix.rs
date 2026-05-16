@@ -1832,9 +1832,7 @@ mod test {
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             snapshot
-                .text_highlight_ranges(HighlightKey::NavigationOverlayDimmedText(
-                    HELIX_JUMP_OVERLAY_KEY,
-                ))
+                .text_highlight_ranges(HighlightKey::VimHelixJumpDimmedText)
                 .map(|ranges| {
                     let (style, ranges) = ranges.as_ref();
                     (style.color, ranges.len())
