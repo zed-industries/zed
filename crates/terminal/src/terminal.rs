@@ -86,6 +86,9 @@ actions!(
         Paste,
         /// Pastes the text from the clipboard.
         PasteText,
+        /// Pastes from the primary selection (Linux only).
+        /// On non-Linux platforms, falls back to clipboard paste.
+        PastePrimarySelection,
         /// Shows the character palette for special characters.
         ShowCharacterPalette,
         /// Searches for text in the terminal.

@@ -10222,6 +10222,32 @@ impl Editor {
         }
     }
 
+    pub fn paste_primary_selection(
+        &mut self,
+        _: &PastePrimarySelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.read_only(cx) {
+            return;
+        }
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            if let Some(item) = cx.read_from_primary() {
+                if let Some(text) = item.text() {
+                    self.do_paste(&text, None, true, window, cx);
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        {
+            if let Some(item) = cx.read_from_clipboard() {
+                self.paste_item(&item, window, cx);
+            }
+        }
+    }
+
     pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
