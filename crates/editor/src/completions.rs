@@ -310,9 +310,15 @@ impl Editor {
 
         drop(multibuffer_snapshot);
 
+        let is_showing_snippet_choices = matches!(
+            completions_source,
+            Some(CompletionsMenuSource::SnippetChoices)
+        );
+
         // Hide the current completions menu when query is empty. Without this, cached
-        // completions from before the trigger char may be reused (#32774).
-        if query.is_none() && menu_is_open {
+        // completions from before the trigger char may be reused (#32774). Keep snippet
+        // choice menus open so choice placeholders remain visible after snippet insertion.
+        if query.is_none() && menu_is_open && !is_showing_snippet_choices {
             self.hide_context_menu(window, cx);
         }
 
