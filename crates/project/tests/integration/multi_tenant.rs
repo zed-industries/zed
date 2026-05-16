@@ -80,6 +80,76 @@ async fn open_buffer(
         .unwrap()
 }
 
+async fn two_projects_with_disjoint_git_worktrees(
+    cx: &mut TestAppContext,
+) -> (Arc<FakeFs>, Entity<Project>, Entity<Project>) {
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repos"),
+        json!({
+            "alpha": {
+                ".git": {},
+                "src": { "lib.rs": "fn alpha() {}\n" },
+            },
+            "beta": {
+                ".git": {},
+                "src": { "lib.rs": "fn beta() {}\n" },
+            },
+        }),
+    )
+    .await;
+
+    let project_a = Project::test(fs.clone(), [path!("/repos/alpha").as_ref()], cx).await;
+    let project_b = Project::test(fs.clone(), [path!("/repos/beta").as_ref()], cx).await;
+    cx.run_until_parked();
+    project_a
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_b
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let git_store_a = project_a.read_with(cx, |project, cx| project.git_store(cx));
+    let git_store_b = project_b.read_with(cx, |project, cx| project.git_store(cx));
+    assert_eq!(
+        git_store_a.entity_id(),
+        git_store_b.entity_id(),
+        "both projects must share a single GitStore for this regression"
+    );
+
+    (fs, project_a, project_b)
+}
+
+#[gpui::test]
+async fn test_active_repository_is_scoped_to_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let (_fs, project_a, project_b) = two_projects_with_disjoint_git_worktrees(cx).await;
+
+    let active_repo_a = project_a.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+    });
+    let active_repo_b = project_b.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .map(|repo| repo.read(cx).work_directory_abs_path.clone())
+    });
+
+    assert_eq!(
+        active_repo_a.as_deref(),
+        Some(Path::new(path!("/repos/alpha"))),
+        "project_a should use its own repository as active"
+    );
+    assert_eq!(
+        active_repo_b.as_deref(),
+        Some(Path::new(path!("/repos/beta"))),
+        "project_b should use its own repository as active, not the shared GitStore's active repository"
+    );
+}
+
 // ────────────────────────────────────────────────────────────────
 // BookmarkStore
 // ────────────────────────────────────────────────────────────────
