@@ -393,8 +393,8 @@ impl ThreadView {
         let session_id = thread.read(cx).session_id().clone();
         let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
-        let has_commands = !session_capabilities.read().available_commands().is_empty();
-        let placeholder = placeholder_text(agent_display_name.as_ref(), has_commands);
+        let has_slash_completions = session_capabilities.read().has_slash_completions();
+        let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
         let mut should_auto_submit = false;
         let mut show_external_source_prompt_warning = false;
@@ -1029,7 +1029,7 @@ impl ThreadView {
                     .read()
                     .available_commands()
                     .iter()
-                    .any(|command| command.name == "logout");
+                    .any(|available_command| available_command.name == "logout");
             if can_login && !logout_supported {
                 message_editor.update(cx, |editor, cx| editor.clear(window, cx));
                 self.clear_external_source_prompt_warning(cx);
@@ -3777,7 +3777,7 @@ impl ThreadView {
         let thread = self.as_native_thread(cx)?.read(cx);
 
         let (tooltip_label, color, icon) = if matches!(thread.speed(), Some(Speed::Fast)) {
-            ("Disable Fast Mode", Color::Muted, IconName::FastForward)
+            ("Disable Fast Mode", Color::Accent, IconName::FastForward)
         } else {
             (
                 "Enable Fast Mode",
@@ -4229,8 +4229,8 @@ impl ThreadView {
                         }),
                 )
                 .item(
-                    ContextMenuEntry::new("Rules")
-                        .icon(IconName::Reader)
+                    ContextMenuEntry::new("Skills")
+                        .icon(IconName::Sparkle)
                         .icon_color(Color::Muted)
                         .icon_size(IconSize::XSmall)
                         .handler({
@@ -4238,7 +4238,7 @@ impl ThreadView {
                             move |window, cx| {
                                 message_editor.focus_handle(cx).focus(window, cx);
                                 message_editor.update(cx, |editor, cx| {
-                                    editor.insert_context_type("rule", window, cx);
+                                    editor.insert_context_type("skill", window, cx);
                                 });
                             }
                         }),
@@ -9186,9 +9186,6 @@ impl Render for ThreadView {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
@@ -9409,6 +9406,21 @@ pub(crate) fn open_link(
             MentionUri::TerminalSelection { .. } => {}
             MentionUri::GitDiff { .. } => {}
             MentionUri::MergeConflict { .. } => {}
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => {
+                workspace
+                    .open_abs_path(
+                        skill_file_path,
+                        workspace::OpenOptions {
+                            focus: Some(true),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            }
         })
     } else {
         cx.open_url(&url);

@@ -60,6 +60,7 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer, SelectionEffects};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -2169,7 +2170,15 @@ impl AgentPanel {
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
-                if focus {
+                // If we're already viewing the draft as the base view but an
+                // overlay (e.g. Settings) is covering it, clear the overlay
+                // so the user actually sees the draft they asked for.
+                // Otherwise pressing "New Thread" from the Settings panel is
+                // a silent no-op because the early return below would leave
+                // the overlay on top of the draft.
+                if self.overlay_view.is_some() {
+                    self.clear_overlay(focus, window, cx);
+                } else if focus {
                     self.focus_handle(cx).focus(window, cx);
                 }
                 return;
@@ -4167,7 +4176,9 @@ impl AgentPanel {
             .overflow_x_hidden()
             .child(content)
             .when(
-                self.has_open_project(cx) && !self.is_title_editor_focused(window, cx),
+                matches!(self.visible_surface(), VisibleSurface::AgentThread(_))
+                    && self.has_open_project(cx)
+                    && !self.is_title_editor_focused(window, cx),
                 |this| {
                     this.child(gradient_overlay).child(
                         h_flex()
@@ -4247,6 +4258,12 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
+                    // When the Skills feature flag is on, hide the legacy Rules menu entry.
+                    // The flag is read from a global store populated asynchronously, and
+                    // this menu builder runs on every open, so the latest resolved value is
+                    // reflected when the user clicks the ellipsis.
+                    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
@@ -4281,9 +4298,13 @@ impl AgentPanel {
                                     }),
                                 )
                                 .action("Add Custom Server…", Box::new(AddContextServer))
-                                .separator()
-                                .action("Rules", Box::new(OpenRulesLibrary::default()))
-                                .action("Profiles", Box::new(ManageProfiles::default()));
+                                .separator();
+
+                            if !skills_enabled {
+                                menu = menu.action("Rules", Box::new(OpenRulesLibrary::default()));
+                            }
+
+                            menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
                         menu = menu
@@ -6758,6 +6779,63 @@ mod tests {
             assert_eq!(panel.active_terminal_id(), None);
             assert!(panel.has_terminal(terminal_id));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_dismisses_settings_overlay(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        // Put the panel on its ephemeral new-draft view so the base view
+        // already contains the draft that `NewThread` would activate.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_view_is_new_draft(cx),
+                "precondition: base view should be the ephemeral draft"
+            );
+            assert!(!panel.is_overlay_open());
+        });
+
+        // Simulate the Settings overlay being open on top of the draft.
+        // We don't go through `open_configuration` here because it would
+        // build provider configuration views, which call into
+        // `LanguageModelProvider::configuration_view` — unimplemented for
+        // the fake provider used in tests. The bug being exercised lives
+        // entirely in the overlay/base-view bookkeeping, so toggling the
+        // overlay flag directly is sufficient.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.set_overlay(OverlayView::Configuration, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.is_overlay_open(),
+                "precondition: Settings overlay should be open"
+            );
+        });
+
+        // Dispatching `NewThread` while Settings is open must dismiss the
+        // overlay so the user actually sees the new thread. Previously
+        // this was a silent no-op: `activate_draft` early-returned without
+        // clearing the overlay because the base view already held the
+        // draft.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                !panel.is_overlay_open(),
+                "Settings overlay should be dismissed when invoking NewThread"
+            );
+            assert!(panel.active_view_is_new_draft(cx));
         });
     }
 

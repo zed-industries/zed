@@ -1698,16 +1698,6 @@ impl EditPredictionStore {
                     ..
                 } = pending_prediction;
                 let settled_editable_region_for_metrics = settled_editable_region.clone();
-                let kept_rate_result = cx
-                    .background_spawn(async move {
-                        compute_kept_rate(
-                            &editable_region_before_prediction,
-                            &predicted_editable_region,
-                            &settled_editable_region_for_metrics,
-                        )
-                    })
-                    .await;
-
                 #[cfg(test)]
                 {
                     let request_id = request_id.clone();
@@ -1718,12 +1708,17 @@ impl EditPredictionStore {
                         }
                     });
                 }
-
                 cx.background_spawn({
                     let client = client.clone();
                     let llm_token = llm_token.clone();
                     let app_version = app_version.clone();
                     async move {
+                        let kept_rate_result = compute_kept_rate(
+                            &editable_region_before_prediction,
+                            &predicted_editable_region,
+                            &settled_editable_region_for_metrics,
+                        );
+
                         let result: anyhow::Result<()> = async {
                             let settled_editable_region =
                                 can_collect_data.then_some(settled_editable_region);
@@ -1756,6 +1751,10 @@ impl EditPredictionStore {
                                 model_version,
                                 e2e_latency_ms: e2e_latency.as_millis(),
                             };
+
+                            let json_bytes = serde_json::to_vec(&body)?;
+                            let compressed = zstd::encode_all(&json_bytes[..], 3)?;
+
                             let url = client
                                 .http_client()
                                 .build_zed_llm_url("/predict_edits/settled", &[])?;
@@ -1763,7 +1762,8 @@ impl EditPredictionStore {
                                 |builder| {
                                     Ok(builder
                                         .uri(url.as_ref())
-                                        .body(serde_json::to_string(&body)?.into())?)
+                                        .header("Content-Encoding", "zstd")
+                                        .body(compressed.clone().into())?)
                                 },
                                 client,
                                 llm_token,

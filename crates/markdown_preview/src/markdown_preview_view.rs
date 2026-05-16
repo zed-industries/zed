@@ -1020,7 +1020,9 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(bg_color)
             .child(
                 div()

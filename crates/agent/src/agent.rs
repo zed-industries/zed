@@ -91,6 +91,25 @@ pub struct SkillLoadingErrorsUpdated {
     pub errors: Vec<SkillLoadingError>,
 }
 
+#[derive(Clone, Debug)]
+pub struct NativeAvailableSkill {
+    pub name: String,
+    pub description: String,
+    pub source: SharedString,
+    pub skill_file_path: PathBuf,
+}
+
+impl From<&Skill> for NativeAvailableSkill {
+    fn from(skill: &Skill) -> Self {
+        Self {
+            name: skill.name.clone(),
+            description: skill.description.clone(),
+            source: skill.source.scope_prefix().to_string().into(),
+            skill_file_path: skill.skill_file_path.clone(),
+        }
+    }
+}
+
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
@@ -1266,21 +1285,7 @@ impl NativeAgent {
             Some(command)
         });
 
-        // Skills are exposed as slash commands regardless of
-        // `disable_model_invocation`. The flag controls catalog visibility
-        // for the model, not user-driven invocation — that's the whole
-        // point of marking a skill model-disabled.
-        let skill_commands = state.skills.iter().map(|skill| {
-            // The meta carries the literal scope prefix the popup
-            // inserts as `/<prefix>:<name>`: empty for globals (so
-            // the inserted text is `/:<name>`) and the worktree root
-            // name for project-locals. See `SkillSource::scope_prefix`.
-            acp::AvailableCommand::new(skill.name.clone(), skill.description.clone()).meta(
-                acp_thread::meta_with_skill_source(skill.source.scope_prefix()),
-            )
-        });
-
-        mcp_commands.chain(skill_commands).collect()
+        mcp_commands.collect()
     }
 
     pub fn load_thread(
@@ -1719,6 +1724,24 @@ impl NativeAgentConnection {
     pub fn ensure_skills_scan_started(&self, cx: &mut App) {
         self.0
             .update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+    }
+
+    pub fn available_skills(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Vec<NativeAvailableSkill> {
+        self.0
+            .read(cx)
+            .session_project_state(session_id)
+            .map(|state| {
+                state
+                    .skills
+                    .iter()
+                    .map(NativeAvailableSkill::from)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn load_thread(
@@ -3807,7 +3830,7 @@ mod internal_tests {
     }
 
     #[gpui::test]
-    async fn test_skills_appear_as_slash_commands(cx: &mut TestAppContext) {
+    async fn test_skills_appear_as_available_skills(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
             cx.update_flags(true, vec!["skills".to_string()]);
@@ -3816,8 +3839,8 @@ mod internal_tests {
         let skills_dir = global_skills_dir();
 
         // Two skills: one model-invocable (default), one slash-only via
-        // `disable-model-invocation: true`. Both should still appear as
-        // slash commands.
+        // `disable-model-invocation: true`. Both should still appear in
+        // the slash menu as first-class skills.
         let visible_dir = skills_dir.join("visible-skill");
         fs.create_dir(&visible_dir).await.unwrap();
         fs.insert_file(
@@ -3841,9 +3864,9 @@ mod internal_tests {
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
 
         let connection = NativeAgentConnection(agent.clone());
-        let _acp_thread = cx
+        let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection).new_session(
+                Rc::new(connection.clone()).new_session(
                     project.clone(),
                     PathList::new(&[Path::new("/")]),
                     cx,
@@ -3854,8 +3877,8 @@ mod internal_tests {
         cx.run_until_parked();
 
         let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
 
-        // Both skills should be exposed as slash commands.
         agent.read_with(cx, |agent, cx| {
             let commands = NativeAgent::build_available_commands_for_project(
                 agent.projects.get(&project_id),
@@ -3863,12 +3886,25 @@ mod internal_tests {
             );
             let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
             assert!(
+                !names.contains(&"visible-skill"),
+                "skills should not be exposed as ACP slash commands: {names:?}"
+            );
+            assert!(
+                !names.contains(&"deploy"),
+                "slash-only skills should not be exposed as ACP slash commands: {names:?}"
+            );
+        });
+
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+            assert!(
                 names.contains(&"visible-skill"),
-                "visible skill missing from slash commands: {names:?}"
+                "visible skill missing from available skills: {names:?}"
             );
             assert!(
                 names.contains(&"deploy"),
-                "slash-only skill missing from slash commands: {names:?}"
+                "slash-only skill missing from available skills: {names:?}"
             );
         });
 
@@ -3927,9 +3963,9 @@ mod internal_tests {
             cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), None, fs.clone(), cx));
 
         let connection = NativeAgentConnection(agent.clone());
-        let _acp_thread = cx
+        let acp_thread = cx
             .update(|cx| {
-                Rc::new(connection).new_session(
+                Rc::new(connection.clone()).new_session(
                     project.clone(),
                     PathList::new(&[Path::new("/project")]),
                     cx,
@@ -3940,6 +3976,7 @@ mod internal_tests {
         cx.run_until_parked();
 
         let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
         let worktree_id = project.read_with(cx, |project, cx| {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
@@ -3980,15 +4017,18 @@ mod internal_tests {
         });
         cx.run_until_parked();
 
-        agent.read_with(cx, |agent, cx| {
+        agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["my-skill"]);
-            let commands = NativeAgent::build_available_commands_for_project(Some(state), cx);
-            let command_names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+        });
+
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
             assert!(
-                command_names.contains(&"my-skill"),
-                "trusted skill should appear in slash commands: {command_names:?}"
+                skill_names.contains(&"my-skill"),
+                "trusted skill should appear in available skills: {skill_names:?}"
             );
         });
     }

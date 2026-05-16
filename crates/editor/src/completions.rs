@@ -598,6 +598,7 @@ impl Editor {
                 },
                 insert_text_mode: Some(InsertTextMode::AS_IS),
                 confirm: None,
+                group: None,
             }));
 
             completions.extend(
@@ -775,7 +776,8 @@ impl Editor {
 
         let candidate_id = {
             let entries = completions_menu.entries.borrow();
-            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let entry = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let mat = entry.as_match()?;
             if self.show_edit_predictions_in_menu() {
                 self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
             }
@@ -1347,6 +1349,7 @@ fn snippet_completions(
                     confirm: None,
                     match_start: Some(start),
                     snippet_deduplication_key: Some((snippet_index, prefix_index)),
+                    group: None,
                 }
             }));
         }

@@ -22344,7 +22344,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
                         .entries
                         .borrow()
                         .iter()
-                        .map(|mat| mat.string.clone())
+                        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                         .collect::<Vec<String>>(),
                     items
                         .iter()
@@ -22496,7 +22496,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries.iter().map(|mat| mat.string.clone()).collect()
+    entries
+        .iter()
+        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
+        .collect()
 }
 
 #[gpui::test]
@@ -31415,7 +31418,8 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
             let entries = menu.entries.borrow();
             let entries = entries
                 .iter()
-                .map(|entry| entry.string.as_str())
+                .filter_map(|entry| entry.as_match())
+                .map(|m| m.string.as_str())
                 .collect::<Vec<_>>();
             assert_eq!(entries, expected);
         } else {
@@ -31502,7 +31506,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
                 let entries = context_menu.entries.borrow();
                 entries
                     .iter()
-                    .map(|entry| entry.string.clone())
+                    .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                     .collect_vec()
             }
             _ => vec![],

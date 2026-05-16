@@ -70,6 +70,9 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(run_platform_tests(Platform::Mac)),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(miri_scheduler()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
         should_run_tests
             .and_not_in_merge_queue()
@@ -687,6 +690,29 @@ pub(crate) fn check_postgres_and_protobuf_migrations() -> NamedJob {
             .add_step(bufbuild_breaking_action())
             .add_step(buf_lint())
             .add_step(check_protobuf_formatting()),
+    )
+}
+
+fn miri_scheduler() -> NamedJob {
+    fn install_miri() -> Step<Run> {
+        named::bash(
+            "rustup toolchain install nightly --profile minimal --component miri --component rust-src",
+        )
+    }
+
+    fn run_scheduler_tests_under_miri() -> Step<Run> {
+        named::bash("cargo +nightly -q miri test -p scheduler")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_miri())
+            .add_step(run_scheduler_tests_under_miri())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }
 
