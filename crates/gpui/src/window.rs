@@ -2781,13 +2781,14 @@ impl Window {
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     fn record_frame_diagnostics(&self, diagnostics: FrameDiagnostics) {
-        if !crate::devtools::enabled() {
+        let window_id = self.handle.window_id();
+        if !crate::devtools::enabled() || !crate::devtools::window_open(window_id) {
             return;
         }
 
         let stats = self.rendered_frame.scene.stats();
         crate::devtools::record_frame(crate::devtools::FrameEvent {
-            window_id: self.handle.window_id(),
+            window_id,
             reason: diagnostics.reason.as_str(),
             dirty_before_frame: diagnostics.dirty_before_frame,
             dirty_view_count: diagnostics.dirty_view_count,

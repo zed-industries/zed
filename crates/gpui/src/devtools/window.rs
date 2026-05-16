@@ -5,7 +5,7 @@ use super::{
 };
 use crate::prelude::*;
 use crate::{
-    AnyElement, App, Context, EntityId, Pixels, Subscription, TitlebarOptions, Window,
+    AnyElement, App, Context, ElementId, EntityId, Pixels, Subscription, TitlebarOptions, Window,
     WindowBounds, WindowId, WindowKind, WindowOptions, div, hsla, point, px, rgba, size,
 };
 use collections::{FxHashMap, FxHashSet};
@@ -378,7 +378,7 @@ enum ActiveAnimationSource<'a> {
     },
     ElementTick {
         entity_id: EntityId,
-        element_id: &'a str,
+        element_id: &'a ElementId,
         animation_index: usize,
         duration: Duration,
     },

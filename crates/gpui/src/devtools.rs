@@ -64,6 +64,14 @@ pub(crate) fn forget_window(window_id: WindowId) {
     GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
 }
 
+pub(crate) fn forget_entity(entity_id: EntityId) {
+    if !enabled() {
+        return;
+    }
+
+    GPUI_DEVTOOLS.write().forget_entity(entity_id);
+}
+
 pub(crate) fn record_notify(event: NotifyEvent) {
     if !enabled() {
         return;
@@ -174,14 +182,13 @@ pub(crate) fn record_view_render(event: ViewRenderEvent) {
     let mut stats = RenderSourceStats::from_event(&event);
     stats.cause = cause;
     devtools.render_source_last_stats.insert(source, stats);
-
-    if let Some(bounds) = event.bounds
-        && devtools.paused_at.is_none()
-    {
-        devtools
-            .window_state(event.window_id)
-            .view_bounds
-            .insert(event.entity_id, bounds);
+    if devtools.paused_at.is_none() {
+        if let Some(bounds) = event.bounds {
+            devtools
+                .window_state(event.window_id)
+                .view_bounds
+                .insert(event.entity_id, bounds);
+        }
     }
 
     devtools.renders.push(event);
@@ -209,7 +216,7 @@ fn close_source_window(window_id: WindowId) {
     GPUI_DEVTOOLS_ENABLED.store(any_window_open, SeqCst);
 }
 
-fn window_open(window_id: WindowId) -> bool {
+pub(crate) fn window_open(window_id: WindowId) -> bool {
     GPUI_DEVTOOLS.read().is_window_open(window_id)
 }
 
@@ -436,7 +443,7 @@ enum AnimationEventKind {
         caller_column: u32,
     },
     ElementTick {
-        element_id: String,
+        element_id: ElementId,
         animation_index: usize,
         duration: Duration,
         repeats: bool,
@@ -476,7 +483,7 @@ pub(crate) fn animation_element_tick_event(
         entity_id,
         entity_type,
         kind: AnimationEventKind::ElementTick {
-            element_id: format!("{element_id:?}"),
+            element_id: element_id.clone(),
             animation_index,
             duration,
             repeats,
@@ -547,6 +554,24 @@ impl GpuiDevTools {
     fn forget_window(&mut self, window_id: WindowId) {
         self.open_windows.remove(&window_id);
         self.windows.remove(&window_id);
+    }
+
+    fn forget_entity(&mut self, entity_id: EntityId) {
+        self.latest_cause_by_entity.remove(&entity_id);
+        self.latest_cause_by_render_source
+            .retain(|source, cause| source.entity_id != entity_id && cause.entity_id != entity_id);
+        self.render_source_last_stats.retain(|source, stats| {
+            source.entity_id != entity_id
+                && stats.cause.is_none_or(|cause| cause.entity_id != entity_id)
+        });
+        for window_state in self.windows.values_mut() {
+            window_state
+                .latest_dirty_cause_by_entity
+                .retain(|dirty_entity_id, cause| {
+                    *dirty_entity_id != entity_id && cause.entity_id != entity_id
+                });
+            window_state.view_bounds.remove(&entity_id);
+        }
     }
 
     fn pause(&mut self, now: Instant) {

@@ -210,7 +210,10 @@ impl EntityMap {
                 );
                 accessed_entities.remove(&entity_id);
                 #[cfg(any(feature = "inspector", debug_assertions))]
-                self.type_names.remove(entity_id);
+                {
+                    self.type_names.remove(entity_id);
+                    crate::devtools::forget_entity(entity_id);
+                }
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
