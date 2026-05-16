@@ -527,6 +527,7 @@ pub fn init(cx: &mut App) {
 
                         agent_panel.update(cx, |panel, cx| {
                             panel.last_context_source = Some(source);
+                            panel.ensure_thread_initialized(window, cx);
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
@@ -593,6 +594,7 @@ pub fn init(cx: &mut App) {
 
                         agent_panel.update(cx, |panel, cx| {
                             panel.last_context_source = Some(source);
+                            panel.ensure_thread_initialized(window, cx);
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
@@ -3876,7 +3878,7 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
-    fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
             self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         }
@@ -9612,6 +9614,81 @@ mod tests {
             assert!(
                 panel.active_agent_thread(cx).is_some(),
                 "panel should have an active, connected agent thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_fix_diagnostic_with_agent_prefills_message_editor_while_loading(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "main.rs": "fn foo() { let x = 1; }" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Open a draft with a connection that hasn't completed yet (still loading).
+        let connection = StubAgentConnection::new();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_draft_with_server(
+                Rc::new(StubAgentServer::new(connection)),
+                window,
+                cx,
+            );
+        });
+        // Do NOT run_until_parked — the draft ConversationView is still in Loading state.
+
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("fn foo() { let x = 1; }", None, false, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(11)..MultiBufferOffset(22)]);
+                });
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+        });
+
+        cx.dispatch_action(FixDiagnosticWithAgent {
+            diagnostic_message: "mismatched types: expected `i32`, found `&str`".into(),
+        });
+
+        // Now let the connection complete and the thread view be created.
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+            assert!(
+                text.starts_with(
+                    "Fix this diagnostic error:\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
+                ),
+                "message editor should be pre-filled with fix prompt (loading path), got: {text:?}"
             );
         });
     }
