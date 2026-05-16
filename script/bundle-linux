@@ -151,15 +151,39 @@ cp "${target_dir}/${target_triple}/release/zed" "${zed_dir}/libexec/zed-editor"
 cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 
 # Libs
+# parse ldd output, in case the user failed to run script/linux or someone forgets
+# to add a dep there
 find_libs() {
-    ldd ${target_dir}/${target_triple}/release/zed |\
-        cut -d' ' -f3 |\
+    ldd "${target_dir}/${target_triple}/release/zed" |
+        awk '
+            /=> not found/ {
+                print "Missing shared library: " $1 > "/dev/stderr"
+                missing = 1
+                next
+            }
+
+            /=>/ && $3 ~ /^\// {
+                print $3
+                next
+            }
+
+            $1 ~ /^\// {
+                print $1
+                next
+            }
+
+            END {
+                exit missing
+            }
+        ' |
         grep -v '\<\(libstdc++.so\|libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
 }
+libs=$(find_libs)
+mapfile -t libs <<< "$libs"
 
 mkdir -p "${zed_dir}/lib"
-rm -rf "${zed_dir}/lib/*"
-cp $(find_libs) "${zed_dir}/lib"
+rm -rf "${zed_dir:?}/lib"/*
+cp -- "${libs[@]}" "${zed_dir}/lib"
 
 # Icons
 mkdir -p "${zed_dir}/share/icons/hicolor/512x512/apps"
