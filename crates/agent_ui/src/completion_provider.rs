@@ -22,7 +22,7 @@ use project::{
     Completion, CompletionDisplayOptions, CompletionGroup, CompletionIntent, CompletionResponse,
     DiagnosticSummary, PathMatchCandidateSet, Project, ProjectPath, Symbol, WorktreeId,
 };
-use prompt_store::{PromptStore, UserPromptId};
+
 use rope::Point;
 use settings::Settings;
 use terminal::terminal_settings::TerminalSettings;
@@ -158,7 +158,7 @@ pub(crate) enum PromptContextType {
     Symbol,
     Fetch,
     Thread,
-    Rules,
+    Skill,
     Diagnostics,
     BranchDiff,
 }
@@ -197,7 +197,7 @@ impl TryFrom<&str> for PromptContextType {
             "symbol" => Ok(Self::Symbol),
             "fetch" => Ok(Self::Fetch),
             "thread" => Ok(Self::Thread),
-            "rule" => Ok(Self::Rules),
+            "skill" => Ok(Self::Skill),
             "diagnostics" => Ok(Self::Diagnostics),
             "diff" => Ok(Self::BranchDiff),
             _ => Err(format!("Invalid context picker mode: {}", value)),
@@ -212,7 +212,7 @@ impl PromptContextType {
             Self::Symbol => "symbol",
             Self::Fetch => "fetch",
             Self::Thread => "thread",
-            Self::Rules => "rule",
+            Self::Skill => "skill",
             Self::Diagnostics => "diagnostics",
             Self::BranchDiff => "branch diff",
         }
@@ -224,7 +224,7 @@ impl PromptContextType {
             Self::Symbol => "Symbols",
             Self::Fetch => "Fetch",
             Self::Thread => "Threads",
-            Self::Rules => "Rules",
+            Self::Skill => "Skills",
             Self::Diagnostics => "Diagnostics",
             Self::BranchDiff => "Branch Diff",
         }
@@ -236,7 +236,7 @@ impl PromptContextType {
             Self::Symbol => IconName::Code,
             Self::Fetch => IconName::ToolWeb,
             Self::Thread => IconName::Thread,
-            Self::Rules => IconName::Reader,
+            Self::Skill => IconName::Sparkle,
             Self::Diagnostics => IconName::Warning,
             Self::BranchDiff => IconName::GitBranch,
         }
@@ -249,7 +249,7 @@ pub(crate) enum Match {
     Thread(SessionMatch),
     RecentThread(SessionMatch),
     Fetch(SharedString),
-    Rules(RulesContextEntry),
+    Skill(AvailableSkill),
     Entry(EntryMatch),
     BranchDiff(BranchDiffMatch),
 }
@@ -267,7 +267,7 @@ impl Match {
             Match::Thread(_) => 1.,
             Match::RecentThread(_) => 1.,
             Match::Symbol(_) => 1.,
-            Match::Rules(_) => 1.,
+            Match::Skill(_) => 1.,
             Match::Fetch(_) => 1.,
             Match::BranchDiff(_) => 1.,
         }
@@ -289,12 +289,6 @@ fn session_title(title: Option<SharedString>) -> SharedString {
     title
         .filter(|title| !title.is_empty())
         .unwrap_or_else(|| SharedString::new_static(DEFAULT_THREAD_TITLE))
-}
-
-#[derive(Debug, Clone)]
-pub struct RulesContextEntry {
-    pub prompt_id: UserPromptId,
-    pub title: SharedString,
 }
 
 #[derive(Debug, Clone)]
@@ -354,7 +348,6 @@ pub struct PromptCompletionProvider<T: PromptCompletionProviderDelegate> {
     source: Arc<T>,
     editor: WeakEntity<Editor>,
     mention_set: Entity<MentionSet>,
-    prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -363,7 +356,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         source: T,
         editor: WeakEntity<Editor>,
         mention_set: Entity<MentionSet>,
-        prompt_store: Option<Entity<PromptStore>>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
         Self {
@@ -371,7 +363,6 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             editor,
             mention_set,
             workspace,
-            prompt_store,
         }
     }
 
@@ -460,8 +451,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         }
     }
 
-    fn completion_for_rules(
-        rule: RulesContextEntry,
+    fn completion_for_skill(
+        skill: AvailableSkill,
         source_range: Range<Anchor>,
         source: Arc<T>,
         editor: WeakEntity<Editor>,
@@ -469,25 +460,35 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Completion {
-        let uri = MentionUri::Rule {
-            id: rule.prompt_id.into(),
-            name: rule.title.to_string(),
+        let uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
         };
         let new_text = format!("{} ", uri.as_link());
         let new_text_len = new_text.len();
         let icon_path = uri.icon_path(cx);
+        let crease_text: SharedString = uri.name().into();
+        let source_highlight_id = cx
+            .theme()
+            .syntax()
+            .highlight_id("variable")
+            .map(HighlightId::new);
+        let label = build_slash_item_label(&skill.name, Some(&skill.source), source_highlight_id);
         Completion {
             replace_range: source_range.clone(),
             new_text,
-            label: CodeLabel::plain(rule.title.to_string(), None),
-            documentation: None,
+            label,
+            documentation: Some(CompletionDocumentation::MultiLinePlainText(
+                skill.description.into(),
+            )),
             insert_text_mode: None,
             source: project::CompletionSource::Custom,
             match_start: None,
             snippet_deduplication_key: None,
             icon_path: Some(icon_path),
             confirm: Some(confirm_completion_callback(
-                rule.title,
+                crease_text,
                 source_range.start,
                 new_text_len - 1,
                 uri,
@@ -989,20 +990,16 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 }
             }
 
-            Some(PromptContextType::Rules) => {
-                if let Some(prompt_store) = self.prompt_store.as_ref() {
-                    let search_rules_task =
-                        search_rules(query, cancellation_flag, prompt_store, cx);
-                    cx.background_spawn(async move {
-                        search_rules_task
-                            .await
-                            .into_iter()
-                            .map(Match::Rules)
-                            .collect::<Vec<_>>()
-                    })
-                } else {
-                    Task::ready(Vec::new())
-                }
+            Some(PromptContextType::Skill) => {
+                let skills = self.source.available_skills(cx);
+                let search_skills_task = search_skills(query, cancellation_flag, skills, cx);
+                cx.background_spawn(async move {
+                    search_skills_task
+                        .await
+                        .into_iter()
+                        .map(Match::Skill)
+                        .collect::<Vec<_>>()
+                })
             }
 
             Some(PromptContextType::Diagnostics) => Task::ready(Vec::new()),
@@ -1231,9 +1228,10 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             ));
         }
 
-        if self.prompt_store.is_some() && self.source.supports_context(PromptContextType::Rules, cx)
+        if self.source.supports_context(PromptContextType::Skill, cx)
+            && !self.source.available_skills(cx).is_empty()
         {
-            entries.push(PromptContextEntry::Mode(PromptContextType::Rules));
+            entries.push(PromptContextEntry::Mode(PromptContextType::Skill));
         }
 
         if self.source.supports_context(PromptContextType::Fetch, cx) {
@@ -1617,8 +1615,8 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             cx,
                                         ))
                                     }
-                                    Match::Rules(user_rules) => Some(Self::completion_for_rules(
-                                        user_rules,
+                                    Match::Skill(skill) => Some(Self::completion_for_skill(
+                                        skill,
                                         source_range.clone(),
                                         source.clone(),
                                         editor.clone(),
@@ -2281,29 +2279,36 @@ async fn filter_sessions(
         .collect()
 }
 
-pub(crate) fn search_rules(
+pub(crate) fn search_skills(
     query: String,
     cancellation_flag: Arc<AtomicBool>,
-    prompt_store: &Entity<PromptStore>,
+    skills: Vec<AvailableSkill>,
     cx: &mut App,
-) -> Task<Vec<RulesContextEntry>> {
-    let search_task = prompt_store.read(cx).search(query, cancellation_flag, cx);
+) -> Task<Vec<AvailableSkill>> {
+    if skills.is_empty() {
+        return Task::ready(Vec::new());
+    }
+    let executor = cx.background_executor().clone();
     cx.background_spawn(async move {
-        search_task
-            .await
+        let candidates = skills
+            .iter()
+            .enumerate()
+            .map(|(id, skill)| StringMatchCandidate::new(id, &skill.name))
+            .collect::<Vec<_>>();
+        let matches = fuzzy::match_strings(
+            &candidates,
+            &query,
+            false,
+            true,
+            100,
+            &cancellation_flag,
+            executor,
+        )
+        .await;
+        matches
             .into_iter()
-            .flat_map(|metadata| {
-                // Default prompts are filtered out as they are automatically included.
-                if metadata.default {
-                    None
-                } else {
-                    Some(RulesContextEntry {
-                        prompt_id: metadata.id.as_user()?,
-                        title: metadata.title?,
-                    })
-                }
-            })
-            .collect::<Vec<_>>()
+            .map(|mat| skills[mat.candidate_id].clone())
+            .collect()
     })
 }
 
