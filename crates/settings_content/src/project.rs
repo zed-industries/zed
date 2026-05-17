@@ -209,6 +209,11 @@ pub struct GlobalLspSettingsContent {
     pub notifications: Option<LspNotificationSettingsContent>,
     /// Rules for rendering LSP semantic tokens.
     pub semantic_token_rules: Option<SemanticTokenRules>,
+    /// Whether to enable horizontal scrolling for code blocks in LSP hover popovers.
+    /// When enabled, code blocks will have a horizontal scrollbar instead of wrapping text.
+    ///
+    /// Default: `false`
+    pub hover_code_block_horizontal_scroll: Option<bool>,
 }
 
 #[with_fallible_options]

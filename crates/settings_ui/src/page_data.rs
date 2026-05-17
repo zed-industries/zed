@@ -1811,7 +1811,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn hover_popover_section() -> [SettingsPageItem; 5] {
+    fn hover_popover_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Hover Popover"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1865,6 +1865,27 @@ fn editor_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.hover_popover_hiding_delay = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Block Horizontal Scroll",
+                description: "When enabled, code blocks in the hover popover will have a horizontal scrollbar instead of wrapping text.",
+                field: Box::new(SettingField {
+                    json_path: Some("global_lsp_settings.hover_code_block_horizontal_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .global_lsp_settings
+                            .as_ref()
+                            .and_then(|s| s.hover_code_block_horizontal_scroll.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .global_lsp_settings
+                            .get_or_insert_default()
+                            .hover_code_block_horizontal_scroll = value;
                     },
                 }),
                 metadata: None,
@@ -9718,5 +9739,42 @@ mod tests {
         write_vim_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.vim_mode, Some(true));
         assert_eq!(settings.helix_mode, Some(false));
+    }
+
+    #[test]
+    fn test_hover_code_block_horizontal_scroll() {
+        let mut settings = SettingsContent::default();
+        assert_eq!(
+            settings
+                .global_lsp_settings
+                .as_ref()
+                .and_then(|s| s.hover_code_block_horizontal_scroll),
+            None,
+            "new setting should be None by default (default.json provides the fallback)",
+        );
+
+        settings
+            .global_lsp_settings
+            .get_or_insert_default()
+            .hover_code_block_horizontal_scroll = Some(true);
+        assert_eq!(
+            settings
+                .global_lsp_settings
+                .as_ref()
+                .and_then(|s| s.hover_code_block_horizontal_scroll),
+            Some(true),
+        );
+
+        settings
+            .global_lsp_settings
+            .get_or_insert_default()
+            .hover_code_block_horizontal_scroll = Some(false);
+        assert_eq!(
+            settings
+                .global_lsp_settings
+                .as_ref()
+                .and_then(|s| s.hover_code_block_horizontal_scroll),
+            Some(false),
+        );
     }
 }

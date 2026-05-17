@@ -2481,6 +2481,9 @@
     //
     // Default rules are viewable via the "zed: show default semantic token rules" action.
     "semantic_token_rules": [],
+    // Whether to enable horizontal scrolling for code blocks in LSP hover popovers.
+    // Default: false
+    "hover_code_block_horizontal_scroll": false,
   },
   // Jupyter settings
   "jupyter": {
