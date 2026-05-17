@@ -107,6 +107,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
                     EditorEvent::BufferEdited => {
                         events.borrow_mut().push(("editor1", "buffer edited"))
                     }
+                    EditorEvent::BufferReloaded => {
+                        events.borrow_mut().push(("editor1", "buffer reloaded"))
+                    }
                     _ => {}
                 },
             )
@@ -125,6 +128,9 @@ fn test_edit_events(cx: &mut TestAppContext) {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
                     EditorEvent::BufferEdited => {
                         events.borrow_mut().push(("editor2", "buffer edited"))
+                    }
+                    EditorEvent::BufferReloaded => {
+                        events.borrow_mut().push(("editor2", "buffer reloaded"))
                     }
                     _ => {}
                 },
@@ -211,6 +217,20 @@ fn test_edit_events(cx: &mut TestAppContext) {
         editor.backspace(&Backspace, window, cx);
     });
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
+
+    buffer.update(cx, |buffer, cx| {
+        let version = buffer.saved_version().clone();
+        let line_ending = buffer.snapshot().line_ending();
+        let saved_mtime = buffer.saved_mtime();
+        buffer.did_reload(version, line_ending, saved_mtime, cx);
+    });
+    assert_eq!(
+        mem::take(&mut *events.borrow_mut()),
+        [
+            ("editor1", "buffer reloaded"),
+            ("editor2", "buffer reloaded"),
+        ]
+    );
 }
 
 #[gpui::test]

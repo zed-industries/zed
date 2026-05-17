@@ -9378,9 +9378,11 @@ impl Editor {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
             }
-            multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
-                cx.emit(EditorEvent::TitleChanged)
+            multi_buffer::Event::Reloaded => {
+                cx.emit(EditorEvent::TitleChanged);
+                cx.emit(EditorEvent::BufferReloaded);
             }
+            multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::DiagnosticsUpdated => {
                 self.update_diagnostics_state(window, cx);
             }
@@ -11466,6 +11468,7 @@ pub enum EditorEvent {
         hunks: Vec<MultiBufferDiffHunk>,
     },
     BufferEdited,
+    BufferReloaded,
     Edited {
         transaction_id: clock::Lamport,
     },

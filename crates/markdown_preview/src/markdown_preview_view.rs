@@ -308,6 +308,9 @@ impl MarkdownPreviewView {
                     | EditorEvent::BuffersEdited { .. } => {
                         this.update_markdown_from_active_editor(true, false, window, cx);
                     }
+                    EditorEvent::BufferReloaded => {
+                        this.update_markdown_from_active_editor(false, false, window, cx);
+                    }
                     EditorEvent::SelectionsChanged { .. } => {
                         let (selection_start, editor_is_focused) =
                             editor.update(cx, |editor, cx| {
@@ -1201,7 +1204,7 @@ mod tests {
     use crate::markdown_preview_view::ImageSource;
     use crate::markdown_preview_view::Resource;
     use crate::markdown_preview_view::resolve_preview_image;
-    use editor::Editor;
+    use editor::{Editor, EditorEvent};
     use gpui::{Entity, TestAppContext};
     use serde_json::json;
     use std::path::PathBuf;
@@ -1449,6 +1452,86 @@ mod tests {
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn refreshes_preview_when_source_editor_buffer_reloads(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "notes.md": "# Fresh\n"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/notes.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let (preview, editor) = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let editor: Entity<Editor> = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap();
+
+                let preview = workspace.update(cx, |workspace, cx| {
+                    let preview = MarkdownPreviewView::create_markdown_view(
+                        workspace,
+                        editor.clone(),
+                        window,
+                        cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                });
+
+                (preview, editor)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        preview.update(cx, |preview, cx| {
+            preview.markdown.update(cx, |markdown, cx| {
+                markdown.reset("# Stale\n".into(), cx);
+            });
+        });
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview
+                .markdown
+                .read(cx)
+                .source()
+                .to_string()),
+            "# Stale\n"
+        );
+
+        editor.update(cx, |_, cx| cx.emit(EditorEvent::BufferReloaded));
+        cx.run_until_parked();
+
+        assert_eq!(
+            preview.read_with(cx, |preview, cx| preview
+                .markdown
+                .read(cx)
+                .source()
+                .to_string()),
+            "# Fresh\n"
         );
     }
 
