@@ -111,7 +111,6 @@ impl CachedMermaidDiagram {
                     let svg_string = mermaid_render::render_to_svg(
                         &contents.contents,
                         &mermaid_theme,
-                        mermaid_render::MermaidBackend::Merman,
                     )?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer

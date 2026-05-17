@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use mermaid_render::{MermaidBackend, MermaidTheme};
+use mermaid_render::MermaidTheme;
 
 const LARGE_FLOWCHART: &str = r#"flowchart TD
     Start([System Boot Sequence]) --> InitCheck{Hardware Diagnostics}
@@ -104,14 +104,8 @@ fn bench_mermaid_rendering(criterion: &mut Criterion) {
 
     let theme = MermaidTheme::default();
 
-    group.bench_function("mermaid_rs/render_large_flowchart", |b| {
-        b.iter(|| {
-            mermaid_render::render_to_svg(LARGE_FLOWCHART, &theme, MermaidBackend::MermaidRs)
-        });
-    });
-
     group.bench_function("merman/render_large_flowchart", |b| {
-        b.iter(|| mermaid_render::render_to_svg(LARGE_FLOWCHART, &theme, MermaidBackend::Merman));
+        b.iter(|| mermaid_render::render_to_svg(LARGE_FLOWCHART, &theme));
     });
 
     group.finish();

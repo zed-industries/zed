@@ -1,4 +1,4 @@
-use mermaid_render::{AccentColor, MermaidBackend, MermaidTheme};
+use mermaid_render::{AccentColor, MermaidTheme};
 
 #[test]
 fn debug_accent_flowchart_svg() {
@@ -49,7 +49,7 @@ fn debug_accent_flowchart_svg() {
     G --> H[Ship Package]
     H --> I([Delivery Complete])"#;
 
-    let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+    let svg = mermaid_render::render_to_svg(source, &theme)
         .expect("render failed");
 
     // Find ALL elements with problematic attributes using quick-xml
@@ -119,7 +119,7 @@ fn generics_not_double_escaped() {
         ],
     };
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
-    let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+    let svg = mermaid_render::render_to_svg(source, &theme)
         .expect("render failed");
     assert!(!svg.contains("&amp;lt;"), "Double-escaped &amp;lt; found in SVG");
     assert!(!svg.contains("&amp;gt;"), "Double-escaped &amp;gt; found in SVG");
@@ -159,7 +159,7 @@ fn backslash_n_converted_to_line_break() {
     L7["Layer 7\nHTTP, FTP"]
     L6["Layer 6\nEncryption"]
     L7 --> L6"#;
-    let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+    let svg = mermaid_render::render_to_svg(source, &theme)
         .expect("render failed");
     assert!(
         !svg.contains(r"\n"),

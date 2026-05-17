@@ -1,4 +1,4 @@
-use mermaid_render::{MermaidBackend, MermaidTheme};
+use mermaid_render::MermaidTheme;
 
 #[test]
 fn debug_theme_propagation() {
@@ -26,8 +26,7 @@ fn debug_theme_propagation() {
     ];
 
     for (name, source) in diagrams {
-        let svg =
-            mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman).unwrap();
+        let svg = mermaid_render::render_to_svg(source, &theme).unwrap();
         let has_red = svg.contains("ff0000") || svg.contains("FF0000");
         let has_default = svg.contains("ECECFF");
         println!(
@@ -47,9 +46,7 @@ fn debug_theme_propagation() {
     ];
 
     for (name, source) in diagrams_with_init {
-        let svg =
-            mermaid_render::render_to_svg(source, &default_theme, MermaidBackend::Merman)
-                .unwrap();
+        let svg = mermaid_render::render_to_svg(source, &default_theme).unwrap();
         let has_red = svg.contains("ff0000") || svg.contains("FF0000");
         let has_default = svg.contains("ECECFF");
         println!(

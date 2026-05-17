@@ -1,10 +1,5 @@
-use mermaid_render::{MermaidBackend, MermaidTheme};
+use mermaid_render::MermaidTheme;
 use std::path::PathBuf;
-
-const BACKENDS: &[(MermaidBackend, &str)] = &[
-    (MermaidBackend::MermaidRs, "mermaid-rs"),
-    (MermaidBackend::Merman, "merman"),
-];
 
 fn one_dark_theme() -> MermaidTheme {
     let editor_background = "#282c33";
@@ -77,10 +72,7 @@ fn generate_visual_comparison() {
         corpus_dir.display()
     );
 
-    for (_, backend_slug) in BACKENDS {
-        std::fs::create_dir_all(output_dir.join(backend_slug))
-            .expect("failed to create backend output dir");
-    }
+    std::fs::create_dir_all(&output_dir).expect("failed to create output dir");
 
     for entry in &corpus_files {
         let path = entry.path();
@@ -88,30 +80,28 @@ fn generate_visual_comparison() {
         let diagram_source =
             std::fs::read_to_string(&path).expect("failed to read corpus file");
 
-        for (backend, backend_slug) in BACKENDS {
-            let filename = format!("{stem}.svg");
-            let out_path = output_dir.join(backend_slug).join(&filename);
+        let filename = format!("{stem}.svg");
+        let out_path = output_dir.join(&filename);
 
-            match mermaid_render::render_to_svg(&diagram_source, &theme, *backend) {
-                Ok(svg) => {
-                    std::fs::write(&out_path, &svg).expect("failed to write SVG");
-                    println!("OK   {backend_slug}/{filename}");
-                }
-                Err(err) => {
-                    let truncated = xml_escape(
-                        &err.to_string().chars().take(120).collect::<String>(),
-                    );
-                    let error_svg = format!(
-                        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"80\">\
-                         <rect width=\"400\" height=\"80\" fill=\"#fff5f5\" stroke=\"#ffcccc\" rx=\"4\"/>\
-                         <text x=\"10\" y=\"25\" font-family=\"monospace\" font-size=\"12\" fill=\"#cc0000\">RENDER FAILED</text>\
-                         <text x=\"10\" y=\"50\" font-family=\"monospace\" font-size=\"10\" fill=\"#666\">{}</text>\
-                         </svg>",
-                        truncated,
-                    );
-                    std::fs::write(&out_path, &error_svg).expect("failed to write error SVG");
-                    println!("FAIL {backend_slug}/{filename}: {err}");
-                }
+        match mermaid_render::render_to_svg(&diagram_source, &theme) {
+            Ok(svg) => {
+                std::fs::write(&out_path, &svg).expect("failed to write SVG");
+                println!("OK   {filename}");
+            }
+            Err(err) => {
+                let truncated = xml_escape(
+                    &err.to_string().chars().take(120).collect::<String>(),
+                );
+                let error_svg = format!(
+                    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"400\" height=\"80\">\
+                     <rect width=\"400\" height=\"80\" fill=\"#fff5f5\" stroke=\"#ffcccc\" rx=\"4\"/>\
+                     <text x=\"10\" y=\"25\" font-family=\"monospace\" font-size=\"12\" fill=\"#cc0000\">RENDER FAILED</text>\
+                     <text x=\"10\" y=\"50\" font-family=\"monospace\" font-size=\"10\" fill=\"#666\">{}</text>\
+                     </svg>",
+                    truncated,
+                );
+                std::fs::write(&out_path, &error_svg).expect("failed to write error SVG");
+                println!("FAIL {filename}: {err}");
             }
         }
     }
@@ -121,7 +111,7 @@ fn generate_visual_comparison() {
 <html>
 <head>
 <meta charset="utf-8">
-<title>Mermaid Renderer Comparison</title>
+<title>Mermaid Renderer Corpus</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 16px; }
   table { border-collapse: collapse; width: 100%; table-layout: fixed; }
@@ -131,7 +121,7 @@ fn generate_visual_comparison() {
 </style>
 </head>
 <body>
-<h1>Mermaid Renderer Comparison</h1>
+<h1>Mermaid Renderer Corpus</h1>
 "#,
     );
 
@@ -142,14 +132,10 @@ fn generate_visual_comparison() {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        html.push_str(&format!("<h2>{stem}</h2>\n<table><tr>\n"));
-        for (_, backend_slug) in BACKENDS {
-            let svg_path = format!("{backend_slug}/{stem}.svg");
-            html.push_str(&format!(
-                "<td><h4>{backend_slug}</h4><img src=\"{svg_path}\"></td>\n",
-            ));
-        }
-        html.push_str("</tr></table>\n");
+        let svg_path = format!("{stem}.svg");
+        html.push_str(&format!(
+            "<h2>{stem}</h2>\n<table><tr>\n<td><img src=\"{svg_path}\"></td>\n</tr></table>\n",
+        ));
     }
 
     html.push_str("</body>\n</html>\n");
@@ -160,9 +146,9 @@ fn generate_visual_comparison() {
     let canonical = html_path
         .canonicalize()
         .unwrap_or_else(|_| html_path.clone());
-    println!("\n=== Visual comparison HTML written to ===");
+    println!("\n=== Corpus HTML written to ===");
     println!("{}", canonical.display());
-    println!("=========================================\n");
+    println!("==============================\n");
 }
 
 fn xml_escape(s: &str) -> String {

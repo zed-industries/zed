@@ -2,12 +2,6 @@
 
 use anyhow::{Context as _, Result, anyhow};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MermaidBackend {
-    MermaidRs,
-    Merman,
-}
-
 #[derive(Debug, Clone)]
 pub struct AccentColor {
     /// The accent stroke/border color (e.g. `"rgb(116, 173, 232)"`).
@@ -46,53 +40,53 @@ pub struct MermaidTheme {
 
 impl Default for MermaidTheme {
     fn default() -> Self {
-        let theme = mermaid_rs_renderer::Theme::modern();
+        // Values mirror the previous `mermaid_rs_renderer::Theme::modern()` defaults so existing
+        // tests and call sites that relied on those colors continue to work.
+        const GIT_BRANCH_COLORS: [&str; 8] = [
+            "hsl(240, 100%, 46.2745098039%)",
+            "hsl(60, 100%, 43.5294117647%)",
+            "hsl(80, 100%, 46.2745098039%)",
+            "hsl(210, 100%, 46.2745098039%)",
+            "hsl(180, 100%, 46.2745098039%)",
+            "hsl(150, 100%, 46.2745098039%)",
+            "hsl(300, 100%, 46.2745098039%)",
+            "hsl(0, 100%, 46.2745098039%)",
+        ];
+        const GIT_BRANCH_LABEL_COLORS: [&str; 8] = [
+            "#ffffff", "black", "black", "#ffffff", "black", "black", "black", "black",
+        ];
+
         Self {
             dark_mode: false,
-            font_family: theme.font_family,
-            background: theme.background,
-            primary_color: theme.primary_color,
-            primary_text_color: theme.primary_text_color,
-            primary_border_color: theme.primary_border_color.clone(),
-            secondary_color: theme.secondary_color,
-            tertiary_color: theme.tertiary_color,
-            line_color: theme.line_color,
-            text_color: theme.text_color.clone(),
-            edge_label_background: theme.edge_label_background,
-            cluster_background: theme.cluster_background,
-            cluster_border: theme.cluster_border,
-            note_background: theme.sequence_note_fill,
-            note_border: theme.sequence_note_border,
-            actor_background: theme.sequence_actor_fill,
-            actor_border: theme.sequence_actor_border,
-            activation_background: theme.sequence_activation_fill,
-            activation_border: theme.sequence_activation_border,
-            git_branch_colors: theme.git_colors,
-            git_branch_label_colors: theme.git_branch_label_colors,
-            er_attr_bg_odd: theme.primary_border_color,
-            er_attr_bg_even: theme.text_color,
+            font_family: "Inter, ui-sans-serif, system-ui, -apple-system, \"Segoe UI\", \"DejaVu Sans\", \"Liberation Sans\", sans-serif, \"Noto Color Emoji\", \"Apple Color Emoji\", \"Segoe UI Emoji\"".to_string(),
+            background: "#FFFFFF".to_string(),
+            primary_color: "#F8FAFC".to_string(),
+            primary_text_color: "#0F172A".to_string(),
+            primary_border_color: "#94A3B8".to_string(),
+            secondary_color: "#E2E8F0".to_string(),
+            tertiary_color: "#FFFFFF".to_string(),
+            line_color: "#64748B".to_string(),
+            text_color: "#0F172A".to_string(),
+            edge_label_background: "#FFFFFF".to_string(),
+            cluster_background: "#F1F5F9".to_string(),
+            cluster_border: "#CBD5E1".to_string(),
+            note_background: "#FFF7ED".to_string(),
+            note_border: "#FDBA74".to_string(),
+            actor_background: "#F8FAFC".to_string(),
+            actor_border: "#94A3B8".to_string(),
+            activation_background: "#E2E8F0".to_string(),
+            activation_border: "#94A3B8".to_string(),
+            git_branch_colors: GIT_BRANCH_COLORS.map(|value| value.to_string()),
+            git_branch_label_colors: GIT_BRANCH_LABEL_COLORS.map(|value| value.to_string()),
+            er_attr_bg_odd: "#94A3B8".to_string(),
+            er_attr_bg_even: "#0F172A".to_string(),
             accent_colors: Vec::new(),
         }
     }
 }
 
-pub fn render_to_svg(
-    source: &str,
-    theme: &MermaidTheme,
-    backend: MermaidBackend,
-) -> Result<String> {
-    match backend {
-        MermaidBackend::MermaidRs => render_with_mermaid_rs(source, theme),
-        MermaidBackend::Merman => render_with_merman(source, theme),
-    }
-}
-
-fn render_with_mermaid_rs(source: &str, theme: &MermaidTheme) -> Result<String> {
-    let options = mermaid_rs_renderer::RenderOptions {
-        theme: to_mermaid_rs_theme(theme),
-        layout: mermaid_rs_renderer::LayoutConfig::default(),
-    };
-    mermaid_rs_renderer::render_with_options(source, options)
+pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
+    render_with_merman(source, theme)
 }
 
 fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
@@ -1215,44 +1209,4 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
     }))
 }
 
-fn to_mermaid_rs_theme(theme: &MermaidTheme) -> mermaid_rs_renderer::Theme {
-    let pie_colors: [String; 12] =
-        std::array::from_fn(|i| theme.git_branch_colors[i % theme.git_branch_colors.len()].clone());
 
-    mermaid_rs_renderer::Theme {
-        font_family: theme.font_family.clone(),
-        background: theme.background.clone(),
-        text_color: theme.text_color.clone(),
-        primary_color: theme.primary_color.clone(),
-        primary_text_color: theme.primary_text_color.clone(),
-        primary_border_color: theme.primary_border_color.clone(),
-        line_color: theme.line_color.clone(),
-        secondary_color: theme.secondary_color.clone(),
-        tertiary_color: theme.tertiary_color.clone(),
-        edge_label_background: theme.edge_label_background.clone(),
-        cluster_background: theme.cluster_background.clone(),
-        cluster_border: theme.cluster_border.clone(),
-        sequence_actor_fill: theme.actor_background.clone(),
-        sequence_actor_border: theme.actor_border.clone(),
-        sequence_actor_line: theme.line_color.clone(),
-        sequence_note_fill: theme.note_background.clone(),
-        sequence_note_border: theme.note_border.clone(),
-        sequence_activation_fill: theme.activation_background.clone(),
-        sequence_activation_border: theme.activation_border.clone(),
-        pie_colors,
-        pie_title_text_color: theme.text_color.clone(),
-        pie_section_text_color: theme.text_color.clone(),
-        pie_legend_text_color: theme.text_color.clone(),
-        pie_stroke_color: theme.primary_border_color.clone(),
-        pie_outer_stroke_color: theme.primary_border_color.clone(),
-        git_colors: theme.git_branch_colors.clone(),
-        git_inv_colors: theme.git_branch_colors.clone(),
-        git_branch_label_colors: theme.git_branch_label_colors.clone(),
-        git_commit_label_color: theme.text_color.clone(),
-        git_commit_label_background: theme.edge_label_background.clone(),
-        git_tag_label_color: theme.text_color.clone(),
-        git_tag_label_background: theme.primary_color.clone(),
-        git_tag_label_border: theme.primary_border_color.clone(),
-        ..mermaid_rs_renderer::Theme::modern()
-    }
-}

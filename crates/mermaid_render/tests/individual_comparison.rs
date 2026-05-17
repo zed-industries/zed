@@ -1,4 +1,4 @@
-use mermaid_render::{MermaidBackend, MermaidTheme};
+use mermaid_render::MermaidTheme;
 use std::path::PathBuf;
 
 const DIAGRAMS: &[(&str, &str)] = &[
@@ -172,23 +172,16 @@ fn generate_individual_svgs() {
         .join("../../target/mermaid_individual");
     std::fs::create_dir_all(&out_dir).expect("failed to create output directory");
 
-    let backends = [
-        (MermaidBackend::MermaidRs, "mermaid_rs"),
-        (MermaidBackend::Merman, "merman"),
-    ];
-
     for (name, source) in DIAGRAMS {
-        for (backend, backend_label) in &backends {
-            let filename = format!("{name}_{backend_label}.svg");
-            let path = out_dir.join(&filename);
-            match mermaid_render::render_to_svg(source, &theme, *backend) {
-                Ok(svg) => {
-                    std::fs::write(&path, &svg).expect("failed to write SVG");
-                    println!("OK   {filename}");
-                }
-                Err(err) => {
-                    println!("FAIL {filename}: {err}");
-                }
+        let filename = format!("{name}.svg");
+        let path = out_dir.join(&filename);
+        match mermaid_render::render_to_svg(source, &theme) {
+            Ok(svg) => {
+                std::fs::write(&path, &svg).expect("failed to write SVG");
+                println!("OK   {filename}");
+            }
+            Err(err) => {
+                println!("FAIL {filename}: {err}");
             }
         }
     }

@@ -1,4 +1,4 @@
-use mermaid_render::{MermaidBackend, MermaidTheme};
+use mermaid_render::MermaidTheme;
 
 const DIAGRAMS: &[(&str, &str)] = &[
     (
@@ -171,7 +171,7 @@ fn no_empty_attributes_or_nan_in_merman_output() {
     let mut all_issues = Vec::new();
 
     for (name, source) in DIAGRAMS {
-        let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+        let svg = mermaid_render::render_to_svg(source, &theme)
             .unwrap_or_else(|e| panic!("{name}: render failed: {e}"));
 
         for pattern in &bad_patterns {
@@ -206,7 +206,7 @@ fn accent_colors_auto_applied_to_nodes() {
     // automatic accent colors applied to its node groups.
     let source = "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing\n    Processing --> Done\n    Done --> [*]";
 
-    let svg = mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman)
+    let svg = mermaid_render::render_to_svg(source, &theme)
         .expect("render failed");
 
     // accent_fill_and_text darkens the background color for dark mode.
@@ -235,7 +235,7 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
     let mut all_issues = Vec::new();
 
     for (name, source) in DIAGRAMS {
-        match mermaid_render::render_to_svg(source, &theme, MermaidBackend::Merman) {
+        match mermaid_render::render_to_svg(source, &theme) {
             Ok(svg) => all_issues.extend(check_svg_issues(name, &svg)),
             Err(e) => eprintln!("{name}: render failed (skipped): {e}"),
         }
@@ -256,7 +256,7 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
             let path = entry.path();
             let name = path.file_stem().unwrap().to_string_lossy().to_string();
             let source = std::fs::read_to_string(&path).unwrap();
-            match mermaid_render::render_to_svg(&source, &theme, MermaidBackend::Merman) {
+            match mermaid_render::render_to_svg(&source, &theme) {
                 Ok(svg) => all_issues.extend(check_svg_issues(&name, &svg)),
                 Err(e) => eprintln!("corpus/{name}.mmd: render failed: {e}"),
             }

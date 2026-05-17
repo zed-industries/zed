@@ -15,7 +15,6 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 merman = { version = "0.4", features = ["render"] }
-mermaid-rs-renderer.workspace = true
 quick-xml.workspace = true
 serde_json.workspace = true
 
