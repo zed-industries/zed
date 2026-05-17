@@ -4,10 +4,10 @@ use mermaid_render::MermaidTheme;
 fn debug_theme_propagation() {
     // Use obviously wrong colors so we can detect if they're applied
     let mut theme = MermaidTheme::default();
-    theme.primary_color = "#ff0000".to_string();
-    theme.primary_text_color = "#00ff00".to_string();
-    theme.primary_border_color = "#0000ff".to_string();
-    theme.text_color = "#00ff00".to_string();
+    theme.primary_color = gpui::rgb(0xff0000).into();
+    theme.primary_text_color = gpui::rgb(0x00ff00).into();
+    theme.primary_border_color = gpui::rgb(0x0000ff).into();
+    theme.text_color = gpui::rgb(0x00ff00).into();
 
     let diagrams = [
         ("flowchart", "flowchart TD\n    A[Hello] --> B[World]"),

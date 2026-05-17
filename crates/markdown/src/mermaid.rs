@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, Hsla,
-    ImageSource, RenderImage, Rgba, StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity,
+    ImageSource, RenderImage, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -149,18 +149,6 @@ impl CachedMermaidDiagram {
     }
 }
 
-/// Converts an HSLA color to a CSS `rgb()` string (e.g. `rgb(26, 43, 60)`).
-///
-/// We use `rgb()` rather than hex because merman's internal color derivation
-/// can produce `hsl(…, NaN%)` values when given hex inputs.
-fn hsla_to_rgb_string(color: Hsla) -> String {
-    let rgba: Rgba = color.to_rgb();
-    let r = (rgba.r * 255.0).round() as u8;
-    let g = (rgba.g * 255.0).round() as u8;
-    let b = (rgba.b * 255.0).round() as u8;
-    format!("rgb({r}, {g}, {b})")
-}
-
 fn mermaid_font_family(font_family: &str) -> &str {
     gpui::font_name_with_fallbacks(font_family, "system-ui")
 }
@@ -171,41 +159,40 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
     let is_dark = !cx.theme().appearance.is_light();
 
     let players = cx.theme().players();
-    let git_branch_colors: [String; 8] =
-        std::array::from_fn(|i| hsla_to_rgb_string(players.0[i % players.0.len()].cursor));
-    let git_branch_label_colors: [String; 8] =
-        std::array::from_fn(|_| "rgb(255, 255, 255)".to_string());
+    let git_branch_colors =
+        std::array::from_fn(|i| players.0[i % players.0.len()].cursor);
+    let git_branch_label_colors = std::array::from_fn(|_| gpui::white());
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
         font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()).to_string(),
-        background: hsla_to_rgb_string(colors.editor_background),
-        primary_color: hsla_to_rgb_string(colors.surface_background),
-        primary_text_color: hsla_to_rgb_string(colors.text),
-        primary_border_color: hsla_to_rgb_string(colors.border),
-        secondary_color: hsla_to_rgb_string(colors.element_background),
-        tertiary_color: hsla_to_rgb_string(colors.ghost_element_hover),
-        line_color: hsla_to_rgb_string(colors.border),
-        text_color: hsla_to_rgb_string(colors.text),
-        edge_label_background: hsla_to_rgb_string(colors.editor_background),
-        cluster_background: hsla_to_rgb_string(colors.panel_background),
-        cluster_border: hsla_to_rgb_string(colors.border_variant),
-        note_background: hsla_to_rgb_string(colors.surface_background),
-        note_border: hsla_to_rgb_string(colors.border_variant),
-        actor_background: hsla_to_rgb_string(colors.element_background),
-        actor_border: hsla_to_rgb_string(colors.border),
-        activation_background: hsla_to_rgb_string(colors.ghost_element_hover),
-        activation_border: hsla_to_rgb_string(colors.border),
+        background: colors.editor_background,
+        primary_color: colors.surface_background,
+        primary_text_color: colors.text,
+        primary_border_color: colors.border,
+        secondary_color: colors.element_background,
+        tertiary_color: colors.ghost_element_hover,
+        line_color: colors.border,
+        text_color: colors.text,
+        edge_label_background: colors.editor_background,
+        cluster_background: colors.panel_background,
+        cluster_border: colors.border_variant,
+        note_background: colors.surface_background,
+        note_border: colors.border_variant,
+        actor_background: colors.element_background,
+        actor_border: colors.border,
+        activation_background: colors.ghost_element_hover,
+        activation_border: colors.border,
         git_branch_colors,
         git_branch_label_colors,
-        er_attr_bg_odd: hsla_to_rgb_string(colors.surface_background),
-        er_attr_bg_even: hsla_to_rgb_string(colors.element_background),
+        er_attr_bg_odd: colors.surface_background,
+        er_attr_bg_even: colors.element_background,
         accent_colors: players
             .0
             .iter()
             .map(|player| mermaid_render::AccentColor {
-                stroke: hsla_to_rgb_string(player.cursor),
-                background: hsla_to_rgb_string(player.background),
+                stroke: player.cursor,
+                background: player.background,
             })
             .collect(),
     }

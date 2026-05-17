@@ -1,4 +1,9 @@
+use gpui::Hsla;
 use mermaid_render::MermaidTheme;
+
+fn hex(value: u32) -> Hsla {
+    gpui::rgb(value).into()
+}
 use std::path::PathBuf;
 
 const DIAGRAMS: &[(&str, &str)] = &[
@@ -123,44 +128,44 @@ const DIAGRAMS: &[(&str, &str)] = &[
 ];
 
 fn one_dark_theme() -> MermaidTheme {
-    let editor_background = "#282c33";
-    let surface_background = "#2f343e";
-    let text = "#dce0e5";
-    let border = "#464b57";
-    let border_variant = "#363c46";
-    let element_background = "#2e343e";
-    let ghost_element_hover = "#363c46";
-    let panel_background = "#2f343e";
+    let editor_background = hex(0x282c33);
+    let surface_background = hex(0x2f343e);
+    let text = hex(0xdce0e5);
+    let border = hex(0x464b57);
+    let border_variant = hex(0x363c46);
+    let element_background = hex(0x2e343e);
+    let ghost_element_hover = hex(0x363c46);
+    let panel_background = hex(0x2f343e);
 
     let player_cursors = [
-        "#74ade8", "#be5046", "#bf956a", "#b477cf",
-        "#6eb4bf", "#d07277", "#dec184", "#a1c181",
+        hex(0x74ade8), hex(0xbe5046), hex(0xbf956a), hex(0xb477cf),
+        hex(0x6eb4bf), hex(0xd07277), hex(0xdec184), hex(0xa1c181),
     ];
 
     MermaidTheme {
         dark_mode: true,
         font_family: "Zed Plex Sans, system-ui".to_string(),
-        background: editor_background.to_string(),
-        primary_color: surface_background.to_string(),
-        primary_text_color: text.to_string(),
-        primary_border_color: border.to_string(),
-        secondary_color: element_background.to_string(),
-        tertiary_color: ghost_element_hover.to_string(),
-        line_color: border.to_string(),
-        text_color: text.to_string(),
-        edge_label_background: editor_background.to_string(),
-        cluster_background: panel_background.to_string(),
-        cluster_border: border_variant.to_string(),
-        note_background: surface_background.to_string(),
-        note_border: border_variant.to_string(),
-        actor_background: element_background.to_string(),
-        actor_border: border.to_string(),
-        activation_background: ghost_element_hover.to_string(),
-        activation_border: border.to_string(),
-        git_branch_colors: std::array::from_fn(|i| player_cursors[i % player_cursors.len()].to_string()),
-        git_branch_label_colors: std::array::from_fn(|_| "#fff".to_string()),
-        er_attr_bg_odd: surface_background.to_string(),
-        er_attr_bg_even: element_background.to_string(),
+        background: editor_background,
+        primary_color: surface_background,
+        primary_text_color: text,
+        primary_border_color: border,
+        secondary_color: element_background,
+        tertiary_color: ghost_element_hover,
+        line_color: border,
+        text_color: text,
+        edge_label_background: editor_background,
+        cluster_background: panel_background,
+        cluster_border: border_variant,
+        note_background: surface_background,
+        note_border: border_variant,
+        actor_background: element_background,
+        actor_border: border,
+        activation_background: ghost_element_hover,
+        activation_border: border,
+        git_branch_colors: std::array::from_fn(|i| player_cursors[i % player_cursors.len()]),
+        git_branch_label_colors: std::array::from_fn(|_| gpui::white()),
+        er_attr_bg_odd: surface_background,
+        er_attr_bg_even: element_background,
         accent_colors: Vec::new(),
     }
 }

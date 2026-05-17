@@ -1,42 +1,65 @@
+use gpui::Hsla;
 use mermaid_render::{AccentColor, MermaidTheme};
+
+fn rgb(r: u8, g: u8, b: u8) -> Hsla {
+    gpui::Rgba {
+        r: r as f32 / 255.0,
+        g: g as f32 / 255.0,
+        b: b as f32 / 255.0,
+        a: 1.0,
+    }
+    .into()
+}
+
+fn base_theme(accent_colors: Vec<AccentColor>) -> MermaidTheme {
+    MermaidTheme {
+        dark_mode: true,
+        font_family: "system-ui".to_string(),
+        background: rgb(40, 44, 51),
+        primary_color: rgb(47, 52, 62),
+        primary_text_color: rgb(220, 224, 229),
+        primary_border_color: rgb(70, 75, 87),
+        secondary_color: rgb(46, 52, 62),
+        tertiary_color: rgb(54, 60, 70),
+        line_color: rgb(70, 75, 87),
+        text_color: rgb(220, 224, 229),
+        edge_label_background: rgb(40, 44, 51),
+        cluster_background: rgb(47, 52, 62),
+        cluster_border: rgb(54, 60, 70),
+        note_background: rgb(47, 52, 62),
+        note_border: rgb(54, 60, 70),
+        actor_background: rgb(46, 52, 62),
+        actor_border: rgb(70, 75, 87),
+        activation_background: rgb(54, 60, 70),
+        activation_border: rgb(70, 75, 87),
+        git_branch_colors: std::array::from_fn(|_| rgb(128, 128, 128)),
+        git_branch_label_colors: std::array::from_fn(|_| rgb(255, 255, 255)),
+        er_attr_bg_odd: rgb(47, 52, 62),
+        er_attr_bg_even: rgb(46, 52, 62),
+        accent_colors,
+    }
+}
+
+fn accent(r: u8, g: u8, b: u8) -> AccentColor {
+    let c = rgb(r, g, b);
+    AccentColor {
+        stroke: c,
+        background: c,
+    }
+}
 
 #[test]
 fn debug_accent_flowchart_svg() {
-    let theme = MermaidTheme {
-        dark_mode: true,
-        font_family: "system-ui".to_string(),
-        background: "rgb(40, 44, 51)".to_string(),
-        primary_color: "rgb(47, 52, 62)".to_string(),
-        primary_text_color: "rgb(220, 224, 229)".to_string(),
-        primary_border_color: "rgb(70, 75, 87)".to_string(),
-        secondary_color: "rgb(46, 52, 62)".to_string(),
-        tertiary_color: "rgb(54, 60, 70)".to_string(),
-        line_color: "rgb(70, 75, 87)".to_string(),
-        text_color: "rgb(220, 224, 229)".to_string(),
-        edge_label_background: "rgb(40, 44, 51)".to_string(),
-        cluster_background: "rgb(47, 52, 62)".to_string(),
-        cluster_border: "rgb(54, 60, 70)".to_string(),
-        note_background: "rgb(47, 52, 62)".to_string(),
-        note_border: "rgb(54, 60, 70)".to_string(),
-        actor_background: "rgb(46, 52, 62)".to_string(),
-        actor_border: "rgb(70, 75, 87)".to_string(),
-        activation_background: "rgb(54, 60, 70)".to_string(),
-        activation_border: "rgb(70, 75, 87)".to_string(),
-        git_branch_colors: std::array::from_fn(|_| "rgb(128,128,128)".to_string()),
-        git_branch_label_colors: std::array::from_fn(|_| "rgb(255,255,255)".to_string()),
-        er_attr_bg_odd: "rgb(47, 52, 62)".to_string(),
-        er_attr_bg_even: "rgb(46, 52, 62)".to_string(),
-        accent_colors: vec![
-            AccentColor { stroke: "rgb(116, 173, 232)".into(), background: "rgb(116, 173, 232)".into() },
-            AccentColor { stroke: "rgb(190, 80, 70)".into(), background: "rgb(190, 80, 70)".into() },
-            AccentColor { stroke: "rgb(191, 149, 106)".into(), background: "rgb(191, 149, 106)".into() },
-            AccentColor { stroke: "rgb(180, 119, 207)".into(), background: "rgb(180, 119, 207)".into() },
-            AccentColor { stroke: "rgb(110, 180, 191)".into(), background: "rgb(110, 180, 191)".into() },
-            AccentColor { stroke: "rgb(208, 114, 119)".into(), background: "rgb(208, 114, 119)".into() },
-            AccentColor { stroke: "rgb(222, 193, 132)".into(), background: "rgb(222, 193, 132)".into() },
-            AccentColor { stroke: "rgb(161, 193, 129)".into(), background: "rgb(161, 193, 129)".into() },
-        ],
-    };
+    let theme = base_theme(vec![
+        accent(116, 173, 232),
+        accent(190, 80, 70),
+        accent(191, 149, 106),
+        accent(180, 119, 207),
+        accent(110, 180, 191),
+        accent(208, 114, 119),
+        accent(222, 193, 132),
+        accent(161, 193, 129),
+    ]);
 
     let source = r#"flowchart TD
     A([Customer Places Order]) --> B[Validate Cart]
@@ -90,34 +113,7 @@ fn debug_accent_flowchart_svg() {
 
 #[test]
 fn generics_not_double_escaped() {
-    let theme = MermaidTheme {
-        dark_mode: true,
-        font_family: "system-ui".to_string(),
-        background: "rgb(40, 44, 51)".to_string(),
-        primary_color: "rgb(47, 52, 62)".to_string(),
-        primary_text_color: "rgb(220, 224, 229)".to_string(),
-        primary_border_color: "rgb(70, 75, 87)".to_string(),
-        secondary_color: "rgb(46, 52, 62)".to_string(),
-        tertiary_color: "rgb(54, 60, 70)".to_string(),
-        line_color: "rgb(70, 75, 87)".to_string(),
-        text_color: "rgb(220, 224, 229)".to_string(),
-        edge_label_background: "rgb(40, 44, 51)".to_string(),
-        cluster_background: "rgb(47, 52, 62)".to_string(),
-        cluster_border: "rgb(54, 60, 70)".to_string(),
-        note_background: "rgb(47, 52, 62)".to_string(),
-        note_border: "rgb(54, 60, 70)".to_string(),
-        actor_background: "rgb(46, 52, 62)".to_string(),
-        actor_border: "rgb(70, 75, 87)".to_string(),
-        activation_background: "rgb(54, 60, 70)".to_string(),
-        activation_border: "rgb(70, 75, 87)".to_string(),
-        git_branch_colors: std::array::from_fn(|_| "rgb(128,128,128)".to_string()),
-        git_branch_label_colors: std::array::from_fn(|_| "rgb(255,255,255)".to_string()),
-        er_attr_bg_odd: "rgb(47, 52, 62)".to_string(),
-        er_attr_bg_even: "rgb(46, 52, 62)".to_string(),
-        accent_colors: vec![
-            AccentColor { stroke: "rgb(116, 173, 232)".into(), background: "rgb(116, 173, 232)".into() },
-        ],
-    };
+    let theme = base_theme(vec![accent(116, 173, 232)]);
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
     let svg = mermaid_render::render_to_svg(source, &theme)
         .expect("render failed");
@@ -127,34 +123,7 @@ fn generics_not_double_escaped() {
 
 #[test]
 fn backslash_n_converted_to_line_break() {
-    let theme = MermaidTheme {
-        dark_mode: true,
-        font_family: "system-ui".to_string(),
-        background: "rgb(40, 44, 51)".to_string(),
-        primary_color: "rgb(47, 52, 62)".to_string(),
-        primary_text_color: "rgb(220, 224, 229)".to_string(),
-        primary_border_color: "rgb(70, 75, 87)".to_string(),
-        secondary_color: "rgb(46, 52, 62)".to_string(),
-        tertiary_color: "rgb(54, 60, 70)".to_string(),
-        line_color: "rgb(70, 75, 87)".to_string(),
-        text_color: "rgb(220, 224, 229)".to_string(),
-        edge_label_background: "rgb(40, 44, 51)".to_string(),
-        cluster_background: "rgb(47, 52, 62)".to_string(),
-        cluster_border: "rgb(54, 60, 70)".to_string(),
-        note_background: "rgb(47, 52, 62)".to_string(),
-        note_border: "rgb(54, 60, 70)".to_string(),
-        actor_background: "rgb(46, 52, 62)".to_string(),
-        actor_border: "rgb(70, 75, 87)".to_string(),
-        activation_background: "rgb(54, 60, 70)".to_string(),
-        activation_border: "rgb(70, 75, 87)".to_string(),
-        git_branch_colors: std::array::from_fn(|_| "rgb(128,128,128)".to_string()),
-        git_branch_label_colors: std::array::from_fn(|_| "rgb(255,255,255)".to_string()),
-        er_attr_bg_odd: "rgb(47, 52, 62)".to_string(),
-        er_attr_bg_even: "rgb(46, 52, 62)".to_string(),
-        accent_colors: vec![
-            AccentColor { stroke: "rgb(116, 173, 232)".into(), background: "rgb(116, 173, 232)".into() },
-        ],
-    };
+    let theme = base_theme(vec![accent(116, 173, 232)]);
     let source = r#"graph TD
     L7["Layer 7\nHTTP, FTP"]
     L6["Layer 6\nEncryption"]
@@ -170,4 +139,3 @@ fn backslash_n_converted_to_line_break() {
         "Label lines should be split into separate <text> elements"
     );
 }
-

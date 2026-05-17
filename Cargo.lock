@@ -11121,6 +11121,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "criterion",
+ "gpui",
+ "mermaid_render",
  "merman",
  "quick-xml 0.38.3",
  "serde_json",
