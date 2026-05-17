@@ -9744,7 +9744,7 @@ impl Editor {
         );
     }
 
-    pub(crate) fn open_buffers_in_workspace(
+    pub fn open_buffers_in_workspace(
         workspace: WeakEntity<Workspace>,
         new_selections_by_buffer: HashMap<
             Entity<language::Buffer>,

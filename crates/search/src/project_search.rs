@@ -11,8 +11,8 @@ use crate::{
 use anyhow::Context as _;
 use collections::HashMap;
 use editor::{
-    Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
-    SelectionEffects,
+    Anchor, BufferOffset, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer,
+    PathKey, SelectionEffects,
     actions::{Backtab, FoldAll, SelectAll, Tab, UnfoldAll},
     items::active_match_index,
     multibuffer_context_lines,
@@ -26,12 +26,12 @@ use gpui::{
     div,
 };
 use itertools::Itertools;
-use language::{Buffer, Language};
+use language::{Buffer, BufferId, Capability, Language, Point as TextPoint};
 use menu::Confirm;
 use multi_buffer;
 use project::{
     Project, ProjectPath, SearchResults,
-    search::{SearchInputKind, SearchQuery},
+    search::{FileMatchSummary, SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
 use settings::Settings;
@@ -228,15 +228,113 @@ fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
+/// Placeholder shown inline when a deferred file's matches couldn't be
+/// enumerated (multiline regex over the streaming-mode threshold). The user
+/// clicks this row to open the file directly.
+const DEFERRED_PLACEHOLDER_TEXT: &str = "matches inside — open file to view";
+
+/// Trailing decorative line appended when the per-file match cap was hit. Not
+/// an excerpt; just buffer text so the truncated state is visible in the
+/// rendered output.
+const DEFERRED_TRUNCATED_TAIL: &str = "… more matches in this file (open to view)";
+
+/// Build a synthetic read-only `Buffer` that holds one snippet per line and
+/// return the `Range<Point>` for each snippet so the multibuffer can excerpt
+/// them as individual rows. The snippet's `MatchLocation` byte ranges remain
+/// on `summary.matches`; we re-read them at hydration time to drive the
+/// real-buffer anchor calculation.
+///
+/// Layout for a file with N matches:
+///
+/// ```text
+///   row 0: <snippet 0>\n        <- excerpt 0
+///   row 1: <snippet 1>\n        <- excerpt 1
+///   ...
+///   row N-1: <snippet N-1>\n    <- excerpt N-1
+///   row N: …more matches…\n     <- (only if `truncated`, not an excerpt)
+/// ```
+///
+/// For the multiline-regex-over-threshold case (`matches.is_empty() &&
+/// truncated`), the stub contains a single placeholder line and one excerpt
+/// covering it; clicking that excerpt opens the file with no preset
+/// selection.
+fn build_stub_buffer_and_ranges(
+    summary: &FileMatchSummary,
+    cx: &mut Context<ProjectSearch>,
+) -> (Entity<Buffer>, Vec<Range<TextPoint>>) {
+    let mut text = String::with_capacity(
+        summary
+            .matches
+            .iter()
+            .map(|m| m.snippet.len() + 1)
+            .sum::<usize>()
+            + 64,
+    );
+    let mut ranges: Vec<Range<TextPoint>> = Vec::with_capacity(summary.matches.len().max(1));
+
+    if summary.matches.is_empty() {
+        text.push_str(DEFERRED_PLACEHOLDER_TEXT);
+        text.push('\n');
+        ranges.push(
+            TextPoint::new(0, 0)..TextPoint::new(0, DEFERRED_PLACEHOLDER_TEXT.len() as u32),
+        );
+    } else {
+        for (row, m) in summary.matches.iter().enumerate() {
+            let row = row as u32;
+            let snippet_len = m.snippet.len() as u32;
+            ranges.push(TextPoint::new(row, 0)..TextPoint::new(row, snippet_len));
+            text.push_str(&m.snippet);
+            text.push('\n');
+        }
+        if summary.truncated {
+            text.push_str(DEFERRED_TRUNCATED_TAIL);
+            text.push('\n');
+        }
+    }
+
+    debug_assert!(text.ends_with('\n'));
+
+    let stub = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_capability(Capability::ReadOnly, cx);
+        buffer
+    });
+    (stub, ranges)
+}
+
+/// State held by `ProjectSearch` for each file emitted as
+/// `SearchResult::DeferredFile`. The file's matches are rendered in the
+/// multibuffer through a synthetic read-only stub buffer; when the user
+/// clicks any of the stub excerpts, the real file is opened and the stub is
+/// swapped out atomically. Issue 20970.
+pub(crate) struct DeferredFileState {
+    /// Streaming-scan summary carrying byte ranges, line numbers, and
+    /// snippets. Used at hydration time to compute real-buffer anchors.
+    pub(crate) summary: FileMatchSummary,
+    /// `PathKey::with_sort_prefix(worktree_id.to_proto(), rel_path)`. Stored
+    /// once so swap events can route back to this entry without recomputing.
+    pub(crate) path_key: PathKey,
+    /// Captured `search_id` at insertion. A hydration task short-circuits if
+    /// `ProjectSearch::search_id` has advanced past this value by the time
+    /// the swap is ready (i.e. a new search has started).
+    pub(crate) search_id: usize,
+    /// `Some` while a hydration task is running. Tasks are dropped (and
+    /// thereby cancelled) when `deferred_files` is cleared on new search.
+    pub(crate) hydration: Option<Task<()>>,
+    /// Set if the most recent hydration failed (worktree gone, IO error).
+    /// Surfaced inline so the user knows why their click didn't work.
+    pub(crate) last_error: Option<SharedString>,
+}
+
 pub struct ProjectSearch {
     project: Entity<Project>,
     excerpts: Entity<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
-    /// Files matched but not loaded as buffers because they exceeded
-    /// `max_loaded_file_size_bytes`. Displayed in the search toolbar tooltip;
-    /// not yet interactively rendered in the multibuffer (Phase 1; issue 20970).
-    deferred_file_count: usize,
+    /// Files emitted by the streaming-search path because they exceeded
+    /// `max_loaded_file_size_bytes`. Rendered as stub-buffer excerpts in the
+    /// multibuffer and hydrated to real buffers on click. Issue 20970.
+    deferred_files: HashMap<PathKey, DeferredFileState>,
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
@@ -329,7 +427,7 @@ impl ProjectSearch {
             excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
-            deferred_file_count: 0,
+            deferred_files: HashMap::default(),
             active_query: None,
             last_search_query_text: None,
             search_id: 0,
@@ -353,7 +451,24 @@ impl ProjectSearch {
                 excerpts,
                 pending_search: Default::default(),
                 match_ranges: self.match_ranges.clone(),
-                deferred_file_count: self.deferred_file_count,
+                // Rebuild the deferred-file index without the hydration tasks:
+                // in-flight tasks belong to the source view, not the clone.
+                deferred_files: self
+                    .deferred_files
+                    .iter()
+                    .map(|(key, state)| {
+                        (
+                            key.clone(),
+                            DeferredFileState {
+                                summary: state.summary.clone(),
+                                path_key: state.path_key.clone(),
+                                search_id: state.search_id,
+                                hydration: None,
+                                last_error: state.last_error.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
                 active_query: self.active_query.clone(),
                 last_search_query_text: self.last_search_query_text.clone(),
                 search_id: self.search_id,
@@ -373,10 +488,25 @@ impl ProjectSearch {
         excerpts: &Entity<MultiBuffer>,
         cx: &mut Context<Self>,
     ) -> Subscription {
-        cx.subscribe(excerpts, |this, _, event, cx| {
-            if matches!(event, multi_buffer::Event::FileHandleChanged) {
+        cx.subscribe(excerpts, |this, excerpts, event, cx| match event {
+            multi_buffer::Event::FileHandleChanged => {
                 this.remove_deleted_buffers(cx);
             }
+            multi_buffer::Event::BuffersRemoved { .. } => {
+                // Issue 20970: hydration of a deferred file swaps the synthetic
+                // stub buffer for the real file under the same PathKey, dropping
+                // the stub's BufferId. Defensively retain match_ranges so any
+                // anchor that no longer resolves (whether from this swap or
+                // another excerpt removal) is dropped before the next find-next.
+                let snapshot = excerpts.read(cx).snapshot(cx);
+                let before = this.match_ranges.len();
+                this.match_ranges
+                    .retain(|range| snapshot.anchor_to_buffer_anchor(range.start).is_some());
+                if this.match_ranges.len() != before {
+                    cx.notify();
+                }
+            }
+            _ => {}
         })
     }
 
@@ -449,7 +579,7 @@ impl ProjectSearch {
         self.search_id += 1;
         self.active_query = Some(query);
         self.match_ranges.clear();
-        self.deferred_file_count = 0;
+        self.deferred_files.clear();
         self.search_state = SearchState::Running(SearchActivity::Searching);
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
             let SearchResults { rx, _task_handle } = search;
@@ -458,7 +588,7 @@ impl ProjectSearch {
             project_search
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.clear();
-                    project_search.deferred_file_count = 0;
+                    project_search.deferred_files.clear();
                     project_search
                         .excerpts
                         .update(cx, |excerpts, cx| excerpts.clear(cx));
@@ -467,23 +597,24 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let (buffers_with_ranges, deferred_files_in_chunk, has_reached_limit, search_activity) = cx
+                let (buffers_with_ranges, deferred_summaries_in_chunk, has_reached_limit, search_activity) = cx
                     .background_executor()
                     .spawn(async move {
                         let mut limit_reached = false;
                         let mut search_activity = None;
                         let mut buffers_with_ranges = Vec::with_capacity(results.len());
-                        let mut deferred_files_in_chunk: usize = 0;
+                        let mut deferred_summaries_in_chunk: Vec<FileMatchSummary> = Vec::new();
                         for result in results {
                             match result {
                                 project::search::SearchResult::Buffer { buffer, ranges } => {
                                     buffers_with_ranges.push((buffer, ranges));
                                 }
-                                project::search::SearchResult::DeferredFile(_summary) => {
-                                    // Phase 1: count deferred files for the toolbar tooltip
-                                    // but do not render them inline yet. Issue 20970 follow-up
-                                    // will add interactive hydration on click.
-                                    deferred_files_in_chunk += 1;
+                                project::search::SearchResult::DeferredFile(summary) => {
+                                    // Captured here, but the stub-buffer construction
+                                    // and excerpt insertion happen on the foreground
+                                    // (next block) because `Buffer::local` requires a
+                                    // foreground `Context`. Issue 20970.
+                                    deferred_summaries_in_chunk.push(summary);
                                 }
                                 project::search::SearchResult::LimitReached => {
                                     limit_reached = true;
@@ -496,15 +627,49 @@ impl ProjectSearch {
                                 }
                             }
                         }
-                        (buffers_with_ranges, deferred_files_in_chunk, limit_reached, search_activity)
+                        (buffers_with_ranges, deferred_summaries_in_chunk, limit_reached, search_activity)
                     })
                     .await;
                 limit_reached |= has_reached_limit;
-                if deferred_files_in_chunk > 0 {
+                if !deferred_summaries_in_chunk.is_empty() {
                     project_search
                         .update(cx, |project_search, cx| {
-                            project_search.deferred_file_count =
-                                project_search.deferred_file_count.saturating_add(deferred_files_in_chunk);
+                            for summary in deferred_summaries_in_chunk {
+                                let path_key = PathKey::with_sort_prefix(
+                                    summary.path.worktree_id.to_proto(),
+                                    summary.path.path.clone(),
+                                );
+                                if project_search.deferred_files.contains_key(&path_key) {
+                                    // Defensive: a second emission for the same file
+                                    // should not overwrite our state (would lose any
+                                    // in-flight hydration task). Streaming pipeline
+                                    // doesn't currently re-emit, but guarding here
+                                    // costs nothing.
+                                    continue;
+                                }
+                                let (stub_buffer, ranges) =
+                                    build_stub_buffer_and_ranges(&summary, cx);
+                                project_search.excerpts.update(cx, |excerpts, cx| {
+                                    excerpts.set_excerpts_for_path(
+                                        path_key.clone(),
+                                        stub_buffer,
+                                        ranges,
+                                        0,
+                                        cx,
+                                    );
+                                });
+                                let search_id = project_search.search_id;
+                                project_search.deferred_files.insert(
+                                    path_key.clone(),
+                                    DeferredFileState {
+                                        summary,
+                                        path_key,
+                                        search_id,
+                                        hydration: None,
+                                        last_error: None,
+                                    },
+                                );
+                            }
                             cx.notify();
                         })
                         .ok()?;
@@ -1037,19 +1202,34 @@ impl ProjectSearchView {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
             editor.set_in_project_search(true);
+            // Issue 20970: route excerpt-open clicks through our handler so we
+            // can intercept clicks on deferred-file stubs and hydrate them
+            // before delegating real-file opens to the workspace.
+            editor.set_delegate_open_excerpts(true);
             editor
         });
         subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
 
-        subscriptions.push(
-            cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
-                if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
-                    this.update_match_index(cx);
+        subscriptions.push(cx.subscribe_in(
+            &results_editor,
+            window,
+            |this, _, event: &EditorEvent, window, cx| {
+                match event {
+                    editor::EditorEvent::SelectionsChanged { .. } => {
+                        this.update_match_index(cx);
+                    }
+                    editor::EditorEvent::OpenExcerptsRequested {
+                        selections_by_buffer,
+                        split,
+                    } => {
+                        this.handle_open_excerpts(selections_by_buffer, *split, window, cx);
+                    }
+                    _ => {}
                 }
-                // Reraise editor events for workspace item activation purposes
+                // Reraise editor events for workspace item activation purposes.
                 cx.emit(ViewEvent::EditorEvent(event.clone()));
-            }),
-        );
+            },
+        ));
         subscriptions.push(cx.subscribe(
             &results_editor,
             |_this, _editor, _event: &SearchEvent, cx| cx.notify(),
@@ -1847,6 +2027,258 @@ impl ProjectSearchView {
             })
         }
     }
+
+    /// Receive the editor's `OpenExcerptsRequested` event (we set the
+    /// `delegate_open_excerpts` flag on the results editor). For each buffer
+    /// in the event, route clicks on deferred-file stubs through hydration
+    /// and clicks on real loaded buffers through the normal workspace open.
+    /// Issue 20970.
+    fn handle_open_excerpts(
+        &mut self,
+        selections_by_buffer: &HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let multi_buffer = self.results_editor.read(cx).buffer().clone();
+        let snapshot = multi_buffer.read(cx).snapshot(cx);
+        let mut workspace_opens: HashMap<
+            Entity<Buffer>,
+            (Vec<Range<BufferOffset>>, Option<u32>),
+        > = HashMap::default();
+
+        for (buffer_id, (ranges, scroll_offset)) in selections_by_buffer.iter() {
+            let Some(buffer_entity) = multi_buffer.read(cx).buffer(*buffer_id) else {
+                continue;
+            };
+
+            let path_key = snapshot.path_for_buffer(*buffer_id).cloned();
+            let is_deferred = path_key
+                .as_ref()
+                .is_some_and(|pk| self.entity.read(cx).deferred_files.contains_key(pk));
+
+            if !is_deferred {
+                workspace_opens.insert(buffer_entity, (ranges.clone(), *scroll_offset));
+                continue;
+            }
+            let path_key = match path_key {
+                Some(pk) => pk,
+                None => continue,
+            };
+
+            // Each snippet occupies exactly one row in the stub buffer, so
+            // the clicked offset's row maps directly to the MatchLocation
+            // index. See `build_stub_buffer_and_ranges`.
+            let stub_snapshot = buffer_entity.read(cx).snapshot();
+            let clicked_offset = ranges.first().map(|r| r.start.0).unwrap_or(0);
+            let clicked_match_index = stub_snapshot.offset_to_point(clicked_offset).row as usize;
+
+            self.hydrate_deferred_file(path_key, clicked_match_index, window, cx);
+        }
+
+        if !workspace_opens.is_empty() {
+            Editor::open_buffers_in_workspace(
+                self.workspace.clone(),
+                workspace_opens,
+                split,
+                window,
+                cx,
+            );
+        }
+    }
+
+    /// Open the real file backing a deferred stub, swap the stub's excerpts
+    /// for real-buffer excerpts under the same `PathKey`, and drive the
+    /// results editor's selection to the clicked match.
+    ///
+    /// Reserves the `deferred_files` slot via a placeholder task so that a
+    /// second click while hydration is in flight is a no-op. The hydration
+    /// task captures the current `search_id`; if a new search starts before
+    /// the swap, the task short-circuits before mutating state.
+    ///
+    /// For non-UTF-8 or BOM-prefixed files, the disk-byte ranges captured by
+    /// the streaming scan don't correspond 1:1 to the decoded `BufferSnapshot`
+    /// offsets. In that case we fall back to opening the file in the
+    /// workspace without computing anchors. Issue 20970.
+    fn hydrate_deferred_file(
+        &mut self,
+        path_key: PathKey,
+        clicked_match_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let initial = self.entity.update(cx, |project_search, _cx| {
+            let state = project_search.deferred_files.get_mut(&path_key)?;
+            if state.hydration.is_some() {
+                return None;
+            }
+            state.last_error = None;
+            // Reserve the slot so concurrent clicks coalesce. Replaced with
+            // the real Task handle after `cx.spawn_in` returns below.
+            state.hydration = Some(Task::ready(()));
+            Some((
+                project_search.project.clone(),
+                state.summary.path.clone(),
+                state.search_id,
+                state.summary.matches.clone(),
+            ))
+        });
+        let Some((project, project_path, captured_search_id, summary_matches)) = initial else {
+            return;
+        };
+        let has_matches = !summary_matches.is_empty();
+        let entity_weak = self.entity.downgrade();
+        let workspace_weak = self.workspace.clone();
+        let results_editor_weak = self.results_editor.downgrade();
+        let path_key_for_task = path_key.clone();
+
+        let task = cx.spawn_in(window, async move |project_search_view, cx| {
+            let open_task = project
+                .update(cx, |project, cx| project.open_buffer(project_path.clone(), cx));
+            let real_buffer = match open_task.await {
+                Ok(buffer) => buffer,
+                Err(err) => {
+                    let message: SharedString = format!("Failed to open file: {err}").into();
+                    entity_weak
+                        .update(cx, |project_search, cx| {
+                            if let Some(state) =
+                                project_search.deferred_files.get_mut(&path_key_for_task)
+                            {
+                                state.hydration = None;
+                                state.last_error = Some(message);
+                            }
+                            cx.notify();
+                        })
+                        .log_err();
+                    return;
+                }
+            };
+
+            let (buffer_snapshot, encoding_name, has_bom) = real_buffer.read_with(cx, |buf, _| {
+                (buf.snapshot(), buf.encoding().name(), buf.has_bom())
+            });
+
+            let still_relevant = entity_weak
+                .read_with(cx, |project_search, _| {
+                    project_search.search_id == captured_search_id
+                        && project_search
+                            .deferred_files
+                            .contains_key(&path_key_for_task)
+                })
+                .unwrap_or(false);
+            if !still_relevant {
+                return;
+            }
+
+            let utf8_no_bom = encoding_name == "UTF-8" && !has_bom;
+            if !utf8_no_bom || !has_matches {
+                // Fallback: open the file in the workspace without a swap.
+                // The disk-byte offsets captured at scan time aren't valid
+                // post-decode, so we don't compute anchors. Drive line-jump
+                // here in a follow-up by chaining on the returned task.
+                workspace_weak
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace
+                            .open_path(project_path.clone(), None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    })
+                    .log_err();
+                entity_weak
+                    .update(cx, |project_search, cx| {
+                        if let Some(state) =
+                            project_search.deferred_files.get_mut(&path_key_for_task)
+                        {
+                            state.hydration = None;
+                        }
+                        cx.notify();
+                    })
+                    .log_err();
+                return;
+            }
+
+            let buffer_len = buffer_snapshot.len();
+            let anchor_ranges: Vec<Range<language::Anchor>> = summary_matches
+                .iter()
+                .map(|m| {
+                    let start = (m.byte_range.start as usize).min(buffer_len);
+                    let end = (m.byte_range.end as usize).min(buffer_len).max(start);
+                    buffer_snapshot.anchor_before(start)..buffer_snapshot.anchor_after(end)
+                })
+                .collect();
+
+            let swap_fut = match entity_weak.update(cx, |project_search, cx| {
+                project_search.excerpts.update(cx, |excerpts, cx| {
+                    excerpts.set_anchored_excerpts_for_path(
+                        path_key_for_task.clone(),
+                        real_buffer.clone(),
+                        anchor_ranges,
+                        multibuffer_context_lines(cx),
+                        cx,
+                    )
+                })
+            }) {
+                Ok(fut) => fut,
+                Err(_) => return,
+            };
+            let new_anchors = swap_fut.await;
+
+            let still_relevant = entity_weak
+                .read_with(cx, |project_search, _| {
+                    project_search.search_id == captured_search_id
+                })
+                .unwrap_or(false);
+            if !still_relevant {
+                return;
+            }
+
+            let clicked_anchor_range = new_anchors.get(clicked_match_index).cloned();
+
+            entity_weak
+                .update(cx, |project_search, cx| {
+                    project_search.match_ranges.extend(new_anchors);
+                    // Re-sort to preserve the binary-search invariant in
+                    // `editor::items::active_match_index` after mid-stream
+                    // insertion of a hydrated file's matches.
+                    let mb_snapshot = project_search.excerpts.read(cx).snapshot(cx);
+                    project_search
+                        .match_ranges
+                        .sort_by(|a, b| a.start.cmp(&b.start, &mb_snapshot));
+                    project_search.deferred_files.remove(&path_key_for_task);
+                    cx.notify();
+                })
+                .log_err();
+
+            if let Some(range) = clicked_anchor_range {
+                results_editor_weak
+                    .update_in(cx, |editor, window, cx| {
+                        editor.unfold_ranges(std::slice::from_ref(&range), false, true, cx);
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges([range]),
+                        );
+                    })
+                    .log_err();
+            }
+
+            project_search_view
+                .update(cx, |view, cx| {
+                    view.update_match_index(cx);
+                    cx.notify();
+                })
+                .log_err();
+        });
+
+        // Replace the placeholder reservation with the real task handle so
+        // the task is cancelled when the deferred slot is cleared (e.g. on
+        // new search).
+        self.entity.update(cx, |project_search, _| {
+            if let Some(state) = project_search.deferred_files.get_mut(&path_key) {
+                state.hydration = Some(task);
+            }
+        });
+    }
 }
 
 fn buffer_search_query(
@@ -2226,7 +2658,39 @@ impl Render for ProjectSearchBar {
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.search_state.limit_reached();
         let is_search_underway = project_search.pending_search.is_some();
-        let deferred_file_count = project_search.deferred_file_count;
+        let deferred_file_count = project_search.deferred_files.len();
+        let (total_unloaded_matches, has_unenumerated) = {
+            let mut total = 0usize;
+            let mut unenumerated = false;
+            for state in project_search.deferred_files.values() {
+                total += state.summary.matches.len();
+                if state.summary.matches.is_empty() && state.summary.truncated {
+                    unenumerated = true;
+                }
+            }
+            (total, unenumerated)
+        };
+        let deferred_badge_text = if deferred_file_count == 0 {
+            None
+        } else {
+            let file_word = if deferred_file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            let text = if total_unloaded_matches > 0 && has_unenumerated {
+                format!(
+                    "+{total_unloaded_matches} in {deferred_file_count} unloaded {file_word} (some not enumerated)"
+                )
+            } else if total_unloaded_matches > 0 {
+                format!(
+                    "+{total_unloaded_matches} in {deferred_file_count} unloaded {file_word}"
+                )
+            } else {
+                format!("{deferred_file_count} unloaded {file_word} (matches not enumerated)")
+            };
+            Some(SharedString::from(text))
+        };
 
         let color_override = match (
             project_search.search_state,
@@ -2344,22 +2808,31 @@ impl Render for ProjectSearchBar {
                                         .with_rotate_animation(2)
                                         .into_any_element(),
                                 )
-                            }),
+                            })
+                            .when_some(
+                                deferred_badge_text.filter(|_| !limit_reached),
+                                |this, badge_text| {
+                                    this.child(
+                                        h_flex()
+                                            .gap_0p5()
+                                            .child(
+                                                Icon::new(IconName::FolderSearch)
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                Label::new(badge_text)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            ),
+                                    )
+                                },
+                            ),
                     )
                     .when(limit_reached, |this| {
                         this.tooltip(Tooltip::text(
                             "Search Limits Reached\nTry narrowing your search",
                         ))
-                    })
-                    .when(!limit_reached && deferred_file_count > 0, |this| {
-                        let tooltip_text = if deferred_file_count == 1 {
-                            "1 large file was searched without being loaded into the editor.\nMatches are tracked but not previewed inline yet.".to_string()
-                        } else {
-                            format!(
-                                "{deferred_file_count} large files were searched without being loaded into the editor.\nMatches are tracked but not previewed inline yet."
-                            )
-                        };
-                        this.tooltip(Tooltip::text(tooltip_text))
                     }),
             );
 
@@ -5621,5 +6094,368 @@ pub mod tests {
             editor::SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT + Duration::from_millis(100),
         );
         cx.background_executor.run_until_parked();
+    }
+
+    /// Phase 2 helper: override the streaming-mode threshold and per-file cap
+    /// for a test. Mirrors `override_search_streaming_settings` in
+    /// `crates/project/tests/integration/project_tests.rs`. Issue 20970.
+    fn override_search_streaming_settings(
+        cx: &mut TestAppContext,
+        max_loaded_file_size_bytes: u64,
+        max_matches_per_deferred_file: usize,
+    ) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let search = settings.editor.search.get_or_insert_default();
+                    search.max_loaded_file_size_bytes = Some(max_loaded_file_size_bytes);
+                    search.max_matches_per_deferred_file =
+                        Some(max_matches_per_deferred_file);
+                });
+            });
+        });
+    }
+
+    /// Phase 2: after streaming search emits a `DeferredFile`, the UI should
+    /// surface it as a synthetic stub buffer with one excerpt per match.
+    /// Issue 20970.
+    #[gpui::test]
+    async fn test_deferred_file_renders_as_stub_excerpts(cx: &mut TestAppContext) {
+        init_test(cx);
+        override_search_streaming_settings(cx, 256, 1000);
+
+        let filler = "X".repeat(80);
+        let large_content = format!(
+            "header\n{filler}\nmatch ME\n{filler}\nmatch ME\n{filler}\nmatch ME\n"
+        );
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "small.rs": "match ME inline\n",
+                "large.txt": large_content.clone(),
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "match ME", cx);
+        cx.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                assert_eq!(
+                    project_search.deferred_files.len(),
+                    1,
+                    "exactly one deferred-file entry expected"
+                );
+                let state = project_search
+                    .deferred_files
+                    .values()
+                    .next()
+                    .expect("deferred state present");
+                assert_eq!(
+                    state.summary.matches.len(),
+                    3,
+                    "all 3 matches captured by streaming scan"
+                );
+                assert!(!state.summary.truncated);
+
+                // The multibuffer holds the loaded file and the stub. Verify
+                // there's exactly one stub (no `file()`) and it carries 3
+                // excerpts mapping 1:1 to the captured matches.
+                let mb = search_view.results_editor.read(cx).buffer().read(cx);
+                let stub_count = mb
+                    .all_buffers()
+                    .iter()
+                    .filter(|b| b.read(cx).file().is_none())
+                    .count();
+                assert_eq!(stub_count, 1);
+                let stub_text = mb
+                    .all_buffers()
+                    .iter()
+                    .find(|b| b.read(cx).file().is_none())
+                    .map(|b| b.read(cx).text())
+                    .unwrap();
+                assert!(stub_text.contains("match ME"));
+            })
+            .unwrap();
+    }
+
+    /// Phase 2: find-next and find-prev must skip over deferred-file stubs
+    /// — `match_ranges` should only contain anchors from loaded buffers.
+    /// Issue 20970.
+    #[gpui::test]
+    async fn test_find_next_skips_deferred_excerpts(cx: &mut TestAppContext) {
+        init_test(cx);
+        override_search_streaming_settings(cx, 256, 1000);
+
+        let filler = "X".repeat(80);
+        let large_content =
+            format!("header\n{filler}\nMARKER\n{filler}\nMARKER\n{filler}\nMARKER\n");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "small1.rs": "MARKER one\n",
+                "small2.rs": "MARKER two\n",
+                "large.txt": large_content,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "MARKER", cx);
+        cx.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                // 2 loaded files × 1 match each = 2 navigable matches.
+                // The deferred large file contributes 3 captured matches that
+                // must NOT show up in `match_ranges` (skipped by find-next).
+                assert_eq!(
+                    project_search.match_ranges.len(),
+                    2,
+                    "only loaded-file matches participate in find-next"
+                );
+                assert_eq!(project_search.deferred_files.len(), 1);
+            })
+            .unwrap();
+    }
+
+    /// Phase 2: `build_stub_buffer_and_ranges` must produce a single
+    /// placeholder excerpt for the empty-matches + truncated case
+    /// (multiline-regex-over-threshold). Tests the function directly because
+    /// the upstream streaming-search classification of multiline regex is
+    /// environment-dependent. Issue 20970.
+    #[gpui::test]
+    async fn test_build_stub_buffer_handles_truncated_empty(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/dir"), json!({ "dummy.txt": "stub" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+
+        let summary = FileMatchSummary {
+            path: ProjectPath {
+                worktree_id: project::WorktreeId::from_proto(0),
+                path: rel_path("dummy.txt").into_arc(),
+            },
+            abs_path: std::sync::Arc::from(std::path::Path::new("/dir/dummy.txt")),
+            file_size: 1024,
+            matches: Vec::new(),
+            truncated: true,
+        };
+
+        let (stub_buffer, ranges) = search
+            .update(cx, |_, cx| build_stub_buffer_and_ranges(&summary, cx));
+
+        cx.update(|cx| {
+            let buffer = stub_buffer.read(cx);
+            let text = buffer.text();
+            assert!(
+                text.contains(DEFERRED_PLACEHOLDER_TEXT),
+                "expected placeholder text, got {text:?}"
+            );
+            assert_eq!(buffer.capability(), Capability::ReadOnly);
+        });
+        assert_eq!(
+            ranges.len(),
+            1,
+            "exactly one excerpt covering the placeholder line"
+        );
+        assert_eq!(ranges[0].start, TextPoint::new(0, 0));
+        assert_eq!(
+            ranges[0].end,
+            TextPoint::new(0, DEFERRED_PLACEHOLDER_TEXT.len() as u32)
+        );
+    }
+
+    /// Phase 2: simulating a click on a deferred-file excerpt should hydrate
+    /// the stub via `project.open_buffer`, swap it for the real buffer under
+    /// the same `PathKey`, and populate `match_ranges` with the file's
+    /// matches. Issue 20970.
+    #[gpui::test]
+    async fn test_click_hydrates_deferred_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        override_search_streaming_settings(cx, 256, 1000);
+
+        let filler = "X".repeat(80);
+        let large_content =
+            format!("header\n{filler}\nNEEDLE\n{filler}\nNEEDLE\n{filler}\nNEEDLE\n");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "large.txt": large_content,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "NEEDLE", cx);
+        cx.run_until_parked();
+
+        let stub_buffer_id = search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                assert_eq!(project_search.deferred_files.len(), 1);
+                let mb = search_view.results_editor.read(cx).buffer().read(cx);
+                mb.all_buffers()
+                    .iter()
+                    .find(|b| b.read(cx).file().is_none())
+                    .map(|b| b.read(cx).remote_id())
+                    .expect("stub buffer present")
+            })
+            .unwrap();
+
+        let selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)> =
+            HashMap::from_iter([(
+                stub_buffer_id,
+                (vec![BufferOffset(0)..BufferOffset(0)], None),
+            )]);
+
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.handle_open_excerpts(&selections_by_buffer, false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                assert!(
+                    project_search.deferred_files.is_empty(),
+                    "hydration should clear the deferred-file entry"
+                );
+                assert_eq!(
+                    project_search.match_ranges.len(),
+                    3,
+                    "hydration should append 3 anchor ranges (one per match) to match_ranges"
+                );
+                let mb = search_view.results_editor.read(cx).buffer().read(cx);
+                let real_count = mb
+                    .all_buffers()
+                    .iter()
+                    .filter(|b| b.read(cx).file().is_some())
+                    .count();
+                assert_eq!(real_count, 1, "stub should be swapped for the real file");
+                let stub_count = mb
+                    .all_buffers()
+                    .iter()
+                    .filter(|b| b.read(cx).file().is_none())
+                    .count();
+                assert_eq!(stub_count, 0, "stub buffer should have been removed");
+            })
+            .unwrap();
+    }
+
+    /// Phase 2: after hydration, the anchor ranges in `match_ranges` should
+    /// resolve to the substring that was matched in the streaming scan.
+    /// Issue 20970.
+    #[gpui::test]
+    async fn test_hydrated_anchors_resolve_to_matched_substring(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        override_search_streaming_settings(cx, 256, 1000);
+
+        let filler = "X".repeat(120);
+        let large_content = format!(
+            "alpha\n{filler}\nNEEDLE one\nbeta\n{filler}\nNEEDLE two\n{filler}\n"
+        );
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({ "large.txt": large_content }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "NEEDLE", cx);
+        cx.run_until_parked();
+
+        let stub_buffer_id = search_view
+            .update(cx, |search_view, _window, cx| {
+                let mb = search_view.results_editor.read(cx).buffer().read(cx);
+                mb.all_buffers()
+                    .iter()
+                    .find(|b| b.read(cx).file().is_none())
+                    .map(|b| b.read(cx).remote_id())
+                    .expect("stub buffer present")
+            })
+            .unwrap();
+
+        let selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)> =
+            HashMap::from_iter([(
+                stub_buffer_id,
+                (vec![BufferOffset(0)..BufferOffset(0)], None),
+            )]);
+        search_view
+            .update(cx, |search_view, window, cx| {
+                search_view.handle_open_excerpts(&selections_by_buffer, false, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(50));
+        cx.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                let mb_snapshot =
+                    search_view.results_editor.read(cx).buffer().read(cx).snapshot(cx);
+                for (i, range) in project_search.match_ranges.iter().enumerate() {
+                    let text: String = mb_snapshot.text_for_range(range.clone()).collect();
+                    assert_eq!(
+                        text, "NEEDLE",
+                        "match_ranges[{i}] should resolve to the matched substring 'NEEDLE', got {text:?}"
+                    );
+                }
+            })
+            .unwrap();
     }
 }
