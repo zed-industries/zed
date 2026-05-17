@@ -885,20 +885,17 @@ impl CompletionsMenu {
                         let filter_range = &completion.label.filter_range;
                         let full_text = &completion.label.text;
 
-                        let main_text: String = full_text[filter_range.clone()].to_string();
+                        let main_text: String = full_text[0..filter_range.end].to_string();
                         let main_highlights: Vec<_> = highlights
                             .iter()
                             .filter_map(|(range, highlight)| {
-                                if range.end <= filter_range.start
-                                    || range.start >= filter_range.end
+                                if range.start >= filter_range.end
                                 {
                                     return None;
                                 }
-                                let clamped_start =
-                                    range.start.max(filter_range.start) - filter_range.start;
                                 let clamped_end =
-                                    range.end.min(filter_range.end) - filter_range.start;
-                                Some((clamped_start..clamped_end, (*highlight)))
+                                    range.end.min(filter_range.end);
+                                Some((range.start..clamped_end, (*highlight)))
                             })
                             .collect();
                         let main_label = StyledText::new(main_text)
