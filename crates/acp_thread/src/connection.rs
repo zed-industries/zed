@@ -127,6 +127,14 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
+    fn supports_logout(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn logout(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
+    }
+
     fn prompt(
         &self,
         user_message_id: UserMessageId,
