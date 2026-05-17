@@ -812,6 +812,8 @@ pub mod preview {
                 OpenPreview,
                 /// Opens an SVG preview in a split pane.
                 OpenPreviewToTheSide,
+                /// Copies the SVG preview as a PNG image.
+                CopyAsImage,
             ]
         );
     }
