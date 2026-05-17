@@ -1811,7 +1811,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn hover_popover_section() -> [SettingsPageItem; 6] {
+    fn hover_popover_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Hover Popover"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1865,27 +1865,6 @@ fn editor_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.hover_popover_hiding_delay = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Code Block Horizontal Scroll",
-                description: "When enabled, code blocks in the hover popover will have a horizontal scrollbar instead of wrapping text.",
-                field: Box::new(SettingField {
-                    json_path: Some("global_lsp_settings.hover_code_block_horizontal_scroll"),
-                    pick: |settings_content| {
-                        settings_content
-                            .global_lsp_settings
-                            .as_ref()
-                            .and_then(|s| s.hover_code_block_horizontal_scroll.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .global_lsp_settings
-                            .get_or_insert_default()
-                            .hover_code_block_horizontal_scroll = value;
                     },
                 }),
                 metadata: None,
@@ -9191,7 +9170,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 9] {
+    fn lsp_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -9363,6 +9342,27 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                 }),
                 metadata: None,
                 files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Block Horizontal Scroll",
+                description: "When enabled, code blocks in hover popovers, signature help, and code context menus will have a horizontal scrollbar instead of wrapping text.",
+                field: Box::new(SettingField {
+                    json_path: Some("global_lsp_settings.code_block_horizontal_scroll"),
+                    pick: |settings_content| {
+                        settings_content
+                            .global_lsp_settings
+                            .as_ref()
+                            .and_then(|s| s.code_block_horizontal_scroll.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .global_lsp_settings
+                            .get_or_insert_default()
+                            .code_block_horizontal_scroll = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
@@ -9742,13 +9742,13 @@ mod tests {
     }
 
     #[test]
-    fn test_hover_code_block_horizontal_scroll() {
+    fn test_code_block_horizontal_scroll() {
         let mut settings = SettingsContent::default();
         assert_eq!(
             settings
                 .global_lsp_settings
                 .as_ref()
-                .and_then(|s| s.hover_code_block_horizontal_scroll),
+                .and_then(|s| s.code_block_horizontal_scroll),
             None,
             "new setting should be None by default (default.json provides the fallback)",
         );
@@ -9756,24 +9756,24 @@ mod tests {
         settings
             .global_lsp_settings
             .get_or_insert_default()
-            .hover_code_block_horizontal_scroll = Some(true);
+            .code_block_horizontal_scroll = Some(true);
         assert_eq!(
             settings
                 .global_lsp_settings
                 .as_ref()
-                .and_then(|s| s.hover_code_block_horizontal_scroll),
+                .and_then(|s| s.code_block_horizontal_scroll),
             Some(true),
         );
 
         settings
             .global_lsp_settings
             .get_or_insert_default()
-            .hover_code_block_horizontal_scroll = Some(false);
+            .code_block_horizontal_scroll = Some(false);
         assert_eq!(
             settings
                 .global_lsp_settings
                 .as_ref()
-                .and_then(|s| s.hover_code_block_horizontal_scroll),
+                .and_then(|s| s.code_block_horizontal_scroll),
             Some(false),
         );
     }

@@ -674,7 +674,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .font_weight(buffer_font_weight),
         code_block_overflow_x_scroll: project_settings
             .global_lsp_settings
-            .hover_code_block_horizontal_scroll,
+            .code_block_horizontal_scroll,
         inline_code: TextStyleRefinement {
             background_color: Some(cx.theme().colors().background),
             font_family: Some(buffer_font_family),
