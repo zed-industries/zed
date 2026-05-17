@@ -1582,9 +1582,8 @@ impl Sidebar {
                 }
             }
 
-            let has_threads = if !threads.is_empty() || !terminals.is_empty() {
-                true
-            } else {
+            let has_visible_rows = !threads.is_empty() || !terminals.is_empty();
+            let has_unloaded_threads = !should_load_threads && {
                 let store = ThreadMetadataStore::global(cx).read(cx);
                 store
                     .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
@@ -1595,6 +1594,7 @@ impl Sidebar {
                         .next()
                         .is_some()
             };
+            let has_threads = has_visible_rows || has_unloaded_threads;
 
             if !query.is_empty() {
                 let workspace_highlight_positions =
