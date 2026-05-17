@@ -473,15 +473,17 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: ConnectionTo<Agent>,
+    supports_delete: bool,
     updates_tx: async_channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: async_channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
-    fn new(connection: ConnectionTo<Agent>) -> Self {
+    fn new(connection: ConnectionTo<Agent>, supports_delete: bool) -> Self {
         let (tx, rx) = async_channel::unbounded();
         Self {
             connection,
+            supports_delete,
             updates_tx: tx,
             updates_rx: rx,
         }
@@ -534,6 +536,29 @@ impl AgentSessionList for AcpSessionList {
                 next_cursor: response.next_cursor,
                 meta: response.meta,
             })
+        })
+    }
+
+    fn supports_delete(&self, cx: &App) -> bool {
+        self.supports_delete && cx.has_flag::<AcpBetaFeatureFlag>()
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        if !self.supports_delete(cx) {
+            return Task::ready(Err(anyhow::anyhow!("delete_session not supported")));
+        }
+
+        let conn = self.connection.clone();
+        let updates_tx = self.updates_tx.clone();
+        let session_id = session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            into_foreground_future(conn.send_request(acp::DeleteSessionRequest::new(session_id)))
+                .await
+                .map_err(map_acp_error)?;
+            updates_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .log_err();
+            Ok(())
         })
     }
 
@@ -927,6 +952,11 @@ impl AcpConnection {
             .unwrap_or_else(|| agent_id.0.clone());
         let agent_version = agent_info
             .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
+        let agent_supports_delete = response
+            .agent_capabilities
+            .session_capabilities
+            .delete
+            .is_some();
 
         let session_list = if response
             .agent_capabilities
@@ -934,7 +964,10 @@ impl AcpConnection {
             .list
             .is_some()
         {
-            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            let list = Rc::new(AcpSessionList::new(
+                connection.clone(),
+                agent_supports_delete,
+            ));
             *client_session_list.borrow_mut() = Some(list.clone());
             Some(list)
         } else {
@@ -2337,6 +2370,8 @@ pub mod test_support {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use feature_flags::FeatureFlag as _;
+
     use super::*;
 
     #[test]
@@ -2481,6 +2516,128 @@ mod tests {
         assert_eq!(
             debug_log.trailing_stderr().as_deref(),
             Some("recent stderr")
+        );
+    }
+
+    #[gpui::test]
+    async fn session_delete_support_requires_beta_flag_and_capability(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions, cx).await;
+        let session_list = AcpSessionList::new(connection.clone(), true);
+        let missing_capability = AcpSessionList::new(connection, false);
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+
+            assert_eq!(
+                session_list.supports_delete(cx),
+                cx.has_flag::<AcpBetaFeatureFlag>()
+            );
+            assert!(!missing_capability.supports_delete(cx));
+
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+            assert!(session_list.supports_delete(cx));
+            assert!(!missing_capability.supports_delete(cx));
+        });
+    }
+
+    async fn connect_session_delete_test_agent(
+        deleted_sessions: Arc<std::sync::Mutex<Vec<acp::SessionId>>>,
+        cx: &mut gpui::TestAppContext,
+    ) -> ConnectionTo<Agent> {
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+
+        cx.background_spawn(
+            Agent
+                .builder()
+                .name("delete-test-agent")
+                .on_receive_request(
+                    {
+                        let deleted_sessions = deleted_sessions.clone();
+                        async move |request: acp::DeleteSessionRequest, responder, _cx| {
+                            deleted_sessions
+                                .lock()
+                                .expect("deleted sessions lock should not be poisoned")
+                                .push(request.session_id);
+                            responder.respond(acp::DeleteSessionResponse::default())
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        )
+        .detach();
+
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        cx.background_spawn(Client.builder().name("delete-test-client").connect_with(
+            client_transport,
+            move |connection: ConnectionTo<Agent>| async move {
+                connection_tx.send(connection).ok();
+                futures::future::pending::<Result<(), acp::Error>>().await
+            },
+        ))
+        .detach();
+
+        connection_rx
+            .await
+            .expect("failed to receive ACP connection")
+    }
+
+    #[gpui::test]
+    async fn session_list_delete_sends_session_delete_when_supported(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
+        let session_list = AcpSessionList::new(connection, true);
+        let session_id = acp::SessionId::new("session-to-delete");
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+        cx.update(|cx| session_list.delete_session(&session_id, cx))
+            .await
+            .expect("delete_session failed");
+
+        assert_eq!(
+            *deleted_sessions
+                .lock()
+                .expect("deleted sessions lock should not be poisoned"),
+            vec![session_id]
+        );
+    }
+
+    #[gpui::test]
+    async fn session_list_delete_does_not_send_when_unsupported(cx: &mut gpui::TestAppContext) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
+        let session_list = AcpSessionList::new(connection, false);
+        let session_id = acp::SessionId::new("session-to-delete");
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+        let error = cx
+            .update(|cx| session_list.delete_session(&session_id, cx))
+            .await
+            .expect_err("delete_session should fail when unsupported");
+
+        assert!(
+            error.to_string().contains("delete_session not supported"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            deleted_sessions
+                .lock()
+                .expect("deleted sessions lock should not be poisoned")
+                .is_empty()
         );
     }
 
