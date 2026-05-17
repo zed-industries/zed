@@ -3,9 +3,12 @@ use acp_thread::{AcpThread, PermissionOptions, StubAgentConnection};
 use agent::ThreadStore;
 use agent_ui::{
     ThreadId,
-    terminal_thread_metadata_store::{TerminalThreadMetadata, TerminalThreadMetadataStore},
+    terminal_thread_metadata_store::{
+        TerminalThreadMetadata, TerminalThreadMetadataStore, TestTerminalMetadataDbName,
+    },
     test_support::{
-        active_session_id, active_thread_id, open_thread_with_connection, send_message,
+        active_session_id, active_thread_id, open_thread_with_connection,
+        open_thread_with_custom_connection, send_message,
     },
     thread_metadata_store::{ThreadMetadata, WorktreePaths},
 };
@@ -10667,15 +10670,24 @@ mod property_test {
                 let panel =
                     workspace.read_with(cx, |workspace, cx| workspace.panel::<AgentPanel>(cx));
                 if let Some(panel) = panel {
-                    let connection = StubAgentConnection::new();
-                    connection.set_next_prompt_updates(vec![
-                        acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
-                            "Done".into(),
-                        )),
-                    ]);
-                    open_thread_with_connection(&panel, connection, cx);
-                    send_message(&panel, cx);
+                    let agent_id = AgentId::new(format!("prop-agent-{}", state.thread_counter));
+                    let connection = StubAgentConnection::new().with_agent_id(agent_id.clone());
+                    open_thread_with_custom_connection(&panel, connection.clone(), cx);
+                    let thread_id = active_thread_id(&panel, cx);
                     let session_id = active_session_id(&panel, cx);
+                    // Make the thread non-draft without exercising the prompt
+                    // send path; these invariants are about sidebar state, not
+                    // git checkpointing during user prompts.
+                    cx.update(|_, cx| {
+                        connection.send_update(
+                            session_id.clone(),
+                            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                                "Done".into(),
+                            )),
+                            cx,
+                        );
+                    });
+                    cx.run_until_parked();
                     state.saved_thread_ids.push(session_id.clone());
 
                     let title: SharedString = format!("Thread {}", state.thread_counter).into();
@@ -10684,15 +10696,24 @@ mod property_test {
                         chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2024, 1, 1, 0, 0, 0)
                             .unwrap()
                             + chrono::Duration::seconds(state.thread_counter as i64);
-                    save_thread_metadata(
-                        session_id,
-                        Some(title),
+                    let metadata = cx.update(|_, cx| ThreadMetadata {
+                        thread_id,
+                        session_id: Some(session_id),
+                        agent_id,
+                        title: Some(title),
+                        title_override: None,
                         updated_at,
-                        None,
-                        None,
-                        &project,
-                        cx,
-                    );
+                        created_at: None,
+                        interacted_at: None,
+                        worktree_paths: project.read(cx).worktree_paths(cx),
+                        archived: false,
+                        remote_connection: project.read(cx).remote_connection_options(cx),
+                    });
+                    cx.update(|_, cx| {
+                        ThreadMetadataStore::global(cx)
+                            .update(cx, |store, cx| store.save(metadata, cx))
+                    });
+                    cx.run_until_parked();
                 }
             }
             Operation::SaveWorktreeThread { worktree_index } => {
@@ -11158,11 +11179,12 @@ mod property_test {
         //    content yet.
         let panel = active_workspace.read(cx).panel::<AgentPanel>(cx).unwrap();
         let panel_has_content = panel.read(cx).active_thread_id(cx).is_some()
-            || panel.read(cx).active_conversation_view().is_some();
+            || panel.read(cx).active_conversation_view().is_some()
+            || panel.read(cx).active_terminal_id().is_some();
 
         let Some(entry) = sidebar.active_entry.as_ref() else {
             if panel_has_content {
-                anyhow::bail!("active_entry is None but panel has content (draft or thread)");
+                anyhow::bail!("active_entry is None but panel has content");
             }
             return Ok(());
         };
@@ -11315,15 +11337,19 @@ mod property_test {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static NEXT_PROPTEST_DB: AtomicUsize = AtomicUsize::new(0);
 
+        let test_db_id = NEXT_PROPTEST_DB.fetch_add(1, Ordering::SeqCst);
+        cx.update(|cx| {
+            cx.set_global(TestTerminalMetadataDbName(format!(
+                "PROPTEST_TERMINAL_THREAD_METADATA_{test_db_id}"
+            )));
+        });
+
         agent_ui::test_support::init_test(cx);
         cx.update(|cx| {
             cx.set_global(db::AppDatabase::test_new());
             cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
             cx.set_global(agent_ui::thread_metadata_store::TestMetadataDbName(
-                format!(
-                    "PROPTEST_THREAD_METADATA_{}",
-                    NEXT_PROPTEST_DB.fetch_add(1, Ordering::SeqCst)
-                ),
+                format!("PROPTEST_THREAD_METADATA_{test_db_id}"),
             ));
 
             ThreadStore::init_global(cx);
