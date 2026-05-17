@@ -43,7 +43,7 @@ fn base_theme(accent_colors: Vec<AccentColor>) -> MermaidTheme {
 fn accent(r: u8, g: u8, b: u8) -> AccentColor {
     let c = rgb(r, g, b);
     AccentColor {
-        stroke: c,
+        foreground: c,
         background: c,
     }
 }

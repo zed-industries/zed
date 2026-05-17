@@ -191,7 +191,7 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
             .0
             .iter()
             .map(|player| mermaid_render::AccentColor {
-                stroke: player.cursor,
+                foreground: player.cursor,
                 background: player.background,
             })
             .collect(),

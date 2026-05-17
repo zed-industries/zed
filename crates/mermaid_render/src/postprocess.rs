@@ -2,10 +2,8 @@
 //!
 //! These run after merman has produced an SVG and adjust it so that the
 //! result is themed correctly, can be parsed by `usvg`, and lays out text
-//! that overflows its container. The two entry points (called from
-//! `render_with_merman`) are [`wrap_foreignobject_labels`] and
-//! [`postprocess_merman_svg`]; everything else in this module is a private
-//! helper.
+//! that overflows its container. The single entry point is [`postprocess`];
+//! everything else in this module is a private helper.
 
 use anyhow::{Context as _, Result};
 use gpui::{Hsla, Rgba};
@@ -29,7 +27,7 @@ use crate::{MermaidTheme, css_color};
 /// 5. Run the main themed XML pass: inject theme-derived CSS into the
 ///    `<style>` element, rewrite colors on themed shapes, drop empty
 ///    elements, etc.
-pub(crate) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
+pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     // Step 1: merman emits literal `\n` in foreignObject label HTML rather
     // than interpreting it as a line break. Convert to `<br/>` so the
     // fallback function below splits on it.
@@ -84,7 +82,7 @@ fn postprocess_merman_svg(
             let (fill, text) = accent_fill_and_text(accent.background, theme.dark_mode);
             AccentStyle {
                 fill: css_color(fill),
-                stroke: css_color(accent.stroke),
+                stroke: css_color(accent.foreground),
                 text: css_color(text),
             }
         })

@@ -89,14 +89,14 @@ fn rgb_theme() -> MermaidTheme {
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
         accent_colors: vec![
-            mermaid_render::AccentColor { stroke: rgb(116, 173, 232), background: rgb(116, 173, 232) },
-            mermaid_render::AccentColor { stroke: rgb(190, 80, 70), background: rgb(190, 80, 70) },
-            mermaid_render::AccentColor { stroke: rgb(191, 149, 106), background: rgb(191, 149, 106) },
-            mermaid_render::AccentColor { stroke: rgb(180, 119, 207), background: rgb(180, 119, 207) },
-            mermaid_render::AccentColor { stroke: rgb(110, 180, 191), background: rgb(110, 180, 191) },
-            mermaid_render::AccentColor { stroke: rgb(208, 114, 119), background: rgb(208, 114, 119) },
-            mermaid_render::AccentColor { stroke: rgb(222, 193, 132), background: rgb(222, 193, 132) },
-            mermaid_render::AccentColor { stroke: rgb(161, 193, 129), background: rgb(161, 193, 129) },
+            mermaid_render::AccentColor { foreground: rgb(116, 173, 232), background: rgb(116, 173, 232) },
+            mermaid_render::AccentColor { foreground: rgb(190, 80, 70), background: rgb(190, 80, 70) },
+            mermaid_render::AccentColor { foreground: rgb(191, 149, 106), background: rgb(191, 149, 106) },
+            mermaid_render::AccentColor { foreground: rgb(180, 119, 207), background: rgb(180, 119, 207) },
+            mermaid_render::AccentColor { foreground: rgb(110, 180, 191), background: rgb(110, 180, 191) },
+            mermaid_render::AccentColor { foreground: rgb(208, 114, 119), background: rgb(208, 114, 119) },
+            mermaid_render::AccentColor { foreground: rgb(222, 193, 132), background: rgb(222, 193, 132) },
+            mermaid_render::AccentColor { foreground: rgb(161, 193, 129), background: rgb(161, 193, 129) },
         ],
     }
 }
