@@ -2679,6 +2679,7 @@ mod tests {
         );
     }
 
+    #[gpui::test]
     async fn logout_is_gated_by_beta_flag_and_agent_capability(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
