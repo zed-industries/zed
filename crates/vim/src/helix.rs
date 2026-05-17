@@ -1056,25 +1056,25 @@ impl Vim {
             let font = style.text.font();
             let font_size = style.text.font_size.to_pixels(window.rem_size());
             let label_color = cx.theme().colors().vim_helix_jump_label_foreground;
+            let dimmed_text_range = VimSettings::get_global(cx)
+                .helix_jump_dim_non_label_text
+                .then(|| {
+                    buffer_snapshot.anchor_after(start_offset)
+                        ..buffer_snapshot.anchor_after(end_offset)
+                });
 
-            let mut data = Self::build_helix_jump_ui_data(
+            Self::build_helix_jump_ui_data(
                 buffer_snapshot,
                 start_offset,
                 end_offset,
                 cursor_offset,
                 label_color,
+                dimmed_text_range,
                 &skip_data,
                 window.text_system(),
                 font,
                 font_size,
-            );
-            if VimSettings::get_global(cx).helix_jump_dim_non_label_text {
-                data.dimmed_text_range = Some(
-                    buffer_snapshot.anchor_after(start_offset)
-                        ..buffer_snapshot.anchor_after(end_offset),
-                );
-            }
-            data
+            )
         })
     }
 
@@ -1111,6 +1111,7 @@ impl Vim {
         end_offset: MultiBufferOffset,
         cursor_offset: MultiBufferOffset,
         label_color: Hsla,
+        dimmed_text_range: Option<Range<Anchor>>,
         skip_data: &HelixJumpSkipData,
         text_system: &WindowTextSystem,
         font: Font,
@@ -1197,7 +1198,7 @@ impl Vim {
         HelixJumpUiData {
             labels,
             overlays,
-            dimmed_text_range: None,
+            dimmed_text_range,
         }
     }
 
@@ -1886,6 +1887,7 @@ mod test {
                 buffer_snapshot.len(),
                 cursor_offset,
                 label_color,
+                None,
                 &skip_data,
                 window.text_system(),
                 font,
@@ -3807,6 +3809,7 @@ mod test {
                 buffer_snapshot.len(),
                 cursor_offset,
                 configured_label_color,
+                None,
                 &skip_data,
                 window.text_system(),
                 font,
