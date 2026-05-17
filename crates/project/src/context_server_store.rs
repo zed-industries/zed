@@ -455,8 +455,11 @@ impl ContextServerStore {
                 }
             }));
             subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
-                if matches!(event, WorktreeStoreEvent::WorktreeAdded(_))
-                    && !DisableAiSettings::get_global(cx).disable_ai
+                if matches!(
+                    event,
+                    WorktreeStoreEvent::WorktreeAdded(_)
+                        | WorktreeStoreEvent::WorktreeRemoved(_, _)
+                ) && !DisableAiSettings::get_global(cx).disable_ai
                 {
                     this.available_context_servers_changed(cx);
                 }

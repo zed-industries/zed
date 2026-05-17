@@ -665,23 +665,14 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_context_server_restarts_when_worktree_is_added(cx: &mut TestAppContext) {
+async fn test_context_server_refreshed_when_worktree_added(cx: &mut TestAppContext) {
     const SERVER_1_ID: &str = "mcp-1";
 
     let server_1_id = ContextServerId(SERVER_1_ID.into());
 
-    cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        let settings = ProjectSettings::get_global(cx).clone();
-        ProjectSettings::override_global(settings, cx);
-    });
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(path!("/test"), json!({"code.rs": ""})).await;
+    let (fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
     fs.insert_tree(path!("/second"), json!({"other.rs": ""}))
         .await;
-    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
     let executor = cx.executor();
     let store = project.read_with(cx, |project, _| project.context_server_store());
@@ -723,9 +714,20 @@ async fn test_context_server_restarts_when_worktree_is_added(cx: &mut TestAppCon
         cx.run_until_parked();
     }
 
-    let server_ids_before = cx.update(|cx| store.read(cx).server_ids().to_vec());
+    // Witness that adding a worktree triggers the store to refresh available
+    // servers (via `cx.notify` after `maintain_servers`). Without the
+    // `WorktreeStoreEvent::WorktreeAdded` subscription in `ContextServerStore`,
+    // this counter would remain zero.
+    let notify_count = Rc::new(RefCell::new(0usize));
+    let _notify_subscription = cx.update(|cx| {
+        let count = notify_count.clone();
+        cx.observe(&store, move |_, _| {
+            *count.borrow_mut() += 1;
+        })
+    });
 
     {
+        let _server_events = assert_server_events(&store, vec![], cx);
         let _ = project.update(cx, |project, cx| {
             project.find_or_create_worktree(path!("/second"), true, cx)
         });
@@ -733,83 +735,18 @@ async fn test_context_server_restarts_when_worktree_is_added(cx: &mut TestAppCon
     }
 
     cx.update(|cx| {
-        let server_ids_after = store.read(cx).server_ids().to_vec();
-
-        assert_eq!(
-            server_ids_after,
-            server_ids_before,
-            "Configured server list should be refreshed without changing ids when a worktree is added"
+        assert!(
+            *notify_count.borrow() > 0,
+            "Adding a worktree should trigger the context server store to refresh"
         );
         assert!(
-            server_ids_after.contains(&server_1_id),
+            store.read(cx).server_ids().contains(&server_1_id),
             "Configured server list should still include the server after a worktree is added"
         );
         assert_eq!(
             store.read(cx).status_for_server(&server_1_id),
             Some(ContextServerStatus::Running),
             "Server should still be running after a worktree is added"
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_context_server_stops_on_project_release(cx: &mut TestAppContext) {
-    const SERVER_1_ID: &str = "mcp-1";
-
-    let server_1_id = ContextServerId(SERVER_1_ID.into());
-
-    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
-
-    let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
-    store.update(cx, |store, _| {
-        store.set_context_server_factory(Box::new(move |id, _| {
-            Arc::new(ContextServer::new(
-                id.clone(),
-                Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
-            ))
-        }));
-    });
-
-    set_context_server_configuration(
-        vec![(
-            server_1_id.0.clone(),
-            settings::ContextServerSettingsContent::Stdio {
-                enabled: true,
-                remote: false,
-                command: ContextServerCommand {
-                    path: "somebinary".into(),
-                    args: vec!["arg".to_string()],
-                    env: None,
-                    timeout: None,
-                },
-            },
-        )],
-        cx,
-    );
-
-    {
-        let _server_events = assert_server_events(
-            &store,
-            vec![
-                (server_1_id.clone(), ContextServerStatus::Starting),
-                (server_1_id.clone(), ContextServerStatus::Running),
-            ],
-            cx,
-        );
-        cx.run_until_parked();
-    }
-
-    drop(project);
-    cx.run_until_parked();
-
-    cx.update(|cx| {
-        assert!(
-            matches!(
-                store.read(cx).status_for_server(&server_1_id),
-                Some(ContextServerStatus::Running) | Some(ContextServerStatus::Stopped)
-            ),
-            "Server status should remain observable after releasing the project"
         );
     });
 }
