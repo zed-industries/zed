@@ -864,6 +864,24 @@ impl ConversationView {
                         });
                     }
                 }
+                AgentConnectionEntryEvent::RulesLoadingError(message) => {
+                    if let Some(workspace) = this.workspace.upgrade() {
+                        let message = message.clone();
+                        workspace.update(cx, |workspace, cx| {
+                            struct AgentRulesLoadingError;
+
+                            workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::composite::<AgentRulesLoadingError>(
+                                        message.clone(),
+                                    ),
+                                    format!("Failed to load agent rules: {message}"),
+                                ),
+                                cx,
+                            );
+                        });
+                    }
+                }
             });
 
         let connect_result = connection_entry.read(cx).wait_for_connection();

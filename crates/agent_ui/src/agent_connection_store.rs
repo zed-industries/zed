@@ -1,6 +1,7 @@
 use std::rc::Rc;
 
 use acp_thread::{AgentConnection, LoadError};
+use agent::NativeAgentConnection;
 use agent_servers::AcpConnection;
 use agent_servers::{AgentServer, AgentServerDelegate};
 use anyhow::Result;
@@ -17,7 +18,10 @@ pub enum AgentConnectionEntry {
     Connecting {
         connect_task: Shared<Task<Result<AgentConnectedState, LoadError>>>,
     },
-    Connected(AgentConnectedState),
+    Connected {
+        state: AgentConnectedState,
+        _subscriptions: Vec<Subscription>,
+    },
     Error {
         error: LoadError,
     },
@@ -39,7 +43,9 @@ impl AgentConnectionEntry {
     pub fn wait_for_connection(&self) -> Shared<Task<Result<AgentConnectedState, LoadError>>> {
         match self {
             AgentConnectionEntry::Connecting { connect_task } => connect_task.clone(),
-            AgentConnectionEntry::Connected(state) => Task::ready(Ok(state.clone())).shared(),
+            AgentConnectionEntry::Connected { state, .. } => {
+                Task::ready(Ok(state.clone())).shared()
+            }
             AgentConnectionEntry::Error { error } => Task::ready(Err(error.clone())).shared(),
         }
     }
@@ -47,7 +53,7 @@ impl AgentConnectionEntry {
     pub fn status(&self) -> AgentConnectionStatus {
         match self {
             AgentConnectionEntry::Connecting { .. } => AgentConnectionStatus::Connecting,
-            AgentConnectionEntry::Connected(_) => AgentConnectionStatus::Connected,
+            AgentConnectionEntry::Connected { .. } => AgentConnectionStatus::Connected,
             AgentConnectionEntry::Error { .. } => AgentConnectionStatus::Disconnected,
         }
     }
@@ -55,6 +61,7 @@ impl AgentConnectionEntry {
 
 pub enum AgentConnectionEntryEvent {
     NewVersionAvailable(SharedString),
+    RulesLoadingError(SharedString),
 }
 
 impl EventEmitter<AgentConnectionEntryEvent> for AgentConnectionEntry {}
@@ -99,7 +106,7 @@ impl AgentConnectionStore {
 
     pub fn agent_version(&self, key: &Agent, cx: &App) -> Option<SharedString> {
         match self.entries.get(key)?.read(cx) {
-            AgentConnectionEntry::Connected(state) => state.connection.agent_version(),
+            AgentConnectionEntry::Connected { state, .. } => state.connection.agent_version(),
             AgentConnectionEntry::Connecting { .. } | AgentConnectionEntry::Error { .. } => None,
         }
     }
@@ -108,7 +115,7 @@ impl AgentConnectionStore {
         self.entries
             .values()
             .filter_map(|entry| match entry.read(cx) {
-                AgentConnectionEntry::Connected(state) => state
+                AgentConnectionEntry::Connected { state, .. } => state
                     .connection
                     .clone()
                     .downcast::<AcpConnection>()
@@ -172,7 +179,25 @@ impl AgentConnectionStore {
                         entry
                             .update(cx, move |entry, cx| {
                                 if let AgentConnectionEntry::Connecting { .. } = entry {
-                                    *entry = AgentConnectionEntry::Connected(connected_state);
+                                    let native_agent = connected_state
+                                        .connection
+                                        .clone()
+                                        .downcast::<NativeAgentConnection>()
+                                        .map(|connection| connection.0.clone());
+                                    let subscriptions = native_agent
+                                        .map(|native_agent| {
+                                            cx.subscribe(&native_agent, |_entry, _agent, error, cx| {
+                                                cx.emit(AgentConnectionEntryEvent::RulesLoadingError(
+                                                    error.message.clone(),
+                                                ));
+                                            })
+                                        })
+                                        .into_iter()
+                                        .collect();
+                                    *entry = AgentConnectionEntry::Connected {
+                                        state: connected_state,
+                                        _subscriptions: subscriptions,
+                                    };
                                     cx.notify();
                                 }
                             })
