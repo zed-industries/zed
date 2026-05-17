@@ -24,9 +24,10 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, ClickEvent, Context, Decorations, DismissEvent, Entity, EntityId,
+    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
+    TaskExt, WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list,
+    prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -45,7 +46,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use theme::ActiveTheme;
+use theme::{ActiveTheme, CLIENT_SIDE_DECORATION_ROUNDING};
 use ui::{
     AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
     KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes, Scrollbars, Tab,
@@ -5594,6 +5595,11 @@ impl Render for Sidebar {
         let _titlebar_height = ui::utils::platform_title_bar_height(window);
         let ui_font = theme_settings::setup_ui_font(window, cx);
         let sticky_header = self.render_sticky_header(window, cx);
+        let is_sidebar_open = self
+            .multi_workspace
+            .upgrade()
+            .map(|mw| mw.read(cx).sidebar_open())
+            .unwrap_or_default();
 
         let color = cx.theme().colors();
         let bg = color
@@ -5636,8 +5642,23 @@ impl Render for Sidebar {
             .h_full()
             .w(self.width)
             .bg(bg)
-            .when(self.side(cx) == SidebarSide::Left, |el| el.border_r_1())
-            .when(self.side(cx) == SidebarSide::Right, |el| el.border_l_1())
+            .map(|el| match window.window_decorations() {
+                Decorations::Server => el,
+                Decorations::Client { tiling, .. } => el
+                    .when(
+                        !tiling.right && is_sidebar_open && self.side(cx) == SidebarSide::Right,
+                        |el| el.rounded_r(CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
+                    // This border is to avoid a transparent gap in the rounded corners
+                    .mr(px(-1.))
+                    .border_r(px(1.0))
+                    .when(
+                        !tiling.left && is_sidebar_open && self.side(cx) == SidebarSide::Left,
+                        |el| el.rounded_l(CLIENT_SIDE_DECORATION_ROUNDING),
+                    )
+                    .ml(px(-1.))
+                    .border_l(px(1.0))
+            })
             .border_color(color.border)
             .map(|this| match &self.view {
                 SidebarView::ThreadList => this
