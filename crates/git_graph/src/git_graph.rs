@@ -1538,13 +1538,16 @@ impl GitGraph {
                 let mut formatted_time = String::new();
                 let subject: SharedString;
                 let author_name: SharedString;
+                let message: SharedString;
 
-                if let CommitDataState::Loaded(data) = data {
+                if let CommitDataState::Loaded(data) = &data {
                     subject = data.subject.clone();
+                    message = data.message.clone();
                     author_name = data.author_name.clone();
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading…".into();
+                    message = "Loading…".into();
                     author_name = "".into();
                 }
 
@@ -1607,7 +1610,16 @@ impl GitGraph {
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
                         .when(!has_context_menu, |this| {
-                            this.tooltip(Tooltip::text(subject))
+                            const MAX_CHARS: usize = 800;
+                            let tooltip_message: SharedString = if message.chars().count()
+                                > MAX_CHARS
+                            {
+                                let truncated: String = message.chars().take(MAX_CHARS).collect();
+                                format!("{}…", truncated).into()
+                            } else {
+                                message.clone()
+                            };
+                            this.tooltip(Tooltip::text(tooltip_message))
                         })
                         .child(
                             h_flex()
