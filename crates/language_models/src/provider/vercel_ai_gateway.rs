@@ -575,6 +575,7 @@ async fn list_models(
                 prompt_cache_key,
                 chat_completions: true,
                 interleaved_reasoning: false,
+                strip_openai_extensions: false,
             },
         });
     }

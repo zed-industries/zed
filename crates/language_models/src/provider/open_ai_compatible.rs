@@ -375,12 +375,9 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         >,
     > {
         if self.model.capabilities.chat_completions {
-            let api_url = self
-                .state
-                .read_with(cx, |state, _cx| state.settings.api_url.clone());
-            let is_mimo = is_mimo_provider(&api_url);
+            let strip = self.model.capabilities.strip_openai_extensions;
 
-            let interleaved_reasoning = if is_mimo {
+            let interleaved_reasoning = if strip {
                 true
             } else {
                 self.model.capabilities.interleaved_reasoning
@@ -396,7 +393,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 interleaved_reasoning,
             );
 
-            if is_mimo {
+            if strip {
                 strip_openai_extensions(&mut request);
             }
 
@@ -426,10 +423,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             .boxed()
         }
     }
-}
-
-fn is_mimo_provider(api_url: &str) -> bool {
-    api_url.contains("xiaomimimo")
 }
 
 fn strip_openai_extensions(request: &mut open_ai::Request) {
