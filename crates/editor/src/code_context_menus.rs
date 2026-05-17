@@ -1696,11 +1696,19 @@ pub struct AvailableCodeAction {
 }
 
 #[derive(Clone)]
+pub struct FixDiagnosticInfo {
+    pub message: SharedString,
+    pub source: Option<SharedString>,
+    pub code: Option<SharedString>,
+}
+
+#[derive(Clone)]
 pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
     pub(crate) context: TaskContext,
+    pub(crate) fix_diagnostic: Option<FixDiagnosticInfo>,
 }
 
 impl CodeActionContents {
@@ -1715,6 +1723,7 @@ impl CodeActionContents {
             actions,
             debug_scenarios,
             context,
+            fix_diagnostic: None,
         }
     }
 
@@ -1725,14 +1734,15 @@ impl CodeActionContents {
     fn len(&self) -> usize {
         let tasks_len = self.tasks.as_ref().map_or(0, |tasks| tasks.templates.len());
         let code_actions_len = self.actions.as_ref().map_or(0, |actions| actions.len());
-        tasks_len + code_actions_len + self.debug_scenarios.len()
+        let fix_len = self.fix_diagnostic.is_some() as usize;
+        tasks_len + code_actions_len + self.debug_scenarios.len() + fix_len
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = CodeActionsItem> + '_ {
         self.tasks
             .iter()
             .flat_map(|tasks| {
@@ -1752,6 +1762,11 @@ impl CodeActionContents {
                     .iter()
                     .cloned()
                     .map(CodeActionsItem::DebugScenario),
+            )
+            .chain(
+                self.fix_diagnostic
+                    .iter()
+                    .map(|info| CodeActionsItem::FixDiagnostic(info.clone())),
             )
     }
 
@@ -1773,11 +1788,14 @@ impl CodeActionContents {
                 index -= actions.len();
             }
         }
-
-        self.debug_scenarios
-            .get(index)
-            .cloned()
-            .map(CodeActionsItem::DebugScenario)
+        if index < self.debug_scenarios.len() {
+            return self.debug_scenarios.get(index).cloned().map(CodeActionsItem::DebugScenario);
+        }
+        index -= self.debug_scenarios.len();
+        if index == 0 {
+            return self.fix_diagnostic.as_ref().map(|info| CodeActionsItem::FixDiagnostic(info.clone()));
+        }
+        None
     }
 }
 
@@ -1789,6 +1807,7 @@ pub enum CodeActionsItem {
         provider: Rc<dyn CodeActionProvider>,
     },
     DebugScenario(DebugScenario),
+    FixDiagnostic(FixDiagnosticInfo),
 }
 
 impl CodeActionsItem {
@@ -1797,6 +1816,7 @@ impl CodeActionsItem {
             Self::CodeAction { action, .. } => action.lsp_action.title().to_owned(),
             Self::Task(_, task) => task.resolved_label.clone(),
             Self::DebugScenario(scenario) => scenario.label.to_string(),
+            Self::FixDiagnostic(_) => "Fix with Agent".to_owned(),
         }
     }
 
@@ -1805,6 +1825,7 @@ impl CodeActionsItem {
             Self::CodeAction { action, .. } => action.lsp_action.title().replace("\n", ""),
             Self::Task(_, task) => task.resolved_label.replace("\n", ""),
             Self::DebugScenario(scenario) => format!("debug: {}", scenario.label),
+            Self::FixDiagnostic(_) => "Fix with Agent".to_owned(),
         }
     }
 }
@@ -1962,6 +1983,7 @@ impl CodeActionsMenu {
                     CodeActionsItem::DebugScenario(scenario) => {
                         format!("debug: {}", scenario.label).chars().count()
                     }
+                    CodeActionsItem::FixDiagnostic(_) => "Fix with Agent".chars().count(),
                 })
                 .map(|(ix, _)| ix),
         )
@@ -2010,5 +2032,45 @@ impl CodeActionsMenu {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_code_action_contents_fix_diagnostic_absent_by_default() {
+        let contents = CodeActionContents::new(None, None, vec![], TaskContext::default());
+        assert!(contents.is_empty());
+        assert!(!contents
+            .iter()
+            .any(|item| matches!(item, CodeActionsItem::FixDiagnostic(_))));
+        assert!(contents.get(0).is_none());
+    }
+
+    #[test]
+    fn test_code_action_contents_fix_diagnostic_is_last() {
+        let mut contents = CodeActionContents::new(None, None, vec![], TaskContext::default());
+        contents.fix_diagnostic = Some(FixDiagnosticInfo {
+            message: "type mismatch".into(),
+            source: Some("eslint".into()),
+            code: Some("2322".into()),
+        });
+
+        assert!(!contents.is_empty());
+
+        let items: Vec<_> = contents.iter().collect();
+        assert_eq!(items.len(), 1);
+        assert!(
+            matches!(&items[0], CodeActionsItem::FixDiagnostic(info) if info.message.as_ref() == "type mismatch"),
+            "FixDiagnostic should be the only (last) item"
+        );
+
+        let item = contents.get(0);
+        assert!(
+            matches!(item, Some(CodeActionsItem::FixDiagnostic(info)) if info.message.as_ref() == "type mismatch")
+        );
+        assert!(contents.get(1).is_none());
     }
 }

@@ -58,6 +58,50 @@ impl Editor {
             .runnables((buffer_id, buffer_row))
             .map(|t| Arc::new(t.to_owned()));
 
+        let disable_ai = DisableAiSettings::is_ai_disabled_for_buffer(
+            self.buffer.read(cx).as_singleton().as_ref(),
+            cx,
+        );
+        // Prefer the already-active (hovered) diagnostic; fall back to
+        // querying the buffer so ⌘. works without hovering first.
+        // Source and code are always taken from the buffer query.
+        let fix_diagnostic_info = if !disable_ai {
+            let buf = snapshot.buffer_snapshot();
+            let anchor = buf.anchor_before(multibuffer_point);
+            let offset = anchor.to_offset(&buf);
+            let buf_entry = buf
+                .diagnostics_in_range::<MultiBufferOffset>(
+                    MultiBufferOffset(offset.0.saturating_sub(1))
+                        ..MultiBufferOffset(offset.0 + 1),
+                )
+                .next();
+            let message = self
+                .active_diagnostic_message()
+                .map(|msg| SharedString::from(msg.to_owned()))
+                .or_else(|| {
+                    buf_entry
+                        .as_ref()
+                        .map(|d| SharedString::from(d.diagnostic.message.clone()))
+                });
+            message.map(|message| code_context_menus::FixDiagnosticInfo {
+                message,
+                source: buf_entry
+                    .as_ref()
+                    .and_then(|d| d.diagnostic.source.as_deref())
+                    .map(SharedString::from),
+                code: buf_entry.as_ref().and_then(|d| {
+                    d.diagnostic.code.as_ref().map(|c| {
+                        SharedString::from(match c {
+                            lsp::NumberOrString::Number(n) => n.to_string(),
+                            lsp::NumberOrString::String(s) => s.clone(),
+                        })
+                    })
+                }),
+            })
+        } else {
+            None
+        };
+
         let project = self.project.clone();
         let runnable_task = match deployed_from {
             Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
@@ -140,12 +184,13 @@ impl Editor {
                     && debug_scenarios.is_empty();
 
                 crate::hover_popover::hide_hover(editor, cx);
-                let actions = CodeActionContents::new(
+                let mut actions = CodeActionContents::new(
                     resolved_tasks,
                     code_actions,
                     debug_scenarios,
                     task_context.unwrap_or_default(),
                 );
+                actions.fix_diagnostic = fix_diagnostic_info;
 
                 // Don't show the menu if there are no actions available
                 if actions.is_empty() {
@@ -257,6 +302,17 @@ impl Editor {
                         cx,
                     );
                 });
+                Some(Task::ready(Ok(())))
+            }
+            CodeActionsItem::FixDiagnostic(info) => {
+                window.dispatch_action(
+                    Box::new(zed_actions::agent::FixDiagnosticWithAgent {
+                        diagnostic_message: info.message,
+                        source: info.source,
+                        code: info.code,
+                    }),
+                    cx,
+                );
                 Some(Task::ready(Ok(())))
             }
         }

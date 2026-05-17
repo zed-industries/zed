@@ -20452,6 +20452,123 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 }
 
 #[gpui::test]
+async fn test_fix_with_agent_in_code_actions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+
+    // Position cursor inside a diagnostic range
+    cx.set_state("fn func(ˇabc def: i32) {}");
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 8),
+                                lsp::Position::new(0, 18),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: "expected one of `:` or `@`".to_string(),
+                            ..Default::default()
+                        }],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.condition(|editor, _| editor.context_menu_visible()).await;
+
+    cx.update_editor(|editor, _, _| {
+        let menu = editor.context_menu.borrow();
+        let Some(crate::code_context_menus::CodeContextMenu::CodeActions(actions_menu)) =
+            menu.as_ref()
+        else {
+            panic!("expected code actions menu to be open");
+        };
+        let items: Vec<_> = actions_menu.actions.iter().collect();
+        assert!(!items.is_empty(), "code actions menu should not be empty");
+        assert!(
+            matches!(
+                items.last().unwrap(),
+                crate::code_context_menus::CodeActionsItem::FixDiagnostic(_)
+            ),
+            "Fix with Agent should be the last item in the code actions menu"
+        );
+        if let crate::code_context_menus::CodeActionsItem::FixDiagnostic(msg) =
+            items.last().unwrap()
+        {
+            assert!(
+                msg.contains("expected one of"),
+                "diagnostic message should be preserved, got: {msg}"
+            );
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_fix_with_agent_absent_without_diagnostic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("fn funcˇ() {}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.run_until_parked();
+
+    // No diagnostic + no tasks → menu is empty (not shown) or contains no FixDiagnostic
+    cx.update_editor(|editor, _, _| {
+        let menu = editor.context_menu.borrow();
+        if let Some(crate::code_context_menus::CodeContextMenu::CodeActions(actions_menu)) =
+            menu.as_ref()
+        {
+            let has_fix = actions_menu.actions.iter().any(|item| {
+                matches!(
+                    item,
+                    crate::code_context_menus::CodeActionsItem::FixDiagnostic(_)
+                )
+            });
+            assert!(!has_fix, "Fix with Agent should not appear without a diagnostic");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

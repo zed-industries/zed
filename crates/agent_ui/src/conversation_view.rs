@@ -509,7 +509,18 @@ pub struct ConversationView {
     /// causes mermaid diagrams to re-render).
     last_theme_id: Option<String>,
     draft_prompt_persist_task: Option<Task<()>>,
+    pending_editor_insert: Option<PendingEditorInsert>,
     _subscriptions: Vec<Subscription>,
+}
+
+enum PendingEditorInsert {
+    Selection(AgentContextSelection),
+    DiagnosticFix {
+        diagnostic_message: SharedString,
+        source: Option<SharedString>,
+        code: Option<SharedString>,
+        selection: AgentContextSelection,
+    },
 }
 
 impl ConversationView {
@@ -758,6 +769,7 @@ impl ConversationView {
             auth_task: None,
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
+            pending_editor_insert: None,
             _subscriptions: subscriptions,
             focus_handle: cx.focus_handle(),
         }
@@ -972,6 +984,33 @@ impl ConversationView {
                             window,
                             cx,
                         );
+
+                        if let Some(pending) = this.pending_editor_insert.take() {
+                            current.update(cx, |thread_view, cx| match pending {
+                                PendingEditorInsert::Selection(selection) => {
+                                    thread_view.message_editor.update(cx, |editor, cx| {
+                                        editor.insert_selections(selection, window, cx);
+                                    });
+                                }
+                                PendingEditorInsert::DiagnosticFix {
+                                    diagnostic_message,
+                                    source,
+                                    code,
+                                    selection,
+                                } => {
+                                    thread_view.message_editor.update(cx, |editor, cx| {
+                                        editor.insert_diagnostic_fix(
+                                            &diagnostic_message,
+                                            source.as_deref(),
+                                            code.as_deref(),
+                                            selection,
+                                            window,
+                                            cx,
+                                        );
+                                    });
+                                }
+                            });
+                        }
 
                         if this.focus_handle.contains_focused(window, cx) {
                             current
@@ -2860,7 +2899,7 @@ impl ConversationView {
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
     pub(crate) fn insert_selection(
-        &self,
+        &mut self,
         selection: AgentContextSelection,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2870,6 +2909,40 @@ impl ConversationView {
                 thread.active_editor(cx).update(cx, |editor, cx| {
                     editor.insert_selections(selection, window, cx);
                 })
+            });
+        } else {
+            self.pending_editor_insert = Some(PendingEditorInsert::Selection(selection));
+        }
+    }
+
+    pub(crate) fn insert_diagnostic_fix(
+        &mut self,
+        diagnostic_message: &str,
+        source: Option<&str>,
+        code: Option<&str>,
+        selection: AgentContextSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active_thread) = self.active_thread() {
+            active_thread.update(cx, |thread, cx| {
+                thread.active_editor(cx).update(cx, |editor, cx| {
+                    editor.insert_diagnostic_fix(
+                        diagnostic_message,
+                        source,
+                        code,
+                        selection,
+                        window,
+                        cx,
+                    );
+                })
+            });
+        } else {
+            self.pending_editor_insert = Some(PendingEditorInsert::DiagnosticFix {
+                diagnostic_message: diagnostic_message.to_string().into(),
+                source: source.map(SharedString::from),
+                code: code.map(SharedString::from),
+                selection,
             });
         }
     }

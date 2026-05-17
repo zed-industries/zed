@@ -519,6 +519,21 @@ pub mod agent {
         ]
     );
 
+    /// Fix the diagnostic at the current cursor position using the agent.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct FixDiagnosticWithAgent {
+        /// The diagnostic message to fix.
+        pub diagnostic_message: SharedString,
+        /// The language server source that reported this diagnostic (e.g. "eslint").
+        #[serde(default)]
+        pub source: Option<SharedString>,
+        /// The language server error code for this diagnostic (e.g. "2322").
+        #[serde(default)]
+        pub code: Option<SharedString>,
+    }
+
     /// Opens a new agent thread with the provided branch diff for review.
     #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
     #[action(namespace = agent)]

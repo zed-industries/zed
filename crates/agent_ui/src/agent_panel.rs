@@ -18,14 +18,14 @@ use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
 use project::AgentId;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelProviderSetting, LanguageModelSelection};
+use settings: :{LanguageModelProviderSetting, LanguageModelSelection};
 
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
     agent::{
-        AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
-        ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
-        ReviewBranchDiff,
+        AddSelectionToThread, ConflictContent, FixDiagnosticWithAgent, OpenSettings,
+        ReauthenticateAgent, ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
+        ResolveConflictsWithAgent, ReviewBranchDiff,
     },
     assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
@@ -57,7 +57,7 @@ use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, SelectionEffects};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
 use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
@@ -528,10 +528,85 @@ pub fn init(cx: &mut App) {
 
                         agent_panel.update(cx, |panel, cx| {
                             panel.last_context_source = Some(source);
+                            panel.ensure_thread_initialized(window, cx);
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
                                         conversation_view.insert_selection(selection, window, cx);
+                                    });
+                                }
+                            });
+                        });
+                    },
+                )
+                .register_action(
+                    |workspace: &mut Workspace, action: &FixDiagnosticWithAgent, window, cx| {
+                        let diagnostic_message = action.diagnostic_message.clone();
+                        let diagnostic_source = action.source.clone();
+                        let diagnostic_code = action.code.clone();
+
+                        let Some(active_editor) = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx))
+                        else {
+                            return;
+                        };
+
+                        // If no selection, auto-select the active diagnostic range so
+                        // the context mention covers the relevant code.
+                        active_editor.update(cx, |editor, cx| {
+                            let display_snapshot = editor.display_snapshot(cx);
+                            if !editor.has_non_empty_selection(&display_snapshot) {
+                                if let Some(range) = editor.active_diagnostic_range() {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_anchor_ranges([range]);
+                                        },
+                                    );
+                                }
+                            }
+                        });
+
+                        let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
+                            return;
+                        };
+
+                        let source = AgentContextSource::from_focused(workspace, window, cx)
+                            .or_else(|| {
+                                let cached = agent_panel.read(cx).last_context_source.clone()?;
+                                cached.exists(workspace, cx).then_some(cached)
+                            })
+                            .or_else(|| AgentContextSource::from_active(workspace, cx));
+
+                        let Some(source) = source else {
+                            return;
+                        };
+
+                        let Some(selection) = source.read_selection(workspace, true, cx) else {
+                            return;
+                        };
+
+                        if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
+                            workspace.toggle_panel_focus::<AgentPanel>(window, cx);
+                        }
+
+                        agent_panel.update(cx, |panel, cx| {
+                            panel.last_context_source = Some(source);
+                            panel.ensure_thread_initialized(window, cx);
+                            cx.defer_in(window, move |panel, window, cx| {
+                                if let Some(conversation_view) = panel.active_conversation_view() {
+                                    conversation_view.update(cx, |conversation_view, cx| {
+                                        conversation_view.insert_diagnostic_fix(
+                                            &diagnostic_message,
+                                            diagnostic_source.as_deref(),
+                                            diagnostic_code.as_deref(),
+                                            selection,
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }
                             });
@@ -3814,7 +3889,11 @@ impl Panel for AgentPanel {
 }
 
 impl AgentPanel {
-    fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn ensure_thread_initialized(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if matches!(self.base_view, BaseView::Uninitialized) {
             self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         }
@@ -5343,6 +5422,7 @@ mod tests {
     use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus, UserMessageId};
     use action_log::ActionLog;
     use anyhow::{Result, anyhow};
+    use editor::MultiBufferOffset;
     use feature_flags::FeatureFlagAppExt;
     use fs::FakeFs;
     use gpui::{App, TestAppContext, VisualTestContext};
@@ -9898,6 +9978,150 @@ mod tests {
             assert!(
                 panel.active_agent_thread(cx).is_some(),
                 "panel should have an active, connected agent thread"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_fix_diagnostic_with_agent_prefills_message_editor_while_loading(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "main.rs": "fn foo() { let x = 1; }" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        // Open a draft with a connection that hasn't completed yet (still loading).
+        let connection = StubAgentConnection::new();
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_draft_with_server(Rc::new(StubAgentServer::new(connection)), window, cx);
+        });
+        // Do NOT run_until_parked — the draft ConversationView is still in Loading state.
+
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("fn foo() { let x = 1; }", None, false, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(11)..MultiBufferOffset(22)]);
+                });
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+        });
+
+        cx.dispatch_action(FixDiagnosticWithAgent {
+            diagnostic_message: "mismatched types: expected `i32`, found `&str`".into(),
+            source: Some("rust-analyzer".into()),
+            code: Some("E0308".into()),
+        });
+
+        // Now let the connection complete and the thread view be created.
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+            assert!(
+                text.starts_with(
+                    "Fix this diagnostic error (rust-analyzer E0308):\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
+                ),
+                "message editor should be pre-filled with fix prompt (loading path), got: {text:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_fix_diagnostic_with_agent_prefills_message_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "main.rs": "fn foo() { let x = 1; }" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        // Create the panel and register it with the workspace so
+        // workspace.panel::<AgentPanel>() resolves correctly in the action handler.
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let connection = StubAgentConnection::new();
+        open_thread_with_connection(&panel, connection, cx);
+
+        // Open a file editor with a text selection as the agent context source.
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("fn foo() { let x = 1; }", None, false, cx)
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor =
+                    Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx);
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(11)..MultiBufferOffset(22)]);
+                });
+                editor
+            });
+            workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        cx.dispatch_action(FixDiagnosticWithAgent {
+            diagnostic_message: "mismatched types: expected `i32`, found `&str`".into(),
+            source: Some("rust-analyzer".into()),
+            code: Some("E0308".into()),
+        });
+
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let message_editor = thread_view.read_with(cx, |view, _cx| view.message_editor.clone());
+        message_editor.read_with(cx, |editor, cx| {
+            let text = editor.text(cx);
+            assert!(
+                text.starts_with(
+                    "Fix this diagnostic error (rust-analyzer E0308):\n\n```\nmismatched types: expected `i32`, found `&str`\n```\n\n"
+                ),
+                "message editor should be pre-filled with fix prompt, got: {text:?}"
             );
         });
     }

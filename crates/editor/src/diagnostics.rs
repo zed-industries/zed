@@ -185,11 +185,18 @@ impl Editor {
         self.refresh_edit_prediction(false, true, window, cx);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn active_diagnostic_message(&self) -> Option<&str> {
         match &self.active_diagnostics {
             ActiveDiagnostic::Group(group) => Some(group.active_message.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn active_diagnostic_range(&self) -> Option<Range<Anchor>> {
+        if let ActiveDiagnostic::Group(group) = &self.active_diagnostics {
+            Some(group.active_range.clone())
+        } else {
+            None
         }
     }
 
