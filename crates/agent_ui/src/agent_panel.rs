@@ -1560,6 +1560,7 @@ impl AgentPanel {
             None,
             None,
             true,
+            true,
             source,
             window,
             cx,
@@ -1603,6 +1604,7 @@ impl AgentPanel {
         custom_title: Option<String>,
         fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        select: bool,
         focus: bool,
         source: AgentThreadSource,
         window: &mut Window,
@@ -1638,6 +1640,7 @@ impl AgentPanel {
                     custom_title,
                     fallback_title,
                     created_at,
+                    select,
                     focus,
                     source,
                     window,
@@ -1657,6 +1660,7 @@ impl AgentPanel {
         custom_title: Option<String>,
         fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        select: bool,
         focus: bool,
         source: AgentThreadSource,
         window: &mut Window,
@@ -1718,8 +1722,8 @@ impl AgentPanel {
         self.terminals.insert(terminal_id, terminal);
         self.persist_terminal_metadata(terminal_id, cx);
         self.emit_terminal_thread_started(source, cx);
-        if focus {
-            self.set_base_view(BaseView::Terminal { terminal_id }, true, window, cx);
+        if select {
+            self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         }
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
@@ -1900,6 +1904,7 @@ impl AgentPanel {
             metadata.custom_title.clone(),
             fallback_title,
             Some(metadata.created_at),
+            true,
             focus,
             source,
             window,
@@ -5525,6 +5530,7 @@ impl AgentPanel {
             None,
             None,
             focus,
+            focus,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -5559,6 +5565,7 @@ impl AgentPanel {
             metadata.custom_title.clone(),
             fallback_title,
             Some(metadata.created_at),
+            true,
             focus,
             source,
             window,
@@ -5574,6 +5581,7 @@ impl AgentPanel {
         custom_title: Option<String>,
         fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
+        select: bool,
         focus: bool,
         source: AgentThreadSource,
         window: &mut Window,
@@ -5607,6 +5615,7 @@ impl AgentPanel {
             custom_title,
             fallback_title,
             created_at,
+            select,
             focus,
             source,
             window,
@@ -7533,6 +7542,43 @@ mod tests {
             let terminals = panel.terminals(cx);
             assert_eq!(terminals.len(), 1);
             assert_eq!(terminals[0].title.as_ref(), "Fresh Shell Title");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restored_terminal_selects_without_focusing(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let terminal_id = TerminalId::new();
+        let now = Utc::now();
+        let metadata = TerminalThreadMetadata {
+            terminal_id,
+            title: "Persisted Shell Title".into(),
+            custom_title: None,
+            created_at: now,
+            updated_at: now,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/project",
+            )])),
+            remote_connection: None,
+            working_directory: None,
+        };
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel
+                .restore_test_terminal(
+                    metadata,
+                    false,
+                    AgentThreadSource::Sidebar,
+                    None,
+                    window,
+                    cx,
+                )
+                .expect("test terminal should be restored");
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(terminal_id));
         });
     }
 

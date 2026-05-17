@@ -737,10 +737,13 @@ impl Sidebar {
         )
         .detach();
 
-        let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+        let deferred_multi_workspace = multi_workspace.downgrade();
         cx.defer_in(window, move |this, window, cx| {
-            for workspace in &workspaces {
-                this.subscribe_to_workspace(workspace, window, cx);
+            if let Some(multi_workspace) = deferred_multi_workspace.upgrade() {
+                let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+                for workspace in &workspaces {
+                    this.subscribe_to_workspace(workspace, window, cx);
+                }
             }
             this.update_entries(cx);
         });
@@ -853,19 +856,13 @@ impl Sidebar {
         )
         .detach();
 
-        let workspace_for_agent_panel_subscription = workspace.clone();
         cx.subscribe_in(
             workspace,
             window,
-            move |this, _workspace, event: &workspace::Event, window, cx| {
+            move |this, workspace, event: &workspace::Event, window, cx| {
                 if let workspace::Event::PanelAdded(view) = event {
                     if let Ok(agent_panel) = view.clone().downcast::<AgentPanel>() {
-                        this.subscribe_to_agent_panel(
-                            &workspace_for_agent_panel_subscription,
-                            &agent_panel,
-                            window,
-                            cx,
-                        );
+                        this.subscribe_to_agent_panel(workspace, &agent_panel, window, cx);
                         this.update_entries(cx);
                     }
                 }
@@ -949,7 +946,7 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let workspace = workspace.clone();
+        let workspace = workspace.downgrade();
         cx.subscribe_in(
             agent_panel,
             window,
@@ -961,9 +958,11 @@ impl Sidebar {
                     this.update_entries(cx);
                 }
                 AgentPanelEvent::TerminalCloseRequested { metadata, handled } => {
-                    handled.set(true);
-                    let workspace = ThreadEntryWorkspace::Open(workspace.clone());
-                    this.close_terminal(metadata, &workspace, window, cx);
+                    if let Some(workspace) = workspace.upgrade() {
+                        handled.set(true);
+                        let workspace = ThreadEntryWorkspace::Open(workspace);
+                        this.close_terminal(metadata, &workspace, window, cx);
+                    }
                 }
                 AgentPanelEvent::ThreadInteracted { thread_id } => {
                     this.record_thread_interacted(thread_id, cx);
