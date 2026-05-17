@@ -529,6 +529,17 @@ impl CompletionIntent {
     }
 }
 
+/// Describes a visual group for a completion item in the menu.
+/// When the group changes between consecutive completions, the menu inserts a divider.
+/// If a label is provided, a non-selectable header row is also rendered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionGroup {
+    /// Identity of this group, used to detect transitions between consecutive items.
+    pub key: SharedString,
+    /// When set, a non-selectable header with this text is rendered below the divider.
+    pub label: Option<SharedString>,
+}
+
 /// Similar to `CoreCompletion`, but with extra metadata attached.
 #[derive(Clone)]
 pub struct Completion {
@@ -557,6 +568,10 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+    /// An optional group for this completion. When the group changes between consecutive
+    /// items, the completion menu inserts a divider. If the group also carries a label,
+    /// a non-selectable header row is rendered below the divider.
+    pub group: Option<CompletionGroup>,
 }
 
 #[derive(Debug, Clone)]

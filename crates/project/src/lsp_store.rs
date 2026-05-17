@@ -10804,6 +10804,7 @@ impl LspStore {
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
+                    group: None,
                 }]))),
                 0,
                 false,
@@ -13781,6 +13782,7 @@ async fn populate_labels_for_completions(
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,
+                    group: None,
                 });
             }
             None => {
@@ -13797,6 +13799,7 @@ async fn populate_labels_for_completions(
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,
+                    group: None,
                 });
             }
         }

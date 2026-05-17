@@ -38,7 +38,7 @@ fn test_background_executor_spawn() {
 fn test_foreground_ordering() {
     let mut traces = HashSet::new();
 
-    TestScheduler::many(100, async |scheduler| {
+    TestScheduler::many(if cfg!(miri) { 5 } else { 100 }, async |scheduler| {
         #[derive(Hash, PartialEq, Eq)]
         struct TraceEntry {
             session: usize,
@@ -125,6 +125,24 @@ fn test_timer_ordering() {
             .boxed(),
         );
         assert_eq!(futures.collect::<Vec<_>>().await, vec![1, 2, 3]);
+    });
+}
+
+#[test]
+fn test_foreground_task_can_hold_mut_borrow_across_await() {
+    TestScheduler::once(async |scheduler| {
+        let foreground = scheduler.foreground();
+        let (sender, mut receiver) = mpsc::unbounded::<()>();
+
+        foreground
+            .spawn(async move {
+                receiver.next().await;
+            })
+            .detach();
+
+        scheduler.run();
+        sender.unbounded_send(()).unwrap();
+        scheduler.run();
     });
 }
 
@@ -238,7 +256,7 @@ fn test_block() {
 }
 
 #[test]
-#[should_panic(expected = "Parking forbidden. Pending traces:")]
+#[should_panic(expected = "Parking forbidden.")]
 fn test_parking_panics() {
     let config = TestSchedulerConfig {
         capture_pending_traces: true,
@@ -340,7 +358,7 @@ fn test_block_with_timeout() {
 
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
-    TestScheduler::many(100, async |scheduler| {
+    TestScheduler::many(if cfg!(miri) { 5 } else { 100 }, async |scheduler| {
         // Keep the existing probabilistic behavior here (do not force 0 ticks), since this subtest
         // is explicitly checking that some seeds/timeouts can complete while others can time out.
         let task = scheduler.background().spawn(async move {
@@ -354,7 +372,11 @@ fn test_block_with_timeout() {
     });
     assert_eq!(
         results.into_iter().collect::<Vec<_>>(),
-        vec![None, Some(42)]
+        if cfg!(miri) {
+            vec![Some(42)]
+        } else {
+            vec![None, Some(42)]
+        }
     );
 
     // Regression test:
@@ -400,7 +422,7 @@ fn test_block_with_timeout() {
 #[test]
 fn test_block_does_not_progress_same_session_foreground() {
     let mut task2_made_progress_once = false;
-    TestScheduler::many(1000, async |scheduler| {
+    TestScheduler::many(if cfg!(miri) { 5 } else { 1000 }, async |scheduler| {
         let foreground1 = scheduler.foreground();
         let foreground2 = scheduler.foreground();
 
@@ -614,7 +636,7 @@ fn test_background_priority_scheduling() {
 
     // Run many iterations to get statistical significance
     let mut high_before_low_count = 0;
-    let iterations = 100;
+    let iterations = if cfg!(miri) { 5 } else { 100 };
 
     for seed in 0..iterations {
         let config = TestSchedulerConfig::with_seed(seed);

@@ -4,7 +4,7 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    UpdatePlanTool, UserAgentsMd, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -233,6 +233,8 @@ impl UserMessage {
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
         const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
+        const OPEN_SKILLS_TAG: &str =
+            "<skills>\nThe user has attached the following agent skills:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -244,6 +246,7 @@ impl UserMessage {
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
+        let mut skills_context = OPEN_SKILLS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -360,6 +363,14 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::Skill { name, source, .. } => {
+                            let label = if source.is_empty() {
+                                format!("{} (global)", name)
+                            } else {
+                                format!("{} ({})", name, source)
+                            };
+                            write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -432,6 +443,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if skills_context.len() > OPEN_SKILLS_TAG.len() {
+            skills_context.push_str("</skills>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(skills_context));
         }
 
         if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
@@ -3063,11 +3081,13 @@ impl Thread {
             self.messages.len()
         );
 
+        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
+            user_agents_md,
         }
         .render(&self.templates)
         .context("failed to build system prompt")

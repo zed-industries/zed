@@ -42,7 +42,7 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::FeatureFlagAppExt as _;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
@@ -55,10 +55,10 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, rules_to_skills_migration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::Workspace;
@@ -113,6 +113,31 @@ pub(crate) fn resolve_agent_image(
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentThreadSource {
+    AgentPanel,
+    GitPanel,
+    Sidebar,
+}
+
+impl AgentThreadSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentPanel => "agent_panel",
+            Self::GitPanel => "git_panel",
+            Self::Sidebar => "sidebar",
+        }
+    }
+}
+
+pub(crate) fn agent_sidebar_side(cx: &App) -> &'static str {
+    match AgentSettings::get_global(cx).sidebar_side() {
+        SidebarSide::Left => "left",
+        SidebarSide::Right => "right",
+    }
+}
+
 actions!(
     agent,
     [
@@ -527,6 +552,32 @@ pub fn init(
         );
     })
     .detach();
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(
+            |workspace: &mut Workspace,
+             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                // The banner is the only intended entry point and is
+                // gated on the skills flag, but dispatch from the
+                // command palette or a keybind is still possible — only
+                // open the explainer if the flag is enabled so it never
+                // surfaces outside its intended audience.
+                //
+                // Race note: `has_flag` returns false before server
+                // flags are received, so a dispatch during that brief
+                // window is a no-op even for users who genuinely have
+                // the flag. The banner itself has the same race — it
+                // stays hidden until flags arrive — so a user who can
+                // see the banner has, by definition, already passed it.
+                if cx.has_flag::<SkillsFeatureFlag>() {
+                    crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
+                }
+            },
+        );
+    })
+    .detach();
+
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
@@ -554,6 +605,18 @@ pub fn init(
         update_command_palette_filter(cx);
     })
     .detach();
+
+    // Once the `skills` feature flag has resolved, kick off the one-time
+    // migration of non-Default Rules to global Skills. Idempotent and
+    // self-gated on the flag, so it's safe to call on every flag-ready
+    // notification (and a no-op for users without the flag).
+    {
+        let fs = fs.clone();
+        cx.on_flags_ready(move |_, cx| {
+            rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+        })
+        .detach();
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
@@ -588,6 +651,12 @@ fn update_command_palette_filter(cx: &mut App) {
         .edit_predictions
         .provider;
 
+    // The Skills feature flag is loaded asynchronously, so this value may
+    // be `false` before flags resolve. `update_command_palette_filter`
+    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
+    // filter is reapplied with the correct value once flags arrive.
+    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
             AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
@@ -603,6 +672,8 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<PreviousEditPrediction>(),
             TypeId::of::<ToggleEditPrediction>(),
         ];
+
+        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -651,6 +722,17 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
 
             filter.show_namespace("multi_workspace");
+        }
+
+        // Hide `assistant: open rules library` when Skills are enabled —
+        // Rules are surfaced through the Skills UI in that case. Applied
+        // after the disable-ai / agent-enabled branches so it overrides
+        // the `show_namespace("assistant")` call above without affecting
+        // the rest of that namespace's actions.
+        if !disable_ai && skills_enabled {
+            filter.hide_action_types(&open_rules_library_action);
+        } else {
+            filter.show_action_types(open_rules_library_action.iter());
         }
     });
 }

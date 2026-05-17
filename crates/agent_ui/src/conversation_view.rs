@@ -45,11 +45,9 @@ use project::{AgentId, AgentServerStore, Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 
 use crate::message_editor::SessionCapabilities;
-use crate::{DEFAULT_THREAD_TITLE, resolve_agent_image};
+use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
 use rope::Point;
-use settings::{
-    NotifyWhenAgentWaiting, Settings as _, SettingsStore, SidebarSide, ThinkingBlockDisplay,
-};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -80,7 +78,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
-use crate::completion_provider::AgentContextSelection;
+use crate::completion_provider::{AgentContextSelection, AvailableSkill};
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -698,7 +696,7 @@ impl ConversationView {
         project: Entity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -812,7 +810,7 @@ impl ConversationView {
             title,
             self.project.clone(),
             None,
-            "agent_panel",
+            AgentThreadSource::AgentPanel,
             window,
             cx,
         );
@@ -837,7 +835,7 @@ impl ConversationView {
         title: Option<SharedString>,
         project: Entity<Project>,
         initial_content: Option<AgentInitialContent>,
-        source: &'static str,
+        source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ServerState {
@@ -870,10 +868,7 @@ impl ConversationView {
 
         let connect_result = connection_entry.read(cx).wait_for_connection();
 
-        let side = match AgentSettings::get_global(cx).sidebar_side() {
-            SidebarSide::Left => "left",
-            SidebarSide::Right => "right",
-        };
+        let side = crate::agent_sidebar_side(cx);
         let thread_location = "current_worktree";
 
         let load_task = cx.spawn_in(window, async move |this, cx| {
@@ -892,7 +887,7 @@ impl ConversationView {
             telemetry::event!(
                 "Agent Thread Started",
                 agent = connection.telemetry_id(),
-                source = source,
+                source = source.as_str(),
                 side = side,
                 thread_location = thread_location
             );
@@ -1030,9 +1025,17 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
         let agent_id = self.agent.agent_id();
+        let connection = thread.read(cx).connection().clone();
+        let session_id = thread.read(cx).session_id().clone();
+        let available_skills = connection
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
+            .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             thread.read(cx).prompt_capabilities(),
             thread.read(cx).available_commands().to_vec(),
+            available_skills,
         )));
 
         let action_log = thread.read(cx).action_log().clone();
@@ -1658,7 +1661,17 @@ impl ConversationView {
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 if let Some(thread_view) = self.thread_view(&session_id) {
-                    let has_commands = !available_commands.is_empty();
+                    let available_skills = thread
+                        .read(cx)
+                        .connection()
+                        .clone()
+                        .downcast::<agent::NativeAgentConnection>()
+                        .map(|native_connection| {
+                            native_available_skills(&native_connection, &session_id, cx)
+                        })
+                        .unwrap_or_default();
+                    let has_slash_completions =
+                        !available_commands.is_empty() || !available_skills.is_empty();
 
                     let agent_display_name = self
                         .agent_server_store
@@ -1667,13 +1680,12 @@ impl ConversationView {
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
                     let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_commands);
+                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
                     thread_view.update(cx, |thread_view, cx| {
-                        thread_view
-                            .session_capabilities
-                            .write()
-                            .set_available_commands(available_commands.clone());
+                        let mut session_capabilities = thread_view.session_capabilities.write();
+                        session_capabilities.set_available_commands(available_commands.clone());
+                        session_capabilities.set_available_skills(available_skills);
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
@@ -2701,7 +2713,7 @@ impl ConversationView {
                                                             root_work_dirs.clone(),
                                                             root_title.clone(),
                                                             true,
-                                                            "agent_panel",
+                                                            AgentThreadSource::AgentPanel,
                                                             window,
                                                             cx,
                                                         );
@@ -2908,9 +2920,29 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .into_any_element()
 }
 
+fn native_available_skills(
+    native_connection: &agent::NativeAgentConnection,
+    session_id: &acp::SessionId,
+    cx: &App,
+) -> Vec<AvailableSkill> {
+    native_connection
+        .available_skills(session_id, cx)
+        .into_iter()
+        .map(|skill| AvailableSkill {
+            name: skill.name.into(),
+            description: skill.description.into(),
+            source: skill.source,
+            skill_file_path: skill.skill_file_path,
+        })
+        .collect()
+}
+
 fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
-        format!("Message the {} — @ to include context", agent_name)
+        format!(
+            "Message the {}, @ to include context, / for commands",
+            agent_name
+        )
     } else if has_commands {
         format!(
             "Message {} — @ to include context, / for commands",
@@ -3332,7 +3364,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3469,7 +3501,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3551,7 +3583,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3690,7 +3722,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -3991,7 +4023,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4089,7 +4121,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4158,7 +4190,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4280,7 +4312,7 @@ pub(crate) mod tests {
                     project1.clone(),
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -4502,7 +4534,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -5152,7 +5184,7 @@ pub(crate) mod tests {
                     project.clone(),
                     Some(thread_store.clone()),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
@@ -7720,7 +7752,7 @@ pub(crate) mod tests {
                     project,
                     Some(thread_store),
                     None,
-                    "agent_panel",
+                    AgentThreadSource::AgentPanel,
                     window,
                     cx,
                 )
