@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -69,6 +69,44 @@ pub fn classify_worktrees(
     }
 
     (git_repos, non_git_paths)
+}
+
+/// Collects the project's currently-opened paths that fall under any of the
+/// given git repository work directories. May include subdirectories within
+/// a repo, which callers preserve when switching/creating worktrees.
+pub fn collect_git_opened_paths(
+    project: &Project,
+    git_repo_work_dirs: &[PathBuf],
+    cx: &gpui::App,
+) -> Vec<PathBuf> {
+    project
+        .visible_worktrees(cx)
+        .filter_map(|worktree| {
+            let path = worktree.read(cx).abs_path().to_path_buf();
+            git_repo_work_dirs
+                .iter()
+                .any(|work_dir| path.starts_with(work_dir))
+                .then_some(path)
+        })
+        .collect()
+}
+
+/// Remaps `path` to its corresponding location under the deepest matching
+/// `new_root`, or returns `None` if no `old_root` is a prefix.
+fn remap_via_path_remapping(
+    original_path: &Path,
+    path_remapping: &[(PathBuf, PathBuf)],
+) -> Option<PathBuf> {
+    path_remapping
+        .iter()
+        .filter_map(|(old_root, new_root)| {
+            original_path
+                .strip_prefix(old_root)
+                .ok()
+                .map(|relative| (old_root.components().count(), new_root.join(relative)))
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, remapped)| remapped)
 }
 
 /// Resolves a branch target into the ref the new worktree should be based on.
@@ -240,12 +278,11 @@ pub async fn await_and_rollback_on_failure(
 }
 
 /// Propagates worktree trust from the source workspace to the new workspace.
-/// If the source project's worktrees are all trusted, the new worktree paths
-/// will also be trusted automatically.
+/// If the source project's worktrees are all trusted, every worktree in the
+/// new workspace is trusted automatically.
 fn maybe_propagate_worktree_trust(
     source_workspace: &WeakEntity<Workspace>,
     new_workspace: &Entity<Workspace>,
-    paths: &[PathBuf],
     cx: &mut AsyncWindowContext,
 ) {
     cx.update(|_, cx| {
@@ -270,13 +307,12 @@ fn maybe_propagate_worktree_trust(
             return;
         }
 
-        let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
-        let paths_to_trust: HashSet<_> = paths
-            .iter()
-            .filter_map(|path| {
-                let (worktree, _) = worktree_store.read(cx).find_worktree(path, cx)?;
-                Some(PathTrust::Worktree(worktree.read(cx).id()))
-            })
+        let project = new_workspace.read(cx).project().clone();
+        let worktree_store = project.read(cx).worktree_store();
+        let paths_to_trust: HashSet<_> = project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| PathTrust::Worktree(worktree.read(cx).id()))
             .collect();
 
         if !paths_to_trust.is_empty() {
@@ -347,6 +383,12 @@ pub fn handle_create_worktree(
         }
     }
 
+    let git_repo_work_dirs: Vec<PathBuf> = git_repos
+        .iter()
+        .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
+        .collect();
+    let git_opened_paths = collect_git_opened_paths(project.read(cx), &git_repo_work_dirs, cx);
+
     let worktree_name = action.worktree_name.clone();
     let branch_target = action.branch_target.clone();
     let display_name: SharedString = worktree_name
@@ -360,6 +402,7 @@ pub fn handle_create_worktree(
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
             git_repos,
+            git_opened_paths,
             non_git_paths,
             worktree_name,
             branch_target,
@@ -421,6 +464,7 @@ pub fn handle_switch_worktree(
         .iter()
         .map(|repo| repo.read(cx).work_directory_abs_path.to_path_buf())
         .collect();
+    let git_opened_paths = collect_git_opened_paths(project.read(cx), &git_repo_work_dirs, cx);
 
     let display_name: SharedString = action.display_name.clone().into();
 
@@ -432,6 +476,7 @@ pub fn handle_switch_worktree(
         let result = do_switch_worktree(
             worktree_path,
             git_repo_work_dirs,
+            git_opened_paths,
             non_git_paths,
             previous_state,
             workspace_handle.clone(),
@@ -458,6 +503,7 @@ pub fn handle_switch_worktree(
 
 async fn do_create_worktree(
     git_repos: Vec<Entity<Repository>>,
+    git_opened_paths: Vec<PathBuf>,
     non_git_paths: Vec<PathBuf>,
     worktree_name: Option<String>,
     branch_target: NewWorktreeBranchTarget,
@@ -526,7 +572,7 @@ async fn do_create_worktree(
 
     let created_paths = await_and_rollback_on_failure(creation_infos, fs, cx).await?;
 
-    let mut all_paths = created_paths;
+    let mut all_paths = remap_or_fall_back(&git_opened_paths, &path_remapping, &created_paths);
     let has_non_git = !non_git_paths.is_empty();
     all_paths.extend(non_git_paths.iter().cloned());
 
@@ -545,9 +591,29 @@ async fn do_create_worktree(
     .await
 }
 
+/// Remaps each opened git path through `path_remapping` so any subdirectory
+/// portion is preserved under the new worktree root. Falls back to
+/// `fallback_roots` when nothing could be remapped.
+fn remap_or_fall_back(
+    git_opened_paths: &[PathBuf],
+    path_remapping: &[(PathBuf, PathBuf)],
+    fallback_roots: &[PathBuf],
+) -> Vec<PathBuf> {
+    let remapped: Vec<PathBuf> = git_opened_paths
+        .iter()
+        .filter_map(|path| remap_via_path_remapping(path, path_remapping))
+        .collect();
+    if remapped.is_empty() {
+        fallback_roots.to_vec()
+    } else {
+        remapped
+    }
+}
+
 async fn do_switch_worktree(
     worktree_path: PathBuf,
     git_repo_work_dirs: Vec<PathBuf>,
+    git_opened_paths: Vec<PathBuf>,
     non_git_paths: Vec<PathBuf>,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
@@ -560,7 +626,8 @@ async fn do_switch_worktree(
         .map(|work_dir| (work_dir.clone(), worktree_path.clone()))
         .collect();
 
-    let mut all_paths = vec![worktree_path];
+    let fallback = vec![worktree_path];
+    let mut all_paths = remap_or_fall_back(&git_opened_paths, &path_remapping, &fallback);
     let has_non_git = !non_git_paths.is_empty();
     all_paths.extend(non_git_paths.iter().cloned());
 
@@ -684,7 +751,7 @@ async fn open_worktree_workspace(
         })
         .await;
 
-    maybe_propagate_worktree_trust(&workspace, &new_workspace, &all_paths, cx);
+    maybe_propagate_worktree_trust(&workspace, &new_workspace, cx);
 
     if is_creating_new_worktree {
         window_handle.update(cx, |_multi_workspace, window, cx| {
@@ -705,17 +772,10 @@ async fn open_worktree_workspace(
 
                 // Remap every previously-open file path into the new worktree.
                 let remap_path = |original_path: PathBuf| -> Option<PathBuf> {
-                    let best_match = path_remapping
-                        .iter()
-                        .filter_map(|(old_root, new_root)| {
-                            original_path.strip_prefix(old_root).ok().map(|relative| {
-                                (old_root.components().count(), new_root.join(relative))
-                            })
-                        })
-                        .max_by_key(|(depth, _)| *depth);
-
-                    if let Some((_, remapped_path)) = best_match {
-                        return Some(remapped_path);
+                    if let Some(remapped) =
+                        remap_via_path_remapping(&original_path, &path_remapping)
+                    {
+                        return Some(remapped);
                     }
 
                     for non_git in &non_git_paths {
