@@ -5657,7 +5657,7 @@ impl Render for Sidebar {
                         |el| el.rounded_l(CLIENT_SIDE_DECORATION_ROUNDING),
                     )
                     .ml(px(-1.))
-                    .border_l(px(1.0))
+                    .border_l(px(1.0)),
             })
             .border_color(color.border)
             .map(|this| match &self.view {
