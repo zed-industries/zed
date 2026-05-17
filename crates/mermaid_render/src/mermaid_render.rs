@@ -116,6 +116,11 @@ fn render_with_merman(source: &str, theme: &MermaidTheme) -> Result<String> {
     // to <br/> so the fallback function can split them into separate lines.
     let svg = svg.replace(r"\n", "<br/>");
 
+    // Word-wrap foreignObject text that is wider than its container.
+    // Merman's text measurer can underestimate width, causing overflow
+    // in the fallback <text> elements (which don't support CSS wrapping).
+    let svg = wrap_foreignobject_labels(&svg);
+
     // Convert foreignObject labels to plain SVG <text> elements so that
     // renderers like usvg (which don't support foreignObject) can display them.
     let svg = merman::render::foreign_object_label_fallback_svg_text(&svg);
@@ -789,6 +794,135 @@ fn strip_css_angle_units(css: &str) -> String {
     result
 }
 
+/// Insert `<br/>` at word boundaries in foreignObject text that is wider
+/// than its container. This runs before the foreignObject-to-text fallback
+/// conversion so that the fallback function splits the text into multiple
+/// `<text>` elements.
+fn wrap_foreignobject_labels(svg: &str) -> String {
+    const AVG_CHAR_WIDTH: f64 = 8.5;
+    // Merman's vendored text measurer underestimates character widths
+    // by roughly 40%. Scale the foreignObject width up so we only wrap
+    // text that genuinely overflows the node at actual rendering size.
+    const WIDTH_SCALE: f64 = 1.4;
+
+    let fo_tag = "<foreignObject";
+    let fo_close = "</foreignObject>";
+
+    let mut result = String::with_capacity(svg.len() + 256);
+    let mut remaining = svg;
+
+    while let Some(fo_start) = remaining.find(fo_tag) {
+        let Some(tag_end) = remaining[fo_start..].find('>') else {
+            break;
+        };
+        let tag = &remaining[fo_start..fo_start + tag_end + 1];
+
+        let width = tag
+            .find("width=\"")
+            .and_then(|i| {
+                let after = &tag[i + 7..];
+                after.find('"').and_then(|end| after[..end].parse::<f64>().ok())
+            })
+            .unwrap_or(0.0);
+
+        let content_start = fo_start + tag_end + 1;
+        let Some(close_rel) = remaining[content_start..].find(fo_close) else {
+            break;
+        };
+        let content_end = content_start + close_rel;
+        let fo_end = content_end + fo_close.len();
+
+        let available_width = width * WIDTH_SCALE;
+        if available_width <= 0.0 {
+            result.push_str(&remaining[..fo_end]);
+            remaining = &remaining[fo_end..];
+            continue;
+        }
+
+        let content = &remaining[content_start..content_end];
+
+        // If the content already has explicit line breaks, skip wrapping.
+        if content.contains("<br") {
+            result.push_str(&remaining[..fo_end]);
+            remaining = &remaining[fo_end..];
+            continue;
+        }
+
+        // Extract plain text (strip HTML tags) for width estimation.
+        let plain: String = {
+            let mut text = String::new();
+            let mut in_tag = false;
+            for ch in content.chars() {
+                match ch {
+                    '<' => in_tag = true,
+                    '>' => in_tag = false,
+                    _ if !in_tag => text.push(ch),
+                    _ => {}
+                }
+            }
+            text.trim().to_string()
+        };
+
+        let estimated_width = plain.len() as f64 * AVG_CHAR_WIDTH;
+        if estimated_width <= available_width || plain.split_whitespace().count() <= 1 {
+            result.push_str(&remaining[..fo_end]);
+            remaining = &remaining[fo_end..];
+            continue;
+        }
+
+        // Build wrapped text with <br/> at word boundaries.
+        let mut lines: Vec<String> = Vec::new();
+        let mut current_line = String::new();
+        for word in plain.split_whitespace() {
+            let candidate_width = if current_line.is_empty() {
+                word.len() as f64 * AVG_CHAR_WIDTH
+            } else {
+                (current_line.len() + 1 + word.len()) as f64 * AVG_CHAR_WIDTH
+            };
+            if !current_line.is_empty() && candidate_width > available_width {
+                lines.push(current_line);
+                current_line = word.to_string();
+            } else if current_line.is_empty() {
+                current_line = word.to_string();
+            } else {
+                current_line.push(' ');
+                current_line.push_str(word);
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+
+        let wrapped_html = lines.join("<br/>");
+
+        // Replace the inner text in the original HTML.
+        // Find the deepest text node and replace it.
+        let new_content = if let Some(last_open) = content.rfind('>') {
+            if let Some(next_close) = content[last_open..].find('<') {
+                let text_start = last_open + 1;
+                let text_end = last_open + next_close;
+                let mut new = String::new();
+                new.push_str(&content[..text_start]);
+                new.push_str(&wrapped_html);
+                new.push_str(&content[text_end..]);
+                new
+            } else {
+                wrapped_html
+            }
+        } else {
+            wrapped_html
+        };
+
+        result.push_str(&remaining[..content_start]);
+        result.push_str(&new_content);
+        result.push_str(&remaining[content_end..fo_end]);
+        remaining = &remaining[fo_end..];
+    }
+
+    result.push_str(remaining);
+    result
+}
+
 fn skip_css_block(bytes: &[u8], start: usize) -> usize {
     let mut depth = 0;
     let mut i = start;
@@ -1004,6 +1138,9 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
         "darkMode": theme.dark_mode,
+        "flowchart": {
+            "padding": 16,
+        },
         "themeVariables": {
             "primaryColor": theme.primary_color,
             "primaryTextColor": theme.primary_text_color,

@@ -227,6 +227,38 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
     )
 }
 
+/// We deliberately block rendering of some diagram types, even though `merman`
+/// supports them, because we have not yet written custom CSS to ensure text is
+/// readable.
+fn is_supported_diagram_type(source: &str) -> bool {
+
+    /// If updating this list, also update the system prompt!
+    const SUPPORTED_PREFIXES: &[&str] = &[
+        "flowchart",
+        "graph",
+        "sequenceDiagram",
+        "classDiagram",
+        "stateDiagram",
+        "erDiagram",
+        "gantt",
+        "pie",
+        "gitGraph",
+        "mindmap",
+        "timeline",
+        "quadrantChart",
+        "xychart-beta",
+        "journey",
+    ];
+    let first_token = source
+        .trim_start()
+        .split(|c: char| c.is_whitespace() || c == '\n')
+        .next()
+        .unwrap_or("");
+    SUPPORTED_PREFIXES
+        .iter()
+        .any(|prefix| first_token.eq_ignore_ascii_case(prefix))
+}
+
 pub(crate) fn extract_mermaid_diagrams(
     source: &str,
     events: &[(Range<usize>, MarkdownEvent)],
@@ -259,6 +291,9 @@ pub(crate) fn extract_mermaid_diagrams(
             .strip_suffix('\n')
             .unwrap_or(&source[metadata.content_range.clone()])
             .to_string();
+        if !is_supported_diagram_type(&contents) {
+            continue;
+        }
         mermaid_diagrams.insert(
             source_range.start,
             ParsedMarkdownMermaidDiagram {
@@ -641,6 +676,27 @@ mod tests {
         let diagram = diagrams.values().next().unwrap();
         assert_eq!(diagram.contents.contents, "graph TD;");
         assert_eq!(diagram.contents.scale, 150);
+    }
+
+    #[test]
+    fn test_unsupported_diagram_types_are_skipped() {
+        let markdown = concat!(
+            "```mermaid\nsankey-beta\n```\n\n",
+            "```mermaid\nblock-beta\n```\n\n",
+            "```mermaid\nflowchart TD\n    A --> B\n```",
+        );
+        let events = crate::parser::parse_markdown_with_options(markdown, false, false).events;
+        let diagrams = extract_mermaid_diagrams(markdown, &events);
+        assert_eq!(
+            diagrams.len(),
+            1,
+            "Only the flowchart should be extracted; sankey and block should be skipped"
+        );
+        let diagram = diagrams.values().next().unwrap();
+        assert!(
+            diagram.contents.contents.contains("flowchart"),
+            "The extracted diagram should be the flowchart"
+        );
     }
 
     #[gpui::test]
