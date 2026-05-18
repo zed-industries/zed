@@ -33,12 +33,6 @@ fn init_test(cx: &mut TestAppContext) {
     });
 }
 
-fn enable_agent_panel_terminal(cx: &mut TestAppContext) {
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
-    });
-}
-
 #[track_caller]
 fn assert_active_thread(sidebar: &Sidebar, session_id: &acp::SessionId, msg: &str) {
     let active = sidebar.active_entry.as_ref();
@@ -1373,6 +1367,43 @@ async fn test_keyboard_navigation_on_empty_list(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_new_entry_noops_without_open_project(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, [], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    assert!(
+        !sidebar.read_with(cx, |sidebar, _cx| sidebar.contents.has_open_projects),
+        "empty workspaces should be treated as having no open projects"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.create_new_entry(&workspace, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            panel.active_conversation_view().is_none(),
+            "sidebar should not create an agent thread without an open project"
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+}
+
+#[gpui::test]
 async fn test_selection_clamps_after_entry_removal(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -1448,7 +1479,6 @@ fn setup_sidebar_with_agent_panel(
 #[gpui::test]
 async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1529,7 +1559,6 @@ async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut Te
         .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
@@ -1560,7 +1589,6 @@ async fn test_agent_panel_terminal_shows_project_and_linked_worktree(cx: &mut Te
 #[gpui::test]
 async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1613,7 +1641,6 @@ async fn test_agent_panel_terminal_notifications_update_sidebar(cx: &mut TestApp
 #[gpui::test]
 async fn test_thread_switcher_can_activate_agent_panel_terminal(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1690,7 +1717,6 @@ async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
     cx: &mut TestAppContext,
 ) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -1730,7 +1756,6 @@ async fn test_archive_selected_thread_closes_selected_agent_panel_terminal(
 #[gpui::test]
 async fn test_closing_active_agent_panel_terminal_activates_neighbor(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    enable_agent_panel_terminal(cx);
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
@@ -3248,6 +3273,58 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thread_switcher_includes_parked_draft(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    cx.run_until_parked();
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("thread-existing")),
+        Some("Existing Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+
+    let connection = StubAgentConnection::new();
+    agent_ui::test_support::open_draft_with_connection(&panel, connection, cx);
+    cx.run_until_parked();
+    let draft_id = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+    agent_ui::test_support::type_draft_prompt(&panel, "Fix the login bug", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_thread(&NewThread, window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(sidebar.contents.entries.iter().any(|entry| {
+            matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == draft_id)
+        }));
+    });
+
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.on_toggle_thread_switcher(&ToggleThreadSwitcher::default(), window, cx);
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, cx| {
+        let switcher = sidebar
+            .thread_switcher
+            .as_ref()
+            .expect("switcher should be open");
+        assert!(switcher.read(cx).entries().iter().any(|entry| {
+            matches!(entry.thread_id(), Some(thread_id) if thread_id == draft_id)
+        }));
+    });
+}
+
+#[gpui::test]
 async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
     // Clicking `+` when an empty draft is already active should focus it
     // instead of creating and parking a new one.
@@ -3779,7 +3856,7 @@ async fn test_all_ephemeral_drafts_in_group_are_hidden_from_sidebar(cx: &mut Tes
             None,
             None,
             false,
-            "agent_panel",
+            agent_ui::AgentThreadSource::AgentPanel,
             window,
             cx,
         );

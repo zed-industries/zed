@@ -20,7 +20,7 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::Settings;
+use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -1020,7 +1020,9 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(bg_color)
             .child(
                 div()
@@ -1108,7 +1110,7 @@ impl SearchableItem for MarkdownPreviewView {
 
     fn query_suggestion(
         &mut self,
-        _ignore_settings: bool,
+        _seed_query_override: Option<SeedQuerySetting>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {

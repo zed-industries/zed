@@ -74,6 +74,12 @@ const TOOLS: &[ToolInfo] = &[
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
     },
+    ToolInfo {
+        id: "skill",
+        name: "Skill",
+        description: "Loading agent skill instructions",
+        regex_explanation: "Patterns are matched against the absolute path to the skill's SKILL.md file.",
+    },
 ];
 
 pub(crate) struct ToolInfo {

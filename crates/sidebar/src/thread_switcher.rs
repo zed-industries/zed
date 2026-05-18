@@ -1,5 +1,4 @@
 use action_log::DiffStats;
-use agent_client_protocol::schema as acp;
 use agent_ui::{TerminalId, thread_metadata_store::ThreadMetadata};
 use gpui::{
     Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
@@ -11,7 +10,6 @@ use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
 #[derive(Clone)]
 pub(crate) struct ThreadSwitcherThreadEntry {
-    pub session_id: acp::SessionId,
     pub title: SharedString,
     pub icon: IconName,
     pub icon_from_external_svg: Option<SharedString>,
@@ -21,6 +19,7 @@ pub(crate) struct ThreadSwitcherThreadEntry {
     pub project_name: Option<SharedString>,
     pub worktrees: Vec<ThreadItemWorktreeInfo>,
     pub diff_stats: DiffStats,
+    pub is_draft: bool,
     pub is_title_generating: bool,
     pub notified: bool,
     pub timestamp: SharedString,
@@ -72,9 +71,10 @@ impl ThreadSwitcherEntry {
 
     fn element_id(&self) -> SharedString {
         match self {
-            Self::Thread(entry) => {
-                SharedString::from(format!("thread-switcher-thread-{}", entry.session_id))
-            }
+            Self::Thread(entry) => SharedString::from(format!(
+                "thread-switcher-thread-{:?}",
+                entry.metadata.thread_id
+            )),
             Self::Terminal(entry) => {
                 SharedString::from(format!("thread-switcher-terminal-{}", entry.terminal_id))
             }
@@ -90,6 +90,7 @@ impl ThreadSwitcherEntry {
 
     fn icon(&self) -> IconName {
         match self {
+            Self::Thread(entry) if entry.is_draft => IconName::Circle,
             Self::Thread(entry) => entry.icon,
             Self::Terminal(_) => IconName::Terminal,
         }
@@ -97,6 +98,7 @@ impl ThreadSwitcherEntry {
 
     fn icon_from_external_svg(&self) -> Option<SharedString> {
         match self {
+            Self::Thread(entry) if entry.is_draft => None,
             Self::Thread(entry) => entry.icon_from_external_svg.clone(),
             Self::Terminal(_) => None,
         }
@@ -127,6 +129,13 @@ impl ThreadSwitcherEntry {
         match self {
             Self::Thread(entry) => entry.timestamp.clone(),
             Self::Terminal(entry) => entry.timestamp.clone(),
+        }
+    }
+
+    fn is_draft(&self) -> bool {
+        match self {
+            Self::Thread(entry) => entry.is_draft,
+            Self::Terminal(_) => false,
         }
     }
 
@@ -366,6 +375,11 @@ impl Render for ThreadSwitcher {
                         ThreadItem::new(entry.element_id(), entry.title())
                             .rounded(true)
                             .icon(entry.icon())
+                            .when(entry.is_draft(), |this| {
+                                this.icon_color(Color::Custom(
+                                    cx.theme().colors().icon_muted.opacity(0.2),
+                                ))
+                            })
                             .status(entry.status())
                             .when_some(entry.icon_from_external_svg(), |this, svg| {
                                 this.custom_icon_from_external_svg(svg)
