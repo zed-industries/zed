@@ -723,7 +723,7 @@ struct AgentTerminal {
 impl AgentTerminal {
     fn title(&self, cx: &App) -> SharedString {
         let view = self.view.read(cx);
-        if let Some(custom_title) = view.custom_title() {
+        let title = if let Some(custom_title) = view.custom_title() {
             SharedString::from(custom_title)
         } else {
             let terminal = view.terminal().read(cx);
@@ -737,6 +737,12 @@ impl AgentTerminal {
             } else {
                 terminal.breadcrumb_text.clone().into()
             }
+        };
+
+        if title.is_empty() && !self.last_known_title.is_empty() {
+            SharedString::from(self.last_known_title.clone())
+        } else {
+            title
         }
     }
 
@@ -1545,6 +1551,7 @@ impl AgentPanel {
             working_directory,
             None,
             None,
+            None,
             true,
             true,
             source,
@@ -1588,6 +1595,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         custom_title: Option<SharedString>,
+        initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1623,6 +1631,7 @@ impl AgentPanel {
                     terminal_view,
                     terminal_working_directory,
                     custom_title,
+                    initial_title,
                     created_at,
                     select,
                     focus,
@@ -1642,6 +1651,7 @@ impl AgentPanel {
         terminal_view: Entity<TerminalView>,
         working_directory: Option<PathBuf>,
         custom_title: Option<SharedString>,
+        initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1691,7 +1701,9 @@ impl AgentPanel {
             title_editor: None,
             title_editor_initial_title: None,
             title_editor_subscription: None,
-            last_known_title: String::new(),
+            last_known_title: initial_title
+                .map(|title| title.to_string())
+                .unwrap_or_default(),
             working_directory,
             created_at: created_at.unwrap_or_else(Utc::now),
             has_notification: false,
@@ -1871,10 +1883,12 @@ impl AgentPanel {
         }
 
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
+        let initial_title = Self::terminal_restore_initial_title(&metadata);
         self.spawn_terminal(
             metadata.terminal_id,
             working_directory,
             metadata.custom_title.clone(),
+            initial_title,
             Some(metadata.created_at),
             true,
             focus,
@@ -1898,6 +1912,13 @@ impl AgentPanel {
                     .and_then(|workspace| terminal_view::default_working_directory(workspace, cx))
             })
             .or_else(|| self.default_terminal_working_directory(cx))
+    }
+
+    fn terminal_restore_initial_title(metadata: &TerminalThreadMetadata) -> Option<SharedString> {
+        metadata
+            .custom_title
+            .clone()
+            .or_else(|| (!metadata.title.is_empty()).then(|| metadata.title.clone()))
     }
 
     fn edit_terminal_title(
@@ -5487,6 +5508,7 @@ impl AgentPanel {
             None,
             Some(SharedString::from(title.into())),
             None,
+            None,
             focus,
             focus,
             AgentThreadSource::AgentPanel,
@@ -5516,10 +5538,12 @@ impl AgentPanel {
         }
 
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
+        let initial_title = Self::terminal_restore_initial_title(&metadata);
         self.insert_display_only_terminal(
             metadata.terminal_id,
             working_directory,
             metadata.custom_title.clone(),
+            initial_title,
             Some(metadata.created_at),
             true,
             focus,
@@ -5535,6 +5559,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         custom_title: Option<SharedString>,
+        initial_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -5568,6 +5593,7 @@ impl AgentPanel {
             terminal_view,
             working_directory,
             custom_title,
+            initial_title,
             created_at,
             select,
             focus,
