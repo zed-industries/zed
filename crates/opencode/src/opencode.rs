@@ -389,6 +389,7 @@ impl Model {
             | Self::MimoV2_5Pro
             | Self::Glm5
             | Self::Glm5_1
+            | Self::Nemotron3SuperFree
             | Self::BigPickle => true,
 
             Self::Custom {
@@ -400,7 +401,7 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub fn max_token_count(&self, subscription: OpenCodeSubscription) -> u64 {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_7 => 1_000_000,
@@ -429,7 +430,13 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
-            Self::Glm5 | Self::Glm5_1 => 202_725,
+            Self::Glm5 | Self::Glm5_1 => {
+                if subscription == OpenCodeSubscription::Go {
+                    202_752
+                } else {
+                    204_800
+                }
+            }
             Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
@@ -442,7 +449,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub fn max_output_tokens(&self, subscription: OpenCodeSubscription) -> Option<u64> {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
@@ -477,8 +484,21 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
-            Self::Glm5 | Self::Glm5_1 => Some(32_768),
+            Self::MiniMaxM2_5Free => Some(131_072),
+            Self::MiniMaxM2_5 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(65_536)
+                } else {
+                    Some(131_072)
+                }
+            }
+            Self::Glm5 | Self::Glm5_1 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(32_768)
+                } else {
+                    Some(131_072)
+                }
+            }
             Self::BigPickle => Some(128_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
@@ -516,7 +536,6 @@ impl Model {
             | Self::Gpt5_4Mini
             | Self::Gpt5_4Nano
             | Self::Gpt5_3Codex
-            | Self::Gpt5_3Spark
             | Self::Gpt5_2
             | Self::Gpt5_2Codex
             | Self::Gpt5_1
@@ -526,6 +545,9 @@ impl Model {
             | Self::Gpt5
             | Self::Gpt5Codex
             | Self::Gpt5Nano => true,
+
+            // OpenAI models without image support
+            Self::Gpt5_3Spark => false,
 
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
