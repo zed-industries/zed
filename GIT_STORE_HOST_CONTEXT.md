@@ -2,25 +2,34 @@
 
 This note tracks the `GitStore` portion of the project/host split. `GitStore` is now host-shaped state shared by multiple `Project`s, so project-specific git state must move out of `GitStore` and into `Project` or a project-scoped view.
 
-## Core bug: active repository lives on the host store
+## Core bug: active repository lived on the host store
 
-`GitStore.active_repo_id` is currently a single host-global pointer. In a multi-tenant host, this causes:
+`GitStore.active_repo_id` used to be a single host-global pointer. In a multi-tenant host, this caused:
 
-- Project B can report Project A's active repository.
-- Focusing a file or selecting a repository in one project can change the active repository in sibling projects.
-- `GitStoreEvent::ActiveRepositoryChanged` is ownership-blind and cannot be correct for every project.
-- `GitStoreEvent::RepositoryUpdated(_, _, is_active)` computes `is_active` against host-global state, so it is wrong whenever projects have different active repositories.
-- UI/actions that route through the active repo can operate on a sibling project's repository.
+- Project B could report Project A's active repository.
+- Focusing a file or selecting a repository in one project could change the active repository in sibling projects.
+- `GitStoreEvent::ActiveRepositoryChanged` was ownership-blind and could not be correct for every project.
+- `GitStoreEvent::RepositoryUpdated(_, _, is_active)` computed `is_active` against host-global state, so it was wrong whenever projects had different active repositories.
+- UI/actions that routed through the active repo could operate on a sibling project's repository.
 
-The production fix should make active repository state project-scoped, with project APIs such as:
+Current branch status:
 
-- `Project::active_repository_id`
-- `Project::active_repository(cx)`
-- `Project::set_active_repository_id(...)`
-- `Project::set_active_repository_for_path(...)`
-- `Project::set_active_repository_for_worktree(...)`
+- `GitStore.active_repo_id` has been removed.
+- Active repository state now lives on `Project` as `active_repository_id: Option<RepositoryId>`.
+- Project-scoped APIs now include:
+  - `Project::active_repository_id()`
+  - `Project::active_repository(cx)`
+  - `Project::set_active_repository_id(...)`
+  - `Project::set_active_repository(...)`
+  - `Project::set_active_repository_for_path(...)`
+  - `Project::set_active_repository_for_worktree(...)`
+- `Project::active_repository(cx)` filters through the project's owned repository ids and returns `None` for stale or unowned ids instead of indexing into the host repository map.
+- `Project::on_git_store_event` assigns the first claimed repository as active and, when the active repository is removed, falls back to another repository owned by the same project.
 
-`Project::active_repository(cx)` should never index into the host repository map with `[]`; stale ids should return `None` or be cleared.
+Remaining active-repo follow-up:
+
+- `GitStoreEvent::RepositoryUpdated(_, _, is_active)` still has the `is_active` bool in its type, but `GitStore` no longer has enough project context to compute it correctly. The current branch emits `false`; a follow-up should remove this bool or replace it with project-scoped handling.
+- Add a direct regression/property case for active-repo fallback: when a project has two owned repositories and the active one is removed, fallback must choose another repository owned by that same project; if none remain, active repo becomes `None`.
 
 ## Leak definition for this refactor
 
@@ -58,6 +67,8 @@ Useful test-support additions:
 
 A property test is likely the most complete way to validate host sharing. Instead of hand-writing many scenario tests, generate a sequence of operations against one host and assert invariants after each operation.
 
+Current implementation direction: the property test should read like a small state machine, not a mini framework. It should generate only valid operations from the current state, apply them through real `FakeFs` / `Project` / `GitStore` / `WorktreeStore` flows, and validate via project observe subscriptions plus `GitStore` event subscriptions.
+
 ### Model state
 
 The test model should track:
@@ -91,6 +102,14 @@ Candidate generated operations:
 
 Remote-client variants should be considered after local-host properties are stable.
 
+Current first slice generates:
+
+- open project with one initial visible worktree;
+- add another visible worktree to a live project;
+- drop a live project.
+
+The visible worktree sharing invariant was moved out of the GitStore property test and into a planned WorktreeStore property test (`WORKTREE_STORE_PROPERTY_TEST.md`).
+
 ### Invariants after every operation
 
 Per project:
@@ -117,6 +136,14 @@ For events:
 - Repository updates from sibling-owned repos are ignored by project-scoped consumers.
 - Downstream repository broadcasts include only repos owned by the sharing project.
 
+Current property-test subscription shape:
+
+- `GitStorePropertyWorld` is a GPUI entity that owns the generated projects.
+- Each generated project installs:
+  - `cx.observe(project, ...)` to verify invariants after project notifications;
+  - `cx.subscribe(&git_store, ...)` to verify invariants after host `GitStore` events.
+- Subscriptions are detached and rely on GPUI cleanup.
+
 ## Repository ownership invariant
 
 A project owns a repository if the repository is associated with at least one worktree owned by the project.
@@ -142,7 +169,9 @@ Assert more than path equality:
 - if no owned repos remain, active repo becomes `None`;
 - stale active ids never panic.
 
-Fallback selection should be deterministic. Prefer project worktree order or sorted path order, not `HashMap` iteration.
+Fallback selection is now deterministic in the current branch: `Project::next_active_repository_id` sorts project-owned repositories by `work_directory_abs_path` instead of relying on `HashMap` iteration.
+
+This still needs a direct targeted test/property operation that removes the active repository while another project-owned repository remains.
 
 ## External repository events
 
@@ -160,11 +189,18 @@ Events to cover in property tests or helpers:
 - `RepositoryEvent::StatusesChanged`
 - `RepositoryEvent::HeadChanged`
 - `RepositoryEvent::BranchListChanged`
+- `RepositoryEvent::StashEntriesChanged`
+- `RepositoryEvent::GitWorktreeListChanged`
+- `RepositoryEvent::PendingOpsChanged`
+- `RepositoryEvent::GraphEvent`
 - `GitStoreEvent::RepositoryAdded`
 - `GitStoreEvent::RepositoryRemoved`
 - `RepositorySnapshotForDownstream`
+- `RepositorySnapshotRemovedForDownstream`
 - `ForwardRepositoryUpdate`
 - `ForwardRepositoryRemove`
+
+`GitStoreEvent::RepositoryUpdated(repo_id, event, is_active)` still carries `is_active`, but after moving active repository state to `Project`, host-level `GitStore` cannot compute this per-project. Treat this bool as deprecated follow-up scope.
 
 ## Nested repos and same-repo sharing
 

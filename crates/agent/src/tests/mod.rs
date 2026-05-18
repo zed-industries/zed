@@ -5557,7 +5557,8 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let parent_model = Arc::new(FakeLanguageModel::default());
@@ -5692,7 +5693,8 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
     let project_context = cx.new(|_cx| ProjectContext::default());
-    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_store =
+        project.read_with(cx, |project, cx| project.context_server_store(cx));
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
     let model = Arc::new(FakeLanguageModel::default());

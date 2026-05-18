@@ -6,6 +6,8 @@ This note tracks invariants that should move out of the GitStore property test a
 
 The property test should read like a small state machine, not a mini framework. Generate only valid operations from the current model state, apply them through real `FakeFs` / `Project` / `WorktreeStore` flows, and assert invariants after operations and from event/observe subscriptions.
 
+The first GitStore property test uses this shape: a GPUI entity owns the generated projects, operation selection only chooses currently valid operations, and subscriptions are detached so GPUI handles cleanup.
+
 ## Visible worktree sharing
 
 Visible worktrees should generally be shared across projects that target the same host and open the same path. This invariant belongs at the WorktreeStore layer rather than in the GitStore property test.

@@ -70,9 +70,14 @@ Future mitigation:
 
 Same repo path in multiple projects should share the repository entity.
 
+Decisions from the active-repository refactor:
+
+- Active repository state is per-Project local state, stored as `Project::active_repository_id`.
+- Active repository changes for the same shared repo id emit independently per project via `Project::Event::ActiveRepositoryChanged`.
+- `GitStore` no longer owns or emits active repository changes.
+
 Open decisions:
 
-- Should active repository changes for the same shared repo id emit independently per project?
 - If project A performs git operations on a shared repo, which status/update events should project B receive?
 - Should git jobs be shown in every project that owns the repo, or only the initiating project?
 - Should branch changes in one project always update UI in all projects that own the repo?

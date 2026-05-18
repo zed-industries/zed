@@ -480,6 +480,7 @@ pub struct JobsUpdated;
 pub enum GitStoreEvent {
     ActiveRepositoryChanged(Option<RepositoryId>),
     /// Bool is true when the repository that's updated is the active repository
+    /// todo! remove this bool
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
     /// Fired when a repository is added to the host store. The id lets
     /// `Project` decide ownership against `self.worktrees` before

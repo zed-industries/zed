@@ -3972,7 +3972,7 @@ mod internal_tests {
                 .expect("trusted worktrees global initialized by test_with_worktree_trust");
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 trusted_worktrees.trust(
-                    &project.read(cx).worktree_store(),
+                    &project.read(cx).worktree_store(cx),
                     HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
                     cx,
                 );

@@ -1,6 +1,7 @@
 # Shipping multi-tenant `Host` plan
 
 Sections:
+
 1. **Old semantics to fix** — named regressions caused by the refactor; pure correctness.
 2. **Ownership-blind call-site audit** — hundreds of sites reach through `Project` into a shared store. Systematic sweep, not a named list.
 3. **New semantics to decide** — multi-tenant raises product questions that didn't exist before.
@@ -16,9 +17,11 @@ correctness bug that the automated test suite can't catch without an explicit
 two-Project test.
 
 ### `crates/language_tools/`
+
 - [ ] Status-bar LSP indicator iterates shared `LspStore` — filter by `project.language_servers`.
 
 ### `crates/project/src/lsp_store.rs`
+
 - [ ] `maintain_buffer_languages` (~L4751) touches sibling buffers.
 - [ ] `stop_local_language_server` (~L11049) clears sibling diagnostics.
 - [ ] `restart_all_language_servers` (~L11184) restarts sibling servers.
@@ -26,23 +29,29 @@ two-Project test.
 - [ ] `clear_unregistered_diagnostics` (~L13076) collects sibling abs_paths.
 
 ### `crates/project/src/git_store.rs`
-- [ ] `active_repo_id` is a single field shared across Projects — move to `Project`.
+
+- [x] `active_repo_id` is a single field shared across Projects — moved to `Project::active_repository_id` on this branch. `GitStore` no longer owns active repository state.
 - [ ] `forget_shared_diffs_for(peer)` clears every Project's diffs.
-- [ ] `ActiveRepositoryChanged` and `RepositoryUpdated(_, _, is_active)` fire ownership-blind.
+- [ ] `RepositoryUpdated(_, _, is_active)` still carries host-level `is_active` shape; current branch emits `false` because `GitStore` no longer has project context. Remove/replace this bool with project-scoped handling.
+- [x] `ActiveRepositoryChanged` as a `GitStoreEvent` is no longer emitted by `GitStore`; active repository changes now emit `Project::Event::ActiveRepositoryChanged`. Some raw `GitStoreEvent::ActiveRepositoryChanged` subscribers may still need cleanup as part of the event audit.
 
 ### `crates/project/src/project.rs`
+
 - [ ] `status_for_buffer_id` can return sibling repo's status.
 - [ ] `project_path_git_status` can return sibling repo's status.
 - [ ] `wait_for_initial_scan` waits on every Project's worktrees.
 - [ ] `handle_synchronize_buffers` doesn't gate on `self.buffers`.
 
 ### `crates/project/src/agent_server_store.rs`, `environment.rs`
+
 - [ ] `default_visible_worktree_paths` reads host's full worktree set — thread Project through; delete the helper.
 
 ### `crates/project/src/context_server_store.rs`
+
 - [ ] `create_context_server` worktree fallback picks first sibling worktree when `root_path_override` is `None`.
 
 ### `crates/project/src/buffer_store.rs`
+
 - [ ] `non_searchable_buffers` lives on the shared store — Project A marking bleeds into B's search.
 
 ---
@@ -62,13 +71,13 @@ Should be `project.read(cx).active_repository(cx)`.
 
 ### Scale
 
-| Pattern | Sites |
-|---|---|
-| `project.git_store(cx)` | 107 |
-| `project.lsp_store(cx)` | 144 |
-| `project.worktree_store(cx)` | 72 |
-| `project.buffer_store(cx)` | 52 |
-| **Total** | **~375** |
+| Pattern                      | Sites    |
+| ---------------------------- | -------- |
+| `project.git_store(cx)`      | 107      |
+| `project.lsp_store(cx)`      | 144      |
+| `project.worktree_store(cx)` | 72       |
+| `project.buffer_store(cx)`   | 52       |
+| **Total**                    | **~375** |
 
 ### Approach: let the compiler do the audit
 
@@ -86,8 +95,8 @@ Each accessor is one self-contained commit. Very agent-amenable — the build is
 
 Order roughly by user-visible impact:
 
-- [ ] `GitStore::active_repository` — 6 external sites known; `Project::active_repository` already exists.
-- [ ] `GitStore::repositories` — ownership-blind iteration; add `Project::repositories`.
+- [x] `GitStore::active_repository` — removed; external call sites touched in this branch now use `Project::active_repository` / project-scoped setters.
+- [ ] `GitStore::repositories` — ownership-blind iteration; add/use `Project::repositories`.
 - [ ] `GitStore::repository_for_*` family — needs ownership filter.
 - [ ] `LspStore::language_server_statuses` — source of the status-bar indicator bug (§1).
 - [ ] `LspStore::language_servers_for_*` family.
@@ -96,7 +105,7 @@ Order roughly by user-visible impact:
 - [ ] `WorktreeStore::worktree_for_id`.
 - [ ] `BufferStore::get(id)` and `BufferStore::buffers()`.
 
-*Expand as Pass 3 surfaces more.*
+_Expand as Pass 3 surfaces more._
 
 ### Legitimate raw-store access
 
@@ -118,23 +127,29 @@ Without lockdown, the next refactor regrows the same pattern.
 Each needs a product call before the code change.
 
 ### LSP lifecycle
+
 - [ ] Restart from workspace A while B uses the same server — restart both, or per-Project instances?
 - [ ] Stop-server-for-buffers from A — refcount across Projects, or scope to A?
 
 ### Invisible worktrees
+
 - [ ] Go-to-definition into a file outside any worktree currently auto-claims for every Project (Phase 1 holdover). Keep, or scope to the initiating Project?
 
 ### Settings precedence
+
 - [ ] Two workspaces with different `.zed/settings.json` configuring the same language server — first-write wins, last-write wins, or force per-Project servers?
 
 ### Save / edit conflicts
+
 - [ ] Two workspaces editing the same buffer share state today. Feature or bug? Document either way.
 - [ ] Two workspaces saving the same file concurrently.
 
 ### Collab + multi-tenant
+
 - [ ] Peer joined to multiple of my shared Projects — what happens to `shared_diffs` / `shared_buffers` when they leave one?
 
 ### Cross-workspace observability
+
 - [ ] Should LSP/git crashes and toasts in Project A surface in Project B's window?
 
 ---
@@ -142,6 +157,7 @@ Each needs a product call before the code change.
 ## 4. Incomplete refactors
 
 ### Stores not yet audited for Phase 2
+
 Audit recipe: write the two-Project test first; if it passes, document as trivially multi-tenant; if not, apply the established pattern (per-project HashSet on `Project`, filtered accessors, ownership-gated handlers).
 
 Audit scaffold lives in `crates/project/tests/integration/multi_tenant.rs` — add the failing two-Project test there before applying a fix.
@@ -149,7 +165,7 @@ Audit scaffold lives in `crates/project/tests/integration/multi_tenant.rs` — a
 - [x] `DapStore` — fixed: per-Project `dap_sessions: HashSet<SessionId>` on `Project`, populated by `Project::claim_dap_session` (called from each of the three `DapStore::new_session` sites in `debugger_ui::DebugPanel` — `start_session`, `handle_restart_request`, `handle_start_debugging_request`), pruned by `Project::on_dap_store_event` on `DebugClientShutdown`. New filtered accessors `Project::owns_dap_session`, `dap_session_by_id`, `dap_sessions`. The handler now gates the collab `LogToDebugConsole` broadcast on ownership, and the new `Notification { session_id, message }` variant (was `Notification(String)`) is filtered on session ownership for session-scoped toasts — host-wide ones (`session_id: None`) still toast everywhere. `Project::active_debug_session` filters via `owns_dap_session` so a sibling's host-wide `BreakpointStore::active_position` doesn't show in our editors. `Editor::new_internal` now subscribes only to sessions in `project.dap_sessions(cx)` and gates the `observe_new::<Session>` callback on `owns_dap_session`. Tests: `test_dap_store_notification_scoped_by_session_id`, `test_dap_store_session_ownership_set`.
 - [x] `BreakpointStore` — fixed: `Project::serialized_breakpoints`, `Project::restore_serialized_breakpoints`, `Project::clear_breakpoints` filter by `Project::owns_abs_path`. Store gained `clear_breakpoints_for_paths`; `with_serialized_breakpoints` now merges instead of replacing. Workspace serialize/load and the `ClearAllBreakpoints` action route through `Project`. Tests: `test_breakpoint_store_per_project_serialization`, `test_breakpoint_store_load_preserves_other_project`, `test_breakpoint_store_clear_per_project`.
 - [x] `TaskStore` — fixed: `last_scheduled_tasks` and `last_scheduled_scenarios` moved off `Inventory` onto `Project`. `Inventory::used_and_current_resolved_tasks` and `list_debug_scenarios` now take the LRU as a parameter. New `Project::task_scheduled` / `scenario_scheduled` / `last_scheduled_task` / `last_scheduled_scenario` / `delete_previously_used_task` / `last_scheduled_tasks` / `last_scheduled_scenarios` accessors. Cache invalidation rides a new `InventoryEvent::{TaskTemplatesReloaded, DebugScenariosReloaded}` event that each `Project` subscribes to in `Project::on_inventory_event`. Call sites updated in `workspace::tasks::schedule_resolved_task`, `tasks_ui::Rerun` action, `tasks_ui::modal::TasksModalDelegate` (now holds an `Entity<Project>` directly to avoid in-render workspace-update collisions), `debugger_ui::DebugPanel::{start_session, rerun_last_session}`, and `debugger_ui::new_process_modal::{NewProcessModal::show, DebugDelegate::tasks_loaded}`. Test: `test_task_inventory_last_scheduled_per_project`.
-- [x] `SettingsObserver` — fixed: `on_settings_observer_event` now gates the collab proto broadcast (`UpdateWorktreeSettings`) on `Project::owns_worktree_id`, gates `Event::Toast` emissions for `Tasks` / `Debug` / `LocalSettingsUpdated::Ok` paths on `Project::toast_path_visible_to_us` (which lets *global* config paths through so they toast in every workspace), and gates `LocalSettingsUpdated::Err(LocalSettings { worktree_id, .. })` on `Project::owns_worktree_id`. `InvalidSettingsError::LocalSettings` was enriched with a `worktree_id: WorktreeId` field plumbed through `SettingsStore::set_local_settings` and `apply_local_settings`. Tests: `test_settings_observer_toast_scoped_to_owning_project`, `test_settings_observer_global_toasts_in_every_project`, `test_settings_observer_local_settings_scoped_by_worktree_id`.
+- [x] `SettingsObserver` — fixed: `on_settings_observer_event` now gates the collab proto broadcast (`UpdateWorktreeSettings`) on `Project::owns_worktree_id`, gates `Event::Toast` emissions for `Tasks` / `Debug` / `LocalSettingsUpdated::Ok` paths on `Project::toast_path_visible_to_us` (which lets _global_ config paths through so they toast in every workspace), and gates `LocalSettingsUpdated::Err(LocalSettings { worktree_id, .. })` on `Project::owns_worktree_id`. `InvalidSettingsError::LocalSettings` was enriched with a `worktree_id: WorktreeId` field plumbed through `SettingsStore::set_local_settings` and `apply_local_settings`. Tests: `test_settings_observer_toast_scoped_to_owning_project`, `test_settings_observer_global_toasts_in_every_project`, `test_settings_observer_local_settings_scoped_by_worktree_id`.
 - [x] `BookmarkStore` — fixed: `Project::serialized_bookmarks` and `Project::restore_serialized_bookmarks` filter by `Project::owns_abs_path`. Store gained `clear_bookmarks_for_paths`; `load_serialized_bookmarks` now merges instead of replacing. Workspace serialize/load routes through `Project`. Tests: `test_bookmark_store_per_project_serialization`, `test_bookmark_store_load_preserves_other_project`.
 - [x] `ImageStore` — fixed: `Project::images(cx)` filters by `Project::owns_worktree_id` (checking the image's `file.worktree_id`). UI surfaces that want per-Project visibility should go through `Project::images` rather than `ImageStore::images()`. Test: `test_image_store_images_per_project`.
 
@@ -167,11 +183,13 @@ All known bystander accessors have been migrated:
 - [x] `collab::integration::editor_tests::test_add_breakpoints` (8 sites) — now go through `editor.project().unwrap().read(cx).serialized_breakpoints(cx)`.
 
 ### Loose ends in the existing pattern
+
 - [ ] `pending_worktree_paths` never removed after successful claim.
 - [ ] `HostRegistry` accumulates dead `WeakEntity<Host>` entries.
 - [ ] No `observe_release` cleanup for `HostRegistry`.
 
 ### Missing direct unit tests for the patterns
+
 - [ ] `pending_worktree_paths` race.
 - [ ] `claim_found_worktree` repo back-claim.
 - [ ] `RepositoryAdded` re-emit on new worktree association.
@@ -179,9 +197,11 @@ All known bystander accessors have been migrated:
 - [ ] Distinct `FakeFs` → distinct `Host` (the `HostKey::Local(fs_ptr)` discriminator).
 - [ ] Sibling visible-worktree skip vs pending claim.
 - [ ] LSP restart in A doesn't disturb B's buffers (would fail today).
-- [ ] Active repository is per-Project (would fail today).
+- [x] Active repository is per-Project — `Project::active_repository_id` now owns the state and the GitStore property test asserts active ids are project-owned.
+- [ ] Active repository fallback is directly tested — add a targeted scenario/property operation for removing the active repo while another project-owned repo remains.
 
 ### UI-layer audit (outside `crates/project/`)
+
 - [ ] Sweep `lsp_store.read`, `worktree_store.read`, `git_store.read`, etc. outside `project/` for unfiltered iterations. LSP indicator was one; almost certainly more.
 
 ---
@@ -189,13 +209,14 @@ All known bystander accessors have been migrated:
 ## 5. Legwork / meta
 
 ### Coordination
+
 - [ ] Merge `main` into branch, fix conflicts, restabilize on `cargo nextest run --workspace`.
 - [ ] Open draft PR; paste rewritten `HOST_PROJECT_SPLIT.md` as the body.
 - [x] 60-min live onboarding with both teammates: doc walkthrough → `Host`/`HostRegistry`/`HostKey` → walk one leak fix end-to-end → patterns against prior commits.
   - [@anthony @cameron]
 
-
 ### Manual testing
+
 3 people × ≥3 working days daily-driver on the branch. Two workspaces against the same machine, at least one window remote/SSH.
 
 - [ ] LSP server starts only once per (language, project) combo — check process list, not just UI.
@@ -213,5 +234,6 @@ All known bystander accessors have been migrated:
 - [ ] Bug-bash doc with `blocker` / `ship-with` / `follow-up` triage tags.
 
 ### Rollout
+
 - [ ] Land to `main`, bump nightly immediately.
 - [ ] ≥1 week nightly soak with team before stable.

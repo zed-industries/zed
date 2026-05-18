@@ -6106,7 +6106,7 @@ mod tests {
                 .expect("project should have a task inventory")
         });
 
-        task_inventory.update(cx, |inventory, _| {
+        task_inventory.update(cx, |inventory, cx| {
             inventory
                 .update_file_based_tasks(
                     TaskSettingsLocation::Global(Path::new("/tasks.json")),
@@ -6140,6 +6140,7 @@ mod tests {
                         ]))
                         .expect("tasks JSON should serialize"),
                     ),
+                    cx,
                 )
                 .expect("tasks should parse");
         });
@@ -6155,7 +6156,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -6189,8 +6190,8 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let (task_source_kind, resolved_task) = task_inventory.read_with(&*cx, |inventory, _| {
-            inventory
+        let (task_source_kind, resolved_task) = project.read_with(&*cx, |project, _| {
+            project
                 .last_scheduled_task(None)
                 .expect("custom Git task should be scheduled")
         });
