@@ -151,7 +151,11 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// When enabled, opened buffers that the agent has modified show inline
+    /// hunk controls to keep/reject individual hunks. Note that this temporarily
+    /// overrides the buffer's git diff while review is active.
+    ///
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list

@@ -119,9 +119,18 @@ To see which files specifically have been edited, expand the accordion bar that 
 
 You can accept or reject each individual change hunk, or the whole set of changes made by the agent.
 
-Edit diffs also appear in singleton buffers.
-If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
-You can turn this off, though, through the `agent.single_file_review` setting.
+Edit diffs can also appear inline in singleton buffers, with the same
+keep/reject hunk controls as the multi-buffer review pane. This is opt-in
+(it temporarily overrides the buffer's git diff while review is active);
+enable it by setting `agent.single_file_review` to `true` in your settings:
+
+```json
+{
+  "agent": {
+    "single_file_review": true
+  }
+}
+```
 
 ## Adding Context {#adding-context}
 
