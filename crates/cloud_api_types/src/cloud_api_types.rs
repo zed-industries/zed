@@ -41,6 +41,7 @@ pub struct AuthenticatedUser {
     pub name: Option<String>,
     pub is_staff: bool,
     pub accepted_tos_at: Option<Timestamp>,
+    pub has_connected_to_collab_once: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Serialize, Deserialize)]
@@ -112,5 +113,51 @@ pub struct SubmitEditPredictionFeedbackBody {
     pub rating: String,
     pub inputs: serde_json::Value,
     pub output: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_output: Option<String>,
     pub feedback: String,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionSettledBody {
+    pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settled_editable_region: Option<String>,
+    pub ts_error_count_before_prediction: usize,
+    pub ts_error_count_after_prediction: usize,
+    pub can_collect_data: bool,
+    pub is_in_open_source_repo: bool,
+    #[serde(flatten)]
+    pub kept_chars: EditPredictionSettledKeptChars,
+    pub example: Option<serde_json::Value>,
+    pub model_version: Option<String>,
+    #[serde(rename = "e2e_latency")]
+    pub e2e_latency_ms: u128,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitEditPredictionSettledResponse {}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct EditPredictionSettledKeptChars {
+    #[serde(rename = "edit_bytes_candidate_new")]
+    pub candidate_new: usize,
+    #[serde(rename = "edit_bytes_reference_new")]
+    pub reference_new: usize,
+    #[serde(rename = "edit_bytes_candidate_deleted")]
+    pub candidate_deleted: usize,
+    #[serde(rename = "edit_bytes_reference_deleted")]
+    pub reference_deleted: usize,
+    #[serde(rename = "edit_bytes_kept")]
+    pub kept: usize,
+    #[serde(rename = "edit_bytes_correctly_deleted")]
+    pub correctly_deleted: usize,
+    #[serde(rename = "edit_bytes_discarded")]
+    pub discarded: usize,
+    #[serde(rename = "edit_bytes_context")]
+    pub context: usize,
+    #[serde(rename = "edit_bytes_kept_rate")]
+    pub kept_rate: f64,
+    #[serde(rename = "edit_bytes_recall_rate")]
+    pub recall_rate: f64,
 }

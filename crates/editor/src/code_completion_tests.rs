@@ -486,6 +486,7 @@ impl CompletionBuilder {
             confirm: None,
             match_start: None,
             snippet_deduplication_key: None,
+            group: None,
         }
     }
 }

@@ -973,6 +973,13 @@
     },
   },
   {
+    "context": "GitPanel",
+    "bindings": {
+      "ctrl-1": "git_panel::ActivateChangesTab",
+      "ctrl-2": "git_panel::ActivateHistoryTab",
+    },
+  },
+  {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
     "use_key_equivalents": true,
     "bindings": {
@@ -1515,6 +1522,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-backspace": "worktree_picker::DeleteWorktree",
+      "ctrl-alt-shift-backspace": "worktree_picker::ForceDeleteWorktree",
     },
   },
   {
