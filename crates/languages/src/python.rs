@@ -786,7 +786,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -795,13 +795,8 @@ impl LspInstaller for PyrightLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::SERVER_PATH);
-            let latest_version = latest_version.to_string();
-
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
             let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
@@ -2252,7 +2247,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -2261,13 +2256,8 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::SERVER_PATH);
-            let latest_version = latest_version.to_string();
-
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::SERVER_NAME.as_ref()])
+                .await?;
 
             let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {
