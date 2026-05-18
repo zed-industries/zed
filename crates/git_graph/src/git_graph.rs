@@ -2,6 +2,7 @@ use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
+    commit::ParsedCommitMessage,
     parse_git_remote_url,
     repository::{
         CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
@@ -9,7 +10,11 @@ use git::{
     },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
-use git_ui::{commit_tooltip::CommitAvatar, commit_view::CommitView, git_status_icon};
+use git_ui::{
+    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_view::CommitView,
+    git_status_icon,
+};
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
@@ -428,16 +433,6 @@ fn format_timestamp(timestamp: i64) -> String {
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
-}
-
-fn truncate(s: &str, max_chars: usize) -> SharedString {
-    let mut chars = s.chars();
-    let truncated: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        format!("{}…", truncated).into()
-    } else {
-        s.into()
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1548,16 +1543,13 @@ impl GitGraph {
                 let mut formatted_time = String::new();
                 let subject: SharedString;
                 let author_name: SharedString;
-                let message: SharedString;
 
-                if let CommitDataState::Loaded(data) = &data {
+                if let CommitDataState::Loaded(data) = data {
                     subject = data.subject.clone();
-                    message = data.message.clone();
                     author_name = data.author_name.clone();
                     formatted_time = format_timestamp(data.commit_timestamp);
                 } else {
                     subject = "Loading…".into();
-                    message = "Loading…".into();
                     author_name = "".into();
                 }
 
@@ -1620,8 +1612,42 @@ impl GitGraph {
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
                         .when(!has_context_menu, |this| {
-                            // Prevents excessively tall tooltips; commit messages rarely exceed this
-                            this.tooltip(Tooltip::text(truncate(&message, 800)))
+                            if let CommitDataState::Loaded(commit_data) = &data {
+                                let sha = commit.data.sha.to_string();
+                                let remote_url = repository.read(cx).default_remote_url();
+                                let provider_registry =
+                                    GitHostingProviderRegistry::default_global(cx);
+                                let commit_details = CommitDetails {
+                                    sha: sha.clone().into(),
+                                    author_name: commit_data.author_name.clone(),
+                                    author_email: commit_data.author_email.clone(),
+                                    commit_time: OffsetDateTime::from_unix_timestamp(
+                                        commit_data.commit_timestamp,
+                                    )
+                                    .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                                    message: Some(ParsedCommitMessage::parse(
+                                        sha,
+                                        commit_data.message.to_string(),
+                                        remote_url.as_deref(),
+                                        Some(provider_registry),
+                                    )),
+                                };
+                                let workspace = self.workspace.clone();
+                                let repository = repository.clone();
+                                this.hoverable_tooltip(move |_window, cx| {
+                                    cx.new(|cx| {
+                                        CommitTooltip::new(
+                                            commit_details.clone(),
+                                            repository.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        )
+                                    })
+                                    .into()
+                                })
+                            } else {
+                                this
+                            }
                         })
                         .child(
                             h_flex()
@@ -6278,34 +6304,5 @@ mod tests {
             resolved_task.resolved.env.get("REPOSITORY"),
             Some(&"project".to_string())
         );
-    }
-
-    #[test]
-    fn test_truncate_short() {
-        assert_eq!(truncate("hello", 10), "hello");
-    }
-
-    #[test]
-    fn test_truncate_exactly_max() {
-        assert_eq!(truncate("abcde", 5), "abcde");
-    }
-
-    #[test]
-    fn test_truncate_over_max() {
-        let result = truncate("abcdef", 5);
-        assert_eq!(result, "abcde…");
-    }
-
-    #[test]
-    fn test_truncate_unicode() {
-        let result = truncate("🦊🦊🦊🦊🦊🦊", 5);
-        assert!(result.ends_with('…'));
-        assert_eq!(result.chars().filter(|c| *c == '🦊').count(), 5);
-    }
-
-    #[test]
-    fn test_truncate_multiline() {
-        let msg = "Subject line\n\nBody paragraph with details.";
-        assert_eq!(truncate(msg, 100), msg);
     }
 }
