@@ -10414,7 +10414,9 @@ impl Element for EditorElement {
                         start_row..end_row,
                         &selections,
                         highlighted_ranges.iter().cloned().chain(
-                            document_colors.iter().flat_map(|(_, colors)| colors.iter().cloned()),
+                            document_colors
+                                .iter()
+                                .flat_map(|(_, colors)| colors.iter().cloned()),
                         ),
                         self.style.background,
                     );
