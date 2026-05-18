@@ -31,6 +31,9 @@ pub struct ResolvePositionsController {
     repo_path: RepoPath,
     target_commit: String,
     uncommitted_diff: Option<Entity<BufferDiff>>,
+    // Cached `(origin_url, repository_id)` returned by `/repository3/resolve`.
+    // Keyed by origin URL so a change in the upstream remote invalidates the cache.
+    cached_repository_id: Option<(String, String)>,
     debounce_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -55,9 +58,15 @@ struct ResolveSelectionRequest {
 
 #[derive(serde::Serialize)]
 struct DeltaResolvePositionsRequest {
-    source_commit: String,
-    target_commit: String,
+    source: DeltaRepository3Version,
+    target: DeltaRepository3Version,
     positions: Vec<DeltaPositionRequest>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum DeltaRepository3Version {
+    Commit { commit: String },
 }
 
 #[derive(serde::Serialize)]
@@ -72,6 +81,16 @@ struct DeltaPositionRequest {
 enum DeltaAnchorBias {
     Left,
     Right,
+}
+
+#[derive(serde::Serialize)]
+struct DeltaResolveRepository3Request {
+    origin_url: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DeltaResolveRepository3Response {
+    repository_id: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -298,6 +317,7 @@ impl ResolvePositionsController {
             repo_path,
             target_commit,
             uncommitted_diff,
+            cached_repository_id: None,
             debounce_task: None,
             _subscriptions: subscriptions,
         }
@@ -313,15 +333,46 @@ impl ResolvePositionsController {
         let Some(request) = self.resolve_selection_request(direction, cx) else {
             return;
         };
-        let Some(repository_url) = self.delta_repository_url(cx) else {
+        let Some(origin_url) = self.delta_repository_origin_url(cx) else {
             return;
         };
+        let cached_repository_id = self
+            .cached_repository_id
+            .as_ref()
+            .filter(|(cached_origin, _)| cached_origin == &origin_url)
+            .map(|(_, repository_id)| repository_id.clone());
         let parent: WeakEntity<T> = cx.weak_entity();
         self.debounce_task = Some(window.spawn(cx, async move |cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(100))
                 .await;
-            match resolve_positions_via_delta(repository_url, request.clone(), cx).await {
+
+            let repository_id = match cached_repository_id {
+                Some(repository_id) => repository_id,
+                None => match resolve_delta_repository_id(DELTA_SERVER_URL, origin_url.clone(), cx)
+                    .await
+                {
+                    Ok(repository_id) => {
+                        let cache_entry = (origin_url.clone(), repository_id.clone());
+                        if let Err(error) = parent.update(cx, |parent, _| {
+                            if let Some(controller) = controller_slot(parent).as_mut() {
+                                controller.cached_repository_id = Some(cache_entry);
+                            }
+                        }) {
+                            log::warn!("failed to cache DeltaDB repository id: {error:#}");
+                        }
+                        repository_id
+                    }
+                    Err(error) => {
+                        log::warn!("failed to resolve DeltaDB repository id: {error:#}");
+                        return;
+                    }
+                },
+            };
+
+            match resolve_positions_via_delta(DELTA_SERVER_URL, &repository_id, request.clone(), cx)
+                .await
+            {
                 Ok(range) => {
                     parent
                         .update_in(cx, |parent, window, cx| {
@@ -394,16 +445,13 @@ impl ResolvePositionsController {
         })
     }
 
-    fn delta_repository_url<T>(&self, cx: &Context<T>) -> Option<String> {
+    fn delta_repository_origin_url<T>(&self, cx: &Context<T>) -> Option<String> {
         let snapshot = self.context.repository.read(cx).snapshot();
         let remote_url = snapshot
             .remote_upstream_url
             .as_ref()
             .or(snapshot.remote_origin_url.as_ref())?;
-        Some(format!(
-            "http://localhost:9292/repository3/{}",
-            percent_encode(remote_url)
-        ))
+        Some(remote_url.to_string())
     }
 
     fn apply_resolved_selection<T>(
@@ -559,15 +607,51 @@ fn apply_offset_delta(offset: usize, delta: isize) -> usize {
     }
 }
 
+const DELTA_SERVER_URL: &str = "http://localhost:9292";
+
+async fn resolve_delta_repository_id(
+    server_url: &str,
+    origin_url: String,
+    cx: &mut AsyncWindowContext,
+) -> Result<String> {
+    let http_client = cx.update(|_, cx| cx.http_client())?;
+    let resolve_body = serde_json::to_string(&DeltaResolveRepository3Request { origin_url })?;
+    let resolve_request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("{server_url}/repository3/resolve"))
+        .header("content-type", "application/json")
+        .body(AsyncBody::from(resolve_body))?;
+    let mut resolve_response = http_client.send(resolve_request).await?;
+    if !resolve_response.status().is_success() {
+        anyhow::bail!(
+            "Delta repository3 resolve failed with status {}",
+            resolve_response.status()
+        );
+    }
+    let mut resolve_response_body = String::new();
+    resolve_response
+        .body_mut()
+        .read_to_string(&mut resolve_response_body)
+        .await?;
+    let resolve_response: DeltaResolveRepository3Response =
+        serde_json::from_str(&resolve_response_body)?;
+    Ok(resolve_response.repository_id)
+}
+
 async fn resolve_positions_via_delta(
-    repository_url: String,
+    server_url: &str,
+    repository_id: &str,
     request: ResolveSelectionRequest,
     cx: &mut AsyncWindowContext,
 ) -> Result<Range<usize>> {
     let http_client = cx.update(|_, cx| cx.http_client())?;
     let body = serde_json::to_string(&DeltaResolvePositionsRequest {
-        source_commit: request.source_commit,
-        target_commit: request.target_commit,
+        source: DeltaRepository3Version::Commit {
+            commit: request.source_commit,
+        },
+        target: DeltaRepository3Version::Commit {
+            commit: request.target_commit,
+        },
         positions: vec![
             DeltaPositionRequest {
                 path: request.path.clone(),
@@ -583,7 +667,9 @@ async fn resolve_positions_via_delta(
     })?;
     let http_request = Request::builder()
         .method(Method::POST)
-        .uri(format!("{repository_url}/translate-positions"))
+        .uri(format!(
+            "{server_url}/repository3/{repository_id}/resolve-positions"
+        ))
         .header("content-type", "application/json")
         .body(AsyncBody::from(body))?;
     let mut response = http_client.send(http_request).await?;
@@ -603,16 +689,4 @@ async fn resolve_positions_via_delta(
     let start = positions.first().context("missing resolved start")?.offset;
     let end = positions.get(1).context("missing resolved end")?.offset;
     Ok(start.min(end)..start.max(end))
-}
-
-fn percent_encode(input: &str) -> String {
-    let mut encoded = String::new();
-    for byte in input.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
 }
