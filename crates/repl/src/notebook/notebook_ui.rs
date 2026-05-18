@@ -1058,26 +1058,24 @@ impl NotebookEditor {
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(AddCodeBlock), cx);
                                 }),
-                            )
-                            .child(
-                                Self::render_notebook_control(
-                                    "delete-current-cell",
-                                    IconName::Trash,
-                                    window,
-                                    cx,
-                                )
-                                .disabled(self.cell_order.is_empty())
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action(
-                                        "Delete current cell",
-                                        &DeleteCurrentCell,
-                                        cx,
-                                    )
-                                })
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(DeleteCurrentCell), cx);
-                                }),
                             ),
+                    )
+                    .child(
+                        Self::button_group(window, cx).child(
+                            Self::render_notebook_control(
+                                "delete-current-cell",
+                                IconName::Trash,
+                                window,
+                                cx,
+                            )
+                            .disabled(self.cell_order.is_empty())
+                            .tooltip(move |window, cx| {
+                                Tooltip::for_action("Delete current cell", &DeleteCurrentCell, cx)
+                            })
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(DeleteCurrentCell), cx);
+                            }),
+                        ),
                     ),
             )
             .child(
