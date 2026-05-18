@@ -49,7 +49,7 @@ use std::collections::{VecDeque, hash_map};
 use std::env;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
-use zeta_prompt::{ZetaFormat, ZetaPromptInput};
+use zeta_prompt::{ContextSource, ZetaFormat, ZetaPromptInput};
 
 use std::mem;
 use std::ops::Range;
@@ -2708,6 +2708,7 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
+        context_sources: Vec<ContextSource>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
         use edit_prediction_context::{EditHistoryContextEntry, collect_editable_context};
@@ -2732,7 +2733,15 @@ impl EditPredictionStore {
             .collect();
 
         cx.spawn(async move |_, cx| {
-            collect_editable_context(project, buffer, cursor_position, edit_history, cx).await
+            collect_editable_context(
+                project,
+                buffer,
+                cursor_position,
+                edit_history,
+                context_sources,
+                cx,
+            )
+            .await
         })
     }
 

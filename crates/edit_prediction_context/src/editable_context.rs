@@ -42,18 +42,25 @@ pub async fn collect_editable_context(
     active_buffer: Entity<Buffer>,
     cursor_position: Anchor,
     edit_history: Vec<EditHistoryContextEntry>,
+    context_sources: Vec<ContextSource>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<Vec<RelatedFile>> {
     let mut ranges_by_buffer = RangesByBuffer::default();
 
-    collect_current_cursor_context(
-        &mut ranges_by_buffer,
-        active_buffer.clone(),
-        cursor_position,
-        cx,
-    );
-    collect_edit_history_context(&mut ranges_by_buffer, edit_history, cx);
-    collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
+    if context_sources.contains(&ContextSource::CurrentFile) {
+        collect_current_cursor_context(
+            &mut ranges_by_buffer,
+            active_buffer.clone(),
+            cursor_position,
+            cx,
+        );
+    }
+    if context_sources.contains(&ContextSource::EditHistory) {
+        collect_edit_history_context(&mut ranges_by_buffer, edit_history, cx);
+    }
+    if context_sources.contains(&ContextSource::GitLog) {
+        collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
+    }
 
     Ok(cx.update(|cx| {
         let project = project.read(cx);

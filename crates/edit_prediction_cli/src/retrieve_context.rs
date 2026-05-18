@@ -14,11 +14,15 @@ use language::Buffer;
 use project::Project;
 use std::sync::Arc;
 use std::time::Duration;
+use zeta_prompt::ContextSource;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum ContextRetrievalType {
     Lsp,
     Editable,
+    CurrentFile,
+    EditHistory,
+    GitLog,
     #[default]
     All,
     None,
@@ -29,6 +33,9 @@ impl std::fmt::Display for ContextRetrievalType {
         match self {
             ContextRetrievalType::Lsp => write!(f, "lsp"),
             ContextRetrievalType::Editable => write!(f, "editable"),
+            ContextRetrievalType::CurrentFile => write!(f, "current-file"),
+            ContextRetrievalType::EditHistory => write!(f, "edit-history"),
+            ContextRetrievalType::GitLog => write!(f, "git-log"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
         }
@@ -40,11 +47,18 @@ impl ContextRetrievalType {
         matches!(self, ContextRetrievalType::Lsp | ContextRetrievalType::All)
     }
 
-    fn includes_editable(self) -> bool {
-        matches!(
-            self,
-            ContextRetrievalType::Editable | ContextRetrievalType::All
-        )
+    fn editable_context_sources(self) -> Option<Vec<ContextSource>> {
+        match self {
+            ContextRetrievalType::Editable | ContextRetrievalType::All => Some(vec![
+                ContextSource::CurrentFile,
+                ContextSource::EditHistory,
+                ContextSource::GitLog,
+            ]),
+            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CurrentFile]),
+            ContextRetrievalType::EditHistory => Some(vec![ContextSource::EditHistory]),
+            ContextRetrievalType::GitLog => Some(vec![ContextSource::GitLog]),
+            ContextRetrievalType::Lsp | ContextRetrievalType::None => None,
+        }
     }
 }
 
@@ -105,13 +119,14 @@ pub async fn run_context_retrieval(
             .extend(ep_store.update(&mut cx, |store, cx| store.context_for_project(&project, cx)));
     }
 
-    if context_type.includes_editable() {
+    if let Some(context_sources) = context_type.editable_context_sources() {
         let editable_context = ep_store
             .update(&mut cx, |store, cx| {
                 store.collect_editable_context(
                     project.clone(),
                     state.buffer.clone(),
                     state.cursor_position,
+                    context_sources,
                     cx,
                 )
             })
