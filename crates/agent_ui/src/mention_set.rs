@@ -881,7 +881,7 @@ pub(crate) async fn insert_images_as_context(
             snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
         });
         let image = Arc::new(image);
-        let Ok(Some((crease_id, tx, _crease_entity))) = cx.update(|window, cx| {
+        let Ok(Some((crease_id, tx, crease_entity))) = cx.update(|window, cx| {
             insert_crease_for_mention(
                 text_anchor,
                 content_len,
@@ -923,7 +923,7 @@ pub(crate) async fn insert_images_as_context(
                     name: name.to_string(),
                 },
                 task.clone(),
-                None,
+                crease_entity,
                 cx,
             )
         });
