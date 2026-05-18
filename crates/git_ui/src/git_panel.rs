@@ -831,10 +831,8 @@ impl GitPanel {
                     )
                     | GitStoreEvent::RepositoryAdded
                     | GitStoreEvent::RepositoryRemoved(_)
-                    | GitStoreEvent::GlobalConfigurationUpdated => {
-                        this.schedule_update(window, cx);
-                    }
-                    GitStoreEvent::ActiveRepositoryChanged(_) => {
+                    | GitStoreEvent::GlobalConfigurationUpdated
+                    | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
@@ -5488,22 +5486,19 @@ impl GitPanel {
     }
 
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(repository) = &self.active_repository {
-            if repository.read(cx).error().is_some() {
-                return v_flex()
-                    .gap_1p5()
-                    .flex_1()
-                    .items_center()
-                    .justify_center()
-                    .child(self.render_open_error_ui(cx))
-                    .into_any_element();
-            }
-        }
+        let has_open_error = self
+            .active_repository
+            .as_ref()
+            .map_or(false, |repo| repo.read(cx).error().is_some());
 
-        let content = match (self.git_access, &self.active_repository) {
-            (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
-            (_, None) => self.render_uninitialized_ui(cx),
-            (_, Some(_)) => self.render_no_changes_ui(cx),
+        let content: AnyElement = if has_open_error {
+            self.render_open_error_ui(cx)
+        } else {
+            match (self.git_access, &self.active_repository) {
+                (GitAccess::No, Some(repository)) => self.render_unsafe_repo_ui(repository, cx),
+                (_, None) => self.render_uninitialized_ui(cx),
+                (_, Some(_)) => self.render_no_changes_ui(cx),
+            }
         };
 
         v_flex()
@@ -5512,7 +5507,6 @@ impl GitPanel {
             .items_center()
             .justify_center()
             .child(content)
-            .into_any_element()
     }
 
     fn render_no_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
