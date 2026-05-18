@@ -509,6 +509,7 @@ impl AgentSessionList for AcpSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>> {
         let conn = self.connection.clone();
+        let include_additional_directories = cx.has_flag::<AcpBetaFeatureFlag>();
         cx.foreground_executor().spawn(async move {
             let acp_request = acp::ListSessionsRequest::new()
                 .cwd(request.cwd)
@@ -524,7 +525,11 @@ impl AgentSessionList for AcpSessionList {
                         session_id: s.session_id,
                         work_dirs: Some(work_dirs_from_session_info(
                             s.cwd,
-                            s.additional_directories,
+                            if include_additional_directories {
+                                s.additional_directories
+                            } else {
+                                vec![]
+                            },
                         )),
                         title: s.title.map(Into::into),
                         updated_at: s.updated_at.and_then(|date_str| {
@@ -2763,9 +2768,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn session_list_includes_additional_directories_in_work_dirs(
+    async fn session_list_includes_additional_directories_in_work_dirs_when_beta_enabled(
         cx: &mut gpui::TestAppContext,
     ) {
+        cx.update(|cx| set_acp_beta_override(cx, "on"));
         let connection = connect_session_list_test_agent(
             vec![
                 acp::SessionInfo::new("session-1", "/workspace-b").additional_directories(vec![
@@ -2801,6 +2807,62 @@ mod tests {
                 std::path::PathBuf::from("/workspace-c"),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn session_list_excludes_additional_directories_in_work_dirs_when_beta_disabled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| set_acp_beta_override(cx, "off"));
+
+        let connection = connect_session_list_test_agent(
+            vec![
+                acp::SessionInfo::new("session-1", "/workspace-b").additional_directories(vec![
+                    std::path::PathBuf::from("/workspace-a"),
+                    std::path::PathBuf::from("/workspace-c"),
+                ]),
+            ],
+            cx,
+        )
+        .await;
+        let session_list = AcpSessionList::new(connection, false);
+
+        let response = cx
+            .update(|cx| session_list.list_sessions(AgentSessionListRequest::default(), cx))
+            .await
+            .expect("session list should load");
+        let session = response
+            .sessions
+            .first()
+            .expect("session list should include the returned session");
+        let work_dirs = session
+            .work_dirs
+            .as_ref()
+            .expect("session should include work dirs");
+
+        assert_eq!(
+            work_dirs.ordered_paths().cloned().collect::<Vec<_>>(),
+            vec![std::path::PathBuf::from("/workspace-b")]
+        );
+    }
+
+    fn set_acp_beta_override(cx: &mut App, value: &str) {
+        let store = settings::SettingsStore::test(cx);
+        cx.set_global(store);
+        settings::SettingsStore::update_global(cx, |store, _| {
+            store.register_setting::<feature_flags::FeatureFlagsSettings>();
+        });
+        feature_flags::FeatureFlagStore::init(cx);
+
+        let value = value.to_string();
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |content| {
+                content
+                    .feature_flags
+                    .get_or_insert_default()
+                    .insert(AcpBetaFeatureFlag::NAME.to_string(), value);
+            });
+        });
     }
 
     async fn connect_session_list_test_agent(
