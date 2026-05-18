@@ -136,7 +136,7 @@ pub struct AgentPanelTerminalInfo {
     pub title: SharedString,
     pub created_at: DateTime<Utc>,
     pub has_notification: bool,
-    pub custom_title: Option<String>,
+    pub custom_title: Option<SharedString>,
     pub working_directory: Option<PathBuf>,
 }
 
@@ -761,8 +761,8 @@ impl AgentTerminal {
         title_changed || working_directory_changed
     }
 
-    fn custom_title(&self, cx: &App) -> Option<String> {
-        self.view.read(cx).custom_title().map(ToString::to_string)
+    fn custom_title(&self, cx: &App) -> Option<SharedString> {
+        self.view.read(cx).custom_title().map(SharedString::from)
     }
 }
 
@@ -1587,7 +1587,7 @@ impl AgentPanel {
         &mut self,
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
-        custom_title: Option<String>,
+        custom_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1641,7 +1641,7 @@ impl AgentPanel {
         terminal_id: TerminalId,
         terminal_view: Entity<TerminalView>,
         working_directory: Option<PathBuf>,
-        custom_title: Option<String>,
+        custom_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1651,7 +1651,7 @@ impl AgentPanel {
     ) {
         if let Some(custom_title) = custom_title {
             terminal_view.update(cx, |terminal_view, cx| {
-                terminal_view.set_custom_title(Some(custom_title), cx);
+                terminal_view.set_custom_title(Some(custom_title.to_string()), cx);
             });
         }
         let terminal_entity = terminal_view.read(cx).terminal().clone();
@@ -5485,7 +5485,7 @@ impl AgentPanel {
         self.insert_display_only_terminal(
             terminal_id,
             None,
-            Some(title.into()),
+            Some(SharedString::from(title.into())),
             None,
             focus,
             focus,
@@ -5534,7 +5534,7 @@ impl AgentPanel {
         &mut self,
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
-        custom_title: Option<String>,
+        custom_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,

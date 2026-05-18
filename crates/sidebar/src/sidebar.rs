@@ -310,6 +310,10 @@ impl ActivatableEntry {
             Self::Thread {
                 workspace: ThreadEntryWorkspace::Open(workspace),
                 ..
+            }
+            | Self::Terminal {
+                workspace: ThreadEntryWorkspace::Open(workspace),
+                ..
             } => (
                 PathList::new(&workspace.read(cx).root_paths(cx)),
                 workspace.read(cx).project_group_key(cx),
@@ -321,15 +325,8 @@ impl ActivatableEntry {
                         project_group_key,
                     },
                 ..
-            } => (folder_paths.clone(), project_group_key.clone()),
-            Self::Terminal {
-                workspace: ThreadEntryWorkspace::Open(workspace),
-                ..
-            } => (
-                PathList::new(&workspace.read(cx).root_paths(cx)),
-                workspace.read(cx).project_group_key(cx),
-            ),
-            Self::Terminal {
+            }
+            | Self::Terminal {
                 workspace:
                     ThreadEntryWorkspace::Closed {
                         folder_paths,
