@@ -63,6 +63,7 @@ pub struct MentionSet {
     thread_store: Option<Entity<ThreadStore>>,
     prompt_store: Option<Entity<PromptStore>>,
     mentions: HashMap<CreaseId, (MentionUri, MentionTask)>,
+    crease_entities: HashMap<CreaseId, Entity<LoadingContext>>,
 }
 
 impl MentionSet {
@@ -76,6 +77,7 @@ impl MentionSet {
             thread_store,
             prompt_store,
             mentions: HashMap::default(),
+            crease_entities: HashMap::default(),
         }
     }
 
@@ -110,12 +112,24 @@ impl MentionSet {
         for (crease_id, crease) in snapshot.crease_snapshot.creases() {
             if !crease.range().start.is_valid(snapshot.buffer_snapshot()) {
                 self.mentions.remove(&crease_id);
+                self.crease_entities.remove(&crease_id);
             }
         }
     }
 
-    pub fn insert_mention(&mut self, crease_id: CreaseId, uri: MentionUri, task: MentionTask) {
+    pub fn insert_mention(
+        &mut self,
+        crease_id: CreaseId,
+        uri: MentionUri,
+        task: MentionTask,
+        crease_entity: Option<Entity<LoadingContext>>,
+        cx: &mut App,
+    ) {
         self.mentions.insert(crease_id, (uri, task));
+        if let Some(entity) = crease_entity {
+            self.crease_entities.insert(crease_id, entity);
+        }
+        self.recompute_disambiguation(cx);
     }
 
     /// Creates the appropriate confirmation task for a mention based on its URI type.
@@ -165,8 +179,10 @@ impl MentionSet {
         }
     }
 
-    pub fn remove_mention(&mut self, crease_id: &CreaseId) {
+    pub fn remove_mention(&mut self, crease_id: &CreaseId, cx: &mut App) {
         self.mentions.remove(crease_id);
+        self.crease_entities.remove(crease_id);
+        self.recompute_disambiguation(cx);
     }
 
     pub fn creases(&self) -> HashSet<CreaseId> {
@@ -196,11 +212,30 @@ impl MentionSet {
     }
 
     pub fn set_mentions(&mut self, mentions: HashMap<CreaseId, (MentionUri, MentionTask)>) {
+        self.crease_entities
+            .retain(|id, _| mentions.contains_key(id));
         self.mentions = mentions;
     }
 
     pub fn clear(&mut self) -> impl Iterator<Item = (CreaseId, (MentionUri, MentionTask))> {
+        self.crease_entities.clear();
         self.mentions.drain()
+    }
+
+    fn recompute_disambiguation(&self, cx: &mut App) {
+        let labels =
+            compute_disambiguated_labels(self.mentions.iter().map(|(id, (uri, _))| (*id, uri)));
+
+        for (crease_id, new_label) in labels {
+            if let Some(entity) = self.crease_entities.get(&crease_id) {
+                entity.update(cx, |loading_ctx, cx| {
+                    if loading_ctx.label != new_label {
+                        loading_ctx.label = new_label;
+                        cx.notify();
+                    }
+                });
+            }
+        }
     }
 
     pub fn confirm_mention_completion(
@@ -273,7 +308,7 @@ impl MentionSet {
                 cx,
             )
         };
-        let Some((crease_id, tx)) = crease else {
+        let Some((crease_id, tx, crease_entity)) = crease else {
             return Task::ready(());
         };
 
@@ -325,6 +360,10 @@ impl MentionSet {
             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
             .shared();
         self.mentions.insert(crease_id, (mention_uri, task.clone()));
+        if let Some(entity) = crease_entity {
+            self.crease_entities.insert(crease_id, entity);
+        }
+        self.recompute_disambiguation(cx);
 
         // Notify the user if we failed to load the mentioned context
         let workspace = workspace.downgrade();
@@ -338,6 +377,7 @@ impl MentionSet {
                         editor.edit([(start_anchor..end_anchor, "")], cx);
                     });
                     this.mentions.remove(&crease_id);
+                    this.crease_entities.remove(&crease_id);
                 })
                 .ok();
             }
@@ -669,6 +709,26 @@ impl MentionSet {
     }
 }
 
+/// Computes disambiguated labels for a set of mentions. When multiple mentions
+/// share the same base name, their labels include extra context (additional
+/// parent path components for files/directories, source for skills) so the user
+/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
+/// which is the same utility used for buffer tab titles and the sidebar.
+fn compute_disambiguated_labels<'a>(
+    mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
+) -> HashMap<CreaseId, SharedString> {
+    let mentions: Vec<_> = mentions.collect();
+    let details =
+        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
+            uri.disambiguated_name(detail)
+        });
+    mentions
+        .into_iter()
+        .zip(details)
+        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,7 +881,7 @@ pub(crate) async fn insert_images_as_context(
             snapshot.anchor_before(start_anchor.to_offset(&snapshot) + content_len)
         });
         let image = Arc::new(image);
-        let Ok(Some((crease_id, tx))) = cx.update(|window, cx| {
+        let Ok(Some((crease_id, tx, crease_entity))) = cx.update(|window, cx| {
             insert_crease_for_mention(
                 text_anchor,
                 content_len,
@@ -856,13 +916,15 @@ pub(crate) async fn insert_images_as_context(
             })
             .shared();
 
-        mention_set.update(cx, |mention_set, _cx| {
+        mention_set.update(cx, |mention_set, cx| {
             mention_set.insert_mention(
                 crease_id,
                 MentionUri::PastedImage {
                     name: name.to_string(),
                 },
                 task.clone(),
+                crease_entity,
+                cx,
             )
         });
 
@@ -874,8 +936,8 @@ pub(crate) async fn insert_images_as_context(
             editor.update(cx, |editor, cx| {
                 editor.edit([(start_anchor..end_anchor, "")], cx);
             });
-            mention_set.update(cx, |mention_set, _cx| {
-                mention_set.remove_mention(&crease_id)
+            mention_set.update(cx, |mention_set, cx| {
+                mention_set.remove_mention(&crease_id, cx)
             });
         }
     }
@@ -991,7 +1053,11 @@ pub(crate) fn insert_crease_for_mention(
     editor: Entity<Editor>,
     window: &mut Window,
     cx: &mut App,
-) -> Option<(CreaseId, postage::barrier::Sender)> {
+) -> Option<(
+    CreaseId,
+    postage::barrier::Sender,
+    Option<Entity<LoadingContext>>,
+)> {
     let (tx, rx) = postage::barrier::channel();
 
     let crease_id = editor.update(cx, |editor, cx| {
@@ -1002,19 +1068,20 @@ pub(crate) fn insert_crease_for_mention(
         let start = start.bias_right(&snapshot);
         let end = snapshot.anchor_before(start.to_offset(&snapshot) + content_len);
 
+        let (render, crease_entity) = render_mention_fold_button(
+            crease_label.clone(),
+            crease_icon.clone(),
+            crease_tooltip,
+            mention_uri.clone(),
+            workspace.clone(),
+            start..end,
+            rx,
+            image,
+            cx.weak_entity(),
+            cx,
+        );
         let placeholder = FoldPlaceholder {
-            render: render_mention_fold_button(
-                crease_label.clone(),
-                crease_icon.clone(),
-                crease_tooltip,
-                mention_uri.clone(),
-                workspace.clone(),
-                start..end,
-                rx,
-                image,
-                cx.weak_entity(),
-                cx,
-            ),
+            render,
             merge_adjacent: false,
             ..Default::default()
         };
@@ -1033,10 +1100,11 @@ pub(crate) fn insert_crease_for_mention(
         let ids = editor.insert_creases(vec![crease.clone()], cx);
         editor.fold_creases(vec![crease], false, window, cx);
 
-        Some(ids[0])
+        Some((ids[0], crease_entity))
     })?;
 
-    Some((crease_id, tx))
+    let (crease_id, crease_entity) = crease_id;
+    Some((crease_id, tx, Some(crease_entity)))
 }
 
 pub(crate) fn crease_for_mention(
@@ -1215,7 +1283,10 @@ fn render_mention_fold_button(
     image_task: Option<Shared<Task<Result<Arc<Image>, String>>>>,
     editor: WeakEntity<Editor>,
     cx: &mut App,
-) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
+) -> (
+    Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement>,
+    Entity<LoadingContext>,
+) {
     let loading = cx.new(|cx| {
         let loading = cx.spawn(async move |this, cx| {
             loading_finished.recv().await;
@@ -1238,10 +1309,13 @@ fn render_mention_fold_button(
             image: image_task.clone(),
         }
     });
-    Arc::new(move |_fold_id, _fold_range, _cx| loading.clone().into_any_element())
+    let loading_clone = loading.clone();
+    let render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> =
+        Arc::new(move |_fold_id, _fold_range, _cx| loading_clone.clone().into_any_element());
+    (render, loading)
 }
 
-struct LoadingContext {
+pub struct LoadingContext {
     id: EntityId,
     label: SharedString,
     icon: SharedString,
