@@ -120,27 +120,24 @@ impl Vim {
                         sel.end
                     };
                     let point = display_point.to_point(&display_map);
-                    let anchor = if action.before {
-                        display_map.buffer_snapshot().anchor_after(point)
-                    } else {
-                        display_map.buffer_snapshot().anchor_before(point)
-                    };
+                    let buffer_snapshot = display_map.buffer_snapshot();
+                    let start_anchor = buffer_snapshot.anchor_before(point);
+                    let end_anchor = buffer_snapshot.anchor_after(point);
                     edits.push((point..point, to_insert.repeat(count)));
-                    new_selections.push((anchor, to_insert.len() * count));
+                    new_selections.push((start_anchor, end_anchor));
                 }
 
                 editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.select_ranges(new_selections.into_iter().map(|(anchor, len)| {
-                        let offset = anchor.to_offset(&snapshot);
-                        if action.before {
-                            offset.saturating_sub_usize(len)..offset
-                        } else {
-                            offset..(offset + len)
-                        }
-                    }));
+                    s.select_ranges(new_selections.into_iter().map(
+                        |(start_anchor, end_anchor)| {
+                            let start = start_anchor.to_offset(&snapshot);
+                            let end = end_anchor.to_offset(&snapshot);
+                            start..end
+                        },
+                    ));
                 })
             });
         });
