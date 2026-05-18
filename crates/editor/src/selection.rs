@@ -1700,30 +1700,51 @@ impl Editor {
 
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), goal_column);
-        let end_column = cmp::max(tail.column(), goal_column);
-        let reversed = start_column < tail.column();
+
+        // Anchor the columnar rectangle in x pixels rather than byte columns so
+        // rows with multi-byte characters (e.g. diacritics) stay visually aligned.
+        let text_layout_details = self.text_layout_details(window, cx);
+        let tail_x = display_map.x_for_display_point(tail, &text_layout_details);
+        let head_x = display_map.x_for_display_point(
+            DisplayPoint::new(head.row(), goal_column),
+            &text_layout_details,
+        );
+        let start_x = tail_x.min(head_x);
+        let end_x = tail_x.max(head_x);
+        let reversed = head_x < tail_x;
 
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if (matches!(columnar_state, ColumnarSelectionState::FromMouse { .. })
-                    || start_column <= display_map.line_len(row))
-                    && !display_map.is_block_line(row)
-                {
-                    let start = display_map
-                        .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
-                        .to_point(display_map);
-                    let end = display_map
-                        .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
-                        .to_point(display_map);
-                    if reversed {
-                        Some(end..start)
-                    } else {
-                        Some(start..end)
+                if display_map.is_block_line(row) {
+                    return None;
+                }
+
+                if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. }) {
+                    let row_eol_x = display_map.x_for_display_point(
+                        DisplayPoint::new(row, display_map.line_len(row)),
+                        &text_layout_details,
+                    );
+                    if start_x > row_eol_x {
+                        return None;
                     }
+                }
+
+                let start_column =
+                    display_map.display_column_for_x(row, start_x, &text_layout_details);
+                let end_column =
+                    display_map.display_column_for_x(row, end_x, &text_layout_details);
+
+                let start = display_map
+                    .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
+                    .to_point(display_map);
+                let end = display_map
+                    .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
+                    .to_point(display_map);
+                if reversed {
+                    Some(end..start)
                 } else {
-                    None
+                    Some(start..end)
                 }
             })
             .collect::<Vec<_>>();

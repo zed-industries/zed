@@ -37644,3 +37644,122 @@ async fn test_toggle_diagnostics_persists_across_settings_change(cx: &mut TestAp
         );
     });
 }
+
+#[gpui::test]
+async fn test_columnar_selection_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Five lines where the middle row contains a 2-byte char (ã) before the
+    // dragged column. A column selection that uses byte columns directly puts
+    // the ã row's selection at a different visual position than the ASCII rows;
+    // after the fix the selection is anchored in x pixels, so all rows land at
+    // the same character offset.
+    cx.set_state(indoc! {"
+        ˇabcde
+        abcde
+        aãcde
+        abcde
+        abcde
+    "});
+
+    let buffer_text = cx.buffer_text();
+    let lines: Vec<&str> = buffer_text.split('\n').take(5).collect();
+    assert_eq!(lines.len(), 5);
+    assert_eq!(lines[2], "aãcde");
+
+    let char_offset = |row: usize, byte_col: u32| -> usize {
+        let mut chars = 0;
+        for (byte_idx, _) in lines[row].char_indices() {
+            if byte_idx >= byte_col as usize {
+                return chars;
+            }
+            chars += 1;
+        }
+        chars
+    };
+
+    // Drag column-wise from (row 0, col 0) past the ã column on every row.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 4),
+                goal_column: 4,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = editor.selections.all::<Point>(&display_map);
+        assert_eq!(selections.len(), 5, "one selection per row");
+
+        let expected_start = char_offset(0, selections[0].start.column);
+        let expected_end = char_offset(0, selections[0].end.column);
+        assert_eq!(expected_start, 0);
+        assert_eq!(expected_end, 4);
+
+        for (idx, sel) in selections.iter().enumerate() {
+            assert_eq!(sel.start.row, idx as u32, "row {idx} start row");
+            assert_eq!(sel.end.row, idx as u32, "row {idx} end row");
+            assert_eq!(
+                char_offset(idx, sel.start.column),
+                expected_start,
+                "row {idx} start char offset must match row 0",
+            );
+            assert_eq!(
+                char_offset(idx, sel.end.column),
+                expected_end,
+                "row {idx} end char offset must match row 0",
+            );
+        }
+    });
+
+    // Control: drag stops before the ã byte boundary on every row, where old
+    // byte-column logic and new x-anchored logic agree.
+    cx.update_editor(|editor, window, cx| {
+        editor.select(
+            SelectPhase::BeginColumnar {
+                position: DisplayPoint::new(DisplayRow(0), 0),
+                goal_column: 0,
+                reset: true,
+                mode: ColumnarMode::FromMouse,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: DisplayPoint::new(DisplayRow(4), 1),
+                goal_column: 1,
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = editor.selections.all::<Point>(&display_map);
+        assert_eq!(selections.len(), 5);
+        for (idx, sel) in selections.iter().enumerate() {
+            assert_eq!(char_offset(idx, sel.start.column), 0, "row {idx} start");
+            assert_eq!(char_offset(idx, sel.end.column), 1, "row {idx} end");
+        }
+    });
+}
