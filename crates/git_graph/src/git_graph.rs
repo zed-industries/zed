@@ -1544,7 +1544,7 @@ impl GitGraph {
                 let subject: SharedString;
                 let author_name: SharedString;
 
-                if let CommitDataState::Loaded(data) = data {
+                if let CommitDataState::Loaded(ref data) = data {
                     subject = data.subject.clone();
                     author_name = data.author_name.clone();
                     formatted_time = format_timestamp(data.commit_timestamp);
