@@ -2118,6 +2118,15 @@ impl Workspace {
                     .log_err();
             }
 
+            // Auto-show the security modal if the project has restricted worktrees
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(false, window, cx);
+                    });
+                })
+                .log_err();
+
             Ok(OpenResult {
                 window,
                 workspace,
@@ -8010,13 +8019,10 @@ impl Workspace {
                 });
             }
         } else {
-            let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .map(|trusted_worktrees| {
-                    trusted_worktrees
-                        .read(cx)
-                        .has_restricted_worktrees(&self.project().read(cx).worktree_store(), cx)
-                })
-                .unwrap_or(false);
+            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+                &self.project().read(cx).worktree_store(),
+                cx,
+            );
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
                 let remote_host = project
