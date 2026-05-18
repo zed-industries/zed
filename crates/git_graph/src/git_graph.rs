@@ -430,6 +430,16 @@ fn accent_colors_count(accents: &AccentColors) -> usize {
     accents.0.len()
 }
 
+fn truncate(s: &str, max_chars: usize) -> SharedString {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{}…", truncated).into()
+    } else {
+        s.into()
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 struct BranchColor(u8);
 
@@ -1610,16 +1620,8 @@ impl GitGraph {
                         .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
                         .overflow_hidden()
                         .when(!has_context_menu, |this| {
-                            const MAX_CHARS: usize = 800;
-                            let tooltip_message: SharedString = if message.chars().count()
-                                > MAX_CHARS
-                            {
-                                let truncated: String = message.chars().take(MAX_CHARS).collect();
-                                format!("{}…", truncated).into()
-                            } else {
-                                message.clone()
-                            };
-                            this.tooltip(Tooltip::text(tooltip_message))
+                            // Prevents excessively tall tooltips; commit messages rarely exceed this
+                            this.tooltip(Tooltip::text(truncate(&message, 800)))
                         })
                         .child(
                             h_flex()
@@ -6276,5 +6278,34 @@ mod tests {
             resolved_task.resolved.env.get("REPOSITORY"),
             Some(&"project".to_string())
         );
+    }
+
+    #[test]
+    fn test_truncate_short() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn test_truncate_exactly_max() {
+        assert_eq!(truncate("abcde", 5), "abcde");
+    }
+
+    #[test]
+    fn test_truncate_over_max() {
+        let result = truncate("abcdef", 5);
+        assert_eq!(result, "abcde…");
+    }
+
+    #[test]
+    fn test_truncate_unicode() {
+        let result = truncate("🦊🦊🦊🦊🦊🦊", 5);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().filter(|c| *c == '🦊').count(), 5);
+    }
+
+    #[test]
+    fn test_truncate_multiline() {
+        let msg = "Subject line\n\nBody paragraph with details.";
+        assert_eq!(truncate(msg, 100), msg);
     }
 }
