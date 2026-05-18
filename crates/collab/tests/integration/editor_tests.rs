@@ -1399,7 +1399,12 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         "Should have fetched one code lens action, but got: {resulting_lens_actions:?}"
     );
     assert_eq!(
-        resulting_lens_actions.first().unwrap().lsp_action.title(),
+        resulting_lens_actions
+            .values()
+            .next()
+            .unwrap()
+            .lsp_action
+            .title(),
         "LSP Command 1",
         "Only the final code lens action should be in the data"
     )

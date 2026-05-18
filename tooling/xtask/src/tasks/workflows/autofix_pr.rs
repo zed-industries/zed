@@ -2,7 +2,10 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, named},
+    steps::{
+        self, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob, RepositoryTarget,
+        TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -31,26 +34,14 @@ pub fn autofix_pr() -> Workflow {
 const PATCH_ARTIFACT_NAME: &str = "autofix-patch";
 const PATCH_FILE_PATH: &str = "autofix.patch";
 
-fn upload_patch_artifact() -> Step<Use> {
-    Step::new(format!("upload artifact {}", PATCH_ARTIFACT_NAME))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", PATCH_ARTIFACT_NAME))
-        .add_with(("path", PATCH_FILE_PATH))
-        .add_with(("if-no-files-found", "ignore"))
-        .add_with(("retention-days", "1"))
+fn upload_patch_artifact() -> UploadArtifactStep {
+    steps::upload_artifact(PATCH_ARTIFACT_NAME, PATCH_FILE_PATH)
+        .if_no_files_found(IfNoFilesFound::Ignore)
+        .retention_days(1)
 }
 
-fn download_patch_artifact() -> Step<Use> {
-    named::uses(
-        "actions",
-        "download-artifact",
-        "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-    )
-    .add_with(("name", PATCH_ARTIFACT_NAME))
+fn download_patch_artifact() -> DownloadArtifactStep {
+    steps::download_artifact().artifact_name(PATCH_ARTIFACT_NAME)
 }
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
@@ -69,9 +60,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_cargo_fix() -> Step<Run> {
-        named::bash(
-            "cargo fix --workspace --release --all-targets --all-features --allow-dirty --allow-staged",
-        )
+        named::bash("cargo fix --workspace --allow-dirty --allow-staged")
     }
 
     fn run_cargo_machete_fix() -> Step<Run> {
@@ -79,9 +68,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     }
 
     fn run_clippy_fix() -> Step<Run> {
-        named::bash(
-            "cargo clippy --workspace --release --all-targets --all-features --fix --allow-dirty --allow-staged",
-        )
+        named::bash("cargo clippy --workspace --fix --allow-dirty --allow-staged")
     }
 
     fn run_prettier_fix() -> Step<Run> {
@@ -101,7 +88,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         .id("create-patch")
     }
 
-    named::job(
+    named::job(use_clang(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
             .outputs([(
@@ -123,7 +110,7 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(create_patch())
             .add_step(upload_patch_artifact())
             .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
-    )
+    ))
 }
 
 fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
@@ -142,16 +129,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
             git commit -am "Autofix"
             git push
         "#})
-        .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_COMMITTER_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
-        .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_AUTHOR_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
+        .with_zippy_git_identity()
         .add_env(("GITHUB_TOKEN", token))
     }
 

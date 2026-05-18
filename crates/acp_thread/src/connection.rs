@@ -49,6 +49,10 @@ pub trait AgentConnection {
 
     fn telemetry_id(&self) -> SharedString;
 
+    fn agent_version(&self) -> Option<SharedString> {
+        None
+    }
+
     fn new_session(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -122,6 +126,14 @@ pub trait AgentConnection {
     }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+
+    fn supports_logout(&self, _cx: &App) -> bool {
+        false
+    }
+
+    fn logout(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
+    }
 
     fn prompt(
         &self,
@@ -306,7 +318,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self) -> bool {
+    fn supports_delete(&self, _cx: &App) -> bool {
         false
     }
 
@@ -637,6 +649,8 @@ mod test_support {
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
+    use crate::AuthorizationKind;
+
     use super::*;
 
     /// Creates a PNG image encoded as base64 for testing.
@@ -911,6 +925,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        AuthorizationKind::PermissionGrant,
                                         cx,
                                     )
                                 })??

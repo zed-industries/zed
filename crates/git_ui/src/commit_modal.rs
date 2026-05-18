@@ -1,9 +1,10 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
+use crate::git_panel::{
+    GitPanel, commit_message_editor, commit_title_exceeds_limit, panel_editor_style,
+};
 use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
@@ -366,17 +367,17 @@ impl CommitModal {
             .map(|b| b.name().to_owned())
             .unwrap_or_else(|| "<no branch>".to_owned());
 
-        let branch_picker_button = panel_button(branch)
+        let branch_picker_button = Button::new("branch_picker_button", branch)
             .start_icon(
                 Icon::new(IconName::GitBranch)
                     .size(IconSize::Small)
                     .color(Color::Placeholder),
             )
+            .style(ButtonStyle::Transparent)
             .color(Color::Muted)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
+            }));
 
         let branch_picker = PopoverMenu::new("popover-button")
             .menu(move |window, cx| {
@@ -469,11 +470,7 @@ impl CommitModal {
                                 if can_commit {
                                     Tooltip::with_meta_in(
                                         tooltip,
-                                        Some(if is_amend_pending {
-                                            &git::Amend
-                                        } else {
-                                            &git::Commit
-                                        }),
+                                        Some(&git::Commit),
                                         format!(
                                             "git commit{}{}",
                                             if is_amend_pending { " --amend" } else { "" },
@@ -506,10 +503,16 @@ impl CommitModal {
     }
 
     fn on_commit(&mut self, _: &git::Commit, window: &mut Window, cx: &mut Context<Self>) {
-        if self.git_panel.update(cx, |git_panel, cx| {
+        let is_amend = self.git_panel.read(cx).amend_pending();
+        let did_execute = self.git_panel.update(cx, |git_panel, cx| {
             git_panel.commit(&self.commit_editor.focus_handle(cx), window, cx)
-        }) {
-            telemetry::event!("Git Committed", source = "Git Modal");
+        });
+        if did_execute {
+            if is_amend {
+                telemetry::event!("Git Amended", source = "Git Modal");
+            } else {
+                telemetry::event!("Git Committed", source = "Git Modal");
+            }
             cx.emit(DismissEvent);
         }
     }
@@ -547,7 +550,7 @@ impl Render for CommitModal {
                 .text(cx)
                 .lines()
                 .next()
-                .is_some_and(|title| title.len() > max_title_length)
+                .is_some_and(|title| commit_title_exceeds_limit(title, max_title_length))
         } else {
             false
         };

@@ -20,9 +20,10 @@ use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
 use std::path::PathBuf;
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{any::Any, cell::RefCell, collections::VecDeque};
 use task::{Shell, ShellBuilder, SpawnInTerminal};
 use thiserror::Error;
@@ -41,6 +42,8 @@ use crate::GEMINI_ID;
 
 pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
+const ACP_RESPONSE_CHANNEL_CANCELLED: &str =
+    "response channel cancelled — connection may have dropped";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AcpDebugMessageDirection {
@@ -195,6 +198,34 @@ impl AcpDebugLog {
             sender.try_send(message.clone()).log_err();
         }
     }
+
+    fn trailing_stderr(&self) -> Option<String> {
+        let state = self.state.lock().ok()?;
+        let mut lines = state
+            .messages
+            .iter()
+            .rev()
+            .take_while(|message| matches!(&message.message, AcpDebugMessageContent::Stderr { .. }))
+            .filter_map(|message| match &message.message {
+                AcpDebugMessageContent::Stderr { line } if !line.is_empty() => Some(line.as_ref()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if lines.is_empty() {
+            return None;
+        }
+
+        lines.reverse();
+        Some(lines.join("\n"))
+    }
+}
+
+fn exited_load_error_with_stderr(status: ExitStatus, debug_log: &AcpDebugLog) -> LoadError {
+    LoadError::Exited {
+        status,
+        stderr: debug_log.trailing_stderr().map(SharedString::from),
+    }
 }
 
 /// Awaits the response to an ACP request from a GPUI foreground task.
@@ -221,10 +252,8 @@ fn into_foreground_future<T: JsonRpcResponse>(
     });
     async move {
         spawn_result?;
-        rx.await.map_err(|_| {
-            acp::Error::internal_error()
-                .data("response channel cancelled — connection may have dropped")
-        })?
+        rx.await
+            .map_err(|_| acp::Error::internal_error().data(ACP_RESPONSE_CHANNEL_CANCELLED))?
     }
 }
 
@@ -385,6 +414,7 @@ fn enqueue_notification<Notif>(
 pub struct AcpConnection {
     id: AgentId,
     telemetry_id: SharedString,
+    agent_version: Option<SharedString>,
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
@@ -443,15 +473,17 @@ pub struct AcpSession {
 
 pub struct AcpSessionList {
     connection: ConnectionTo<Agent>,
+    supports_delete: bool,
     updates_tx: async_channel::Sender<acp_thread::SessionListUpdate>,
     updates_rx: async_channel::Receiver<acp_thread::SessionListUpdate>,
 }
 
 impl AcpSessionList {
-    fn new(connection: ConnectionTo<Agent>) -> Self {
+    fn new(connection: ConnectionTo<Agent>, supports_delete: bool) -> Self {
         let (tx, rx) = async_channel::unbounded();
         Self {
             connection,
+            supports_delete,
             updates_tx: tx,
             updates_rx: rx,
         }
@@ -504,6 +536,29 @@ impl AgentSessionList for AcpSessionList {
                 next_cursor: response.next_cursor,
                 meta: response.meta,
             })
+        })
+    }
+
+    fn supports_delete(&self, cx: &App) -> bool {
+        self.supports_delete && cx.has_flag::<AcpBetaFeatureFlag>()
+    }
+
+    fn delete_session(&self, session_id: &acp::SessionId, cx: &mut App) -> Task<Result<()>> {
+        if !self.supports_delete(cx) {
+            return Task::ready(Err(anyhow::anyhow!("delete_session not supported")));
+        }
+
+        let conn = self.connection.clone();
+        let updates_tx = self.updates_tx.clone();
+        let session_id = session_id.clone();
+        cx.foreground_executor().spawn(async move {
+            into_foreground_future(conn.send_request(acp::DeleteSessionRequest::new(session_id)))
+                .await
+                .map_err(map_acp_error)?;
+            updates_tx
+                .try_send(acp_thread::SessionListUpdate::Refresh)
+                .log_err();
+            Ok(())
         })
     }
 
@@ -714,6 +769,7 @@ impl AcpConnection {
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        let debug_log = AcpDebugLog::default();
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
             (
@@ -729,7 +785,6 @@ impl AcpConnection {
         // Set up the foreground dispatch channel for bridging Send handler
         // closures to the !Send foreground thread.
         let (dispatch_tx, dispatch_rx) = mpsc::unbounded::<ForegroundWork>();
-        let debug_log = AcpDebugLog::default();
 
         let incoming_lines = futures::io::BufReader::new(stdout).lines();
         let tapped_incoming = incoming_lines.inspect({
@@ -756,37 +811,6 @@ impl AcpConnection {
 
         let transport = Lines::new(tapped_outgoing, tapped_incoming);
 
-        // `connect_client_future` installs the production handler set and
-        // hands us back both the connection-future (to run on a background
-        // executor) and a oneshot receiver that produces the
-        // `ConnectionTo<Agent>` once the transport handshake is ready.
-        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
-        let connection_future =
-            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
-        let io_task = cx.background_spawn(async move {
-            if let Err(err) = connection_future.await {
-                log::error!("ACP connection error: {err}");
-            }
-        });
-
-        let connection: ConnectionTo<Agent> = connection_rx
-            .await
-            .context("Failed to receive ACP connection handle")?;
-
-        // Set up the foreground dispatch loop to process work items from handlers.
-        let dispatch_context = ClientContext {
-            sessions: sessions.clone(),
-            session_list: client_session_list.clone(),
-        };
-        let dispatch_task = cx.spawn({
-            let mut dispatch_rx = dispatch_rx;
-            async move |cx| {
-                while let Some(work) = dispatch_rx.next().await {
-                    work.run(cx, &dispatch_context);
-                }
-            }
-        });
-
         let stderr_task = cx.background_spawn({
             let debug_log = debug_log.clone();
             async move {
@@ -804,17 +828,59 @@ impl AcpConnection {
             }
         });
 
-        let wait_task = cx.spawn({
-            let sessions = sessions.clone();
-            let status_fut = child.status();
-            async move |cx| {
-                let status = status_fut.await?;
-                emit_load_error_to_all_sessions(&sessions, LoadError::Exited { status }, cx);
-                anyhow::Ok(())
+        // `connect_client_future` installs the production handler set and
+        // hands us back both the connection-future (to run on a background
+        // executor) and a oneshot receiver that produces the
+        // `ConnectionTo<Agent>` once the transport handshake is ready.
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        let connection_future =
+            connect_client_future("zed", transport, dispatch_tx.clone(), connection_tx);
+        let io_task = cx.background_spawn(async move {
+            if let Err(err) = connection_future.await {
+                log::error!("ACP connection error: {err}");
             }
         });
 
-        let response = into_foreground_future(
+        let connection_rx = async move {
+            connection_rx
+                .await
+                .context("Failed to receive ACP connection handle")
+        }
+        .boxed_local();
+        let status_fut = child
+            .status()
+            .map({
+                let debug_log = debug_log.clone();
+                move |status| match status {
+                    Ok(status) => Ok(exited_load_error_with_stderr(status, &debug_log)),
+                    Err(err) => Err(anyhow!("failed to wait for agent server exit: {err}")),
+                }
+            })
+            .boxed_local();
+        let (connection, status_fut) = match futures::future::select(connection_rx, status_fut)
+            .await
+        {
+            futures::future::Either::Left((connection, status_fut)) => (connection?, status_fut),
+            futures::future::Either::Right((load_error, _connection_rx)) => {
+                return Err(load_error?.into());
+            }
+        };
+
+        // Set up the foreground dispatch loop to process work items from handlers.
+        let dispatch_context = ClientContext {
+            sessions: sessions.clone(),
+            session_list: client_session_list.clone(),
+        };
+        let dispatch_task = cx.spawn({
+            let mut dispatch_rx = dispatch_rx;
+            async move |cx| {
+                while let Some(work) = dispatch_rx.next().await {
+                    work.run(cx, &dispatch_context);
+                }
+            }
+        });
+
+        let initialize_response = into_foreground_future(
             connection.send_request(
                 acp::InitializeRequest::new(acp::ProtocolVersion::V1)
                     .client_capabilities(
@@ -835,18 +901,62 @@ impl AcpConnection {
                     ),
             ),
         )
-        .await?;
+        .boxed_local();
+        let (response, status_fut) =
+            match futures::future::select(initialize_response, status_fut).await {
+                futures::future::Either::Left((Ok(response), status_fut)) => (response, status_fut),
+                futures::future::Either::Left((Err(error), status_fut)) => {
+                    let response_channel_cancelled = error.code == ErrorCode::InternalError
+                        && error.data.as_ref().and_then(|data| data.as_str())
+                            == Some(ACP_RESPONSE_CHANNEL_CANCELLED);
+                    if !response_channel_cancelled {
+                        return Err(error.into());
+                    }
+
+                    let timer = cx
+                        .background_executor()
+                        .timer(Duration::from_millis(250))
+                        .boxed_local();
+                    if let futures::future::Either::Left((load_error, _timer)) =
+                        futures::future::select(status_fut, timer).await
+                    {
+                        return Err(load_error?.into());
+                    }
+
+                    return Err(error.into());
+                }
+                futures::future::Either::Right((load_error, _initialize_response)) => {
+                    return Err(load_error?.into());
+                }
+            };
 
         if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
             return Err(UnsupportedVersion.into());
         }
 
-        let telemetry_id = response
-            .agent_info
+        let wait_task = cx.spawn({
+            let sessions = sessions.clone();
+            async move |cx| {
+                let load_error = status_fut.await?;
+                emit_load_error_to_all_sessions(&sessions, load_error, cx);
+                anyhow::Ok(())
+            }
+        });
+
+        let agent_info = response.agent_info;
+        let telemetry_id = agent_info
+            .as_ref()
             // Use the one the agent provides if we have one
-            .map(|info| info.name.into())
+            .map(|info| SharedString::from(info.name.clone()))
             // Otherwise, just use the name
             .unwrap_or_else(|| agent_id.0.clone());
+        let agent_version = agent_info
+            .and_then(|info| (!info.version.is_empty()).then(|| SharedString::from(info.version)));
+        let agent_supports_delete = response
+            .agent_capabilities
+            .session_capabilities
+            .delete
+            .is_some();
 
         let session_list = if response
             .agent_capabilities
@@ -854,7 +964,10 @@ impl AcpConnection {
             .list
             .is_some()
         {
-            let list = Rc::new(AcpSessionList::new(connection.clone()));
+            let list = Rc::new(AcpSessionList::new(
+                connection.clone(),
+                agent_supports_delete,
+            ));
             *client_session_list.borrow_mut() = Some(list.clone());
             Some(list)
         } else {
@@ -886,6 +999,7 @@ impl AcpConnection {
             agent_server_store,
             connection,
             telemetry_id,
+            agent_version,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
@@ -919,6 +1033,7 @@ impl AcpConnection {
         Self {
             id: AgentId::new("test"),
             telemetry_id: "test".into(),
+            agent_version: None,
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
@@ -1258,6 +1373,10 @@ impl AgentConnection for AcpConnection {
 
     fn telemetry_id(&self) -> SharedString {
         self.telemetry_id.clone()
+    }
+
+    fn agent_version(&self) -> Option<SharedString> {
+        self.agent_version.clone()
     }
 
     fn new_session(
@@ -1640,6 +1759,22 @@ impl AgentConnection for AcpConnection {
         })
     }
 
+    fn supports_logout(&self, cx: &App) -> bool {
+        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.auth.logout.is_some()
+    }
+
+    fn logout(&self, cx: &mut App) -> Task<Result<()>> {
+        if !self.supports_logout(cx) {
+            return Task::ready(Err(anyhow!("Logout is not supported by this agent.")));
+        }
+
+        let conn = self.connection.clone();
+        cx.foreground_executor().spawn(async move {
+            into_foreground_future(conn.send_request(acp::LogoutRequest::new())).await?;
+            Ok(())
+        })
+    }
+
     fn prompt(
         &self,
         _id: acp_thread::UserMessageId,
@@ -1881,7 +2016,10 @@ pub mod test_support {
                     while let Ok(status) = exit_rx.recv().await {
                         emit_load_error_to_all_sessions(
                             &connection.sessions,
-                            LoadError::Exited { status },
+                            LoadError::Exited {
+                                status,
+                                stderr: None,
+                            },
                             cx,
                         );
                     }
@@ -1904,6 +2042,7 @@ pub mod test_support {
         pub connection: Rc<AcpConnection>,
         pub load_session_count: Arc<AtomicUsize>,
         pub close_session_count: Arc<AtomicUsize>,
+        pub logout_count: Arc<AtomicUsize>,
         pub keep_agent_alive: Task<anyhow::Result<()>>,
     }
 
@@ -1920,6 +2059,10 @@ pub mod test_support {
 
         fn telemetry_id(&self) -> SharedString {
             self.inner.telemetry_id()
+        }
+
+        fn agent_version(&self) -> Option<SharedString> {
+            self.inner.agent_version()
         }
 
         fn new_session(
@@ -1991,6 +2134,14 @@ pub mod test_support {
 
         fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
             self.inner.authenticate(method, cx)
+        }
+
+        fn supports_logout(&self, cx: &App) -> bool {
+            self.inner.supports_logout(cx)
+        }
+
+        fn logout(&self, cx: &mut App) -> Task<Result<()>> {
+            self.inner.logout(cx)
         }
 
         fn prompt(
@@ -2075,6 +2226,7 @@ pub mod test_support {
     ) -> Result<FakeAcpConnectionHarness> {
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
+        let logout_count = Arc::new(AtomicUsize::new(0));
         let sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>> =
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
@@ -2139,6 +2291,16 @@ pub mod test_support {
                     async move |_req: acp::CloseSessionRequest, responder, _cx| {
                         close_session_count.fetch_add(1, Ordering::SeqCst);
                         responder.respond(acp::CloseSessionResponse::new())
+                    }
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
+            .on_receive_request(
+                {
+                    let logout_count = logout_count.clone();
+                    async move |_req: acp::LogoutRequest, responder, _cx| {
+                        logout_count.fetch_add(1, Ordering::SeqCst);
+                        responder.respond(acp::LogoutResponse::new())
                     }
                 },
                 agent_client_protocol::on_receive_request!(),
@@ -2215,6 +2377,7 @@ pub mod test_support {
             connection: Rc::new(connection),
             load_session_count,
             close_session_count,
+            logout_count,
             keep_agent_alive,
         })
     }
@@ -2244,7 +2407,10 @@ pub mod test_support {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use feature_flags::FeatureFlag as _;
+
     use super::*;
+    use gpui::UpdateGlobal as _;
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
@@ -2371,6 +2537,277 @@ mod tests {
             ])
         );
         assert_eq!(task.label, "Login");
+    }
+
+    #[test]
+    fn trailing_stderr_only_uses_final_stderr_block() {
+        let debug_log = AcpDebugLog::default();
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "stale stderr");
+        debug_log.record_line(
+            AcpDebugMessageDirection::Incoming,
+            r#"{"method":"initialized"}"#,
+        );
+
+        assert_eq!(debug_log.trailing_stderr(), None);
+
+        debug_log.record_line(AcpDebugMessageDirection::Stderr, "recent stderr");
+        assert_eq!(
+            debug_log.trailing_stderr().as_deref(),
+            Some("recent stderr")
+        );
+    }
+
+    #[gpui::test]
+    async fn session_delete_support_requires_beta_flag_and_capability(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions, cx).await;
+        let session_list = AcpSessionList::new(connection.clone(), true);
+        let missing_capability = AcpSessionList::new(connection, false);
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+
+            assert_eq!(
+                session_list.supports_delete(cx),
+                cx.has_flag::<AcpBetaFeatureFlag>()
+            );
+            assert!(!missing_capability.supports_delete(cx));
+
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+            assert!(session_list.supports_delete(cx));
+            assert!(!missing_capability.supports_delete(cx));
+        });
+    }
+
+    async fn connect_session_delete_test_agent(
+        deleted_sessions: Arc<std::sync::Mutex<Vec<acp::SessionId>>>,
+        cx: &mut gpui::TestAppContext,
+    ) -> ConnectionTo<Agent> {
+        let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
+
+        cx.background_spawn(
+            Agent
+                .builder()
+                .name("delete-test-agent")
+                .on_receive_request(
+                    {
+                        let deleted_sessions = deleted_sessions.clone();
+                        async move |request: acp::DeleteSessionRequest, responder, _cx| {
+                            deleted_sessions
+                                .lock()
+                                .expect("deleted sessions lock should not be poisoned")
+                                .push(request.session_id);
+                            responder.respond(acp::DeleteSessionResponse::default())
+                        }
+                    },
+                    agent_client_protocol::on_receive_request!(),
+                )
+                .connect_to(agent_transport),
+        )
+        .detach();
+
+        let (connection_tx, connection_rx) = futures::channel::oneshot::channel();
+        cx.background_spawn(Client.builder().name("delete-test-client").connect_with(
+            client_transport,
+            move |connection: ConnectionTo<Agent>| async move {
+                connection_tx.send(connection).ok();
+                futures::future::pending::<Result<(), acp::Error>>().await
+            },
+        ))
+        .detach();
+
+        connection_rx
+            .await
+            .expect("failed to receive ACP connection")
+    }
+
+    #[gpui::test]
+    async fn session_list_delete_sends_session_delete_when_supported(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
+        let session_list = AcpSessionList::new(connection, true);
+        let session_id = acp::SessionId::new("session-to-delete");
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+        cx.update(|cx| session_list.delete_session(&session_id, cx))
+            .await
+            .expect("delete_session failed");
+
+        assert_eq!(
+            *deleted_sessions
+                .lock()
+                .expect("deleted sessions lock should not be poisoned"),
+            vec![session_id]
+        );
+    }
+
+    #[gpui::test]
+    async fn session_list_delete_does_not_send_when_unsupported(cx: &mut gpui::TestAppContext) {
+        let deleted_sessions = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let connection = connect_session_delete_test_agent(deleted_sessions.clone(), cx).await;
+        let session_list = AcpSessionList::new(connection, false);
+        let session_id = acp::SessionId::new("session-to-delete");
+
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+        let error = cx
+            .update(|cx| session_list.delete_session(&session_id, cx))
+            .await
+            .expect_err("delete_session should fail when unsupported");
+
+        assert!(
+            error.to_string().contains("delete_session not supported"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            deleted_sessions
+                .lock()
+                .expect("deleted sessions lock should not be poisoned")
+                .is_empty()
+        );
+    }
+
+    #[gpui::test]
+    async fn logout_is_gated_by_beta_flag_and_agent_capability(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            settings::SettingsStore::update_global(cx, |store, _| {
+                store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            });
+            feature_flags::FeatureFlagStore::init(cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, _| {
+                store.register_setting::<feature_flags::FeatureFlagsSettings>();
+            });
+            feature_flags::FeatureFlagStore::init(cx);
+        });
+
+        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
+        let unsupported_logout = cx.update(|cx| harness.connection.logout(cx));
+        let error = unsupported_logout
+            .await
+            .expect_err("logout should be rejected when the agent does not advertise support");
+        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
+
+        Rc::get_mut(&mut harness.connection)
+            .expect("test harness should own the only ACP connection handle")
+            .agent_capabilities
+            .auth = acp::AgentAuthCapabilities::new().logout(acp::LogoutCapabilities::new());
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("acp-beta".to_string(), "off".to_string());
+                });
+            });
+        });
+        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
+        let disabled_logout = cx.update(|cx| harness.connection.logout(cx));
+        let error = disabled_logout
+            .await
+            .expect_err("logout should be rejected when acp-beta is disabled");
+        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |content| {
+                    content
+                        .feature_flags
+                        .get_or_insert_default()
+                        .insert("acp-beta".to_string(), "on".to_string());
+                });
+            });
+        });
+        assert!(cx.update(|cx| harness.connection.supports_logout(cx)));
+        cx.update(|cx| harness.connection.logout(cx))
+            .await
+            .expect("logout should be sent when the agent advertises support");
+        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn startup_returns_error_when_agent_exits_before_initialization(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let project = project::Project::example([temp_dir.path()], &mut cx.to_async()).await;
+        let agent_server_store =
+            project.read_with(cx, |project, _| project.agent_server_store().downgrade());
+        let command = AgentServerCommand {
+            path: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                r#"printf '%s\n' 'npm error code ETARGET' 'npm error notarget No matching version found for @agentclientprotocol/claude-agent-acp@0.32.0 with a date before 4/28/2026, 12:11:38 PM.' >&2; exit 1"#.into(),
+            ],
+            env: None,
+        };
+
+        let mut async_cx = cx.to_async();
+        let startup = AcpConnection::stdio(
+            AgentId::new("test-agent"),
+            project,
+            command,
+            agent_server_store,
+            None,
+            None,
+            HashMap::default(),
+            &mut async_cx,
+        )
+        .fuse();
+        let timeout = cx
+            .background_executor
+            .timer(std::time::Duration::from_secs(5))
+            .fuse();
+        futures::pin_mut!(startup, timeout);
+
+        let result = futures::select! {
+            result = startup => result,
+            _ = timeout => panic!("timed out waiting for failed ACP startup"),
+        };
+
+        let Err(error) = result else {
+            panic!("expected ACP startup to fail");
+        };
+        let load_error = error
+            .downcast::<LoadError>()
+            .expect("startup failure should preserve the typed load error");
+        match load_error {
+            LoadError::Exited { status, .. } => {
+                assert!(!status.success(), "expected non-zero exit status");
+            }
+            error => panic!("expected exited load error, got: {error:?}"),
+        };
     }
 
     async fn connect_fake_agent(
@@ -3204,6 +3641,7 @@ fn handle_request_permission(
                     thread.request_tool_call_authorization(
                         args.tool_call,
                         acp_thread::PermissionOptions::Flat(args.options),
+                        acp_thread::AuthorizationKind::PermissionGrant,
                         cx,
                     )
                 })
