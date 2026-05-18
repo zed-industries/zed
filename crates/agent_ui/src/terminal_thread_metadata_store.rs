@@ -49,7 +49,6 @@ pub struct TerminalThreadMetadata {
     pub title: SharedString,
     pub custom_title: Option<String>,
     pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub working_directory: Option<PathBuf>,
@@ -386,7 +385,6 @@ impl Domain for TerminalThreadMetadataDb {
             title TEXT NOT NULL,
             custom_title TEXT,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
             working_directory TEXT,
             folder_paths TEXT,
             folder_paths_order TEXT,
@@ -400,14 +398,14 @@ impl Domain for TerminalThreadMetadataDb {
 db::static_connection!(TerminalThreadMetadataDb, []);
 
 impl TerminalThreadMetadataDb {
-    const LIST_QUERY: &str = "SELECT terminal_id, title, custom_title, created_at, updated_at, \
-        working_directory, folder_paths, folder_paths_order, main_worktree_paths, \
-        main_worktree_paths_order, remote_connection \
-        FROM sidebar_terminal_threads \
-        ORDER BY created_at DESC";
-
     pub fn list(&self) -> anyhow::Result<Vec<TerminalThreadMetadata>> {
-        self.select::<TerminalThreadMetadata>(Self::LIST_QUERY)?()
+        self.select::<TerminalThreadMetadata>(
+            "SELECT terminal_id, title, custom_title, created_at, \
+            working_directory, folder_paths, folder_paths_order, main_worktree_paths, \
+            main_worktree_paths_order, remote_connection \
+            FROM sidebar_terminal_threads \
+            ORDER BY created_at DESC",
+        )?()
     }
 
     pub async fn save(&self, row: TerminalThreadMetadata) -> anyhow::Result<()> {
@@ -415,7 +413,6 @@ impl TerminalThreadMetadataDb {
         let title = row.title.to_string();
         let custom_title = row.custom_title.clone();
         let created_at = row.created_at.to_rfc3339();
-        let updated_at = row.updated_at.to_rfc3339();
         let working_directory = row
             .working_directory
             .as_ref()
@@ -441,13 +438,12 @@ impl TerminalThreadMetadataDb {
             .context("serialize terminal thread remote connection")?;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, updated_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+            let sql = "INSERT INTO sidebar_terminal_threads(terminal_id, title, custom_title, created_at, working_directory, folder_paths, folder_paths_order, main_worktree_paths, main_worktree_paths_order, remote_connection) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
                        ON CONFLICT(terminal_id) DO UPDATE SET \
                            title = excluded.title, \
                            custom_title = excluded.custom_title, \
                            created_at = excluded.created_at, \
-                           updated_at = excluded.updated_at, \
                            working_directory = excluded.working_directory, \
                            folder_paths = excluded.folder_paths, \
                            folder_paths_order = excluded.folder_paths_order, \
@@ -459,7 +455,6 @@ impl TerminalThreadMetadataDb {
             i = stmt.bind(&title, i)?;
             i = stmt.bind(&custom_title, i)?;
             i = stmt.bind(&created_at, i)?;
-            i = stmt.bind(&updated_at, i)?;
             i = stmt.bind(&working_directory, i)?;
             i = stmt.bind(&folder_paths, i)?;
             i = stmt.bind(&folder_paths_order, i)?;
@@ -491,7 +486,6 @@ impl Column for TerminalThreadMetadata {
         let (title, next): (String, i32) = Column::column(statement, next)?;
         let (custom_title, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (created_at, next): (String, i32) = Column::column(statement, next)?;
-        let (updated_at, next): (String, i32) = Column::column(statement, next)?;
         let (working_directory, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (folder_paths_str, next): (Option<String>, i32) = Column::column(statement, next)?;
         let (folder_paths_order_str, next): (Option<String>, i32) =
@@ -536,7 +530,6 @@ impl Column for TerminalThreadMetadata {
                 title: SharedString::from(title),
                 custom_title: custom_title.filter(|title| !title.trim().is_empty()),
                 created_at: DateTime::parse_from_rfc3339(&created_at)?.with_timezone(&Utc),
-                updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 worktree_paths,
                 remote_connection,
                 working_directory: working_directory.map(PathBuf::from),
@@ -566,7 +559,6 @@ mod tests {
             title: SharedString::from(title.to_string()),
             custom_title: None,
             created_at: now,
-            updated_at: now,
             worktree_paths,
             remote_connection: None,
             working_directory: None,

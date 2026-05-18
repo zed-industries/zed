@@ -1838,7 +1838,6 @@ impl AgentPanel {
             title: terminal.title(cx),
             custom_title: terminal.custom_title(cx),
             created_at: terminal.created_at,
-            updated_at: Utc::now(),
             worktree_paths: project.worktree_paths(cx),
             remote_connection: project.remote_connection_options(cx),
             working_directory: terminal.working_directory.clone(),
@@ -7418,7 +7417,6 @@ mod tests {
             title: "Persisted Shell Title".into(),
             custom_title: None,
             created_at: now,
-            updated_at: now,
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/project",
             )])),
@@ -7470,7 +7468,6 @@ mod tests {
             title: "Persisted Shell Title".into(),
             custom_title: None,
             created_at: now,
-            updated_at: now,
             worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
                 "/project",
             )])),

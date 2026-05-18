@@ -6306,7 +6306,6 @@ fn terminal_entries_for_workspace<S: std::hash::BuildHasher>(
                 title: terminal.title,
                 custom_title: terminal.custom_title,
                 created_at: terminal.created_at,
-                updated_at: Utc::now(),
                 worktree_paths: worktree_paths.clone(),
                 remote_connection: remote_connection.clone(),
                 working_directory: terminal.working_directory,
