@@ -113,7 +113,7 @@ impl StreamingParser {
             {
                 if partial.new_text.is_some() && !state.buffer_new_text_until_old_text_done {
                     // new_text appeared after old_text, so old_text is done — emit everything.
-                    let start = state.old_text_emitted_len.min(old_text.len());
+                    let start = find_char_boundary(old_text, state.old_text_emitted_len);
                     let chunk = normalize_done_chunk(old_text[start..].to_string());
                     state.old_text_done = true;
                     state.old_text_emitted_len = old_text.len();
@@ -124,9 +124,10 @@ impl StreamingParser {
                     });
                 } else {
                     let safe_end = safe_emit_end_for_edit_text(old_text);
+                    let safe_start = find_char_boundary(old_text, state.old_text_emitted_len);
 
-                    if safe_end > state.old_text_emitted_len {
-                        let chunk = old_text[state.old_text_emitted_len..safe_end].to_string();
+                    if safe_end > safe_start {
+                        let chunk = old_text[safe_start..safe_end].to_string();
                         state.old_text_emitted_len = safe_end;
                         events.push(EditEvent::OldTextChunk {
                             edit_index: index,
@@ -143,9 +144,10 @@ impl StreamingParser {
                 && !state.new_text_done
             {
                 let safe_end = safe_emit_end_for_edit_text(new_text);
+                let safe_start = find_char_boundary(new_text, state.new_text_emitted_len);
 
-                if safe_end > state.new_text_emitted_len {
-                    let chunk = new_text[state.new_text_emitted_len..safe_end].to_string();
+                if safe_end > safe_start {
+                    let chunk = new_text[safe_start..safe_end].to_string();
                     state.new_text_emitted_len = safe_end;
                     events.push(EditEvent::NewTextChunk {
                         edit_index: index,
@@ -343,8 +345,10 @@ impl StreamingParser {
 /// held back because it may be an artifact of the partial JSON fixer closing
 /// an incomplete escape sequence (e.g. turning a half-received `\n` into `\\`).
 /// The next partial will reveal the correct character.
+///
+/// The returned position is always a valid UTF-8 character boundary.
 fn safe_emit_end(text: &str) -> usize {
-    if text.as_bytes().last() == Some(&b'\\') {
+    if text.ends_with('\\') {
         text.len() - 1
     } else {
         text.len()
@@ -353,11 +357,33 @@ fn safe_emit_end(text: &str) -> usize {
 
 fn safe_emit_end_for_edit_text(text: &str) -> usize {
     let safe_end = safe_emit_end(text);
-    if safe_end > 0 && text.as_bytes()[safe_end - 1] == b'\n' {
+    // Use string slicing to check the last character, ensuring we respect UTF-8 boundaries.
+    if safe_end > 0 && text[..safe_end].ends_with('\n') {
         safe_end - 1
     } else {
         safe_end
     }
+}
+
+/// Finds a valid UTF-8 character boundary at or before the target position.
+///
+/// When streaming partial JSON, the text structure can change between updates
+/// (e.g., an escape sequence being completed). This means a byte position that
+/// was valid in one partial may land inside a multi-byte character in the next.
+/// This function finds the nearest valid boundary at or before the target.
+fn find_char_boundary(text: &str, target: usize) -> usize {
+    if target >= text.len() {
+        return text.len();
+    }
+    if text.is_char_boundary(target) {
+        return target;
+    }
+    // Walk backwards to find a valid boundary.
+    let mut pos = target;
+    while pos > 0 && !text.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
 }
 
 fn normalize_done_chunk(mut chunk: String) -> String {
