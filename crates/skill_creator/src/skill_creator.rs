@@ -28,11 +28,11 @@ use workspace::{
 use worktree::WorktreeId;
 
 actions!(
-    skills_library,
+    skill_creator,
     [
         /// Saves the skill being edited to disk.
         SaveSkill,
-        /// Closes the skills library window without saving.
+        /// Closes the skill creator window without saving.
         Cancel,
     ]
 );
@@ -107,18 +107,18 @@ fn project_scopes_from_workspace(
 
 /// Open the skills library window. If one is already open, brings it to the
 /// foreground.
-pub fn open_skills_library(
+pub fn open_skill_creator(
     workspace: Option<WeakEntity<Workspace>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     cx: &mut App,
-) -> Task<Result<WindowHandle<SkillsLibrary>>> {
+) -> Task<Result<WindowHandle<SkillCreator>>> {
     cx.spawn(async move |cx| {
         let existing = cx.update(|cx| {
             let handle = cx
                 .windows()
                 .into_iter()
-                .find_map(|window| window.downcast::<SkillsLibrary>());
+                .find_map(|window| window.downcast::<SkillCreator>());
             if let Some(handle) = handle {
                 handle
                     .update(cx, |_, window, _| window.activate_window())
@@ -159,14 +159,14 @@ pub fn open_skills_library(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| SkillsLibrary::new(workspace, language_registry, fs, window, cx))
+                    cx.new(|cx| SkillCreator::new(workspace, language_registry, fs, window, cx))
                 },
             )
         })
     })
 }
 
-pub struct SkillsLibrary {
+pub struct SkillCreator {
     title_bar: Option<Entity<PlatformTitleBar>>,
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
@@ -190,7 +190,7 @@ pub struct SkillsLibrary {
     _subscriptions: Vec<Subscription>,
 }
 
-impl SkillsLibrary {
+impl SkillCreator {
     fn new(
         workspace: Option<WeakEntity<Workspace>>,
         language_registry: Arc<LanguageRegistry>,
@@ -287,7 +287,7 @@ impl SkillsLibrary {
 
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|cx| PlatformTitleBar::new("skills-library-title-bar", cx)))
+                Some(cx.new(|cx| PlatformTitleBar::new("skill-creator-title-bar", cx)))
             } else {
                 None
             },
@@ -849,15 +849,15 @@ impl SkillsLibrary {
     }
 }
 
-impl Render for SkillsLibrary {
+impl Render for SkillCreator {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font = theme_settings::setup_ui_font(window, cx);
         let theme = cx.theme().clone();
 
         client_side_decorations(
             v_flex()
-                .id("skills-library")
-                .key_context("SkillsLibrary")
+                .id("skill-creator")
+                .key_context("SkillCreator")
                 .on_action(cx.listener(Self::save_skill))
                 .on_action(cx.listener(Self::cancel))
                 .size_full()
@@ -874,7 +874,7 @@ impl Render for SkillsLibrary {
                     // into whatever vertical space is left, and the
                     // markdown editor inside handles its own scrolling.
                     v_flex()
-                        .id("skills-library-form")
+                        .id("skill-creator-form")
                         .flex_1()
                         .min_h_0()
                         .gap_5()

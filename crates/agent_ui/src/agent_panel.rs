@@ -27,7 +27,7 @@ use zed_actions::{
         ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
         ResolveConflictsWithAgent, ReviewBranchDiff,
     },
-    assistant::{FocusAgent, OpenRulesLibrary, OpenSkillsLibrary, Toggle, ToggleFocus},
+    assistant::{FocusAgent, OpenRulesLibrary, OpenSkillCreator, Toggle, ToggleFocus},
 };
 
 use crate::ExpandMessageEditor;
@@ -76,7 +76,7 @@ use prompt_store::{PromptStore, UserPromptId};
 use rules_library::{RulesLibrary, open_rules_library};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
-use skills_library::open_skills_library;
+use skill_creator::open_skill_creator;
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -277,11 +277,11 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
-                .register_action(|workspace, action: &OpenSkillsLibrary, window, cx| {
+                .register_action(|workspace, action: &OpenSkillCreator, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| {
-                            panel.deploy_skills_library(action, window, cx)
+                            panel.deploy_skill_creator(action, window, cx)
                         });
                     }
                 })
@@ -2766,15 +2766,15 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         // When the Skills feature flag is on, the legacy Rules action is
-        // rerouted to the Skills library so the existing keyboard
+        // rerouted to the skill creator so the existing keyboard
         // shortcut (still bound to `OpenRulesLibrary` in the default
         // keymaps) and any persisted user keymap entries keep working.
         // The options-menu "Skills" entry already dispatches
-        // `OpenSkillsLibrary` directly, so this reroute only serves the
+        // `OpenSkillCreator` directly, so this reroute only serves the
         // key-press path and is intended to disappear once the keymaps
-        // migrate to `OpenSkillsLibrary` in the post-flag cleanup.
+        // migrate to `OpenSkillCreator` in the post-flag cleanup.
         if cx.has_flag::<SkillsFeatureFlag>() {
-            self.deploy_skills_library(&OpenSkillsLibrary, window, cx);
+            self.deploy_skill_creator(&OpenSkillCreator, window, cx);
             return;
         }
         open_rules_library(
@@ -2788,13 +2788,13 @@ impl AgentPanel {
         .detach_and_log_err(cx);
     }
 
-    fn deploy_skills_library(
+    fn deploy_skill_creator(
         &mut self,
-        _action: &OpenSkillsLibrary,
+        _action: &OpenSkillCreator,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        open_skills_library(
+        open_skill_creator(
             Some(self.workspace.clone()),
             self.language_registry.clone(),
             self.fs.clone(),
@@ -4480,7 +4480,7 @@ impl AgentPanel {
                                 .separator();
 
                             menu = if skills_enabled {
-                                // Clicking "Skills" dispatches `OpenSkillsLibrary`
+                                // Clicking "Skills" dispatches `OpenSkillCreator`
                                 // directly so that observers, command-palette
                                 // filters, and telemetry see the correct
                                 // action firing. The display action stays as
@@ -4489,15 +4489,15 @@ impl AgentPanel {
                                 // `cmd-alt-l` / `ctrl-alt-l` / `shift-alt-l`
                                 // to `OpenRulesLibrary`, and
                                 // `deploy_rules_library` reroutes those key
-                                // presses to the skills library. When the
+                                // presses to the skill creator. When the
                                 // flag is removed and the keymaps migrate to
-                                // `OpenSkillsLibrary`, this can collapse
+                                // `OpenSkillCreator`, this can collapse
                                 // back to `menu.action(...)`.
                                 menu.entry(
                                     "Skills",
                                     Some(Box::new(OpenRulesLibrary::default())),
                                     |window, cx| {
-                                        window.dispatch_action(Box::new(OpenSkillsLibrary), cx);
+                                        window.dispatch_action(Box::new(OpenSkillCreator), cx);
                                     },
                                 )
                             } else {
@@ -5329,7 +5329,7 @@ impl Render for AgentPanel {
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::deploy_rules_library))
-            .on_action(cx.listener(Self::deploy_skills_library))
+            .on_action(cx.listener(Self::deploy_skill_creator))
             .on_action(cx.listener(Self::go_back))
             .on_action(cx.listener(Self::toggle_options_menu))
             .on_action(cx.listener(Self::increase_font_size))
