@@ -263,8 +263,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
     let user_1 = db
         .create_user(
-            "user1@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "user1".into(),
@@ -277,8 +275,6 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
     let user_2 = db
         .create_user(
-            "user2@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "user2".into(),
@@ -314,8 +310,6 @@ test_both_dbs!(
 async fn test_db_channel_moving(db: &Arc<Database>) {
     let a_id = db
         .create_user(
-            "user1@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "user1".into(),
@@ -404,8 +398,6 @@ test_both_dbs!(
 async fn test_channel_reordering(db: &Arc<Database>) {
     let admin_id = db
         .create_user(
-            "admin@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "admin".into(),
@@ -418,8 +410,6 @@ async fn test_channel_reordering(db: &Arc<Database>) {
 
     let user_id = db
         .create_user(
-            "user@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "user".into(),
@@ -599,8 +589,6 @@ test_both_dbs!(
 async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
     let user_id = db
         .create_user(
-            "user1@example.com",
-            None,
             false,
             NewUserParams {
                 github_login: "user1".into(),

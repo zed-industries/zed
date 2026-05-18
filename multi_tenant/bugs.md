@@ -202,8 +202,7 @@ set.
 
 The `worktrees_using_server` set (L11675-91) is reconstructed from
 `lsp_tree.instances`, which contains entries for every Project's worktrees
-that ever caused this server to be reused. The subsequent buffer scan (L11694-
-731) iterates `buffer_store.buffers()` host-wide:
+that ever caused this server to be reused. The subsequent buffer scan (L11694- 731) iterates `buffer_store.buffers()` host-wide:
 
 ```rust
 self.buffer_store.clone().update(cx, |buffer_store, cx| {
@@ -485,7 +484,7 @@ sort first across all Projects. The stdio context-server's working directory
 and the remote `GetContextServerCommand`'s `root_dir` end up pointing at a
 sibling Project's worktree.
 
-The doc-comment immediately above (L677-83) actually says callers *should*
+The doc-comment immediately above (L677-83) actually says callers _should_
 always pass `root_path_override`, but `maintain_servers` (called at L1242) is
 invoked with whatever override the caller threaded in, and at least one path
 fires the fallback.
@@ -496,7 +495,47 @@ hold a `WeakEntity<Project>` and resolve the fallback against
 `root_path_override` non-optional, forcing every call site to compute it via
 `Project::active_project_directory` (already referenced in the doc-comment).
 
-### 14. `BufferStore::non_searchable_buffers` shared across Projects
+### 14. Project doesn't refresh context servers on worktree add/remove
+
+`crates/project/src/project.rs:2137` (`Project::wire_context_server_triggers`),
+`4651` / `4713` (`on_worktree_store_event::WorktreeAdded` / `WorktreeRemoved`)
+
+On `origin/main`, `ContextServerStore::new_internal` directly subscribed to
+the host `WorktreeStore` and called `available_context_servers_changed` on
+`WorktreeAdded` / `WorktreeRemoved`, so adding a worktree with a
+`.zed/settings.json` declaring a context server would pick the server up.
+
+The multi-tenant refactor moved the maintain loop onto `Project` (good — see
+bug 13's rationale), but `Project::wire_context_server_triggers` only
+subscribes to `ContextServersChanged` from the store and `observe(&registry)`.
+Worktree add/remove no longer triggers a refresh.
+
+**Surfacing scenario:** open Project A → add a new worktree to A that
+contains a `.zed/settings.json` declaring an MCP server → the server
+doesn't start until something else (settings file edit, AI toggle, extension
+load) triggers `ContextServersChanged`.
+
+**Fix shape:** in `Project::on_worktree_store_event`, after the existing
+ownership filter has decided the worktree belongs to this Project, call
+`self.available_context_servers_changed(cx)`:
+
+- `WorktreeAdded` arm: after the `if !already_owned { ... }` block claims
+  the worktree and we reach `self.on_worktree_added(...)`.
+- `WorktreeRemoved` arm: after `self.worktrees.retain(...)` if any entry
+  was actually removed for this Project.
+
+This fires exactly once per (Project, worktree) pair instead of the host-
+wide N-per-worktree the old in-store subscription did.
+
+Context: discovered while resolving a merge conflict in
+`crates/project/src/context_server_store.rs:442`. The merge resolution
+(dropping origin's `if maintain_server_loop { ... }` block from
+`new_internal`) is correct — the loop belongs on `Project` — but the
+worktree trigger needs to be ported to the Project side.
+
+---
+
+### 15. `BufferStore::non_searchable_buffers` shared across Projects
 
 `crates/project/src/buffer_store.rs:37`
 
@@ -587,6 +626,8 @@ Two failure modes layered:
 3. Bug 3 (Restart-All clobber) — visible to anyone clicking the LSP button.
 4. Bugs 11, 12 (env / scan races) — affect remote/SSH multi-project users
    most.
-5. Bugs 4-10, 13, 14 — sibling clobbers, fix as a batch via the
+5. Bug 14 (worktree-add context-server refresh) — one-line addition in
+   `Project::on_worktree_store_event`; pair with the fix for bug 13.
+6. Bugs 4-10, 13, 15 — sibling clobbers, fix as a batch via the
    `BufferStore::buffers_in` / `Project::..._filtered` primitives once they
    exist.

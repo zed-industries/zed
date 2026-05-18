@@ -387,6 +387,11 @@ impl ActionLog {
                 let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
+                    if buffer_text.len() == git_diff_base.len()
+                        && buffer_text.chars_at(0).eq(git_diff_base.chars_at(0))
+                    {
+                        return (Arc::<str>::from(git_diff_base.to_string()), git_diff_base);
+                    }
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
                     let committed_edits = language::line_diff(
                         &agent_diff_base.to_string(),
@@ -1320,6 +1325,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -2700,6 +2706,86 @@ mod tests {
             "0000003",
         );
         cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test]
+    async fn test_keep_edits_on_commit_with_shifted_diff_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let initial_text = indoc! {"
+            use crate::{Alpha, Beta};
+
+            fn keep() {
+                work();
+            }
+
+            fn remove() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": initial_text,
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", initial_text.into())],
+            "0000000",
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.rs"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let final_text = indoc! {"
+            use crate::{Alpha};
+
+            fn keep() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(final_text, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert!(!unreviewed_hunks(&action_log, cx).is_empty());
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", final_text.into())],
+            "0000001",
+        );
+        cx.run_until_parked();
+
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 

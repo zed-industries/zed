@@ -925,6 +925,14 @@ fn main() {
             .ok()
             .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
+            Some(request) if request.is_focus_app_only() => cx.spawn({
+                let app_state = app_state.clone();
+                async move |cx| {
+                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                        fail_to_open_window_async(e, cx)
+                    }
+                }
+            }),
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
                 Task::ready(())
@@ -978,6 +986,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
                     .detach();
             }
+            OpenRequestKind::FocusApp => {
+                cx.spawn(async move |cx| {
+                    if workspace::activate_any_workspace_window(cx).is_some() {
+                        return anyhow::Ok(());
+                    }
+                    restore_or_create_workspace(app_state, cx).await
+                })
+                .detach_and_log_err(cx);
+            }
             OpenRequestKind::Extension { extension_id } => {
                 cx.spawn(async move |cx| {
                     let workspace =
@@ -1001,6 +1018,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let multi_workspace =
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
+                    let panels_task = multi_workspace.update(cx, |multi_workspace, _, cx| {
+                        multi_workspace
+                            .workspace()
+                            .update(cx, |workspace, _| workspace.take_panels_task())
+                    })?;
+                    if let Some(task) = panels_task {
+                        task.await.log_err();
+                    }
+
                     multi_workspace.update(cx, |multi_workspace, window, cx| {
                         multi_workspace.workspace().update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
@@ -1011,6 +1037,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                         cx,
                                     );
                                 });
+                            } else {
+                                log::warn!(
+                                    "zed://agent received but the AgentPanel is not registered \
+                                     (is `disable_ai` enabled?)"
+                                );
                             }
                         });
                     })

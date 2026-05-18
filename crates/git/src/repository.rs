@@ -3415,8 +3415,12 @@ impl GitBinary {
     {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
+        // Disabled to stop malicious actors from running arbitrary commands via fsmonitor hooks
         command.args(["-c", "core.fsmonitor=false"]);
+        // Prepended signature lines would corrupt our --format parsers.
+        command.args(["-c", "log.showSignature=false"]);
         command.arg("--no-optional-locks");
+        // Internal commands must be non-interactive so background tasks never block on user input.
         command.arg("--no-pager");
 
         if !self.is_trusted {
@@ -3811,6 +3815,51 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_build_command_disables_log_show_signature(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+        let output = git
+            .build_command(&["config", "--get", "log.showSignature"])
+            .output()
+            .await
+            .expect("git config should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            "false",
+            "log.showSignature should be disabled for trusted repos"
+        );
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            false,
+        );
+        let output = git
+            .build_command(&["config", "--get", "log.showSignature"])
+            .output()
+            .await
+            .expect("git config should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            "false",
+            "log.showSignature should be disabled for untrusted repos"
         );
     }
 

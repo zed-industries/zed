@@ -759,6 +759,19 @@ impl Editor {
         });
     }
 
+    pub fn toggle_all_diff_hunks(
+        &mut self,
+        _: &ToggleAllDiffHunks,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_any_expanded_diff_hunks(cx) {
+            self.collapse_all_diff_hunks(&CollapseAllDiffHunks, window, cx);
+        } else {
+            self.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+        }
+    }
+
     pub(super) fn toggle_selected_diff_hunks(
         &mut self,
         _: &ToggleSelectedDiffHunks,

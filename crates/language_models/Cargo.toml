@@ -47,19 +47,24 @@ lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
+oauth_callback_server.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
+rand.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
+sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+smol.workspace = true
 strum.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 ui_input.workspace = true
+url.workspace = true
 util.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
 
@@ -71,5 +76,6 @@ feature_flags.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
+parking_lot.workspace = true
 pretty_assertions.workspace = true
 settings = { workspace = true, features = ["test-support"] }

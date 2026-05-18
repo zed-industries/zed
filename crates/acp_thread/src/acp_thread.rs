@@ -93,35 +93,6 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-/// Key used in ACP `AvailableCommand` meta to indicate where a skill
-/// originated from (e.g. `"global"` or a worktree root name). Set by
-/// the native agent so the completion popup can surface skill origin to
-/// disambiguate same-named global vs. project-local skills.
-pub const SKILL_SOURCE_META_KEY: &str = "zed.skill_source";
-
-/// Borrowing accessor for the skill source label stored in ACP meta.
-/// Prefer this over [`skill_source_from_meta`] in hot paths (e.g. per-
-/// command iteration during validation), since it avoids allocating
-/// a `SharedString` for callers that only need to compare against a
-/// `&str`.
-pub fn skill_source_str_from_meta(meta: &Option<acp::Meta>) -> Option<&str> {
-    meta.as_ref()
-        .and_then(|m| m.get(SKILL_SOURCE_META_KEY))
-        .and_then(|v| v.as_str())
-}
-
-/// Helper to extract skill source label from ACP meta as an owned
-/// `SharedString`. Use this when the value needs to outlive the meta
-/// reference; otherwise prefer [`skill_source_str_from_meta`].
-pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
-    skill_source_str_from_meta(meta).map(|s| SharedString::from(s.to_owned()))
-}
-
-/// Helper to create meta tagging an `AvailableCommand` with a skill source.
-pub fn meta_with_skill_source(source: &str) -> acp::Meta {
-    acp::Meta::from_iter([(SKILL_SOURCE_META_KEY.into(), source.into())])
-}
-
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<UserMessageId>,

@@ -49,6 +49,7 @@ two-Project test.
 ### `crates/project/src/context_server_store.rs`
 
 - [ ] `create_context_server` worktree fallback picks first sibling worktree when `root_path_override` is `None`.
+- [ ] `Project::wire_context_server_triggers` doesn't refresh on `WorktreeAdded` / `WorktreeRemoved` — the in-store subscription that origin/main had was deliberately removed (correctly), but the Project-side replacement was never wired. Add `self.available_context_servers_changed(cx)` to the `WorktreeAdded` / `WorktreeRemoved` arms of `Project::on_worktree_store_event`, after the ownership filter. See `bugs.md` bug 14.
 
 ### `crates/project/src/buffer_store.rs`
 

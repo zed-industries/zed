@@ -78,7 +78,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
-use crate::completion_provider::AgentContextSelection;
+use crate::completion_provider::{AgentContextSelection, AvailableSkill};
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -516,6 +516,12 @@ impl ConversationView {
     pub fn has_auth_methods(&self) -> bool {
         self.as_connected().map_or(false, |connected| {
             !connected.connection.auth_methods().is_empty()
+        })
+    }
+
+    pub fn supports_logout(&self, cx: &App) -> bool {
+        self.as_connected().is_some_and(|connected| {
+            connected.auth_state.is_ok() && connected.connection.supports_logout(cx)
         })
     }
 
@@ -1025,9 +1031,17 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Entity<ThreadView> {
         let agent_id = self.agent.agent_id();
+        let connection = thread.read(cx).connection().clone();
+        let session_id = thread.read(cx).session_id().clone();
+        let available_skills = connection
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .map(|native_connection| native_available_skills(&native_connection, &session_id, cx))
+            .unwrap_or_default();
         let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
             thread.read(cx).prompt_capabilities(),
             thread.read(cx).available_commands().to_vec(),
+            available_skills,
         )));
 
         let action_log = thread.read(cx).action_log().clone();
@@ -1653,7 +1667,17 @@ impl ConversationView {
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 if let Some(thread_view) = self.thread_view(&session_id) {
-                    let has_commands = !available_commands.is_empty();
+                    let available_skills = thread
+                        .read(cx)
+                        .connection()
+                        .clone()
+                        .downcast::<agent::NativeAgentConnection>()
+                        .map(|native_connection| {
+                            native_available_skills(&native_connection, &session_id, cx)
+                        })
+                        .unwrap_or_default();
+                    let has_slash_completions =
+                        !available_commands.is_empty() || !available_skills.is_empty();
 
                     let agent_display_name = self
                         .agent_server_store
@@ -1662,13 +1686,12 @@ impl ConversationView {
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
                     let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_commands);
+                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
 
                     thread_view.update(cx, |thread_view, cx| {
-                        thread_view
-                            .session_capabilities
-                            .write()
-                            .set_available_commands(available_commands.clone());
+                        let mut session_capabilities = thread_view.session_capabilities.write();
+                        session_capabilities.set_available_commands(available_commands.clone());
+                        session_capabilities.set_available_skills(available_skills);
                         thread_view.message_editor.update(cx, |editor, cx| {
                             editor.set_placeholder_text(&new_placeholder, window, cx);
                         });
@@ -2770,6 +2793,7 @@ impl ConversationView {
                             dismiss_if_visible(this, window, cx);
                         }
                         AgentPanelEvent::EntryChanged
+                        | AgentPanelEvent::TerminalClosed { .. }
                         | AgentPanelEvent::ThreadInteracted { .. } => {}
                     },
                 ));
@@ -2893,6 +2917,54 @@ impl ConversationView {
             Self::handle_auth_required(this, AuthRequired::new(), agent_id, connection, window, cx);
         })
     }
+
+    pub(crate) fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.supports_logout(cx) {
+            return;
+        }
+
+        if let Some(active) = self.root_thread_view() {
+            active.update(cx, |active, cx| active.clear_thread_error(cx));
+        }
+        let Some(connection) = self
+            .as_connected()
+            .map(|connected| connected.connection.clone())
+        else {
+            return;
+        };
+        let logout = connection.logout(cx);
+        self.auth_task = Some(cx.spawn_in(window, {
+            async move |this, cx| {
+                let result = logout.await;
+                this.update_in(cx, |this, window, cx| {
+                    if let Err(err) = result {
+                        if let Some(active) = this.root_thread_view() {
+                            active.update(cx, |active, cx| active.handle_thread_error(err, cx));
+                        }
+                    } else if let Some(connected) = this.as_connected_mut() {
+                        connected.auth_state = AuthState::Unauthenticated {
+                            description: None,
+                            configuration_view: None,
+                            pending_auth_method: None,
+                            _subscription: None,
+                        };
+                        if let Some(view) = connected.active_view()
+                            && view
+                                .read(cx)
+                                .message_editor
+                                .focus_handle(cx)
+                                .is_focused(window)
+                        {
+                            this.focus_handle.focus(window, cx)
+                        }
+                        cx.notify();
+                    }
+                    drop(this.auth_task.take());
+                })
+                .ok();
+            }
+        }));
+    }
 }
 
 fn loading_contents_spinner(size: IconSize) -> AnyElement {
@@ -2903,9 +2975,29 @@ fn loading_contents_spinner(size: IconSize) -> AnyElement {
         .into_any_element()
 }
 
+fn native_available_skills(
+    native_connection: &agent::NativeAgentConnection,
+    session_id: &acp::SessionId,
+    cx: &App,
+) -> Vec<AvailableSkill> {
+    native_connection
+        .available_skills(session_id, cx)
+        .into_iter()
+        .map(|skill| AvailableSkill {
+            name: skill.name.into(),
+            description: skill.description.into(),
+            source: skill.source,
+            skill_file_path: skill.skill_file_path,
+        })
+        .collect()
+}
+
 fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
-        format!("Message the {} — @ to include context", agent_name)
+        format!(
+            "Message the {}, @ to include context, / for commands",
+            agent_name
+        )
     } else if has_commands {
         format!(
             "Message {} — @ to include context, / for commands",
@@ -3751,13 +3843,17 @@ pub(crate) mod tests {
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        conversation_view.read_with(cx, |view, _cx| {
+        conversation_view.read_with(cx, |view, cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
             assert!(
                 !connected.auth_state.is_ok(),
                 "Auth state should be Unauthenticated"
+            );
+            assert!(
+                !view.supports_logout(cx),
+                "Logout should be hidden while unauthenticated"
             );
             assert!(
                 connected.active_id.is_none(),
@@ -3795,6 +3891,10 @@ pub(crate) mod tests {
                 .expect("Should still be in Connected state after auth");
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
+                view.supports_logout(cx),
+                "Logout should be available after authentication"
+            );
+            assert!(
                 connected.active_id.is_some(),
                 "There should be an active thread after successful auth"
             );
@@ -3810,6 +3910,23 @@ pub(crate) mod tests {
             assert!(
                 active.read(cx).thread_error.is_none(),
                 "The new thread should have no errors"
+            );
+        });
+
+        conversation_view.update_in(cx, |view, window, cx| view.logout(window, cx));
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let connected = view
+                .as_connected()
+                .expect("Should still be in Connected state after logout");
+            assert!(
+                !connected.auth_state.is_ok(),
+                "Auth state should be Unauthenticated after logout"
+            );
+            assert!(
+                !view.supports_logout(cx),
+                "Logout should be hidden after logout"
             );
         });
     }
@@ -4871,6 +4988,15 @@ pub(crate) mod tests {
             } else {
                 Task::ready(Err(anyhow::anyhow!("Unknown auth method")))
             }
+        }
+
+        fn supports_logout(&self, _cx: &App) -> bool {
+            true
+        }
+
+        fn logout(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+            *self.authenticated.lock() = false;
+            Task::ready(Ok(()))
         }
 
         fn prompt(
