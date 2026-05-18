@@ -252,17 +252,11 @@ fn maybe_propagate_worktree_trust(
         if ProjectSettings::get_global(cx).session.trust_all_worktrees {
             return;
         }
-        let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
-            return;
-        };
-
         let source_is_trusted = source_workspace
             .upgrade()
             .map(|workspace| {
                 let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                !trusted_store
-                    .read(cx)
-                    .has_restricted_worktrees(&source_worktree_store, cx)
+                !TrustedWorktrees::has_restricted_worktrees(&source_worktree_store, cx)
             })
             .unwrap_or(false);
 
@@ -280,9 +274,11 @@ fn maybe_propagate_worktree_trust(
             .collect();
 
         if !paths_to_trust.is_empty() {
-            trusted_store.update(cx, |store, cx| {
-                store.trust(&worktree_store, paths_to_trust, cx);
-            });
+            if let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) {
+                trusted_store.update(cx, |store, cx| {
+                    store.trust(&worktree_store, paths_to_trust, cx);
+                });
+            }
         }
     })
     .ok();
