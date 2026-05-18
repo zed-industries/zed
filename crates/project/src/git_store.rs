@@ -4545,8 +4545,8 @@ impl MergeDetails {
 }
 
 impl Repository {
-    pub fn error(&self) -> Option<String> {
-        self.open_error.clone()
+    pub fn error(&self) -> Option<&str> {
+        self.open_error.as_deref()
     }
 
     pub fn is_trusted(&self) -> bool {
@@ -7981,7 +7981,7 @@ impl Repository {
                         repo.open_error = Some(err.clone());
                         let id = repo.id;
                         if let Some(git_store) = repo.git_store.upgrade() {
-                            let error = anyhow::anyhow!("{}", err);
+                            let error = anyhow::anyhow!(err.clone());
                             git_store.update(cx, |_, cx| {
                                 cx.emit(GitStoreEvent::RepositoryOpenError(id, error));
                             });
