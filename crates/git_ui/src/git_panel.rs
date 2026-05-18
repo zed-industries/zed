@@ -9196,4 +9196,94 @@ mod tests {
             ));
         });
     }
+
+    #[gpui::test]
+    async fn test_panel_shows_generic_open_error(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "main.rs": "fn main() {}",
+                },
+            }),
+        )
+        .await;
+        fs.set_open_repo_error(
+            Path::new(path!("/root/project/.git")),
+            "fatal: not a git repository".to_string(),
+        );
+
+        let project =
+            Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, cx| {
+            let repository = panel
+                .active_repository
+                .as_ref()
+                .expect("panel should have an active repository even when it fails to open");
+            let error = repository
+                .read(cx)
+                .error()
+                .expect("active repository should expose the open error so the panel can render the error UI");
+            assert!(
+                error.contains("fatal: not a git repository"),
+                "open error should contain the underlying failure message, got: {error}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(20.0.into());
+                });
+            });
+        });
+
+        cx.add_window(|window, cx| {
+            let style = panel_editor_style(true, window, cx);
+
+            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
+
+            Editor::single_line(window, cx)
+        });
+    }
 }

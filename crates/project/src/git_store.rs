@@ -9364,6 +9364,45 @@ mod tests {
             repo_paths(&["submodule/a.txt", "submodule/nested/b.txt", "top_level.rs"])
         );
     }
+
+    #[gpui::test]
+    async fn test_repository_open_error_is_stored(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_open_repo_error(
+            Path::new("/project/.git"),
+            "fatal: not a git repository".to_string(),
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should detect the repository even when it fails to open")
+        });
+        repository.read_with(cx, |repository, _| {
+            let error = repository
+                .error()
+                .expect("open_error should be set when the repository fails to open");
+            assert!(
+                error.contains("fatal: not a git repository"),
+                "open_error should contain the underlying failure message, got: {error}"
+            );
+        });
+    }
 }
 
 /// This snapshot computes the repository state on the foreground thread while
