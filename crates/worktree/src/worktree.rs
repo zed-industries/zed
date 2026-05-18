@@ -4418,14 +4418,32 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
+                    let is_dot_git_dir_itself =
+                        path_in_git_dir == Path::new("") && self.fs.is_dir(&dot_git_abs_path).await;
                     let skip = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
                     }) || skipped_dirs_in_dot_git
                         .iter()
                         .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
-                        || path_in_git_dir == Path::new("")
-                            && self.fs.is_dir(&dot_git_abs_path).await;
+                        || is_dot_git_dir_itself;
                     if skip {
+                        // When the .git directory itself is created (e.g. via `git init`),
+                        // and no repository is registered for it yet, we still need to
+                        // add it to `dot_git_abs_paths` so that `update_git_repositories`
+                        // can detect the new repository.
+                        if is_dot_git_dir_itself {
+                            let sanitized_dot_git_abs_path = SanitizedPath::new(&dot_git_abs_path);
+                            let already_known =
+                                snapshot.git_repositories.iter().any(|(_, repo)| {
+                                    SanitizedPath::new(repo.common_dir_abs_path.as_ref())
+                                        == sanitized_dot_git_abs_path
+                                        || SanitizedPath::new(repo.repository_dir_abs_path.as_ref())
+                                            == sanitized_dot_git_abs_path
+                                });
+                            if !already_known && !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                                dot_git_abs_paths.push(dot_git_abs_path);
+                            }
+                        }
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
                         );
