@@ -4915,7 +4915,9 @@ mod tests {
                 second_repository.expect("should have repository for /project_b"),
             )
         });
-        first_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        project.update(cx, |project, cx| {
+            project.set_active_repository(&first_repository, cx);
+        });
         cx.run_until_parked();
 
         let (multi_workspace, cx) = cx.add_window_view(|window, cx| {

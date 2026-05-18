@@ -101,7 +101,6 @@ pub struct GitStore {
     worktree_store: Entity<WorktreeStore>,
     repositories: HashMap<RepositoryId, Entity<Repository>>,
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
-    active_repo_id: Option<RepositoryId>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
@@ -623,7 +622,6 @@ impl GitStore {
             worktree_store,
             repositories: HashMap::default(),
             worktree_ids: HashMap::default(),
-            active_repo_id: None,
             _subscriptions,
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
@@ -697,48 +695,6 @@ impl GitStore {
         matches!(self.state, GitStoreState::Local { .. })
     }
 
-    fn set_active_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
-        if self.active_repo_id != Some(repo_id) {
-            self.active_repo_id = Some(repo_id);
-            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
-        }
-    }
-
-    pub fn set_active_repo_for_path(&mut self, project_path: &ProjectPath, cx: &mut Context<Self>) {
-        if let Some((repo, _)) = self.repository_and_path_for_project_path(project_path, cx) {
-            self.set_active_repo_id(repo.read(cx).id, cx);
-        }
-    }
-
-    pub fn set_active_repo_for_worktree(
-        &mut self,
-        worktree_id: WorktreeId,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(worktree) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-        else {
-            return;
-        };
-        let worktree_abs_path = worktree.read(cx).abs_path();
-        let Some(repo_id) = self
-            .repositories
-            .values()
-            .filter(|repo| {
-                let repo_path = &repo.read(cx).work_directory_abs_path;
-                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
-            })
-            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
-            .map(|repo| repo.read(cx).id)
-        else {
-            return;
-        };
-
-        self.set_active_repo_id(repo_id, cx);
-    }
-
     /// Drops every per-peer shared-diff entry. Called from
     /// `Project::unshare_internal` when collab sharing ends.
     pub fn forget_all_shared_diffs(&mut self) {
@@ -747,12 +703,6 @@ impl GitStore {
 
     pub(crate) fn forget_shared_diffs_for(&mut self, peer_id: &proto::PeerId) {
         self.shared_diffs.remove(peer_id);
-    }
-
-    pub fn active_repository(&self) -> Option<Entity<Repository>> {
-        self.active_repo_id
-            .as_ref()
-            .map(|id| self.repositories[id].clone())
     }
 
     pub fn open_unstaged_diff(
@@ -1416,26 +1366,12 @@ impl GitStore {
                         }
                     })
                     .collect();
-                let is_active_repo_removed = repos_without_worktree
-                    .iter()
-                    .any(|repo_id| self.active_repo_id == Some(*repo_id));
-
                 for repo_id in repos_without_worktree {
                     self.repositories.remove(&repo_id);
                     self.worktree_ids.remove(&repo_id);
                     cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(
                         repo_id,
                     ));
-                }
-
-                if is_active_repo_removed {
-                    if let Some((&repo_id, _)) = self.repositories.iter().next() {
-                        self.active_repo_id = Some(repo_id);
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(repo_id)));
-                    } else {
-                        self.active_repo_id = None;
-                        cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-                    }
                 }
             }
             _ => {}
@@ -1474,11 +1410,7 @@ impl GitStore {
                 .ok();
             }
         }
-        cx.emit(GitStoreEvent::RepositoryUpdated(
-            id,
-            event.clone(),
-            self.active_repo_id == Some(id),
-        ))
+        cx.emit(GitStoreEvent::RepositoryUpdated(id, event.clone(), false))
     }
 
     fn on_jobs_updated(&mut self, _: Entity<Repository>, _: &JobsUpdated, cx: &mut Context<Self>) {
@@ -1571,8 +1503,7 @@ impl GitStore {
                     repo.schedule_scan(cx);
                     repo
                 });
-                // Trigger an empty repository update so the listener
-                // (Project / HeadlessProject) sets remote active_repo_id correctly.
+                // Trigger an empty repository update so listeners can send an initial snapshot.
                 cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(
                     repo.read(cx).snapshot(),
                 ));
@@ -1583,18 +1514,10 @@ impl GitStore {
                 self.repositories.insert(id, repo);
                 self.worktree_ids.insert(id, HashSet::from([worktree_id]));
                 cx.emit(GitStoreEvent::RepositoryAdded(id));
-                self.active_repo_id.get_or_insert_with(|| {
-                    cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                    id
-                });
             }
         }
 
         for id in removed_ids {
-            if self.active_repo_id == Some(id) {
-                self.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-            }
             self.repositories.remove(&id);
             cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(id));
         }
@@ -1825,9 +1748,8 @@ impl GitStore {
         worktree_id: WorktreeId,
         cx: &App,
     ) -> Option<Arc<Path>> {
-        self.active_repo_id
-            .iter()
-            .chain(self.worktree_ids.keys())
+        self.worktree_ids
+            .keys()
             .find(|repo_id| {
                 self.worktree_ids
                     .get(repo_id)
@@ -2020,11 +1942,6 @@ impl GitStore {
                 |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
-            this.active_repo_id.get_or_insert_with(|| {
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-                id
-            });
-
             cx.emit(GitStoreEvent::ForwardRepositoryUpdate(update));
             Ok(())
         })
@@ -2040,10 +1957,6 @@ impl GitStore {
             let id = RepositoryId::from_proto(update.id);
             this.repositories.remove(&id);
             cx.emit(GitStoreEvent::ForwardRepositoryRemove(update));
-            if this.active_repo_id == Some(id) {
-                this.active_repo_id = None;
-                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
-            }
             cx.emit(GitStoreEvent::RepositoryRemoved(id));
         });
         Ok(())
@@ -4740,24 +4653,6 @@ impl Repository {
             })
             .ok();
         result_rx
-    }
-
-    pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
-        let Some(git_store) = self.git_store.upgrade() else {
-            return;
-        };
-        let entity = cx.entity();
-        git_store.update(cx, |git_store, cx| {
-            let Some((&id, _)) = git_store
-                .repositories
-                .iter()
-                .find(|(_, handle)| *handle == &entity)
-            else {
-                return;
-            };
-            git_store.active_repo_id = Some(id);
-            cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
-        });
     }
 
     pub fn cached_status(&self) -> impl '_ + Iterator<Item = StatusEntry> {

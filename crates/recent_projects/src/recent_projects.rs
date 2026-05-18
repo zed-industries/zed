@@ -1115,9 +1115,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let worktree_id = folder.worktree_id;
                 if let Some(workspace) = self.workspace.upgrade() {
                     workspace.update(cx, |workspace, cx| {
-                        let git_store = workspace.project().read(cx).git_store(cx);
-                        git_store.update(cx, |git_store, cx| {
-                            git_store.set_active_repo_for_worktree(worktree_id, cx);
+                        workspace.project().update(cx, |project, cx| {
+                            project.set_active_repository_for_worktree(worktree_id, cx);
                         });
                     });
                 }

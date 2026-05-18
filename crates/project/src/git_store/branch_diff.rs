@@ -62,7 +62,7 @@ impl BranchDiff {
         cx: &mut Context<Self>,
     ) -> Self {
         let git_store = project.read(cx).git_store(cx);
-        let repo = git_store.read(cx).active_repository();
+        let repo = project.read(cx).active_repository(cx);
         let git_store_subscription = cx.subscribe_in(
             &git_store,
             window,
@@ -166,12 +166,7 @@ impl BranchDiff {
                 this.tree_diff_update_needed = false;
 
                 if this.repo.is_none() {
-                    let active_repo = this
-                        .project
-                        .read(cx)
-                        .git_store(cx)
-                        .read(cx)
-                        .active_repository();
+                    let active_repo = this.project.read(cx).active_repository(cx);
                     if active_repo.is_some() {
                         this.repo = active_repo;
                         needs_update = true;

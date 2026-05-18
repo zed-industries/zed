@@ -5957,9 +5957,8 @@ impl Workspace {
         });
 
         if focus_changed && let Some(project_path) = &active_entry {
-            let git_store_entity = self.project.read(cx).git_store(cx);
-            git_store_entity.update(cx, |git_store, cx| {
-                git_store.set_active_repo_for_path(project_path, cx);
+            self.project.update(cx, |project, cx| {
+                project.set_active_repository_for_path(project_path, cx);
             });
         }
 

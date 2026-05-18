@@ -342,7 +342,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let Some(repo) = project.read(cx).git_store(cx).read(cx).active_repository() else {
+        let Some(repo) = project.read(cx).active_repository(cx) else {
             return Task::ready(Err(anyhow!("No active repository")));
         };
         let main_branch = repo.update(cx, |repo, _| repo.default_branch(true));
@@ -2868,9 +2868,8 @@ mod tests {
 
         // Select project A explicitly and open the diff.
         workspace.update(cx, |workspace, cx| {
-            let git_store = workspace.project().read(cx).git_store(cx);
-            git_store.update(cx, |git_store, cx| {
-                git_store.set_active_repo_for_worktree(worktree_a_id, cx);
+            workspace.project().update(cx, |project, cx| {
+                project.set_active_repository_for_worktree(worktree_a_id, cx);
             });
         });
         cx.focus(&workspace);
@@ -2888,9 +2887,8 @@ mod tests {
 
         // Switch the explicit active repository to project B and re-run the diff action.
         workspace.update(cx, |workspace, cx| {
-            let git_store = workspace.project().read(cx).git_store(cx);
-            git_store.update(cx, |git_store, cx| {
-                git_store.set_active_repo_for_worktree(worktree_b_id, cx);
+            workspace.project().update(cx, |project, cx| {
+                project.set_active_repository_for_worktree(worktree_b_id, cx);
             });
         });
         cx.focus(&workspace);

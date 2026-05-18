@@ -286,6 +286,9 @@ pub struct Project {
     /// will use this set to filter `Project::repositories(cx)` and the
     /// downstream-broadcast paths in `on_git_store_event`.
     repositories: HashSet<RepositoryId>,
+    /// Per-project active repository. `GitStore` is host-shared, so
+    /// active-repository selection must live on the tenant `Project`.
+    active_repository_id: Option<RepositoryId>,
     /// Per-project view of which language servers (by id) this Project
     /// considers "its own" out of the (potentially shared) host
     /// `LspStore`. A server is claimed when the host store fires
@@ -452,6 +455,7 @@ pub enum Event {
     WorktreeAdded(WorktreeId),
     WorktreeOrderChanged,
     WorktreeRemoved(WorktreeId),
+    ActiveRepositoryChanged(Option<RepositoryId>),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
     WorktreePathsChanged {
@@ -1370,6 +1374,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
@@ -1493,6 +1498,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
@@ -1751,6 +1757,7 @@ impl Project {
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
                 repositories: HashSet::default(),
+                active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
@@ -4042,11 +4049,18 @@ impl Project {
         match event {
             GitStoreEvent::RepositoryAdded(id) => {
                 if self.repository_belongs_to_us(*id, &git_store, cx) {
-                    self.repositories.insert(*id);
+                    let inserted = self.repositories.insert(*id);
+                    if inserted && self.active_repository_id.is_none() {
+                        self.set_active_repository_id(Some(*id), cx);
+                    }
                 }
             }
             GitStoreEvent::RepositoryRemoved(id) => {
                 self.repositories.remove(id);
+                if self.active_repository_id == Some(*id) {
+                    let fallback = self.next_active_repository_id(cx);
+                    self.set_active_repository_id(fallback, cx);
+                }
             }
             _ => {}
         }
@@ -7947,8 +7961,88 @@ impl Project {
         })
     }
 
+    pub fn active_repository_id(&self) -> Option<RepositoryId> {
+        self.active_repository_id
+    }
+
     pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
-        self.git_store(cx).read(cx).active_repository()
+        let active_repository_id = self.active_repository_id?;
+        if !self.repositories.contains(&active_repository_id) {
+            return None;
+        }
+        self.git_store(cx)
+            .read(cx)
+            .repositories()
+            .get(&active_repository_id)
+            .cloned()
+    }
+
+    pub fn set_active_repository_id(
+        &mut self,
+        repository_id: Option<RepositoryId>,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_id = repository_id.filter(|id| self.repositories.contains(id));
+        if self.active_repository_id != repository_id {
+            self.active_repository_id = repository_id;
+            cx.emit(Event::ActiveRepositoryChanged(repository_id));
+            cx.notify();
+        }
+    }
+
+    pub fn set_active_repository(
+        &mut self,
+        repository: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_id = repository.read(cx).id;
+        self.set_active_repository_id(Some(repository_id), cx);
+    }
+
+    pub fn set_active_repository_for_path(
+        &mut self,
+        project_path: &ProjectPath,
+        cx: &mut Context<Self>,
+    ) {
+        let repository_id = self
+            .git_store(cx)
+            .read(cx)
+            .repository_and_path_for_project_path(project_path, cx)
+            .map(|(repository, _)| repository.read(cx).id);
+        self.set_active_repository_id(repository_id, cx);
+    }
+
+    pub fn set_active_repository_for_worktree(
+        &mut self,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
+            return;
+        };
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        let repository_id = self
+            .repositories(cx)
+            .values()
+            .filter(|repo| {
+                let repo_path = &repo.read(cx).work_directory_abs_path;
+                *repo_path == worktree_abs_path || worktree_abs_path.starts_with(repo_path.as_ref())
+            })
+            .max_by_key(|repo| repo.read(cx).work_directory_abs_path.as_os_str().len())
+            .map(|repo| repo.read(cx).id);
+        self.set_active_repository_id(repository_id, cx);
+    }
+
+    fn next_active_repository_id(&self, cx: &App) -> Option<RepositoryId> {
+        self.repositories(cx)
+            .into_iter()
+            .sorted_by(|(_, left), (_, right)| {
+                left.read(cx)
+                    .work_directory_abs_path
+                    .cmp(&right.read(cx).work_directory_abs_path)
+            })
+            .map(|(repository_id, _)| repository_id)
+            .next()
     }
 
     pub fn repositories(&self, cx: &App) -> HashMap<RepositoryId, Entity<Repository>> {

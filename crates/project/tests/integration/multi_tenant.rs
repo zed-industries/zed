@@ -418,11 +418,8 @@ fn verify_project_repository_ownership(
             actual_repository_ids
         );
 
-        let active_repository_id = project.read_with(cx, |project, cx| {
-            project
-                .active_repository(cx)
-                .map(|repository| repository.read(cx).snapshot().id)
-        });
+        let active_repository_id =
+            project.read_with(cx, |project, _| project.active_repository_id());
         if let Some(active_repository_id) = active_repository_id {
             ensure!(
                 host_repositories
