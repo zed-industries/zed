@@ -225,15 +225,18 @@ fn update_cargo_config(webrtc_path: &Path) -> Result<()> {
     }
 
     let existing_content = if config_path.exists() {
-        fs::read_to_string(&config_path).with_context(|| format!("reading {}", config_path.display()))?
+        fs::read_to_string(&config_path)
+            .with_context(|| format!("reading {}", config_path.display()))?
     } else {
         String::new()
     };
 
-    let mut doc = existing_content.parse::<DocumentMut>()
+    let mut doc = existing_content
+        .parse::<DocumentMut>()
         .with_context(|| format!("parsing existing {}", config_path.display()))?;
 
-    let env_table = doc.entry("env")
+    let env_table = doc
+        .entry("env")
         .or_insert(Item::Table(Table::new()))
         .as_table_mut()
         .context("`env` entry is not a table")?;
@@ -244,7 +247,10 @@ fn update_cargo_config(webrtc_path: &Path) -> Result<()> {
     fs::write(&config_path, doc.to_string())
         .with_context(|| format!("writing {}", config_path.display()))?;
 
-    eprintln!("Updated {} with {ENV_VAR}={cleaned_path}", config_path.display());
+    eprintln!(
+        "Updated {} with {ENV_VAR}={cleaned_path}",
+        config_path.display()
+    );
     Ok(())
 }
 
