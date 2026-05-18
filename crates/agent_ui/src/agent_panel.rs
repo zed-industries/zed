@@ -1677,7 +1677,7 @@ impl AgentPanel {
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
-                    this.request_terminal_close(terminal_id, cx);
+                    this.close_terminal_from_terminal_event(terminal_id, window, cx);
                 }
                 TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
@@ -1739,7 +1739,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_terminal_internal(terminal_id, true, window, cx);
+        self.close_terminal_internal(terminal_id, true, None, window, cx);
     }
 
     pub fn close_terminal_without_activating_draft(
@@ -1748,13 +1748,14 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_terminal_internal(terminal_id, false, window, cx);
+        self.close_terminal_internal(terminal_id, false, None, window, cx);
     }
 
     fn close_terminal_internal(
         &mut self,
         terminal_id: TerminalId,
         activate_draft_after_close: bool,
+        terminal_closed_metadata: Option<TerminalThreadMetadata>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1777,14 +1778,21 @@ impl AgentPanel {
             }
         }
 
+        if let Some(metadata) = terminal_closed_metadata {
+            cx.emit(AgentPanelEvent::TerminalClosed { metadata });
+        }
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
 
-    fn request_terminal_close(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
-        if let Some(metadata) = self.terminal_metadata(terminal_id, cx) {
-            cx.emit(AgentPanelEvent::TerminalCloseRequested { metadata });
-        }
+    fn close_terminal_from_terminal_event(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let metadata = self.terminal_metadata(terminal_id, cx);
+        self.close_terminal_internal(terminal_id, false, metadata, window, cx);
     }
 
     fn emit_terminal_thread_started(&self, source: AgentThreadSource, cx: &App) {
@@ -3872,7 +3880,7 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ActiveViewFocused,
     EntryChanged,
-    TerminalCloseRequested { metadata: TerminalThreadMetadata },
+    TerminalClosed { metadata: TerminalThreadMetadata },
     ThreadInteracted { thread_id: ThreadId },
 }
 
