@@ -1,12 +1,20 @@
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
+use anyhow::{Context as _, Result, ensure};
 use collections::BTreeMap;
 use dap::client::SessionId;
 use fs::FakeFs;
-use gpui::{Entity, TestAppContext};
+use gpui::proptest::prelude::*;
+use gpui::{App, AppContext as _, Entity, TestAppContext};
 use language::Buffer;
 use project::{
-    Event, Project, ProjectPath, TaskSourceKind,
+    Event, Project, ProjectPath, TaskSourceKind, WorktreeId,
     bookmark_store::SerializedBookmark,
     debugger::{
         breakpoint_store::{
@@ -15,8 +23,10 @@ use project::{
         },
         dap_store::DapStoreEvent,
     },
+    git_store::{GitStore, GitStoreEvent, RepositoryId},
     project_settings::SettingsObserverEvent,
 };
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde_json::json;
 use settings::SettingsStore;
 use task::{ResolvedTask, TaskTemplate};
@@ -148,6 +158,398 @@ async fn test_active_repository_is_scoped_to_project(cx: &mut TestAppContext) {
         Some(Path::new(path!("/repos/beta"))),
         "project_b should use its own repository as active, not the shared GitStore's active repository"
     );
+}
+
+const GIT_STORE_PROPERTY_REPO_PATHS: [&str; 4] = [
+    path!("/repos/alpha"),
+    path!("/repos/beta"),
+    path!("/repos/gamma"),
+    path!("/repos/delta"),
+];
+const GIT_STORE_PROPERTY_MAX_LIVE_PROJECTS: usize = 4;
+
+#[derive(Clone, Copy, Debug)]
+enum GitStorePropertyOperationKind {
+    OpenProject,
+    AddWorktree,
+    DropProject,
+}
+
+fn git_store_property_tree() -> serde_json::Value {
+    json!({
+        "alpha": {
+            ".git": {},
+            "src": { "lib.rs": "fn alpha() {}\n" },
+        },
+        "beta": {
+            ".git": {},
+            "src": { "lib.rs": "fn beta() {}\n" },
+        },
+        "gamma": {
+            ".git": {},
+            "src": { "lib.rs": "fn gamma() {}\n" },
+        },
+        "delta": {
+            ".git": {},
+            "src": { "lib.rs": "fn delta() {}\n" },
+        },
+    })
+}
+
+struct HostRepositoryState {
+    worktrees_by_repository_id: HashMap<RepositoryId, HashSet<WorktreeId>>,
+    path_by_repository_id: HashMap<RepositoryId, Arc<Path>>,
+}
+
+struct GitStorePropertyWorld {
+    fs: Arc<FakeFs>,
+    projects: Vec<Entity<Project>>,
+}
+
+impl HostRepositoryState {
+    fn new(git_store: &Entity<GitStore>, cx: &App) -> Result<Self> {
+        let mut worktrees_by_repository_id =
+            HashMap::<RepositoryId, HashSet<WorktreeId>>::default();
+        let mut path_by_repository_id = HashMap::<RepositoryId, Arc<Path>>::default();
+        let git_store = git_store.read(cx);
+
+        for (repository_id, repository) in git_store.repositories() {
+            let snapshot = repository.read(cx).snapshot();
+            path_by_repository_id.insert(*repository_id, snapshot.work_directory_abs_path);
+            let worktree_ids = git_store
+                .worktree_ids_for_repository(*repository_id)
+                .with_context(|| {
+                    format!(
+                        "local repository {:?} has no worktree associations",
+                        repository_id
+                    )
+                })?;
+            ensure!(
+                !worktree_ids.is_empty(),
+                "local repository {:?} has an empty worktree association set",
+                repository_id
+            );
+            worktrees_by_repository_id.insert(*repository_id, worktree_ids.clone());
+        }
+
+        Ok(Self {
+            worktrees_by_repository_id,
+            path_by_repository_id,
+        })
+    }
+}
+
+impl GitStorePropertyWorld {
+    async fn new(cx: &mut TestAppContext) -> Entity<Self> {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/repos"), git_store_property_tree())
+            .await;
+
+        cx.new(|_| Self {
+            fs,
+            projects: Vec::new(),
+        })
+    }
+
+    async fn open_project(this: &Entity<Self>, path_index: usize, cx: &mut TestAppContext) {
+        let fs = this.read_with(cx, |this, _| this.fs.clone());
+        let path = Path::new(GIT_STORE_PROPERTY_REPO_PATHS[path_index]);
+        let project = Project::test(fs, [path], cx).await;
+        this.update(cx, |this, cx| {
+            this.projects.push(project.clone());
+            Self::setup_project_subscriptions(this, &project, cx);
+        });
+    }
+
+    async fn add_worktree(
+        this: &Entity<Self>,
+        project_index: usize,
+        path_index: usize,
+        cx: &mut TestAppContext,
+    ) {
+        let project = this.read_with(cx, |this, _| this.projects[project_index].clone());
+        let path = Path::new(GIT_STORE_PROPERTY_REPO_PATHS[path_index]);
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path, true, cx)
+            })
+            .await
+            .expect("failed to add property-test worktree");
+    }
+
+    fn drop_project(this: &Entity<Self>, project_index: usize, cx: &mut TestAppContext) {
+        let project = this.update(cx, |this, _| this.projects.swap_remove(project_index));
+        drop(project);
+    }
+
+    fn choose_operation(&self, choice: usize, cx: &App) -> GitStorePropertyOperationKind {
+        let mut valid_operations = Vec::new();
+
+        if self.projects.len() < GIT_STORE_PROPERTY_MAX_LIVE_PROJECTS {
+            valid_operations.push(GitStorePropertyOperationKind::OpenProject);
+        }
+        if self.project_with_missing_worktree(cx).is_some() {
+            valid_operations.push(GitStorePropertyOperationKind::AddWorktree);
+        }
+        if self.projects.len() > 1 {
+            valid_operations.push(GitStorePropertyOperationKind::DropProject);
+        }
+
+        valid_operations[choice % valid_operations.len()]
+    }
+
+    fn project_with_missing_worktree(&self, cx: &App) -> Option<usize> {
+        self.projects
+            .iter()
+            .enumerate()
+            .find_map(|(project_index, project)| {
+                let worktree_paths = project_worktree_paths(project, cx);
+                GIT_STORE_PROPERTY_REPO_PATHS
+                    .iter()
+                    .any(|path| !worktree_paths.contains(Path::new(path)))
+                    .then_some(project_index)
+            })
+    }
+
+    fn choose_missing_worktree(&self, project_index: usize, rng: &mut StdRng, cx: &App) -> usize {
+        let project = &self.projects[project_index];
+        let worktree_paths = project_worktree_paths(project, cx);
+        let missing_paths = GIT_STORE_PROPERTY_REPO_PATHS
+            .iter()
+            .enumerate()
+            .filter_map(|(path_index, path)| {
+                (!worktree_paths.contains(Path::new(path))).then_some(path_index)
+            })
+            .collect::<Vec<_>>();
+        missing_paths[rng.random_range(0..missing_paths.len())]
+    }
+
+    fn setup_project_subscriptions(
+        _this: &mut Self,
+        project: &Entity<Project>,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        cx.observe(project, |this, _, cx| {
+            verify_git_store_property_invariants(&this.projects, cx)
+                .context("GitStore property invariant violation after project notify")
+                .unwrap();
+        })
+        .detach();
+
+        let git_store = project.read_with(cx, |project, cx| project.git_store(cx));
+        cx.subscribe(&git_store, |this, _, event: &GitStoreEvent, cx| {
+            verify_git_store_property_invariants(&this.projects, cx)
+                .with_context(|| {
+                    format!(
+                        "GitStore property invariant violation after GitStore event {:?}",
+                        event
+                    )
+                })
+                .unwrap();
+        })
+        .detach();
+    }
+}
+
+fn project_worktree_paths(project: &Entity<Project>, cx: &App) -> HashSet<PathBuf> {
+    project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).abs_path().as_ref().to_path_buf())
+            .collect()
+    })
+}
+
+fn verify_git_store_property_invariants(projects: &[Entity<Project>], cx: &App) -> Result<()> {
+    if projects.is_empty() {
+        return Ok(());
+    }
+
+    let git_store = projects[0].read_with(cx, |project, cx| project.git_store(cx));
+    for project in &projects[1..] {
+        let project_git_store = project.read_with(cx, |project, cx| project.git_store(cx));
+        ensure!(
+            project_git_store.entity_id() == git_store.entity_id(),
+            "all generated projects should share one host GitStore"
+        );
+    }
+
+    let host_repositories = HostRepositoryState::new(&git_store, cx)?;
+    verify_project_repository_ownership(projects, &host_repositories, cx)?;
+    verify_host_repositories_have_live_project_owner(projects, &host_repositories, cx)?;
+    verify_repository_paths_map_to_shared_repository_ids(&host_repositories)?;
+
+    Ok(())
+}
+
+fn verify_project_repository_ownership(
+    projects: &[Entity<Project>],
+    host_repositories: &HostRepositoryState,
+    cx: &App,
+) -> Result<()> {
+    for project in projects {
+        let project_worktree_ids = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| worktree.read(cx).id())
+                .collect::<HashSet<_>>()
+        });
+        let expected_repository_ids = host_repositories
+            .worktrees_by_repository_id
+            .iter()
+            .filter_map(|(repository_id, worktree_ids)| {
+                worktree_ids
+                    .iter()
+                    .any(|worktree_id| project_worktree_ids.contains(worktree_id))
+                    .then_some(*repository_id)
+            })
+            .collect::<HashSet<_>>();
+        let actual_repository_ids = project.read_with(cx, |project, cx| {
+            project
+                .repositories(cx)
+                .keys()
+                .copied()
+                .collect::<HashSet<_>>()
+        });
+        ensure!(
+            actual_repository_ids == expected_repository_ids,
+            "project repository ids should match repositories associated with its worktrees. expected: {:?}, actual: {:?}",
+            expected_repository_ids,
+            actual_repository_ids
+        );
+
+        let active_repository_id = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .map(|repository| repository.read(cx).snapshot().id)
+        });
+        if let Some(active_repository_id) = active_repository_id {
+            ensure!(
+                host_repositories
+                    .worktrees_by_repository_id
+                    .contains_key(&active_repository_id),
+                "active repository {:?} should exist in the host GitStore",
+                active_repository_id
+            );
+            ensure!(
+                actual_repository_ids.contains(&active_repository_id),
+                "active repository {:?} should be owned by the project; project repositories: {:?}",
+                active_repository_id,
+                actual_repository_ids
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_host_repositories_have_live_project_owner(
+    projects: &[Entity<Project>],
+    host_repositories: &HostRepositoryState,
+    cx: &App,
+) -> Result<()> {
+    let project_worktree_ids = projects
+        .iter()
+        .map(|project| {
+            project.read_with(cx, |project, cx| {
+                project
+                    .worktrees(cx)
+                    .map(|worktree| worktree.read(cx).id())
+                    .collect::<HashSet<_>>()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (repository_id, worktree_ids) in &host_repositories.worktrees_by_repository_id {
+        let owned_by_live_project = project_worktree_ids.iter().any(|project_ids| {
+            worktree_ids
+                .iter()
+                .any(|worktree_id| project_ids.contains(worktree_id))
+        });
+        ensure!(
+            owned_by_live_project,
+            "host repository {:?} at {:?} should be owned by at least one live project",
+            repository_id,
+            host_repositories.path_by_repository_id.get(repository_id)
+        );
+    }
+
+    Ok(())
+}
+
+fn verify_repository_paths_map_to_shared_repository_ids(
+    host_repositories: &HostRepositoryState,
+) -> Result<()> {
+    let mut repository_id_by_path = HashMap::<Arc<Path>, RepositoryId>::default();
+    for (repository_id, repository_path) in &host_repositories.path_by_repository_id {
+        if let Some(existing_repository_id) =
+            repository_id_by_path.insert(repository_path.clone(), *repository_id)
+        {
+            ensure!(
+                existing_repository_id == *repository_id,
+                "repository path {:?} should map to one shared repository id, but saw {:?} and {:?}",
+                repository_path,
+                existing_repository_id,
+                repository_id
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[gpui::property_test(config = ProptestConfig {
+    cases: 10,
+    ..Default::default()
+})]
+async fn test_git_store_multi_tenant_random_invariants(
+    #[strategy = any::<u64>()] seed: u64,
+    #[strategy = gpui::proptest::collection::vec(0usize..1000, 1..40)] operation_choices: Vec<
+        usize,
+    >,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+    let mut rng = StdRng::seed_from_u64(seed);
+
+    let world = GitStorePropertyWorld::new(cx).await;
+    GitStorePropertyWorld::open_project(
+        &world,
+        rng.random_range(0..GIT_STORE_PROPERTY_REPO_PATHS.len()),
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    for choice in operation_choices {
+        match world.read_with(cx, |world, cx| world.choose_operation(choice, cx)) {
+            GitStorePropertyOperationKind::OpenProject => {
+                GitStorePropertyWorld::open_project(
+                    &world,
+                    rng.random_range(0..GIT_STORE_PROPERTY_REPO_PATHS.len()),
+                    cx,
+                )
+                .await;
+            }
+            GitStorePropertyOperationKind::AddWorktree => {
+                let (project_index, path_index) = world.read_with(cx, |world, cx| {
+                    // note we could clean this up by passing project index through the add worktree op
+                    let project_index = world.project_with_missing_worktree(cx).unwrap();
+                    let path_index = world.choose_missing_worktree(project_index, &mut rng, cx);
+                    (project_index, path_index)
+                });
+                GitStorePropertyWorld::add_worktree(&world, project_index, path_index, cx).await;
+            }
+            GitStorePropertyOperationKind::DropProject => {
+                let project_count = world.read_with(cx, |world, _| world.projects.len());
+                let project_index = rng.random_range(0..project_count);
+                GitStorePropertyWorld::drop_project(&world, project_index, cx);
+            }
+        }
+
+        cx.run_until_parked();
+    }
 }
 
 // ────────────────────────────────────────────────────────────────

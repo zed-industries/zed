@@ -4,21 +4,22 @@ Questions and follow-up scope that should not block the immediate active-reposit
 
 ## Visible worktree sharing
 
-Should visible worktrees be shared across projects that target the same host?
+Visible worktrees should be shared across projects that target the same host whenever possible. This is one of the main goals of the multi-tenant `Host` refactor: projects should reuse host-level resources instead of duplicating worktrees, repositories, scans, and watchers.
 
-Current notes from planning:
+Decisions from planning:
 
 - Repositories should be shared when multiple projects open the same repo path.
-- If visible worktrees are also shared, project ownership cannot mean "unique visible worktree entity per project".
-- Project ownership should probably be a project-to-worktree association, not ownership of the worktree entity itself.
+- Visible worktrees for the same host/path should also generally be shared.
+- Project ownership cannot mean "unique visible worktree entity per project".
+- Project ownership should be a project-to-worktree association, not ownership of the worktree entity itself.
 - Dropping one project must remove only that project's association; the shared worktree/repo should remain while any project still uses it.
+- `Project::worktrees(cx)` should expose the worktrees visible to that project, even when the backing worktree entities are host-shared.
 
 Open decisions:
 
-- Are visible worktrees always host-level shared resources?
+- What are the exceptions where visible worktrees should not be shared?
 - Can a worktree be visible in two projects at once with different project ordering/selection state?
 - Where does per-project worktree order live if the worktree entity is shared?
-- How should `Project::worktrees(cx)` represent shared visible worktrees?
 
 ## Remote clients and collab
 
