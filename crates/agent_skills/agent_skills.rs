@@ -654,6 +654,20 @@ fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
     })
 }
 
+/// All built-in skills as `(name, raw_content)` pairs. Used by
+/// `builtin_skill_content` to serve the full SKILL.md without disk I/O.
+const BUILTIN_SKILL_ENTRIES: &[(&str, &str)] = &[("create-skill", CREATE_SKILL_CONTENT)];
+
+/// Look up the full embedded content of a built-in skill by its
+/// synthetic file path. Returns `None` if the path doesn't match any
+/// built-in skill.
+pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
+    BUILTIN_SKILL_ENTRIES.iter().find_map(|(name, content)| {
+        let expected = PathBuf::from(format!("<built-in>/{}", name)).join(SKILL_FILE_NAME);
+        (expected == skill_file_path).then_some(*content)
+    })
+}
+
 /// Returns the global skills directory: `~/.agents/skills`.
 ///
 /// Other agents (e.g. Claude Code) already write skill files into this
