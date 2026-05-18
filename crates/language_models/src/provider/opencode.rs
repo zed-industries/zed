@@ -602,11 +602,11 @@ impl LanguageModel for OpenCodeLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        self.model.max_token_count()
+        self.model.max_token_count(self.subscription)
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        self.model.max_output_tokens()
+        self.model.max_output_tokens(self.subscription)
     }
 
     fn stream_completion(
@@ -646,7 +646,9 @@ impl LanguageModel for OpenCodeLanguageModel {
                     request,
                     self.model.id().to_string(),
                     1.0,
-                    self.model.max_output_tokens().unwrap_or(8192),
+                    self.model
+                        .max_output_tokens(self.subscription)
+                        .unwrap_or(8192),
                     mode,
                     anthropic::completion::AnthropicPromptCacheMode::Automatic,
                 );
@@ -671,7 +673,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id(),
                     false,
                     false,
-                    self.model.max_output_tokens(),
+                    self.model.max_output_tokens(self.subscription),
                     reasoning_effort,
                     self.model.interleaved_reasoning(),
                 );
@@ -692,7 +694,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.model.id(),
                     false,
                     false,
-                    self.model.max_output_tokens(),
+                    self.model.max_output_tokens(self.subscription),
                     None,
                     supports_none_reasoning_effort,
                 );
