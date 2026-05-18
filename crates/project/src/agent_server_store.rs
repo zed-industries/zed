@@ -7,8 +7,12 @@ use std::{
 
 use anyhow::{Context as _, Result, bail};
 use collections::HashMap;
-use fs::Fs;
-use gpui::{AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task, TaskExt};
+use fs::{Fs, RemoveOptions};
+use futures::StreamExt;
+use gpui::{
+    AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    TaskExt,
+};
 use http_client::{HttpClient, github::AssetKind};
 use node_runtime::NodeRuntime;
 use percent_encoding::percent_decode_str;
@@ -1126,6 +1130,72 @@ fn versioned_archive_cache_dir(
     ))
 }
 
+// The `v_` prefix here must stay in sync with `versioned_archive_cache_dir`,
+// so we only ever remove directories that we created ourselves.
+const VERSIONED_ARCHIVE_CACHE_DIR_PREFIX: &str = "v_";
+
+async fn remove_stale_versioned_archive_cache_dirs(
+    fs: Arc<dyn Fs>,
+    base_dir: &Path,
+    current_version_dir: &Path,
+) -> Result<()> {
+    let Some(current_dir_name) = current_version_dir.file_name() else {
+        return Ok(());
+    };
+
+    let current_mtime = fs
+        .metadata(current_version_dir)
+        .await
+        .with_context(|| format!("reading metadata for {current_version_dir:?}"))?
+        .with_context(|| format!("missing metadata for {current_version_dir:?}"))?
+        .mtime;
+
+    let mut entries = fs
+        .read_dir(base_dir)
+        .await
+        .with_context(|| format!("reading archive cache directory {base_dir:?}"))?;
+
+    while let Some(entry) = entries.next().await {
+        let entry = entry.with_context(|| format!("reading entry in {base_dir:?}"))?;
+        let Some(entry_name) = entry.file_name() else {
+            continue;
+        };
+
+        if entry_name == current_dir_name
+            || !entry_name
+                .to_string_lossy()
+                .starts_with(VERSIONED_ARCHIVE_CACHE_DIR_PREFIX)
+        {
+            continue;
+        }
+
+        let Some(entry_metadata) = fs.metadata(&entry).await.log_err().flatten() else {
+            continue;
+        };
+        if !entry_metadata.is_dir {
+            continue;
+        }
+        // Only remove directories that predate the current version's directory.
+        // This avoids racing with a concurrent extraction of a different version
+        // that finished after we cached the current version's mtime.
+        if !current_mtime.bad_is_greater_than(entry_metadata.mtime) {
+            continue;
+        }
+
+        fs.remove_dir(
+            &entry,
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .with_context(|| format!("removing stale archive cache directory {entry:?}"))?;
+    }
+
+    Ok(())
+}
+
 pub struct LocalExtensionArchiveAgent {
     pub fs: Arc<dyn Fs>,
     pub http_client: Arc<dyn HttpClient>,
@@ -1298,6 +1368,18 @@ impl ExternalAgentServer for LocalExtensionArchiveAgent {
                     anyhow::bail!("command must be relative (start with './'): {}", cmd);
                 }
             };
+
+            cx.background_spawn({
+                let fs = fs.clone();
+                let dir = dir.clone();
+                let version_dir = version_dir.clone();
+                async move {
+                    remove_stale_versioned_archive_cache_dirs(fs, &dir, &version_dir)
+                        .await
+                        .log_err();
+                }
+            })
+            .detach();
 
             let mut args = target_config.args.clone();
             args.extend(extra_args);
@@ -1477,6 +1559,18 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
                     anyhow::bail!("command must be relative (start with './'): {}", cmd);
                 }
             };
+
+            cx.background_spawn({
+                let fs = fs.clone();
+                let dir = dir.clone();
+                let version_dir = version_dir.clone();
+                async move {
+                    remove_stale_versioned_archive_cache_dirs(fs, &dir, &version_dir)
+                        .await
+                        .log_err();
+                }
+            })
+            .detach();
 
             let mut args = target_config.args.clone();
             args.extend(extra_args);
@@ -1943,7 +2037,7 @@ mod tests {
         AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
     };
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::TestAppContext;
     use node_runtime::NodeRuntime;
     use settings::Settings as _;
 
@@ -2135,6 +2229,63 @@ mod tests {
 
         assert!(file_name.starts_with("v_release-2.3.5_"));
         assert_ne!(slash_version_dir, colon_version_dir);
+    }
+
+    #[gpui::test]
+    async fn test_remove_stale_versioned_archive_cache_dirs(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let base_dir = Path::new("/cache");
+
+        // FakeFs increments mtime on every create, so creation order is
+        // ascending mtime: v_old_1 < v_old_2 < other < v_not_a_dir < v_current < v_newer.
+        fs.insert_tree(
+            base_dir,
+            serde_json::json!({
+                "v_old_1": {},
+                "v_old_2": {},
+                "other": {},
+            }),
+        )
+        .await;
+        fs.insert_file(base_dir.join("v_not_a_dir"), b"keep me".to_vec())
+            .await;
+        let current_version_dir = base_dir.join("v_current");
+        fs.create_dir(&current_version_dir).await.unwrap();
+        // Sibling that "finished extracting" after the current dir was cached.
+        fs.create_dir(&base_dir.join("v_newer")).await.unwrap();
+
+        remove_stale_versioned_archive_cache_dirs(
+            fs.clone() as Arc<dyn Fs>,
+            base_dir,
+            &current_version_dir,
+        )
+        .await
+        .unwrap();
+
+        let mut remaining = fs
+            .read_dir(base_dir)
+            .await
+            .unwrap()
+            .filter_map(|entry| async move { entry.ok() })
+            .map(|path| {
+                path.file_name()
+                    .expect("entry has a name")
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>()
+            .await;
+        remaining.sort();
+
+        assert_eq!(
+            remaining,
+            vec![
+                "other".to_string(),
+                "v_current".to_string(),
+                "v_newer".to_string(),
+                "v_not_a_dir".to_string(),
+            ]
+        );
     }
 
     #[gpui::test]
