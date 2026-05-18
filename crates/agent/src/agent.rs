@@ -32,7 +32,7 @@ use acp_thread::{
 use agent_client_protocol::schema as acp;
 use agent_skills::{
     MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
-    global_skills_dir, load_skills_from_directory, project_skills_relative_path,
+    builtin_skills, global_skills_dir, load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -104,7 +104,7 @@ impl From<&Skill> for NativeAvailableSkill {
         Self {
             name: skill.name.clone(),
             description: skill.description.clone(),
-            source: skill.source.scope_prefix().to_string().into(),
+            source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
         }
     }
@@ -1644,14 +1644,18 @@ impl NativeAgent {
             // Read the body on demand here — bodies live on disk between
             // materializations to keep memory cost O(total frontmatter)
             // rather than O(total file size).
-            let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to read skill body from {}",
-                        skill.skill_file_path.display()
-                    )
-                })?;
+            let body = if let Some(embedded) = skill.embedded_body {
+                embedded.to_string()
+            } else {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to read skill body from {}",
+                            skill.skill_file_path.display()
+                        )
+                    })?
+            };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
@@ -2960,7 +2964,9 @@ fn combine_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    let mut skills = Vec::new();
+    // Built-in skills go first (lowest priority) so that global and
+    // project-local skills with the same name shadow them.
+    let mut skills = builtin_skills();
     let mut errors = Vec::new();
     for result in global.into_iter().chain(project) {
         match result {
@@ -2980,9 +2986,10 @@ fn log_skill_conflicts(skills: &[Skill]) {
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
             Some(existing) => match (&existing.source, &skill.source) {
-                (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
+                (SkillSource::BuiltIn | SkillSource::Global, SkillSource::ProjectLocal { .. })
+                | (SkillSource::BuiltIn, SkillSource::Global) => {
                     log::warn!(
-                        "Project skill '{}' at '{}' overrides global skill at '{}' for the model; both appear in the slash-command popup with their source",
+                        "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
                         existing.skill_file_path.display(),
@@ -3024,9 +3031,17 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                if matches!(result[idx].source, SkillSource::Global)
-                    && matches!(skill.source, SkillSource::ProjectLocal { .. })
-                {
+                let dominated = match (&result[idx].source, &skill.source) {
+                    // Project-local overrides both global and built-in
+                    (
+                        SkillSource::BuiltIn | SkillSource::Global,
+                        SkillSource::ProjectLocal { .. },
+                    ) => true,
+                    // Global overrides built-in
+                    (SkillSource::BuiltIn, SkillSource::Global) => true,
+                    _ => false,
+                };
+                if dominated {
                     result[idx] = skill.clone();
                 }
             }
@@ -3064,6 +3079,7 @@ mod internal_tests {
             directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
+            embedded_body: None,
         }
     }
 
@@ -3078,6 +3094,7 @@ mod internal_tests {
             directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
+            embedded_body: None,
         }
     }
 
@@ -3201,6 +3218,7 @@ mod internal_tests {
                 directory_path: PathBuf::from(format!("/skills/{name}")),
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
                 disable_model_invocation: false,
+                embedded_body: None,
             });
         }
 
@@ -3275,6 +3293,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-01-first"),
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -3283,6 +3302,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-02-overflows"),
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -3291,6 +3311,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-03-would-fit"),
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -3346,6 +3367,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/hidden-huge"),
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
             disable_model_invocation: true,
+            embedded_body: None,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -3354,6 +3376,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/visible"),
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         let (kept, errors) = select_catalog_skills(&[hidden, visible]);
