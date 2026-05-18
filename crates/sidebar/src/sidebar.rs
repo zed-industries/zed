@@ -16,9 +16,9 @@ use agent_ui::threads_archive_view::{
     fuzzy_match_positions,
 };
 use agent_ui::{
-    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo,
-    AgentThreadSource, ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE,
-    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
+    AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
+    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread,
+    TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
     import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -449,29 +449,15 @@ fn linked_worktree_path_lists_for_workspaces(
         .collect()
 }
 
-fn workspace_has_agent_panel_terminals(workspace: &Entity<Workspace>, cx: &App) -> bool {
-    workspace_has_agent_panel_terminals_except(workspace, None, cx)
+fn workspace_has_terminal_metadata(workspace: &Entity<Workspace>, cx: &App) -> bool {
+    workspace_has_terminal_metadata_except(workspace, None, cx)
 }
 
-fn workspace_has_agent_panel_terminals_except(
+fn workspace_has_terminal_metadata_except(
     workspace: &Entity<Workspace>,
     except_terminal_id: Option<TerminalId>,
     cx: &App,
 ) -> bool {
-    if workspace
-        .read(cx)
-        .panel::<AgentPanel>(cx)
-        .is_some_and(|panel| {
-            panel
-                .read(cx)
-                .terminals(cx)
-                .iter()
-                .any(|terminal| except_terminal_id != Some(terminal.id))
-        })
-    {
-        return true;
-    }
-
     let Some(store) = TerminalThreadMetadataStore::try_global(cx) else {
         return false;
     };
@@ -484,20 +470,7 @@ fn workspace_has_agent_panel_terminals_except(
     store
         .read(cx)
         .entries_for_path(&path_list, remote_connection.as_ref())
-        .find(|terminal| except_terminal_id != Some(terminal.terminal_id))
-        .is_some()
-}
-
-fn workspace_contains_worktree_path(
-    workspace: &Entity<Workspace>,
-    worktree_path: &Path,
-    cx: &App,
-) -> bool {
-    let project = workspace.read(cx).project().clone();
-    project
-        .read(cx)
-        .visible_worktrees(cx)
-        .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path)
+        .any(|terminal| except_terminal_id != Some(terminal.terminal_id))
 }
 
 #[derive(Clone)]
@@ -1243,15 +1216,15 @@ impl Sidebar {
         };
 
         let groups = mw.project_groups(cx);
-        let mut live_terminal_ids: HashSet<TerminalId> = HashSet::new();
+        let mut live_notified_terminal_ids: HashSet<TerminalId> = HashSet::new();
         for workspace in &workspaces {
             if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
-                live_terminal_ids.extend(
+                live_notified_terminal_ids.extend(
                     agent_panel
                         .read(cx)
                         .terminals(cx)
                         .into_iter()
-                        .map(|terminal| terminal.id),
+                        .filter_map(|terminal| terminal.has_notification.then_some(terminal.id)),
                 );
             }
         }
@@ -1314,29 +1287,23 @@ impl Sidebar {
                 |metadata: TerminalThreadMetadata, workspace: ThreadEntryWorkspace| {
                     let worktrees =
                         worktree_info_from_thread_paths(&metadata.worktree_paths, &branch_by_path);
+                    let has_notification =
+                        live_notified_terminal_ids.contains(&metadata.terminal_id);
                     TerminalEntry {
                         metadata,
                         workspace,
                         worktrees,
-                        has_notification: false,
+                        has_notification,
                         highlight_positions: Vec::new(),
                     }
                 };
 
-            let mut terminals: Vec<TerminalEntry> = group_workspaces
-                .iter()
-                .flat_map(|workspace| {
-                    terminal_entries_for_workspace(workspace, &branch_by_path, cx)
-                })
-                .collect();
-            terminals.retain(|terminal| seen_terminal_ids.insert(terminal.metadata.terminal_id));
+            let mut terminals = Vec::new();
             let terminal_store = TerminalThreadMetadataStore::global(cx);
             let group_host = group_key.host();
             let mut push_terminal_metadata =
                 |metadata: TerminalThreadMetadata, workspace: ThreadEntryWorkspace| {
-                    if live_terminal_ids.contains(&metadata.terminal_id)
-                        || !seen_terminal_ids.insert(metadata.terminal_id)
-                    {
+                    if !seen_terminal_ids.insert(metadata.terminal_id) {
                         return;
                     }
                     terminals.push(make_terminal_entry(metadata, workspace));
@@ -3725,16 +3692,6 @@ impl Sidebar {
                         )
                     })
                 })
-                .filter(|root| {
-                    !workspaces.iter().any(|workspace| {
-                        workspace_has_agent_panel_terminals_except(workspace, Some(terminal_id), cx)
-                            && workspace_contains_worktree_path(
-                                workspace,
-                                root.root_path.as_path(),
-                                cx,
-                            )
-                    })
-                })
                 .collect::<Vec<_>>()
         };
 
@@ -3756,8 +3713,7 @@ impl Sidebar {
                 });
 
                 workspace.and_then(|workspace| {
-                    if workspace_has_agent_panel_terminals_except(&workspace, Some(terminal_id), cx)
-                    {
+                    if workspace_has_terminal_metadata_except(&workspace, Some(terminal_id), cx) {
                         return None;
                     }
 
@@ -4095,16 +4051,6 @@ impl Sidebar {
                             )
                         })
                     })
-                    .filter(|root| {
-                        !workspaces.iter().any(|workspace| {
-                            workspace_has_agent_panel_terminals(workspace, cx)
-                                && workspace_contains_worktree_path(
-                                    workspace,
-                                    root.root_path.as_path(),
-                                    cx,
-                                )
-                        })
-                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -4143,7 +4089,7 @@ impl Sidebar {
                 .read(cx)
                 .workspace_for_paths(folder_paths, None, cx)?;
 
-            if workspace_has_agent_panel_terminals(&workspace, cx) {
+            if workspace_has_terminal_metadata(&workspace, cx) {
                 return None;
             }
 
@@ -6272,42 +6218,6 @@ impl Render for Sidebar {
             })
             .child(self.render_sidebar_bottom_bar(cx))
     }
-}
-
-fn terminal_entries_for_workspace<S: std::hash::BuildHasher>(
-    workspace: &Entity<Workspace>,
-    branch_by_path: &HashMap<PathBuf, SharedString, S>,
-    cx: &App,
-) -> Vec<TerminalEntry> {
-    let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
-        return Vec::new();
-    };
-    let project = workspace.read(cx).project().clone();
-    let project = project.read(cx);
-    let worktree_paths = project.worktree_paths(cx);
-    let remote_connection = project.remote_connection_options(cx);
-    let worktrees = worktree_info_from_thread_paths(&worktree_paths, branch_by_path);
-
-    agent_panel
-        .read(cx)
-        .terminals(cx)
-        .into_iter()
-        .map(move |terminal: AgentPanelTerminalInfo| TerminalEntry {
-            metadata: TerminalThreadMetadata {
-                terminal_id: terminal.id,
-                title: terminal.title,
-                custom_title: terminal.custom_title,
-                created_at: terminal.created_at,
-                worktree_paths: worktree_paths.clone(),
-                remote_connection: remote_connection.clone(),
-                working_directory: terminal.working_directory,
-            },
-            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
-            worktrees: worktrees.clone(),
-            has_notification: terminal.has_notification,
-            highlight_positions: Vec::new(),
-        })
-        .collect()
 }
 
 fn all_thread_infos_for_workspace(
