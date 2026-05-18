@@ -51,6 +51,7 @@ pub enum OpenRequestKind {
             Box<dyn CliResponseSink>,
         ),
     ),
+    FocusApp,
     Extension {
         extension_id: String,
     },
@@ -82,6 +83,7 @@ impl std::fmt::Debug for OpenRequestKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CliConnection(_) => write!(f, "CliConnection(..)"),
+            Self::FocusApp => write!(f, "FocusApp"),
             Self::Extension { extension_id } => f
                 .debug_struct("Extension")
                 .field("extension_id", extension_id)
@@ -118,6 +120,15 @@ impl std::fmt::Debug for OpenRequestKind {
 }
 
 impl OpenRequest {
+    pub fn is_focus_app_only(&self) -> bool {
+        matches!(self.kind, Some(OpenRequestKind::FocusApp))
+            && self.open_paths.is_empty()
+            && self.diff_paths.is_empty()
+            && self.remote_connection.is_none()
+            && self.join_channel.is_none()
+            && self.open_channel_notes.is_empty()
+    }
+
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
 
@@ -167,6 +178,8 @@ impl OpenRequest {
                 }
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
+            } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
+                this.kind = Some(OpenRequestKind::FocusApp);
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -210,7 +223,8 @@ impl OpenRequest {
     }
 
     fn parse_agent_url(&mut self, agent_path: &str) {
-        // Format: "" or "?prompt=<text>"
+        // Format: "" or "?prompt=<text>".
+        let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
         let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
@@ -1227,6 +1241,63 @@ mod tests {
                 );
             }
             _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_trailing_slash(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent/?prompt=hello".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(
+                    external_source_prompt
+                        .as_ref()
+                        .map(ExternalSourcePrompt::as_str),
+                    Some("hello")
+                );
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_focus_app_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for url in ["zed://", "zed://open", "zed://open/"] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![url.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap()
+            });
+            assert!(
+                matches!(request.kind, Some(OpenRequestKind::FocusApp)),
+                "expected FocusApp for {url}, got {:?}",
+                request.kind
+            );
+            assert!(
+                request.is_focus_app_only(),
+                "expected is_focus_app_only for {url}"
+            );
         }
     }
 
