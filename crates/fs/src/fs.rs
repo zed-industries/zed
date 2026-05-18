@@ -1241,8 +1241,12 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
+            // Skipped for poll watchers: PollWatcher::watch() recursively scans
+            // at registration, blocking on large virtual filesystem mounts
+            if !use_poll {
+                if let Some(parent) = target.parent() {
+                    watcher.add(parent).log_err();
+                }
             }
         }
 
