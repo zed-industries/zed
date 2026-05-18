@@ -164,7 +164,7 @@ impl RenderOnce for Tab {
                 TabPosition::Middle(Ordering::Less) => this.border_l_1().pr_px().border_b_1(),
                 TabPosition::Middle(Ordering::Greater) => this.border_r_1().pl_px().border_b_1(),
             })
-            .cursor_pointer()
+            .cursor(crate::utils::clickable_element_cursor(cx))
             .child(
                 h_flex()
                     .group("")

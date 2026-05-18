@@ -193,6 +193,7 @@ impl VsCodeSettings {
             }),
             helix_mode: None,
             hide_mouse: None,
+            clickable_element_cursor: None,
             image_viewer: None,
             journal: None,
             language_models: None,

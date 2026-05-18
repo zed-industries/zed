@@ -111,6 +111,33 @@ pub enum HideMouseMode {
     OnTypingAndAction,
 }
 
+/// Controls the mouse cursor style shown when hovering over clickable
+/// elements (buttons, tabs, list items, etc.).
+///
+/// Default: pointer
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ClickableElementCursor {
+    /// Use the pointing hand cursor (CSS `pointer`)
+    #[default]
+    Pointer,
+    /// Use the default arrow cursor (CSS `default`)
+    Default,
+}
+
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
@@ -191,6 +218,12 @@ pub struct SettingsContent {
     ///
     /// Default: on_typing_and_action
     pub hide_mouse: Option<HideMouseMode>,
+
+    /// Controls the mouse cursor style shown when hovering over clickable
+    /// elements (buttons, tabs, list items, etc.).
+    ///
+    /// Default: pointer
+    pub clickable_element_cursor: Option<ClickableElementCursor>,
 
     pub journal: Option<JournalSettingsContent>,
 

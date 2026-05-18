@@ -666,6 +666,7 @@ pub struct App {
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) mode: GpuiMode,
     pub(crate) cursor_hide_mode: CursorHideMode,
+    clickable_cursor_style: Option<CursorStyle>,
     flushing_effects: bool,
     pending_updates: usize,
     quit_mode: QuitMode,
@@ -755,6 +756,7 @@ impl App {
                 quit_mode: QuitMode::default(),
                 quitting: false,
                 cursor_hide_mode: CursorHideMode::default(),
+                clickable_cursor_style: None,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -905,6 +907,20 @@ impl App {
     /// to keyboard input.
     pub fn set_cursor_hide_mode(&mut self, mode: CursorHideMode) {
         self.cursor_hide_mode = mode;
+    }
+
+    /// Returns the cursor style override for clickable elements.
+    /// When `Some(CursorStyle::Arrow)`, all `PointingHand` cursors
+    /// are replaced with `Arrow`.
+    pub fn clickable_cursor_style(&self) -> Option<CursorStyle> {
+        self.clickable_cursor_style
+    }
+
+    /// Sets the cursor style override for clickable elements.
+    /// When `Some(CursorStyle::Arrow)`, all `PointingHand` cursors
+    /// are replaced with `Arrow`.
+    pub fn set_clickable_cursor_style(&mut self, style: Option<CursorStyle>) {
+        self.clickable_cursor_style = style;
     }
 
     /// Returns whether the cursor is currently visible according to the

@@ -240,6 +240,12 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Controls the mouse cursor style shown when hovering over clickable
+  // elements (buttons, tabs, list items, etc.).
+  // Can be:
+  // 1. "pointer" (default) - Shows the pointing hand cursor
+  // 2. "default" - Shows the default arrow cursor
+  "clickable_element_cursor": "pointer",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,

@@ -6,6 +6,8 @@ use gpui::{
 };
 use smallvec::SmallVec;
 
+use settings::{ClickableElementCursorSettings, Settings};
+
 use crate::{DynamicSpacing, ElevationIndex, prelude::*};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
@@ -495,6 +497,7 @@ pub struct ButtonLike {
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     hoverable_tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
     cursor_style: CursorStyle,
+    cursor_style_explicitly_set: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_right_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
@@ -518,6 +521,7 @@ impl ButtonLike {
             hoverable_tooltip: None,
             children: SmallVec::new(),
             cursor_style: CursorStyle::PointingHand,
+            cursor_style_explicitly_set: false,
             on_click: None,
             on_right_click: None,
             layer: None,
@@ -599,6 +603,7 @@ impl Clickable for ButtonLike {
 
     fn cursor_style(mut self, cursor_style: CursorStyle) -> Self {
         self.cursor_style = cursor_style;
+        self.cursor_style_explicitly_set = true;
         self
     }
 }
@@ -676,6 +681,12 @@ impl RenderOnce for ButtonLike {
             ButtonStyle::Outlined | ButtonStyle::OutlinedGhost | ButtonStyle::OutlinedCustom(_)
         );
 
+        let effective_cursor = if self.cursor_style_explicitly_set {
+            self.cursor_style
+        } else {
+            ClickableElementCursorSettings::get_global(cx).0
+        };
+
         self.base
             .h_flex()
             .id(self.id.clone())
@@ -708,10 +719,10 @@ impl RenderOnce for ButtonLike {
             .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)
             .when(self.disabled, |this| {
-                if self.cursor_style == CursorStyle::PointingHand {
+                if effective_cursor == CursorStyle::PointingHand {
                     this.cursor_not_allowed()
                 } else {
-                    this.cursor(self.cursor_style)
+                    this.cursor(effective_cursor)
                 }
             })
             .when(!self.disabled, |this| {
@@ -719,7 +730,7 @@ impl RenderOnce for ButtonLike {
                 let focus_color =
                     |refinement: StyleRefinement| refinement.bg(hovered_style.background);
 
-                this.cursor(self.cursor_style)
+                this.cursor(effective_cursor)
                     .hover(focus_color)
                     .map(|this| {
                         if is_outlined {

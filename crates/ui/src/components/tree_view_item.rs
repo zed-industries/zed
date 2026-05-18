@@ -158,7 +158,7 @@ impl RenderOnce for TreeViewItem {
             .child(
                 h_flex()
                     .id("inner_tree_view_item")
-                    .cursor_pointer()
+                    .cursor(crate::utils::clickable_element_cursor(cx))
                     .size_full()
                     .h(item_size)
                     .pl_0p5()

@@ -260,7 +260,7 @@ impl RenderOnce for Checkbox {
                 } else if self.visualization {
                     this.cursor_default()
                 } else {
-                    this.cursor_pointer()
+                    this.cursor(crate::utils::clickable_element_cursor(cx))
                 }
             })
             .gap(DynamicSpacing::Base06.rems(cx))
@@ -499,7 +499,7 @@ impl RenderOnce for Switch {
 
         h_flex()
             .id(self.id)
-            .cursor_pointer()
+            .cursor(crate::utils::clickable_element_cursor(cx))
             .gap(DynamicSpacing::Base06.rems(cx))
             .when(self.full_width, |this| this.w_full().justify_between())
             .when(
@@ -614,7 +614,7 @@ impl SwitchField {
 }
 
 impl RenderOnce for SwitchField {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let tooltip = self
             .tooltip
             .zip(self.label.clone())
@@ -635,8 +635,9 @@ impl RenderOnce for SwitchField {
 
         h_flex()
             .id((self.id.clone(), "container"))
-            .when(!self.disabled, |this| {
-                this.hover(|this| this.cursor_pointer())
+            .when(!self.disabled, {
+                let cursor = crate::utils::clickable_element_cursor(cx);
+                move |this| this.hover(move |this| this.cursor(cursor))
             })
             .w_full()
             .gap_4()

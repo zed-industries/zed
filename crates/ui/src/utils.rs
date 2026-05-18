@@ -1,6 +1,7 @@
 //! UI-related utilities
 
-use gpui::App;
+use gpui::{App, CursorStyle};
+use settings::{ClickableElementCursorSettings, Settings};
 use theme::ActiveTheme;
 
 mod apca_contrast;
@@ -55,4 +56,10 @@ pub fn capitalize(str: &str) -> String {
         None => String::new(),
         Some(first_char) => first_char.to_uppercase().collect::<String>() + chars.as_str(),
     }
+}
+
+/// Returns the cursor style that should be used for clickable elements
+/// based on the user's settings.
+pub fn clickable_element_cursor(cx: &App) -> CursorStyle {
+    ClickableElementCursorSettings::get_global(cx).0
 }

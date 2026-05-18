@@ -4221,6 +4221,15 @@ impl Window {
                 .rendered_frame
                 .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
+
+            // Allow replacing the hand cursor with the default arrow cursor
+            // when the user has configured clickable element cursor style.
+            let style = if style == CursorStyle::PointingHand {
+                cx.clickable_cursor_style().unwrap_or(CursorStyle::PointingHand)
+            } else {
+                style
+            };
+
             cx.platform.set_cursor_style(style);
         }
     }

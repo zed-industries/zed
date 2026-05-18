@@ -1098,7 +1098,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn cursor_section() -> [SettingsPageItem; 5] {
+    fn cursor_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Cursor"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1148,6 +1148,19 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| settings_content.hide_mouse.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.hide_mouse = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Clickable Element Cursor",
+                description: "Mouse cursor style when hovering over clickable elements (buttons, tabs, list items, etc.).",
+                field: Box::new(SettingField {
+                    json_path: Some("clickable_element_cursor"),
+                    pick: |settings_content| settings_content.clickable_element_cursor.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.clickable_element_cursor = value;
                     },
                 }),
                 metadata: None,

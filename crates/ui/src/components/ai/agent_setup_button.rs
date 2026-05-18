@@ -94,12 +94,15 @@ impl RenderOnce for AgentSetupButton {
             .border_1()
             .border_color(cx.theme().colors().border_variant)
             .rounded_sm()
-            .when(is_clickable, |this| {
-                this.cursor_pointer().hover(|style| {
-                    style
-                        .bg(cx.theme().colors().element_hover)
-                        .border_color(cx.theme().colors().border)
-                })
+            .when(is_clickable, {
+                let cursor = crate::utils::clickable_element_cursor(cx);
+                move |this| {
+                    this.cursor(cursor).hover(|style| {
+                        style
+                            .bg(cx.theme().colors().element_hover)
+                            .border_color(cx.theme().colors().border)
+                    })
+                }
             })
             .when_some(top_section, |this, section| this.child(section))
             .when_some(bottom_section, |this, section| this.child(section))

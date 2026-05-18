@@ -299,7 +299,10 @@ impl RenderOnce for ListItem {
                     })
                     .when_some(
                         self.on_click.filter(|_| !self.disabled),
-                        |this, on_click| this.cursor_pointer().on_click(on_click),
+                        {
+                            let cursor = crate::utils::clickable_element_cursor(cx);
+                            move |this, on_click| this.cursor(cursor).on_click(on_click)
+                        },
                     )
                     .when(self.outlined, |this| {
                         this.border_1()

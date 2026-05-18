@@ -1,4 +1,5 @@
 mod base_keymap_setting;
+mod clickable_element_cursor_setting;
 mod content_into_gpui;
 mod editable_setting_control;
 mod editorconfig_store;
@@ -32,6 +33,7 @@ use util::asset_str;
 
 pub use ::settings_content::*;
 pub use base_keymap_setting::*;
+pub use clickable_element_cursor_setting::ClickableElementCursorSettings;
 pub use content_into_gpui::IntoGpui;
 pub use editable_setting_control::*;
 pub use editorconfig_store::{

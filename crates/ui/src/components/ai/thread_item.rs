@@ -384,7 +384,7 @@ impl RenderOnce for ThreadItem {
 
         v_flex()
             .id(self.id.clone())
-            .cursor_pointer()
+            .cursor(crate::utils::clickable_element_cursor(cx))
             .group("thread-item")
             .relative()
             .flex_shrink_0()
