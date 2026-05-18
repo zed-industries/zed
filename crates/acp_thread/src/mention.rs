@@ -358,7 +358,12 @@ impl MentionUri {
 
         match self {
             MentionUri::Skill { name, source, .. } => {
-                format!("{} ({})", name, source)
+                if source.is_empty() {
+                    // Must match `SkillSource::display_label()` in agent_skills.
+                    format!("{} (global)", name)
+                } else {
+                    format!("{} ({})", name, source)
+                }
             }
             MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
                 project::path_suffix(abs_path, detail)
