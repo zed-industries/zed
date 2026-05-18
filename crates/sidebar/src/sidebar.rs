@@ -3619,6 +3619,160 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    fn should_load_closed_workspace_for_archive(
+        folder_paths: &PathList,
+        project_group_key: &ProjectGroupKey,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        except_thread_id: Option<ThreadId>,
+        except_terminal_id: Option<TerminalId>,
+        cx: &App,
+    ) -> bool {
+        if folder_paths.is_empty() || folder_paths == project_group_key.path_list() {
+            return false;
+        }
+
+        let thread_store = ThreadMetadataStore::global(cx);
+        let thread_store = thread_store.read(cx);
+        if folder_paths.ordered_paths().any(|path| {
+            thread_store.path_is_referenced_by_unarchived_threads(
+                except_thread_id,
+                path,
+                remote_connection,
+            )
+        }) {
+            return false;
+        }
+
+        TerminalThreadMetadataStore::try_global(cx).is_none_or(|terminal_store| {
+            let terminal_store = terminal_store.read(cx);
+            !folder_paths.ordered_paths().any(|path| {
+                terminal_store.path_is_referenced_by_terminal(
+                    except_terminal_id,
+                    path,
+                    remote_connection,
+                )
+            })
+        })
+    }
+
+    async fn wait_for_archive_workspace_metadata(
+        workspace: &Entity<Workspace>,
+        cx: &mut gpui::AsyncApp,
+    ) {
+        let scans_complete =
+            workspace.read_with(cx, |workspace, cx| workspace.worktree_scans_complete(cx));
+        scans_complete.await;
+
+        let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
+        let barriers = project.update(cx, |project, cx| {
+            let repositories = project
+                .repositories(cx)
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            repositories
+                .into_iter()
+                .map(|repository| repository.update(cx, |repository, _| repository.barrier()))
+                .collect::<Vec<_>>()
+        });
+        for barrier in barriers {
+            let result: anyhow::Result<()> = barrier.await.map_err(|_| {
+                anyhow::anyhow!("git repository barrier canceled while archiving worktree")
+            });
+            result.log_err();
+        }
+    }
+
+    fn open_workspace_for_archive(
+        &mut self,
+        folder_paths: PathList,
+        project_group_key: ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(Task<anyhow::Result<Entity<Workspace>>>, Entity<Workspace>)> {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return None;
+        };
+
+        let host = project_group_key.host();
+        let active_workspace = multi_workspace.read(cx).workspace().clone();
+        let modal_workspace = active_workspace.clone();
+
+        let open_task = multi_workspace.update(cx, |this, cx| {
+            this.find_or_create_workspace(
+                folder_paths,
+                host,
+                Some(project_group_key),
+                |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                &[],
+                None,
+                OpenMode::Add,
+                window,
+                cx,
+            )
+        });
+
+        Some((open_task, modal_workspace))
+    }
+
+    fn open_workspace_and_archive_thread(
+        &mut self,
+        session_id: acp::SessionId,
+        folder_paths: PathList,
+        project_group_key: ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((open_task, modal_workspace)) =
+            self.open_workspace_for_archive(folder_paths, project_group_key, window, cx)
+        else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            let result = open_task.await;
+            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+            let workspace = result?;
+            Self::wait_for_archive_workspace_metadata(&workspace, cx).await;
+
+            this.update_in(cx, |this, window, cx| {
+                this.update_entries(cx);
+                this.archive_thread(&session_id, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn open_workspace_and_close_terminal(
+        &mut self,
+        metadata: TerminalThreadMetadata,
+        folder_paths: PathList,
+        project_group_key: ProjectGroupKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((open_task, modal_workspace)) =
+            self.open_workspace_for_archive(folder_paths, project_group_key, window, cx)
+        else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            let result = open_task.await;
+            remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+            let workspace = result?;
+            Self::wait_for_archive_workspace_metadata(&workspace, cx).await;
+
+            this.update_in(cx, |this, window, cx| {
+                let workspace = ThreadEntryWorkspace::Open(workspace);
+                this.close_terminal(&metadata, &workspace, window, cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn close_terminal(
         &mut self,
         metadata: &TerminalThreadMetadata,
@@ -3626,6 +3780,29 @@ impl Sidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let ThreadEntryWorkspace::Closed {
+            folder_paths,
+            project_group_key,
+        } = workspace
+            && Self::should_load_closed_workspace_for_archive(
+                folder_paths,
+                project_group_key,
+                metadata.remote_connection.as_ref(),
+                None,
+                Some(metadata.terminal_id),
+                cx,
+            )
+        {
+            self.open_workspace_and_close_terminal(
+                metadata.clone(),
+                folder_paths.clone(),
+                project_group_key.clone(),
+                window,
+                cx,
+            );
+            return;
+        }
+
         let terminal_id = metadata.terminal_id;
         let is_active = self
             .active_entry
@@ -3997,6 +4174,41 @@ impl Sidebar {
                     .as_ref()
                     .map(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)))
             });
+        let thread_entry_workspace = self.contents.entries.iter().find_map(|entry| match entry {
+            ListEntry::Thread(thread) => thread_id
+                .map_or_else(
+                    || thread.metadata.session_id.as_ref() == Some(session_id),
+                    |tid| thread.metadata.thread_id == tid,
+                )
+                .then(|| thread.workspace.clone()),
+            _ => None,
+        });
+
+        if let (
+            Some(metadata),
+            Some(ThreadEntryWorkspace::Closed {
+                folder_paths,
+                project_group_key,
+            }),
+        ) = (metadata.as_ref(), thread_entry_workspace)
+            && Self::should_load_closed_workspace_for_archive(
+                &folder_paths,
+                &project_group_key,
+                metadata.remote_connection.as_ref(),
+                Some(metadata.thread_id),
+                None,
+                cx,
+            )
+        {
+            self.open_workspace_and_archive_thread(
+                session_id.clone(),
+                folder_paths,
+                project_group_key,
+                window,
+                cx,
+            );
+            return;
+        }
 
         // Compute which linked worktree roots should be archived from disk if
         // this thread is archived. This must happen before we remove any
