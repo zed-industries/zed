@@ -7,9 +7,9 @@ use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -323,15 +323,19 @@ impl ChatGptModel {
         true
     }
 
-    fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+    fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
         // Codex bundled models all default to Medium reasoning effort.
         Some(ReasoningEffort::Medium)
     }
 
-    fn supports_none_reasoning_effort(&self) -> bool {
-        // The Codex backend's supported_reasoning_levels for every model in
-        // this list is low/medium/high/xhigh -- sending `none` is rejected.
-        false
+    fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+        // The Codex backend's supported_reasoning_levels for every model in this list is low/medium/high/xhigh
+        &[
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::XHigh,
+        ]
     }
 
     fn supports_parallel_tool_calls(&self) -> bool {
@@ -385,7 +389,32 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.model.reasoning_effort().is_some()
+        true
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        let default_effort = self.model.default_reasoning_effort();
+        self.model
+            .supported_reasoning_efforts()
+            .iter()
+            .copied()
+            .filter_map(|effort| {
+                let (name, value) = match effort {
+                    ReasoningEffort::None => return None,
+                    ReasoningEffort::Minimal => ("Minimal", "minimal"),
+                    ReasoningEffort::Low => ("Low", "low"),
+                    ReasoningEffort::Medium => ("Medium", "medium"),
+                    ReasoningEffort::High => ("High", "high"),
+                    ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                };
+
+                Some(LanguageModelEffortLevel {
+                    name: name.into(),
+                    value: value.into(),
+                    is_default: Some(effort) == default_effort,
+                })
+            })
+            .collect()
     }
 
     fn telemetry_id(&self) -> String {
@@ -423,8 +452,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             /*max_output_tokens*/ None,
-            self.model.reasoning_effort(),
-            self.model.supports_none_reasoning_effort(),
+            self.model.default_reasoning_effort(),
+            self.model
+                .supported_reasoning_efforts()
+                .contains(&ReasoningEffort::None),
         );
         responses_request.store = Some(false);
 
@@ -444,9 +475,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             }
             true
         });
-        if !instructions.is_empty() {
-            responses_request.instructions = Some(instructions.join("\n\n"));
-        }
+        responses_request.instructions = Some(instructions.join("\n\n"));
 
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
@@ -986,6 +1015,7 @@ impl Render for ConfigurationView {
                 .unwrap_or_else(|| "Signed in".to_string());
 
             let weak_state = self.state.downgrade();
+
             return v_flex()
                 .child(
                     ConfiguredApiCard::new(SharedString::from(label))
@@ -997,30 +1027,52 @@ impl Render for ConfigurationView {
                 .into_any_element();
         }
 
-        if state.is_signing_in() {
-            return v_flex()
-                .child(Label::new("Signing in…").color(Color::Muted))
-                .into_any_element();
-        }
-
         let last_auth_error = state.last_auth_error.clone();
         let provider_state = self.state.clone();
         let http_client = self.http_client.clone();
 
+        let is_signing_in = state.is_signing_in();
+        let button_label = if is_signing_in {
+            "Signing in…"
+        } else {
+            "Sign in to use ChatGPT Subscription"
+        };
+
         v_flex()
             .gap_2()
-            .when_some(last_auth_error, |this, error| {
-                this.child(Label::new(error).color(Color::Error))
-            })
             .child(Label::new(
                 "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.",
             ))
             .child(
-                Button::new("sign-in", "Sign in with ChatGPT")
+                Button::new("sign-in", button_label)
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .loading(is_signing_in)
+                    .disabled(is_signing_in)
+                    .when(!is_signing_in, |this| {
+                        this.start_icon(
+                            Icon::new(IconName::AiOpenAi)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
+                    })
                     .on_click(move |_, _window, cx| {
                         do_sign_in(&provider_state, &http_client, cx);
                     }),
             )
+            .when_some(last_auth_error, |this, error| {
+                this.child(
+                    h_flex()
+                        .gap_1()
+                        .justify_center()
+                        .child(
+                            Icon::new(IconName::XCircle)
+                                .color(Color::Error)
+                                .size(IconSize::Small),
+                        )
+                        .child(Label::new(error).color(Color::Muted)),
+                )
+            })
             .into_any_element()
     }
 }

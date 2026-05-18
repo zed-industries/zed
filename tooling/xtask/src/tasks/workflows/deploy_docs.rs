@@ -86,6 +86,7 @@ fn docs_build_steps(
 
     steps::use_clang(
         job.add_env(("DOCS_AMPLITUDE_API_KEY", vars::DOCS_AMPLITUDE_API_KEY))
+            .add_env(("DOCS_CONSENT_IO_INSTANCE", vars::DOCS_CONSENT_IO_INSTANCE))
             .add_step(
                 steps::checkout_repo().when_some(checkout_ref, |step, checkout_ref| {
                     step.with_ref(checkout_ref)
@@ -270,6 +271,10 @@ pub(crate) fn deploy_docs_workflow_call(
                 vars::DOCS_AMPLITUDE_API_KEY.to_owned(),
             ),
             (
+                "DOCS_CONSENT_IO_INSTANCE".to_owned(),
+                vars::DOCS_CONSENT_IO_INSTANCE.to_owned(),
+            ),
+            (
                 "CLOUDFLARE_API_TOKEN".to_owned(),
                 vars::CLOUDFLARE_API_TOKEN.to_owned(),
             ),
@@ -324,6 +329,13 @@ pub(crate) fn deploy_docs() -> Workflow {
                             "DOCS_AMPLITUDE_API_KEY".to_owned(),
                             WorkflowCallSecret {
                                 description: "DOCS_AMPLITUDE_API_KEY".to_owned(),
+                                required: true,
+                            },
+                        ),
+                        (
+                            "DOCS_CONSENT_IO_INSTANCE".to_owned(),
+                            WorkflowCallSecret {
+                                description: "DOCS_CONSENT_IO_INSTANCE".to_owned(),
                                 required: true,
                             },
                         ),
