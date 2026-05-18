@@ -33,13 +33,12 @@ use std::time::Duration;
 use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, CursorStyle,
-    DispatchPhase, Edges, Entity,
-    FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
-    ImageFormat, ImageSource, InputHandler, KeyContext, Length, MouseButton, MouseDownEvent,
-    MouseEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, Stateful,
-    StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign,
-    TextLayout, TextRun, TextStyle, TextStyleRefinement, UTF16Selection, WrappedLineLayout,
-    actions, canvas, img, point, quad, relative, size,
+    DispatchPhase, Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId,
+    Hitbox, Hsla, Image, ImageFormat, ImageSource, InputHandler, KeyContext, Length, MouseButton,
+    MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
+    Stateful, StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task,
+    TextAlign, TextLayout, TextRun, TextStyle, TextStyleRefinement, UTF16Selection,
+    WrappedLineLayout, actions, canvas, img, point, quad, relative, size,
 };
 use language::{
     Bias, CharClassifier, Language, LanguageRegistry, OffsetUtf16, ResolvedHighlights, Rope,
