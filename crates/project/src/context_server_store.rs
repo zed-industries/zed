@@ -28,7 +28,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use crate::{
     DisableAiSettings, Project,
     project_settings::{ContextServerSettings, ProjectSettings},
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
 /// Maximum timeout for context server requests
@@ -451,6 +451,16 @@ impl ContextServerStore {
         if maintain_server_loop {
             subscriptions.push(cx.observe(&registry, |this, _registry, cx| {
                 if !DisableAiSettings::get_global(cx).disable_ai {
+                    this.available_context_servers_changed(cx);
+                }
+            }));
+            subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
+                if matches!(
+                    event,
+                    WorktreeStoreEvent::WorktreeAdded(_)
+                        | WorktreeStoreEvent::WorktreeRemoved(_, _)
+                ) && !DisableAiSettings::get_global(cx).disable_ai
+                {
                     this.available_context_servers_changed(cx);
                 }
             }));

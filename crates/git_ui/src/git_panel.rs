@@ -698,6 +698,7 @@ pub struct GitPanel {
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history_shas: Vec<Oid>,
     focused_history_entry: Option<usize>,
+    history_keyboard_nav: bool,
     _repo_subscriptions: Vec<Subscription>,
 
     _settings_subscription: Subscription,
@@ -894,6 +895,7 @@ impl GitPanel {
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history_shas: Vec::new(),
                 focused_history_entry: None,
+                history_keyboard_nav: false,
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: GitAccess::Yes,
@@ -1044,6 +1046,10 @@ impl GitPanel {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
+        }
+        if self.active_tab == GitPanelTab::History && self.focused_history_entry.is_some() {
+            self.history_keyboard_nav = true;
+            cx.notify();
         }
     }
 
@@ -5020,6 +5026,7 @@ impl GitPanel {
             Some(i) => (i + 1).min(count - 1),
         };
         self.focused_history_entry = Some(new_index);
+        self.history_keyboard_nav = true;
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
@@ -5035,6 +5042,7 @@ impl GitPanel {
             Some(i) => i.saturating_sub(1),
         };
         self.focused_history_entry = Some(new_index);
+        self.history_keyboard_nav = true;
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
@@ -5195,6 +5203,7 @@ impl GitPanel {
 
         let focused_history_entry = self.focused_history_entry;
         let is_panel_focused = self.focus_handle.is_focused(window);
+        let show_focus_border = self.history_keyboard_nav;
 
         let ahead_count = active_repository
             .read(cx)
@@ -5214,6 +5223,7 @@ impl GitPanel {
                     uniform_list("commit_history_list", item_count, {
                         let workspace = workspace;
                         let repo_weak = repo_weak;
+                        let git_panel = cx.weak_entity();
                         move |range, window, cx| {
                             let local_offset = time::UtcOffset::current_local_offset()
                                 .unwrap_or(time::UtcOffset::UTC);
@@ -5304,11 +5314,14 @@ impl GitPanel {
                                         .gap_0p5()
                                         .border_1()
                                         .border_color(gpui::transparent_black())
-                                        .when(is_focused && is_panel_focused, |this| {
-                                            this.border_color(
-                                                cx.theme().colors().panel_focused_border,
-                                            )
-                                        })
+                                        .when(
+                                            is_focused && is_panel_focused && show_focus_border,
+                                            |this| {
+                                                this.border_color(
+                                                    cx.theme().colors().panel_focused_border,
+                                                )
+                                            },
+                                        )
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                                         .child(
                                             h_flex()
@@ -5355,6 +5368,18 @@ impl GitPanel {
                                                 short_sha.clone(),
                                                 cx,
                                             )
+                                        })
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let git_panel = git_panel.clone();
+                                            move |_, _, cx| {
+                                                git_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.focused_history_entry = Some(index);
+                                                        panel.history_keyboard_nav = false;
+                                                        cx.notify();
+                                                    })
+                                                    .ok();
+                                            }
                                         })
                                         .on_click(move |_, window, cx| {
                                             CommitView::open(
