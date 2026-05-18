@@ -364,11 +364,7 @@ impl UserMessage {
                             .ok();
                         }
                         MentionUri::Skill { name, source, .. } => {
-                            let label = if source.is_empty() {
-                                format!("{} (global)", name)
-                            } else {
-                                format!("{} ({})", name, source)
-                            };
+                            let label = format!("{} ({})", name, source);
                             write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
                     }

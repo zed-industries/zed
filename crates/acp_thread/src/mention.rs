@@ -343,11 +343,7 @@ impl MentionUri {
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
             MentionUri::Skill { name, source, .. } => {
-                if source.is_empty() {
-                    format!("{} (global)", name)
-                } else {
-                    format!("{} ({})", name, source)
-                }
+                format!("{} ({})", name, source)
             }
         }
     }
