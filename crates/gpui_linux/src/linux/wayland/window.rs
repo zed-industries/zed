@@ -346,12 +346,7 @@ impl WaylandWindowState {
                     height: DevicePixels(f32::from(options.bounds.size.height) as i32),
                 },
                 transparent: true,
-                // Prefer Mailbox over the default Fifo to avoid blocking on
-                // wl_surface.frame callbacks that can be delayed or lost on some
-                // compositor+driver combinations (e.g. NVIDIA + Hyprland).
-                // Mailbox does not block on vblank, preventing event-loop stalls
-                // that freeze the entire editor.
-                // Falls back to Fifo automatically if Mailbox is unsupported.
+                // Prefer Mailbox to avoid blocking. Falls back to FIFO if Mailbox is unsupported.
                 preferred_present_mode: Some(wgpu::PresentMode::Mailbox),
             };
             WgpuRenderer::new(gpu_context, &raw_window, config, compositor_gpu)?
