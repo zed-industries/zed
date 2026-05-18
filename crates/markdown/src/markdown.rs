@@ -397,12 +397,12 @@ enum EscapeAction {
 }
 
 impl EscapeAction {
-    fn output_len(&self) -> usize {
+    fn output_len(&self, c: char) -> usize {
         match self {
-            Self::PassThrough => 1,
+            Self::PassThrough => c.len_utf8(),
             Self::Nbsp(count) => count * '\u{00A0}'.len_utf8(),
             Self::DoubleNewline => 2,
-            Self::PrefixBackslash => 2,
+            Self::PrefixBackslash => '\\'.len_utf8() + c.len_utf8(),
         }
     }
 
@@ -427,8 +427,6 @@ impl EscapeAction {
     }
 }
 
-// Valid to operate on raw bytes since multi-byte UTF-8
-// sequences never contain ASCII-range bytes.
 struct MarkdownEscaper {
     in_leading_whitespace: bool,
 }
@@ -442,21 +440,21 @@ impl MarkdownEscaper {
         }
     }
 
-    fn next(&mut self, byte: u8) -> EscapeAction {
-        let action = if self.in_leading_whitespace && byte == b'\t' {
+    fn next(&mut self, c: char) -> EscapeAction {
+        let action = if self.in_leading_whitespace && c == '\t' {
             EscapeAction::Nbsp(Self::TAB_SIZE)
-        } else if self.in_leading_whitespace && byte == b' ' {
+        } else if self.in_leading_whitespace && c == ' ' {
             EscapeAction::Nbsp(1)
-        } else if byte == b'\n' {
+        } else if c == '\n' {
             EscapeAction::DoubleNewline
-        } else if byte.is_ascii_punctuation() {
+        } else if c.is_ascii_punctuation() {
             EscapeAction::PrefixBackslash
         } else {
             EscapeAction::PassThrough
         };
 
         self.in_leading_whitespace =
-            byte == b'\n' || (self.in_leading_whitespace && (byte == b' ' || byte == b'\t'));
+            c == '\n' || (self.in_leading_whitespace && (c == ' ' || c == '\t'));
         action
     }
 }
@@ -649,7 +647,7 @@ impl Markdown {
     pub fn escape(s: &str) -> Cow<'_, str> {
         let output_len: usize = {
             let mut escaper = MarkdownEscaper::new();
-            s.bytes().map(|byte| escaper.next(byte).output_len()).sum()
+            s.chars().map(|c| escaper.next(c).output_len(c)).sum()
         };
 
         if output_len == s.len() {
@@ -658,22 +656,8 @@ impl Markdown {
 
         let mut escaper = MarkdownEscaper::new();
         let mut output = String::with_capacity(output_len);
-        let mut byte_idx = 0;
-
-        while byte_idx < s.len() {
-            let byte = s.as_bytes()[byte_idx];
-            let action = escaper.next(byte);
-
-            if byte.is_ascii() {
-                action.write_to(byte as char, &mut output);
-                byte_idx += 1;
-            } else {
-                // Multi-byte UTF-8 characters never trigger escaping actions,
-                // so just decode and pass them through.
-                let c = s[byte_idx..].chars().next().unwrap();
-                output.push(c);
-                byte_idx += c.len_utf8();
-            }
+        for c in s.chars() {
+            escaper.next(c).write_to(c, &mut output);
         }
         output.into()
     }
@@ -3747,15 +3731,9 @@ mod tests {
     fn test_escape_non_ascii() {
         // Cyrillic characters should not have backslashes added before them,
         // but ASCII punctuation should still be escaped.
-        assert_eq!(
-            Markdown::escape("Привет, мир"),
-            r"Привет\, мир"
-        );
+        assert_eq!(Markdown::escape("Привет, мир"), r"Привет\, мир");
         // Test with markdown special characters mixed in
-        assert_eq!(
-            Markdown::escape("Привет, *мир*"),
-            r"Привет\, \*мир\*"
-        );
+        assert_eq!(Markdown::escape("Привет, *мир*"), r"Привет\, \*мир\*");
         // Test with the exact example from the issue (single quotes are also ASCII punctuation)
         assert_eq!(
             Markdown::escape("Отсутствует пробел справа от ','"),
@@ -3766,18 +3744,9 @@ mod tests {
             Markdown::escape("こんにちは *world*"),
             r"こんにちは \*world\*"
         );
-        assert_eq!(
-            Markdown::escape("العربيّة [link]"),
-            r"العربيّة \[link\]"
-        );
-        assert_eq!(
-            Markdown::escape("Ελληνικά _text_"),
-            r"Ελληνικά \_text\_"
-        );
-        assert_eq!(
-            Markdown::escape("עברית `code`"),
-            r"עברית \`code\`"
-        );
+        assert_eq!(Markdown::escape("العربيّة [link]"), r"العربيّة \[link\]");
+        assert_eq!(Markdown::escape("Ελληνικά _text_"), r"Ελληνικά \_text\_");
+        assert_eq!(Markdown::escape("עברית `code`"), r"עברית \`code\`");
         // Non-ASCII followed by ASCII punctuation
         assert_eq!(Markdown::escape("Test: тест"), r"Test\: тест");
     }
@@ -3810,22 +3779,12 @@ mod tests {
         ];
         for input in cases {
             let mut escaper = MarkdownEscaper::new();
-            let precomputed: usize = input.bytes().map(|b| escaper.next(b).output_len()).sum();
+            let precomputed: usize = input.chars().map(|c| escaper.next(c).output_len(c)).sum();
 
             let mut escaper = MarkdownEscaper::new();
             let mut output = String::new();
-            let mut byte_idx = 0;
-            while byte_idx < input.len() {
-                let byte = input.as_bytes()[byte_idx];
-                let action = escaper.next(byte);
-                if byte.is_ascii() {
-                    action.write_to(byte as char, &mut output);
-                    byte_idx += 1;
-                } else {
-                    let c = input[byte_idx..].chars().next().unwrap();
-                    output.push(c);
-                    byte_idx += c.len_utf8();
-                }
+            for c in input.chars() {
+                escaper.next(c).write_to(c, &mut output);
             }
 
             assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
