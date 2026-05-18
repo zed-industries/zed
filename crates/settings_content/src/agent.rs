@@ -84,7 +84,7 @@ pub struct AgentSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the agent panel.
     ///
-    /// Default: right
+    /// Default: left
     pub dock: Option<DockPosition>,
     /// Whether the agent panel should use flexible (proportional) sizing.
     ///
@@ -118,6 +118,8 @@ pub struct AgentSettingsContent {
     pub max_content_width: Option<f32>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
+    /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
+    pub subagent_model: Option<LanguageModelSelection>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -429,6 +431,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
                         "x_ai",

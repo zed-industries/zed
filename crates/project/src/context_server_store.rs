@@ -13,7 +13,9 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
 use futures::future::Either;
 use futures::{FutureExt as _, StreamExt as _, future::join_all};
-use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
+use gpui::{
+    App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, TaskExt, WeakEntity, actions,
+};
 use http_client::HttpClient;
 use itertools::Itertools;
 use rand::Rng as _;
@@ -26,7 +28,7 @@ use util::{ResultExt as _, rel_path::RelPath};
 use crate::{
     DisableAiSettings, Project,
     project_settings::{ContextServerSettings, ProjectSettings},
-    worktree_store::WorktreeStore,
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
 /// Maximum timeout for context server requests
@@ -452,6 +454,16 @@ impl ContextServerStore {
                     this.available_context_servers_changed(cx);
                 }
             }));
+            subscriptions.push(cx.subscribe(&worktree_store, |this, _store, event, cx| {
+                if matches!(
+                    event,
+                    WorktreeStoreEvent::WorktreeAdded(_)
+                        | WorktreeStoreEvent::WorktreeRemoved(_, _)
+                ) && !DisableAiSettings::get_global(cx).disable_ai
+                {
+                    this.available_context_servers_changed(cx);
+                }
+            }));
         }
 
         let ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
@@ -605,10 +617,7 @@ impl ContextServerStore {
 
         let server = state.server();
         let configuration = state.configuration();
-        let mut result = Ok(());
-        if let ContextServerState::Running { server, .. } = &state {
-            result = server.stop();
-        }
+        let result = server.stop();
         drop(state);
 
         self.update_server_state(
@@ -1064,9 +1073,8 @@ impl ContextServerStore {
         // Start a loopback HTTP server on an ephemeral port. The redirect URI
         // includes this port so the browser sends the callback directly to our
         // process.
-        let (redirect_uri, callback_rx) = oauth::start_callback_server()
-            .await
-            .context("Failed to start OAuth callback server")?;
+        let (redirect_uri, callback_rx) =
+            oauth::start_callback_server().context("Failed to start OAuth callback server")?;
 
         let http_client = cx.update(|cx| cx.http_client());
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
@@ -1094,9 +1102,6 @@ impl ContextServerStore {
 
         let callback = callback_rx
             .await
-            .map_err(|_| {
-                anyhow::anyhow!("OAuth callback server was shut down before receiving a response")
-            })?
             .context("OAuth callback server received an invalid request")?;
 
         if callback.state != state_param {

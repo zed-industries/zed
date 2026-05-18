@@ -18,8 +18,8 @@ use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkS
 use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    BackgroundExecutor, DismissEvent, Task, TestAppContext, UpdateGlobal, VisualTestContext,
-    WindowBounds, WindowOptions, div,
+    BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
+    VisualTestContext, WindowBounds, WindowOptions, div,
 };
 use indoc::indoc;
 use language::{
@@ -6865,6 +6865,40 @@ async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_base64(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Encode a plain text selection
+    cx.set_state(indoc! {"
+        «helloˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_base64(&ConvertToBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+
+    // Decode a valid base64 selection
+    cx.set_state(indoc! {"
+        «aGVsbG8=ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «helloˇ»
+    "});
+
+    // Decode invalid base64 — should leave text unchanged
+    cx.set_state(indoc! {"
+        «not!!!ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.convert_from_base64(&ConvertFromBase64, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «not!!!ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8139,7 +8173,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8544,7 +8578,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     ) {
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
         cx.set_state(unwrapped_text);
-        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
         cx.assert_editor_state(wrapped_text);
     }
 }
@@ -8570,7 +8604,7 @@ async fn test_rewrap_line_comment_in_go(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -8598,7 +8632,7 @@ async fn test_rewrap_line_comment_in_c(cx: &mut TestAppContext) {
     cx.set_state(indoc! {"
         // Lorem ipsum dolor sit amet, consectetur adipiscing elit.ˇ
     "});
-    cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+    cx.update_editor(|e, _, cx| e.rewrap(RewrapOptions::default(), cx));
     cx.assert_editor_state(indoc! {"
         // Lorem ipsum dolor sit amet,
         // consectetur adipiscing elit.ˇ
@@ -22193,7 +22227,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
                         .entries
                         .borrow()
                         .iter()
-                        .map(|mat| mat.string.clone())
+                        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                         .collect::<Vec<String>>(),
                     items
                         .iter()
@@ -22345,7 +22379,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries.iter().map(|mat| mat.string.clone()).collect()
+    entries
+        .iter()
+        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
+        .collect()
 }
 
 #[gpui::test]
@@ -31264,7 +31301,8 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
             let entries = menu.entries.borrow();
             let entries = entries
                 .iter()
-                .map(|entry| entry.string.as_str())
+                .filter_map(|entry| entry.as_match())
+                .map(|m| m.string.as_str())
                 .collect::<Vec<_>>();
             assert_eq!(entries, expected);
         } else {
@@ -31351,7 +31389,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
                 let entries = context_menu.entries.borrow();
                 entries
                     .iter()
-                    .map(|entry| entry.string.clone())
+                    .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                     .collect_vec()
             }
             _ => vec![],

@@ -481,13 +481,17 @@ message Envelope {
     GitRestoreArchiveCheckpoint git_restore_archive_checkpoint = 446;
     GetCommitData get_commit_data = 447;
     GetCommitDataResponse get_commit_data_response = 448;
+    SearchCommits search_commits = 449;
+    SearchCommitsResponse search_commits_response = 450;
+    GetInitialGraphData get_initial_graph_data = 451;
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
 
-    PrepareCallHierarchy prepare_call_hierarchy = 449;
-    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 450;
-    GetIncomingCalls get_incoming_calls = 451;
-    GetIncomingCallsResponse get_incoming_calls_response = 452;
-    GetOutgoingCalls get_outgoing_calls = 453;
-    GetOutgoingCallsResponse get_outgoing_calls_response = 454; // current max
+    PrepareCallHierarchy prepare_call_hierarchy = 453;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 454;
+    GetIncomingCalls get_incoming_calls = 455;
+    GetIncomingCallsResponse get_incoming_calls_response = 456;
+    GetOutgoingCalls get_outgoing_calls = 457;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 458; // current max
   }
 
   reserved 87 to 88;
