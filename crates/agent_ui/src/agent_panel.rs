@@ -1870,7 +1870,7 @@ impl AgentPanel {
             return;
         }
 
-        let working_directory = self.terminal_restore_options(&metadata, workspace, cx);
+        let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         self.spawn_terminal(
             metadata.terminal_id,
             working_directory,
@@ -1884,7 +1884,7 @@ impl AgentPanel {
         );
     }
 
-    fn terminal_restore_options(
+    fn terminal_restore_working_directory(
         &self,
         metadata: &TerminalThreadMetadata,
         workspace: Option<&Workspace>,
@@ -5515,7 +5515,7 @@ impl AgentPanel {
             return Ok(());
         }
 
-        let working_directory = self.terminal_restore_options(&metadata, workspace, cx);
+        let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         self.insert_display_only_terminal(
             metadata.terminal_id,
             working_directory,

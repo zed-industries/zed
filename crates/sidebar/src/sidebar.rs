@@ -3714,22 +3714,18 @@ impl Sidebar {
                     let store = ThreadMetadataStore::global(cx);
                     let store = store.read(cx);
                     !store.path_is_referenced_by_unarchived_threads(
-                        &plan.root_path,
-                        metadata.remote_connection.as_ref(),
-                    ) && store.path_is_referenced_by_archived_threads(
+                        None,
                         &plan.root_path,
                         metadata.remote_connection.as_ref(),
                     )
                 })
                 .filter(|root| {
                     TerminalThreadMetadataStore::try_global(cx).is_none_or(|terminal_store| {
-                        !terminal_store
-                            .read(cx)
-                            .path_is_referenced_by_other_terminal(
-                                terminal_id,
-                                root.root_path.as_path(),
-                                metadata.remote_connection.as_ref(),
-                            )
+                        !terminal_store.read(cx).path_is_referenced_by_terminal(
+                            Some(terminal_id),
+                            root.root_path.as_path(),
+                            metadata.remote_connection.as_ref(),
+                        )
                     })
                 })
                 .filter(|root| {
@@ -4086,18 +4082,17 @@ impl Sidebar {
                     })
                     .filter(|plan| {
                         thread_id.map_or(true, |tid| {
-                            !store
-                                .read(cx)
-                                .path_is_referenced_by_other_unarchived_threads(
-                                    tid,
-                                    &plan.root_path,
-                                    metadata.remote_connection.as_ref(),
-                                )
+                            !store.read(cx).path_is_referenced_by_unarchived_threads(
+                                Some(tid),
+                                &plan.root_path,
+                                metadata.remote_connection.as_ref(),
+                            )
                         })
                     })
                     .filter(|root| {
                         TerminalThreadMetadataStore::try_global(cx).is_none_or(|terminal_store| {
                             !terminal_store.read(cx).path_is_referenced_by_terminal(
+                                None,
                                 root.root_path.as_path(),
                                 metadata.remote_connection.as_ref(),
                             )

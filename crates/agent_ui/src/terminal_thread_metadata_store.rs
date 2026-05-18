@@ -163,27 +163,12 @@ impl TerminalThreadMetadataStore {
 
     pub fn path_is_referenced_by_terminal(
         &self,
+        terminal_id: Option<TerminalId>,
         path: &Path,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
         self.entries().any(|terminal| {
-            same_remote_connection_identity(terminal.remote_connection.as_ref(), remote_connection)
-                && terminal
-                    .folder_paths()
-                    .paths()
-                    .iter()
-                    .any(|folder_path| folder_path.as_path() == path)
-        })
-    }
-
-    pub fn path_is_referenced_by_other_terminal(
-        &self,
-        terminal_id: TerminalId,
-        path: &Path,
-        remote_connection: Option<&RemoteConnectionOptions>,
-    ) -> bool {
-        self.entries().any(|terminal| {
-            terminal.terminal_id != terminal_id
+            Some(terminal.terminal_id) != terminal_id
                 && same_remote_connection_identity(
                     terminal.remote_connection.as_ref(),
                     remote_connection,
