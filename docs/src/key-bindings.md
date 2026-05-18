@@ -21,7 +21,7 @@ We currently support:
 - Cursor
 - None (disables _all_ key bindings)
 
-This setting can also be changed via the command palette through the `zed: toggle base keymap selector` action.
+This setting can also be changed via the command palette through the {#action zed::ToggleBaseKeymapSelector} action.
 
 You can also enable `vim_mode` or `helix_mode`, which add modal bindings.
 For more information, see the documentation for [Vim mode](./vim.md) and [Helix mode](./helix.md).
@@ -79,7 +79,7 @@ You can see all of Zed's default bindings for each platform in the default keyma
 - [Windows](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-windows.json)
 - [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps, you can use `dev: Open Key Context View` from the command palette.
+If you want to debug problems with custom keymaps, you can use {#action dev::OpenKeyContextView} from the command palette.
 Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding Syntax
@@ -120,7 +120,7 @@ It is possible to match against typing a modifier key on its own. For example, `
 
 If a binding group has a `"context"` key, it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the `dev: open key context view` command in the command palette.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with the {#action dev::OpenKeyContextView} command in the command palette.
 
 For example:
 
@@ -186,7 +186,7 @@ Otherwise, read on...
 
 On Cyrillic, Hebrew, Armenian, and other keyboards that are mostly non-ASCII, macOS automatically maps keys to the ASCII range when `cmd` is held. Zed takes this a step further, and it can always match key-presses against either the ASCII layout or the real layout, regardless of modifiers and the `use_key_equivalents` setting. For example, in Thai, pressing `ctrl-ๆ` will match bindings associated with `ctrl-q` or `ctrl-ๆ`.
 
-On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running `dev: open key context view` from the command palette.
+On keyboards that support extended Latin alphabets (French AZERTY, German QWERTZ, etc.), it is often not possible to type the entire ASCII range without `option`. This introduces an ambiguity: `option-2` produces `@`. To ensure that all the built-in keyboard shortcuts can still be typed on these keyboards, we move key bindings around. For example, shortcuts bound to `@` on QWERTY are moved to `"` on a Spanish layout. This mapping is based on the macOS system defaults and can be seen by running {#action dev::OpenKeyContextView} from the command palette.
 
 If you are defining shortcuts in your personal keymap, you can opt into the key equivalent mapping by setting `use_key_equivalents` to `true` in your keymap:
 

@@ -187,10 +187,10 @@ jobs:
       env:
         CURRENT_VERSION: ${{ needs.check_version_changed.outputs.current_version }}
         WORKING_DIR: ${{ inputs.working-directory }}
-    - name: extension_bump::create_version_tag
+    - name: steps::create_tag
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
-        script: |-
+        script: |
           github.rest.git.createRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -239,10 +239,9 @@ jobs:
         tag: ${{ needs.create_version_label.outputs.tag }}
       env:
         COMMITTER_TOKEN: ${{ steps.generate-token.outputs.token }}
-    - name: extension_bump::enable_automerge_if_staff
+    - name: enable_automerge_if_staff
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
       with:
-        github-token: ${{ steps.generate-token.outputs.token }}
         script: |
           const prNumber = process.env.PR_NUMBER;
           if (!prNumber) {
@@ -301,6 +300,7 @@ jobs:
           `, { pullRequestId: pr.node_id });
 
           console.log(`Automerge enabled for PR #${prNumber} in zed-industries/extensions`);
+        github-token: ${{ steps.generate-token.outputs.token }}
       env:
         PR_NUMBER: ${{ steps.extension-update.outputs.pull-request-number }}
     defaults:

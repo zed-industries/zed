@@ -350,7 +350,7 @@ impl AnyAgentTool for ContextServerTool {
             let input = input
                 .recv()
                 .await
-                .map_err(|e| anyhow::anyhow!(format!("Failed to receive tool input: {e}")))?;
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
             authorize
                 .await
@@ -409,6 +409,9 @@ impl AnyAgentTool for ContextServerTool {
                     }
                     context_server::types::ToolResponseContent::Resource { .. } => {
                         log::warn!("Ignoring resource content from tool response");
+                    }
+                    context_server::types::ToolResponseContent::ResourceLink { .. } => {
+                        log::warn!("Ignoring resource link content from tool response");
                     }
                 }
             }

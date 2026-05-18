@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
     events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -51,7 +52,10 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use util::{
     ResultExt,
@@ -178,6 +182,8 @@ pub(crate) struct MacPlatformState {
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
     keyboard_mapper: Rc<MacKeyboardMapper>,
+    /// Mirrors `[NSCursor setHiddenUntilMouseMoves:]` state, which AppKit doesn't expose.
+    cursor_visible: Arc<AtomicBool>,
 }
 
 impl MacPlatform {
@@ -214,6 +220,7 @@ impl MacPlatform {
             on_thermal_state_change: None,
             menus: None,
             keyboard_mapper,
+            cursor_visible: Arc::new(AtomicBool::new(true)),
         }))
     }
 
@@ -513,17 +520,19 @@ impl Platform for MacPlatform {
         }
     }
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         use std::os::unix::process::CommandExt as _;
 
         let app_pid = std::process::id().to_string();
-        let app_path = self
-            .app_path()
-            .ok()
-            // When the app is not bundled, `app_path` returns the
-            // directory containing the executable. Disregard this
-            // and get the path to the executable itself.
-            .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+        let app_path = binary_path
+            .or_else(|| {
+                self.app_path()
+                    .ok()
+                    // When the app is not bundled, `app_path` returns the
+                    // directory containing the executable. Disregard this
+                    // and get the path to the executable itself.
+                    .and_then(|path| (path.extension()?.to_str()? == "app").then_some(path))
+            })
             .unwrap_or_else(|| std::env::current_exe().unwrap());
 
         // Wait until this process has exited and then re-open this path.
@@ -618,12 +627,22 @@ impl Platform for MacPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let renderer_context = self.0.lock().renderer_context.clone();
+        let (cursor_visible, foreground_executor, background_executor, renderer_context) = {
+            let guard = self.0.lock();
+            (
+                guard.cursor_visible.clone(),
+                guard.foreground_executor.clone(),
+                guard.background_executor.clone(),
+                guard.renderer_context.clone(),
+            )
+        };
+
         Ok(Box::new(MacWindow::open(
             handle,
             options,
-            self.foreground_executor(),
-            self.background_executor(),
+            cursor_visible,
+            foreground_executor,
+            background_executor,
             renderer_context,
         )))
     }
@@ -979,53 +998,22 @@ impl Platform for MacPlatform {
     /// in macOS's [NSCursor](https://developer.apple.com/documentation/appkit/nscursor).
     fn set_cursor_style(&self, style: CursorStyle) {
         unsafe {
-            if style == CursorStyle::None {
-                let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves:YES];
-                return;
-            }
-
-            let new_cursor: id = match style {
-                CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
-                CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
-                CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
-                CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
-                CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
-                CursorStyle::PointingHand => msg_send![class!(NSCursor), pointingHandCursor],
-                CursorStyle::ResizeLeftRight => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeUpDown => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeLeft => msg_send![class!(NSCursor), resizeLeftCursor],
-                CursorStyle::ResizeRight => msg_send![class!(NSCursor), resizeRightCursor],
-                CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
-                CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
-                CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
-
-                // Undocumented, private class methods:
-                // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
-                CursorStyle::ResizeUpLeftDownRight => {
-                    msg_send![class!(NSCursor), _windowResizeNorthWestSouthEastCursor]
-                }
-                CursorStyle::ResizeUpRightDownLeft => {
-                    msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
-                }
-
-                CursorStyle::IBeamCursorForVerticalLayout => {
-                    msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
-                }
-                CursorStyle::OperationNotAllowed => {
-                    msg_send![class!(NSCursor), operationNotAllowedCursor]
-                }
-                CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
-                CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
-                CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-                CursorStyle::None => unreachable!(),
-            };
-
-            let old_cursor: id = msg_send![class!(NSCursor), currentCursor];
-            if new_cursor != old_cursor {
-                let _: () = msg_send![new_cursor, set];
-            }
+            set_active_window_cursor_style(style);
         }
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        let cursor_visible = self.0.lock().cursor_visible.clone();
+        if !cursor_visible.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        unsafe {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: YES];
+        }
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.0.lock().cursor_visible.load(Ordering::Relaxed)
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

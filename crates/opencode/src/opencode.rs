@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use language_model_core::ReasoningEffort;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
@@ -72,10 +73,12 @@ pub enum Model {
     ClaudeSonnet4,
     #[serde(rename = "claude-haiku-4-5")]
     ClaudeHaiku4_5,
-    #[serde(rename = "claude-3-5-haiku")]
-    Claude3_5Haiku,
 
     // -- OpenAI Responses API models --
+    #[serde(rename = "gpt-5.5")]
+    Gpt5_5,
+    #[serde(rename = "gpt-5.5-pro")]
+    Gpt5_5Pro,
     #[serde(rename = "gpt-5.4")]
     Gpt5_4,
     #[serde(rename = "gpt-5.4-pro")]
@@ -114,6 +117,10 @@ pub enum Model {
     Gemini3Flash,
 
     // -- OpenAI Chat Completions protocol models --
+    #[serde(rename = "deepseek-v4-pro")]
+    DeepSeekV4Pro,
+    #[serde(rename = "deepseek-v4-flash")]
+    DeepSeekV4Flash,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
     #[serde(rename = "minimax-m2.5-free")]
@@ -128,10 +135,10 @@ pub enum Model {
     KimiK2_6,
     #[serde(rename = "minimax-m2.7")]
     MiniMaxM2_7,
-    #[serde(rename = "mimo-v2-pro")]
-    MimoV2Pro,
-    #[serde(rename = "mimo-v2-omni")]
-    MimoV2Omni,
+    #[serde(rename = "mimo-v2.5-pro")]
+    MimoV2_5Pro,
+    #[serde(rename = "mimo-v2.5")]
+    MimoV2_5,
     #[serde(rename = "big-pickle")]
     BigPickle,
     #[serde(rename = "nemotron-3-super-free")]
@@ -149,7 +156,9 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         protocol: ApiProtocol,
+        reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
         custom_model_api_url: Option<String>,
+        interleaved_reasoning: bool,
     },
 }
 
@@ -186,7 +195,11 @@ impl Model {
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MiniMaxM2_7 | Self::MimoV2Pro | Self::MimoV2Omni => &[OpenCodeSubscription::Go],
+            Self::MiniMaxM2_7
+            | Self::MimoV2_5Pro
+            | Self::MimoV2_5
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash => &[OpenCodeSubscription::Go],
 
             // Free models
             Self::MiniMaxM2_5Free | Self::Nemotron3SuperFree | Self::BigPickle => {
@@ -211,8 +224,9 @@ impl Model {
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
             Self::ClaudeSonnet4 => "claude-sonnet-4",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
-            Self::Claude3_5Haiku => "claude-3-5-haiku",
 
+            Self::Gpt5_5 => "gpt-5.5",
+            Self::Gpt5_5Pro => "gpt-5.5-pro",
             Self::Gpt5_4 => "gpt-5.4",
             Self::Gpt5_4Pro => "gpt-5.4-pro",
             Self::Gpt5_4Mini => "gpt-5.4-mini",
@@ -232,6 +246,8 @@ impl Model {
             Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
 
+            Self::DeepSeekV4Pro => "deepseek-v4-pro",
+            Self::DeepSeekV4Flash => "deepseek-v4-flash",
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::MiniMaxM2_5Free => "minimax-m2.5-free",
             Self::Glm5 => "glm-5",
@@ -239,8 +255,8 @@ impl Model {
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::MiniMaxM2_7 => "minimax-m2.7",
-            Self::MimoV2Pro => "mimo-v2-pro",
-            Self::MimoV2Omni => "mimo-v2-omni",
+            Self::MimoV2_5Pro => "mimo-v2.5-pro",
+            Self::MimoV2_5 => "mimo-v2.5",
             Self::Qwen3_5Plus => "qwen3.5-plus",
             Self::Qwen3_6Plus => "qwen3.6-plus",
             Self::BigPickle => "big-pickle",
@@ -260,8 +276,9 @@ impl Model {
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
-            Self::Claude3_5Haiku => "Claude Haiku 3.5",
 
+            Self::Gpt5_5 => "GPT 5.5",
+            Self::Gpt5_5Pro => "GPT 5.5 Pro",
             Self::Gpt5_4 => "GPT 5.4",
             Self::Gpt5_4Pro => "GPT 5.4 Pro",
             Self::Gpt5_4Mini => "GPT 5.4 Mini",
@@ -281,6 +298,8 @@ impl Model {
             Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
 
+            Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
+            Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
             Self::Glm5 => "GLM 5",
@@ -288,8 +307,8 @@ impl Model {
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
-            Self::MimoV2Pro => "MiMo V2 Pro",
-            Self::MimoV2Omni => "MiMo V2 Omni",
+            Self::MimoV2_5Pro => "MiMo V2.5 Pro",
+            Self::MimoV2_5 => "MiMo V2.5",
             Self::Qwen3_5Plus => "Qwen3.5 Plus",
             Self::Qwen3_6Plus => "Qwen3.6 Plus",
             Self::BigPickle => "Big Pickle",
@@ -320,10 +339,11 @@ impl Model {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3_5Haiku => ApiProtocol::Anthropic,
+            | Self::ClaudeHaiku4_5 => ApiProtocol::Anthropic,
 
-            Self::Gpt5_4
+            Self::Gpt5_5
+            | Self::Gpt5_5Pro
+            | Self::Gpt5_4
             | Self::Gpt5_4Pro
             | Self::Gpt5_4Mini
             | Self::Gpt5_4Nano
@@ -346,10 +366,12 @@ impl Model {
             | Self::Glm5_1
             | Self::KimiK2_5
             | Self::KimiK2_6
-            | Self::MimoV2Pro
-            | Self::MimoV2Omni
+            | Self::MimoV2_5Pro
+            | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
             | Self::BigPickle
             | Self::Nemotron3SuperFree => ApiProtocol::OpenAiChat,
 
@@ -357,7 +379,29 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> u64 {
+    pub fn interleaved_reasoning(&self) -> bool {
+        match self {
+            Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
+            | Self::KimiK2_5
+            | Self::KimiK2_6
+            | Self::MimoV2_5
+            | Self::MimoV2_5Pro
+            | Self::Glm5
+            | Self::Glm5_1
+            | Self::Nemotron3SuperFree
+            | Self::BigPickle => true,
+
+            Self::Custom {
+                interleaved_reasoning,
+                ..
+            } => *interleaved_reasoning,
+
+            _ => false,
+        }
+    }
+
+    pub fn max_token_count(&self, subscription: OpenCodeSubscription) -> u64 {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_7 => 1_000_000,
@@ -366,9 +410,9 @@ impl Model {
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
             Self::ClaudeOpus4_1 => 200_000,
             Self::ClaudeSonnet4 => 1_000_000,
-            Self::Claude3_5Haiku => 200_000,
 
             // OpenAI models
+            Self::Gpt5_5 | Self::Gpt5_5Pro => 1_050_000,
             Self::Gpt5_4 | Self::Gpt5_4Pro => 1_050_000,
             Self::Gpt5_4Mini | Self::Gpt5_4Nano => 400_000,
             Self::Gpt5_3Codex => 400_000,
@@ -386,19 +430,26 @@ impl Model {
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
             Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
-            Self::Glm5 | Self::Glm5_1 => 204_800,
+            Self::Glm5 | Self::Glm5_1 => {
+                if subscription == OpenCodeSubscription::Go {
+                    202_752
+                } else {
+                    204_800
+                }
+            }
             Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
-            Self::MimoV2Pro => 1_048_576,
-            Self::MimoV2Omni => 262_144,
+            Self::MimoV2_5Pro => 1_048_576,
+            Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
             Self::BigPickle => 200_000,
             Self::Nemotron3SuperFree => 204_800,
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => 1_000_000,
 
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u64> {
+    pub fn max_output_tokens(&self, subscription: OpenCodeSubscription) -> Option<u64> {
         match self {
             // Anthropic models
             Self::ClaudeOpus4_7 | Self::ClaudeOpus4_6 => Some(128_000),
@@ -408,10 +459,11 @@ impl Model {
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4 => Some(64_000),
             Self::ClaudeOpus4_1 => Some(32_000),
-            Self::Claude3_5Haiku => Some(8_192),
 
             // OpenAI models
-            Self::Gpt5_4
+            Self::Gpt5_5
+            | Self::Gpt5_5Pro
+            | Self::Gpt5_4
             | Self::Gpt5_4Pro
             | Self::Gpt5_4Mini
             | Self::Gpt5_4Nano
@@ -432,13 +484,27 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => Some(131_072),
-            Self::Glm5 | Self::Glm5_1 => Some(131_072),
+            Self::MiniMaxM2_5Free => Some(131_072),
+            Self::MiniMaxM2_5 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(65_536)
+                } else {
+                    Some(131_072)
+                }
+            }
+            Self::Glm5 | Self::Glm5_1 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(32_768)
+                } else {
+                    Some(131_072)
+                }
+            }
             Self::BigPickle => Some(128_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3SuperFree => Some(128_000),
-            Self::MimoV2Pro | Self::MimoV2Omni => Some(64_000),
+            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(128_000),
 
             Self::Custom {
                 max_output_tokens, ..
@@ -460,16 +526,16 @@ impl Model {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5
-            | Self::Claude3_5Haiku => true,
+            | Self::ClaudeHaiku4_5 => true,
 
             // OpenAI models support images
-            Self::Gpt5_4
+            Self::Gpt5_5
+            | Self::Gpt5_5Pro
+            | Self::Gpt5_4
             | Self::Gpt5_4Pro
             | Self::Gpt5_4Mini
             | Self::Gpt5_4Nano
             | Self::Gpt5_3Codex
-            | Self::Gpt5_3Spark
             | Self::Gpt5_2
             | Self::Gpt5_2Codex
             | Self::Gpt5_1
@@ -480,13 +546,16 @@ impl Model {
             | Self::Gpt5Codex
             | Self::Gpt5Nano => true,
 
+            // OpenAI models without image support
+            Self::Gpt5_3Spark => false,
+
             // Google models support images
             Self::Gemini3_1Pro | Self::Gemini3Flash => true,
 
             // OpenAI-compatible models with image support
             Self::KimiK2_6
             | Self::KimiK2_5
-            | Self::MimoV2Omni
+            | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus => true,
 
@@ -496,7 +565,9 @@ impl Model {
             | Self::Glm5
             | Self::Glm5_1
             | Self::MiniMaxM2_7
-            | Self::MimoV2Pro
+            | Self::MimoV2_5Pro
+            | Self::DeepSeekV4Pro
+            | Self::DeepSeekV4Flash
             | Self::BigPickle
             | Self::Nemotron3SuperFree => false,
 
@@ -507,6 +578,30 @@ impl Model {
                     | ApiProtocol::OpenAiChat
                     | ApiProtocol::Google
             ),
+        }
+    }
+
+    pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
+        match self {
+            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Custom {
+                reasoning_effort_levels,
+                ..
+            } => reasoning_effort_levels.clone(),
+
+            _ => None,
         }
     }
 }
