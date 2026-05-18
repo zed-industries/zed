@@ -191,22 +191,27 @@ impl PtyProcessInfo {
             return;
         }
         let this = self.clone();
-        let has_changed = cx.background_executor().spawn(async move {
+        let change_task = cx.background_executor().spawn(async move {
+            let prev_cwd = this.current.read().as_ref().map(|p| p.cwd.clone());
+            let prev_name = this.current.read().as_ref().map(|p| p.name.clone());
             let current = this.load();
-            let has_changed = match (this.current.read().as_ref(), current.as_ref()) {
-                (None, None) => false,
-                (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
-                _ => true,
-            };
-            if has_changed {
-                *this.current.write() = current;
-            }
-            has_changed
+            let new_cwd = current.as_ref().map(|p| p.cwd.clone());
+            let new_name = current.as_ref().map(|p| p.name.clone());
+            let has_changed = prev_cwd != new_cwd || prev_name != new_name;
+            let changed_cwd = (prev_cwd != new_cwd).then(|| new_cwd).flatten();
+            (has_changed, changed_cwd)
         });
         let this = Arc::downgrade(self);
         *self.task.lock() = Some(cx.spawn(async move |term, cx| {
-            if has_changed.await {
-                term.update(cx, |_, cx| cx.emit(Event::TitleChanged)).ok();
+            let (has_changed, new_cwd) = change_task.await;
+            if has_changed {
+                term.update(cx, |terminal, cx| {
+                    if let Some(cwd) = new_cwd {
+                        terminal.record_cwd_change(cwd);
+                    }
+                    cx.emit(Event::TitleChanged);
+                })
+                .ok();
             }
             if let Some(this) = this.upgrade() {
                 this.task.lock().take();
