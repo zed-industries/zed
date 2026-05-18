@@ -1,6 +1,6 @@
 use agent_skills::{Skill, SkillIndex};
 use fs::RemoveOptions;
-use gpui::{ScrollHandle, SharedString, prelude::*};
+use gpui::{Action as _, ScrollHandle, SharedString, prelude::*};
 
 use ui::{Divider, Tooltip, prelude::*};
 use util::ResultExt as _;
@@ -44,14 +44,43 @@ pub(crate) fn render_skills_setup_page(
         .pb_16()
         .map(|this| {
             if skills.is_empty() {
-                this.items_center().justify_center().child({
-                    let message = match &settings_window.current_file {
-                        SettingsUiFile::User => "No global skills installed.".to_string(),
-                        SettingsUiFile::Project(_) => "No project skills found.".to_string(),
-                        _ => "No skills available for this context.".to_string(),
-                    };
-                    Label::new(message).color(Color::Muted)
-                })
+                let message = match &settings_window.current_file {
+                    SettingsUiFile::User => "No global skills installed.",
+                    SettingsUiFile::Project(_) => "No project skills found.",
+                    _ => "No skills available for this context.",
+                };
+                let original_window = settings_window.original_window;
+                this.items_center().justify_center().child(
+                    v_flex()
+                        .items_center()
+                        .gap_2()
+                        .child(Label::new(message).color(Color::Muted))
+                        .child(
+                            Button::new("open-agent-panel", "Create with Agent")
+                                .tab_index(0_isize)
+                                .style(ButtonStyle::Outlined)
+                                .end_icon(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .on_click(cx.listener(move |_this, _event, window, cx| {
+                                    let Some(original_window) = original_window else {
+                                        return;
+                                    };
+                                    original_window
+                                        .update(cx, |_workspace, original_window, cx| {
+                                            original_window.dispatch_action(
+                                                zed_actions::assistant::ToggleFocus.boxed_clone(),
+                                                cx,
+                                            );
+                                            original_window.activate_window();
+                                        })
+                                        .log_err();
+                                    window.remove_window();
+                                })),
+                        ),
+                )
             } else {
                 this.track_scroll(scroll_handle)
                     .overflow_y_scroll()
@@ -96,6 +125,7 @@ fn render_skill_row(skill: &Skill, cx: &mut Context<SettingsWindow>) -> AnyEleme
                         SharedString::from(format!("delete-{}", skill.name)),
                         IconName::Trash,
                     )
+                    .tab_index(0_isize)
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::text("Delete Skill"))
                     .on_click(cx.listener(
@@ -120,6 +150,7 @@ fn render_skill_row(skill: &Skill, cx: &mut Context<SettingsWindow>) -> AnyEleme
                 )
                 .child(
                     Button::new(SharedString::from(format!("open-{}", skill.name)), "Open")
+                        .tab_index(0_isize)
                         .style(ButtonStyle::OutlinedGhost)
                         .size(ButtonSize::Medium)
                         .end_icon(
