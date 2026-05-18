@@ -123,6 +123,7 @@ impl SkillSource {
 
 /// App-wide index of loaded skills, published by NativeAgent and read
 /// by any UI that needs to display the skill list (e.g. Settings UI).
+#[derive(Default)]
 pub struct SkillIndex {
     pub global_skills: Vec<Skill>,
     pub project_skills: Vec<ProjectSkillGroup>,
@@ -133,15 +134,6 @@ pub struct ProjectSkillGroup {
     pub worktree_id: SkillScopeId,
     pub worktree_root_name: SharedString,
     pub skills: Vec<Skill>,
-}
-
-impl Default for SkillIndex {
-    fn default() -> Self {
-        Self {
-            global_skills: Vec::new(),
-            project_skills: Vec::new(),
-        }
-    }
 }
 
 impl Global for SkillIndex {}
