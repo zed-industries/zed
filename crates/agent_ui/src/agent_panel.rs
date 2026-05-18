@@ -713,7 +713,6 @@ struct AgentTerminal {
     title_editor_initial_title: Option<String>,
     title_editor_subscription: Option<Subscription>,
     last_known_title: String,
-    fallback_title: Option<SharedString>,
     working_directory: Option<PathBuf>,
     created_at: DateTime<Utc>,
     has_notification: bool,
@@ -724,37 +723,26 @@ struct AgentTerminal {
 
 impl AgentTerminal {
     fn title(&self, cx: &App) -> SharedString {
-        self.title_from_view(cx).0
-    }
-
-    fn title_from_view(&self, cx: &App) -> (SharedString, bool) {
         let view = self.view.read(cx);
         if let Some(custom_title) = view.custom_title() {
-            (SharedString::from(custom_title), false)
+            SharedString::from(custom_title)
         } else {
             let terminal = view.terminal().read(cx);
             if terminal.breadcrumb_text.is_empty() {
                 let title = terminal.title(true);
                 if title == "Terminal" {
-                    if let Some(fallback_title) = &self.fallback_title {
-                        (fallback_title.clone(), true)
-                    } else {
-                        (SharedString::from(""), false)
-                    }
+                    SharedString::from("")
                 } else {
-                    (title.into(), false)
+                    title.into()
                 }
             } else {
-                (terminal.breadcrumb_text.clone().into(), false)
+                terminal.breadcrumb_text.clone().into()
             }
         }
     }
 
     fn refresh_title(&mut self, cx: &mut App) -> bool {
-        let (title, is_fallback_title) = self.title_from_view(cx);
-        if !is_fallback_title {
-            self.fallback_title = None;
-        }
+        let title = self.title(cx);
         let changed = self.last_known_title != title.as_ref();
         if changed {
             self.last_known_title = title.to_string();
@@ -1558,7 +1546,6 @@ impl AgentPanel {
             working_directory,
             None,
             None,
-            None,
             true,
             true,
             source,
@@ -1602,7 +1589,6 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         custom_title: Option<String>,
-        fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1638,7 +1624,6 @@ impl AgentPanel {
                     terminal_view,
                     terminal_working_directory,
                     custom_title,
-                    fallback_title,
                     created_at,
                     select,
                     focus,
@@ -1658,7 +1643,6 @@ impl AgentPanel {
         terminal_view: Entity<TerminalView>,
         working_directory: Option<PathBuf>,
         custom_title: Option<String>,
-        fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -1709,7 +1693,6 @@ impl AgentPanel {
             title_editor_initial_title: None,
             title_editor_subscription: None,
             last_known_title: String::new(),
-            fallback_title,
             working_directory,
             created_at: created_at.unwrap_or_else(Utc::now),
             has_notification: false,
@@ -1896,13 +1879,11 @@ impl AgentPanel {
             return;
         }
 
-        let (working_directory, fallback_title) =
-            self.terminal_restore_options(&metadata, workspace, cx);
+        let working_directory = self.terminal_restore_options(&metadata, workspace, cx);
         self.spawn_terminal(
             metadata.terminal_id,
             working_directory,
             metadata.custom_title.clone(),
-            fallback_title,
             Some(metadata.created_at),
             true,
             focus,
@@ -1917,23 +1898,15 @@ impl AgentPanel {
         metadata: &TerminalThreadMetadata,
         workspace: Option<&Workspace>,
         cx: &App,
-    ) -> (Option<PathBuf>, Option<SharedString>) {
-        let working_directory = metadata
+    ) -> Option<PathBuf> {
+        metadata
             .working_directory
             .clone()
             .or_else(|| {
                 workspace
                     .and_then(|workspace| terminal_view::default_working_directory(workspace, cx))
             })
-            .or_else(|| self.default_terminal_working_directory(cx));
-        let fallback_title =
-            if metadata.custom_title.is_none() && !metadata.title.as_ref().is_empty() {
-                Some(metadata.title.clone())
-            } else {
-                None
-            };
-
-        (working_directory, fallback_title)
+            .or_else(|| self.default_terminal_working_directory(cx))
     }
 
     fn edit_terminal_title(
@@ -5528,7 +5501,6 @@ impl AgentPanel {
             None,
             Some(title.into()),
             None,
-            None,
             focus,
             focus,
             AgentThreadSource::AgentPanel,
@@ -5557,13 +5529,11 @@ impl AgentPanel {
             return Ok(());
         }
 
-        let (working_directory, fallback_title) =
-            self.terminal_restore_options(&metadata, workspace, cx);
+        let working_directory = self.terminal_restore_options(&metadata, workspace, cx);
         self.insert_display_only_terminal(
             metadata.terminal_id,
             working_directory,
             metadata.custom_title.clone(),
-            fallback_title,
             Some(metadata.created_at),
             true,
             focus,
@@ -5579,7 +5549,6 @@ impl AgentPanel {
         terminal_id: TerminalId,
         working_directory: Option<PathBuf>,
         custom_title: Option<String>,
-        fallback_title: Option<SharedString>,
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
@@ -5613,7 +5582,6 @@ impl AgentPanel {
             terminal_view,
             working_directory,
             custom_title,
-            fallback_title,
             created_at,
             select,
             focus,
