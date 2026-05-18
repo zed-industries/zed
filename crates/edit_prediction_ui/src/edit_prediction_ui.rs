@@ -151,8 +151,23 @@ fn capture_example_as_markdown(
         .read(cx)
         .text_anchor_for_position(editor.selections.newest_anchor().head(), cx)?;
     let ep_store = EditPredictionStore::try_global(cx)?;
-    let events = ep_store.update(cx, |store, cx| store.edit_history_for_project(&project, cx));
-    let example = capture_example(project.clone(), buffer, cursor_anchor, events, true, cx)?;
+    let (events, recently_opened_files, recently_viewed_files) =
+        ep_store.update(cx, |store, cx| {
+            let events = store.edit_history_for_project(&project, cx);
+            let (recently_opened_files, recently_viewed_files) =
+                store.recent_paths_for_project(&project, cx);
+            (events, recently_opened_files, recently_viewed_files)
+        });
+    let example = capture_example(
+        project.clone(),
+        buffer,
+        cursor_anchor,
+        events,
+        recently_opened_files,
+        recently_viewed_files,
+        true,
+        cx,
+    )?;
 
     let examples_dir = AllLanguageSettings::get_global(cx)
         .edit_predictions

@@ -1,4 +1,7 @@
-use crate::{StoredEvent, example_spec::ExampleSpec};
+use crate::{
+    StoredEvent,
+    example_spec::{ExampleSpec, RecentFile},
+};
 use anyhow::Result;
 use buffer_diff::BufferDiffSnapshot;
 use collections::HashMap;
@@ -13,6 +16,8 @@ pub fn capture_example(
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
     mut events: Vec<StoredEvent>,
+    recently_opened_files: Vec<RecentFile>,
+    recently_viewed_files: Vec<RecentFile>,
     populate_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
@@ -100,6 +105,8 @@ pub fn capture_example(
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff,
+            recently_opened_files,
+            recently_viewed_files,
             cursor_path,
             cursor_position: String::new(),
             edit_history,
@@ -417,6 +424,8 @@ mod tests {
                     buffer.clone(),
                     Anchor::min_for_buffer(buffer.read(cx).remote_id()),
                     events,
+                    Vec::new(),
+                    Vec::new(),
                     true,
                     cx,
                 )
@@ -452,6 +461,8 @@ mod tests {
                      }
                 "}
                 .to_string(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
                 cursor_path: Path::new("src/main.rs").into(),
                 cursor_position: indoc! {"
                     fn main() {

@@ -790,6 +790,8 @@ async fn build_example(
         tags: Vec::new(),
         reasoning: Some(reasoning_with_source),
         uncommitted_diff: String::new(),
+        recently_opened_files: Vec::new(),
+        recently_viewed_files: Vec::new(),
         cursor_path: Arc::from(Path::new(&cursor_file)),
         cursor_position: String::new(),
         edit_history,

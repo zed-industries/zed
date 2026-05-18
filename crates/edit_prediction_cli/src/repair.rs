@@ -549,6 +549,8 @@ mod tests {
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
                 cursor_path: Arc::from(Path::new("src/main.rs")),
                 cursor_position: "0:0".to_string(),
                 edit_history: String::new(),

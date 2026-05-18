@@ -414,11 +414,16 @@ pub fn request_prediction_with_zeta(
             let model_version = prediction.model_version.clone();
             let example_task = capture_data.and_then(|stored_events| {
                 cx.update(|cx| {
+                    let (recently_opened_files, recently_viewed_files) = this
+                        .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
+                        .ok()?;
                     crate::capture_example(
                         project.clone(),
                         edited_buffer.clone(),
                         position,
                         stored_events,
+                        recently_opened_files,
+                        recently_viewed_files,
                         false,
                         cx,
                     )

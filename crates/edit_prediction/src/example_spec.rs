@@ -13,6 +13,13 @@ pub const INLINE_CURSOR_MARKER: &str = "<|user_cursor|>";
 /// falling back to git-based loading.
 pub const MAX_CURSOR_FILE_SIZE: usize = 64 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RecentFile {
+    pub path: Arc<Path>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_position: Option<usize>,
+}
+
 #[derive(Clone, Debug, PartialEq, Hash, Serialize, Deserialize)]
 pub struct ExampleSpec {
     #[serde(default)]
@@ -25,6 +32,10 @@ pub struct ExampleSpec {
     pub reasoning: Option<String>,
     #[serde(default)]
     pub uncommitted_diff: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_opened_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recently_viewed_files: Vec<RecentFile>,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
@@ -56,11 +67,49 @@ pub struct TelemetrySource {
 
 const REASONING_HEADING: &str = "Reasoning";
 const UNCOMMITTED_DIFF_HEADING: &str = "Uncommitted Diff";
+const RECENTLY_OPENED_FILES_HEADING: &str = "Recently Opened Files";
+const RECENTLY_VIEWED_FILES_HEADING: &str = "Recently Viewed Files";
 const EDIT_HISTORY_HEADING: &str = "Edit History";
 const CURSOR_POSITION_HEADING: &str = "Cursor Position";
 const EXPECTED_PATCH_HEADING: &str = "Expected Patch";
 const REJECTED_PATCH_HEADING: &str = "Rejected Patch";
 const ACCEPTED_PREDICTION_MARKER: &str = "// User accepted prediction:";
+
+fn write_path_list(markdown: &mut String, heading: &str, files: &[RecentFile]) {
+    if files.is_empty() {
+        return;
+    }
+
+    _ = writeln!(markdown, "## {heading}");
+    _ = writeln!(markdown);
+    _ = writeln!(markdown, "```");
+    for file in files {
+        _ = write!(markdown, "{}", file.path.display());
+        if let Some(position) = file.cursor_position {
+            _ = write!(markdown, "\t{position}");
+        }
+        _ = writeln!(markdown);
+    }
+    _ = writeln!(markdown, "```");
+    markdown.push('\n');
+}
+
+fn parse_path_list(text: &str) -> Vec<RecentFile> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let (path, cursor_position) = line
+                .rsplit_once('\t')
+                .map(|(path, position)| (path, position.parse().ok()))
+                .unwrap_or((line, None));
+            RecentFile {
+                path: Path::new(path).into(),
+                cursor_position,
+            }
+        })
+        .collect()
+}
 
 #[derive(Serialize, Deserialize)]
 struct FrontMatter<'a> {
@@ -130,6 +179,17 @@ impl ExampleSpec {
             markdown.push('\n');
         }
 
+        write_path_list(
+            &mut markdown,
+            RECENTLY_OPENED_FILES_HEADING,
+            &self.recently_opened_files,
+        );
+        write_path_list(
+            &mut markdown,
+            RECENTLY_VIEWED_FILES_HEADING,
+            &self.recently_viewed_files,
+        );
+
         _ = writeln!(markdown, "## {}", EDIT_HISTORY_HEADING);
         _ = writeln!(markdown);
 
@@ -194,6 +254,8 @@ impl ExampleSpec {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -223,6 +285,8 @@ impl ExampleSpec {
         enum Section {
             Start,
             UncommittedDiff,
+            RecentlyOpenedFiles,
+            RecentlyViewedFiles,
             EditHistory,
             CursorPosition,
             ExpectedPatch,
@@ -245,6 +309,10 @@ impl ExampleSpec {
                     let title = mem::take(&mut text);
                     current_section = if title.eq_ignore_ascii_case(UNCOMMITTED_DIFF_HEADING) {
                         Section::UncommittedDiff
+                    } else if title.eq_ignore_ascii_case(RECENTLY_OPENED_FILES_HEADING) {
+                        Section::RecentlyOpenedFiles
+                    } else if title.eq_ignore_ascii_case(RECENTLY_VIEWED_FILES_HEADING) {
+                        Section::RecentlyViewedFiles
                     } else if title.eq_ignore_ascii_case(EDIT_HISTORY_HEADING) {
                         Section::EditHistory
                     } else if title.eq_ignore_ascii_case(CURSOR_POSITION_HEADING) {
@@ -291,6 +359,14 @@ impl ExampleSpec {
                     match current_section {
                         Section::UncommittedDiff => {
                             spec.uncommitted_diff = mem::take(&mut text);
+                        }
+                        Section::RecentlyOpenedFiles => {
+                            spec.recently_opened_files = parse_path_list(&text);
+                            text.clear();
+                        }
+                        Section::RecentlyViewedFiles => {
+                            spec.recently_viewed_files = parse_path_list(&text);
+                            text.clear();
                         }
                         Section::EditHistory => {
                             if next_edit_predicted {
@@ -481,6 +557,8 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -617,6 +695,8 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -689,6 +769,8 @@ mod tests {
             tags: Vec::new(),
             reasoning: None,
             uncommitted_diff: String::new(),
+            recently_opened_files: Vec::new(),
+            recently_viewed_files: Vec::new(),
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
