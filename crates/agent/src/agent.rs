@@ -3099,6 +3099,14 @@ mod internal_tests {
         }
     }
 
+    /// Filter to only user-defined (non-built-in) skills for test assertions.
+    fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
+        skills
+            .iter()
+            .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+            .collect()
+    }
+
     #[test]
     fn test_combine_skills_keeps_every_entry_for_autocomplete() {
         // The autocomplete popup needs both same-named entries so the
@@ -3110,9 +3118,10 @@ mod internal_tests {
         let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
 
         assert!(errors.is_empty());
-        assert_eq!(skills.len(), 2);
-        assert!(matches!(skills[0].source, SkillSource::Global));
-        assert!(matches!(skills[1].source, SkillSource::ProjectLocal { .. }));
+        let user = user_skills(&skills);
+        assert_eq!(user.len(), 2);
+        assert!(matches!(user[0].source, SkillSource::Global));
+        assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
     }
 
     #[test]
@@ -3565,9 +3574,10 @@ mod internal_tests {
         // The pre-existing skill should be loaded into the project state.
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "my-skill");
-            assert_eq!(state.skills[0].description, "First version");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "First version");
         });
 
         // Modify the SKILL.md and verify the project context refreshes.
@@ -3581,8 +3591,9 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].description, "Second version");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].description, "Second version");
         });
     }
 
@@ -3628,8 +3639,8 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert!(
-                state.skills.is_empty(),
-                "expected no skills before the global skills dir exists, got {:?}",
+                user_skills(&state.skills).is_empty(),
+                "expected no user skills before the global skills dir exists, got {:?}",
                 state.skills
             );
         });
@@ -3654,9 +3665,10 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "late-skill");
-            assert_eq!(state.skills[0].description, "Created after startup");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "late-skill");
+            assert_eq!(user[0].description, "Created after startup");
         });
     }
 
@@ -3707,8 +3719,8 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
-                state.skills.is_empty(),
-                "expected no skills before the global skills dir exists, got {:?}",
+                user_skills(&state.skills).is_empty(),
+                "expected no user skills before the global skills dir exists, got {:?}",
                 state.skills
             );
         });
@@ -3725,7 +3737,12 @@ mod internal_tests {
         // empty list — NOT the snapshot that `Thread::new` would have
         // captured.
         cx.update(|cx| {
-            assert!(resolve(cx).is_empty());
+            let all = resolve(cx);
+            let user: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
+            assert!(user.is_empty());
         });
 
         // Now create a SKILL.md AFTER the session was registered. With
@@ -3750,15 +3767,20 @@ mod internal_tests {
         // `state.skills` reflects the new skill (the watcher ran).
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "my-skill");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
         });
 
         // The resolver the `SkillTool` uses must see it too. This is the
         // crux of the regression test: the tool's view of skills is
         // resolved at invocation time, not at thread-construction time.
         cx.update(|cx| {
-            let snapshot = resolve(cx);
+            let all = resolve(cx);
+            let snapshot: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(
                 snapshot.len(),
                 1,
@@ -3846,7 +3868,11 @@ mod internal_tests {
         let parent_resolve =
             cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
         cx.update(|cx| {
-            let parent_skills = parent_resolve(cx);
+            let all = parent_resolve(cx);
+            let parent_skills: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(parent_skills.len(), 1);
             assert_eq!(parent_skills[0].name, "shared-skill");
         });
@@ -3892,7 +3918,11 @@ mod internal_tests {
         let subagent_resolve = cx
             .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
         cx.update(|cx| {
-            let subagent_skills = subagent_resolve(cx);
+            let all = subagent_resolve(cx);
+            let subagent_skills: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(subagent_skills.len(), 1);
             assert_eq!(subagent_skills[0].name, "shared-skill");
         });
@@ -3988,7 +4018,14 @@ mod internal_tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect();
-            assert_eq!(catalog, vec!["visible-skill"]);
+            assert!(
+                catalog.contains(&"visible-skill"),
+                "visible skill missing from catalog: {catalog:?}"
+            );
+            assert!(
+                !catalog.contains(&"deploy"),
+                "deploy should be excluded from catalog: {catalog:?}"
+            );
         });
     }
 
@@ -4055,7 +4092,7 @@ mod internal_tests {
         agent.read_with(cx, |agent, cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
-                state.skills.is_empty(),
+                user_skills(&state.skills).is_empty(),
                 "untrusted worktree skills should not load: {:?}",
                 state
                     .skills
@@ -4088,7 +4125,8 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
+            let user = user_skills(&state.skills);
+            let names: Vec<&str> = user.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["my-skill"]);
         });
 
