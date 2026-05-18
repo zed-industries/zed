@@ -1,5 +1,4 @@
 use std::{
-    cell::Cell,
     fmt,
     path::PathBuf,
     rc::Rc,
@@ -1678,7 +1677,7 @@ impl AgentPanel {
                 }
                 TerminalEvent::Bell => this.mark_terminal_notification(terminal_id, window, cx),
                 TerminalEvent::CloseTerminal => {
-                    this.request_terminal_close(terminal_id, window, cx);
+                    this.request_terminal_close(terminal_id, cx);
                 }
                 TerminalEvent::BlinkChanged(_)
                 | TerminalEvent::SelectionsChanged
@@ -1782,25 +1781,10 @@ impl AgentPanel {
         cx.notify();
     }
 
-    fn request_terminal_close(
-        &mut self,
-        terminal_id: TerminalId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let handled = Rc::new(Cell::new(false));
+    fn request_terminal_close(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
         if let Some(metadata) = self.terminal_metadata(terminal_id, cx) {
-            cx.emit(AgentPanelEvent::TerminalCloseRequested {
-                metadata,
-                handled: handled.clone(),
-            });
+            cx.emit(AgentPanelEvent::TerminalCloseRequested { metadata });
         }
-
-        cx.defer_in(window, move |this, window, cx| {
-            if !handled.get() && this.has_terminal(terminal_id) {
-                this.close_terminal(terminal_id, window, cx);
-            }
-        });
     }
 
     fn emit_terminal_thread_started(&self, source: AgentThreadSource, cx: &App) {
@@ -3889,13 +3873,8 @@ pub enum AgentPanelEvent {
     ActiveViewChanged,
     ActiveViewFocused,
     EntryChanged,
-    TerminalCloseRequested {
-        metadata: TerminalThreadMetadata,
-        handled: Rc<Cell<bool>>,
-    },
-    ThreadInteracted {
-        thread_id: ThreadId,
-    },
+    TerminalCloseRequested { metadata: TerminalThreadMetadata },
+    ThreadInteracted { thread_id: ThreadId },
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
@@ -7267,38 +7246,6 @@ mod tests {
                 "terminal metadata should be deleted by the fallback close"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_handled_terminal_close_event_skips_agent_panel_fallback(cx: &mut TestAppContext) {
-        let (panel, mut cx) = setup_panel(cx).await;
-        cx.update(|_, cx| {
-            TerminalThreadMetadataStore::init_global(cx);
-        });
-        let subscription = cx.update(|_, cx| {
-            cx.subscribe(&panel, |_panel, event: &AgentPanelEvent, _cx| {
-                if let AgentPanelEvent::TerminalCloseRequested { handled, .. } = event {
-                    handled.set(true);
-                }
-            })
-        });
-
-        let terminal_id = panel
-            .update_in(&mut cx, |panel, window, cx| {
-                panel.insert_test_terminal("Dev Server", true, window, cx)
-            })
-            .expect("test terminal should be inserted");
-        cx.run_until_parked();
-
-        panel.update(&mut cx, |panel, cx| {
-            panel.emit_test_terminal_close(terminal_id, cx);
-        });
-        cx.run_until_parked();
-
-        panel.read_with(&cx, |panel, _cx| {
-            assert!(panel.has_terminal(terminal_id));
-        });
-        drop(subscription);
     }
 
     #[gpui::test]
