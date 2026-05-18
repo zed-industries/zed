@@ -34,7 +34,7 @@ struct EditableContextRange {
 struct ResolvedEditableContextRange {
     range: Range<Point>,
     order: usize,
-    context_sources: Vec<ContextSource>,
+    context_source: ContextSource,
 }
 
 pub async fn collect_editable_context(
@@ -264,8 +264,7 @@ fn related_file_for_ranges(
     ))
     .into();
 
-    let mut ranges = resolved_context_ranges(ranges, &snapshot);
-    merge_overlapping_ranges(&mut ranges);
+    let ranges = resolved_context_ranges(ranges, &snapshot);
 
     let mut excerpts = ranges
         .into_iter()
@@ -276,7 +275,7 @@ fn related_file_for_ranges(
                 .collect::<String>()
                 .into(),
             order: range.order,
-            context_sources: range.context_sources,
+            context_source: range.context_source,
         })
         .collect::<Vec<_>>();
     excerpts.sort_by_key(|excerpt| excerpt.order);
@@ -305,37 +304,38 @@ fn resolved_context_ranges(
             Some(ResolvedEditableContextRange {
                 range: start..end,
                 order: range.order,
-                context_sources: vec![range.context_source],
+                context_source: range.context_source,
             })
         })
         .collect()
 }
 
+#[allow(dead_code)]
 fn merge_overlapping_ranges(ranges: &mut Vec<ResolvedEditableContextRange>) {
     ranges.sort_by_key(|range| (range.range.start, range.range.end));
     let mut merged: Vec<ResolvedEditableContextRange> = Vec::new();
 
-    for mut range in ranges.drain(..) {
+    for range in ranges.drain(..) {
         if let Some(last_range) = merged.last_mut()
             && range.range.start <= last_range.range.end
         {
+            if context_source_order(range.context_source)
+                < context_source_order(last_range.context_source)
+            {
+                last_range.context_source = range.context_source;
+            }
             last_range.range.end = last_range.range.end.max(range.range.end);
             last_range.order = last_range.order.min(range.order);
-            for context_source in range.context_sources.drain(..) {
-                push_context_source(&mut last_range.context_sources, context_source);
-            }
             continue;
         }
 
-        range
-            .context_sources
-            .sort_by_key(|context_source| context_source_order(*context_source));
         merged.push(range);
     }
 
     *ranges = merged;
 }
 
+#[allow(dead_code)]
 fn push_context_source(context_sources: &mut Vec<ContextSource>, context_source: ContextSource) {
     if !context_sources.contains(&context_source) {
         context_sources.push(context_source);

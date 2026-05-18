@@ -570,7 +570,7 @@ impl RelatedBuffer {
                     row_range: start.row..end.row,
                     text: buffer.text_for_range(start..end).collect::<String>().into(),
                     order,
-                    context_sources: vec![ContextSource::Lsp],
+                    context_source: ContextSource::Lsp,
                 }
             })
             .collect::<Vec<_>>();
