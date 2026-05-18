@@ -16,8 +16,6 @@ pub struct ImageSize {
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
     pub source: SharedString,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size: Option<ImageSize>,
 }
 
 impl LanguageModelImage {
@@ -30,57 +28,24 @@ impl LanguageModelImage {
     }
 
     pub fn empty() -> Self {
-        Self {
-            source: "".into(),
-            size: None,
-        }
+        Self { source: "".into() }
     }
 
     /// Parse Self from a JSON object with case-insensitive field names
     pub fn from_json(obj: &serde_json::Map<String, serde_json::Value>) -> Option<Self> {
         let mut source = None;
-        let mut size_obj = None;
 
         for (k, v) in obj.iter() {
             match k.to_lowercase().as_str() {
                 "source" => source = v.as_str(),
-                "size" => size_obj = v.as_object(),
                 _ => {}
             }
         }
 
         let source = source?;
-        let size_obj = size_obj?;
-
-        let mut width = None;
-        let mut height = None;
-
-        for (k, v) in size_obj.iter() {
-            match k.to_lowercase().as_str() {
-                "width" => width = v.as_i64().map(|w| w as i32),
-                "height" => height = v.as_i64().map(|h| h as i32),
-                _ => {}
-            }
-        }
-
         Some(Self {
-            size: Some(ImageSize {
-                width: width?,
-                height: height?,
-            }),
             source: SharedString::from(source.to_string()),
         })
-    }
-
-    pub fn estimate_tokens(&self) -> usize {
-        let Some(size) = self.size.as_ref() else {
-            return 0;
-        };
-        let width = size.width.unsigned_abs() as usize;
-        let height = size.height.unsigned_abs() as usize;
-
-        // From: https://docs.anthropic.com/en/docs/build-with-claude/vision#calculate-image-costs
-        (width * height) / 750
     }
 
     pub fn to_base64_url(&self) -> String {
@@ -92,7 +57,6 @@ impl std::fmt::Debug for LanguageModelImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("LanguageModelImage")
             .field("source", &format!("<{} bytes>", self.source.len()))
-            .field("size", &self.size)
             .finish()
     }
 }
@@ -480,9 +444,6 @@ mod tests {
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "base64encodedimagedata");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 100);
-                assert_eq!(size.height, 200);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -491,16 +452,12 @@ mod tests {
         let json = serde_json::json!({
             "image": {
                 "source": "wrappedimagedata",
-                "size": {"width": 50, "height": 75}
             }
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "wrappedimagedata");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 50);
-                assert_eq!(size.height, 75);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -508,15 +465,11 @@ mod tests {
         // Test case insensitive
         let json = serde_json::json!({
             "Source": "caseinsensitive",
-            "Size": {"Width": 30, "Height": 40}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "caseinsensitive");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 30);
-                assert_eq!(size.height, 40);
             }
             _ => panic!("Expected Image variant"),
         }
@@ -524,15 +477,11 @@ mod tests {
         // Test direct image object
         let json = serde_json::json!({
             "source": "directimage",
-            "size": {"width": 200, "height": 300}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
             LanguageModelToolResultContent::Image(image) => {
                 assert_eq!(image.source.as_ref(), "directimage");
-                let size = image.size.expect("size");
-                assert_eq!(size.width, 200);
-                assert_eq!(size.height, 300);
             }
             _ => panic!("Expected Image variant"),
         }

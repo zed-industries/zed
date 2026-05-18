@@ -844,17 +844,17 @@ impl ThreadMetadataStore {
         self.in_flight_archives.remove(&thread_id);
     }
 
-    /// Returns `true` if any unarchived thread other than `current_session_id`
+    /// Returns `true` if any unarchived thread other than `thread_id`
     /// references `path` in its folder paths. Used to determine whether a
     /// worktree can safely be removed from disk.
-    pub fn path_is_referenced_by_other_unarchived_threads(
+    pub fn path_is_referenced_by_unarchived_threads(
         &self,
-        thread_id: ThreadId,
+        thread_id: Option<ThreadId>,
         path: &Path,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
         self.entries().any(|thread| {
-            thread.thread_id != thread_id
+            Some(thread.thread_id) != thread_id
                 && !thread.archived
                 && same_remote_connection_identity(
                     thread.remote_connection.as_ref(),

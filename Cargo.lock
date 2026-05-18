@@ -224,13 +224,14 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af62fb84df2af0f933d8f5fd78b843fa5eb0ec5a48fa1b528c41951d0bbe36c"
+checksum = "1084cabbc2b00d353bad7e54750b0ef0f0bba9204c5884240c83a628704db86c"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
- "anyhow",
+ "async-process",
+ "blocking",
  "futures 0.3.32",
  "futures-concurrency",
  "jsonrpcmsg",
@@ -239,7 +240,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
+ "shell-words",
  "tokio",
  "tokio-util",
  "tracing",
@@ -248,20 +249,19 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce42c2d3c048c12897eef2e577dfff1e3355c632c9f1625cc953b9df48b44631"
+checksum = "cabdc9d845d08ec7ed2d0c9de1ae4a1b198301407d55855261572761be90ec9f"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.12.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49bae57dad1c28a362fbdcf7bab0583316a02b45a70792109fced55780a3b63c"
+checksum = "2984583e634f3f4d479b585aaa76de4a633255dcdf2be6489c6a8486f758af04"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -2252,6 +2252,15 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "utf8-chars",
+]
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
@@ -6091,6 +6100,7 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme_settings",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
  "tree-sitter",
@@ -16042,11 +16052,12 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -16061,9 +16072,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
