@@ -2249,9 +2249,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // we don't clone the entire skill list on every prompt
             // (including prompts like `/help` that aren't skills at
             // all). The resolution rule matches the override-applied
-            // view: prefer a project-local with the matching name,
-            // falling back to a global, so the slash command picks the
-            // same entry the model sees in its catalog.
+            // view: among skills with the matching name, pick the one
+            // with the highest source precedence, so the slash command
+            // picks the same entry the model sees in its catalog.
+            // Ties (e.g. two project-local skills from different
+            // worktrees) resolve to the first in iteration order to
+            // match `apply_skill_overrides`.
             if parsed_command.explicit_server_id.is_none()
                 && parsed_command.skill_scope.is_none()
                 && !project_state.skills.is_empty()
@@ -2260,15 +2263,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 let resolved = project_state
                     .skills
                     .iter()
-                    .find(|skill| {
-                        skill.name == prompt_name
-                            && matches!(skill.source, SkillSource::ProjectLocal { .. })
-                    })
-                    .or_else(|| {
-                        project_state
-                            .skills
-                            .iter()
-                            .find(|skill| skill.name == prompt_name)
+                    .filter(|skill| skill.name == prompt_name)
+                    .reduce(|best, candidate| {
+                        if candidate.source.precedence() > best.source.precedence() {
+                            candidate
+                        } else {
+                            best
+                        }
                     });
                 if let Some(skill) = resolved {
                     let skill = skill.clone();
@@ -2985,9 +2986,8 @@ fn log_skill_conflicts(skills: &[Skill]) {
     let mut by_name: HashMap<&str, &Skill> = HashMap::default();
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
-            Some(existing) => match (&existing.source, &skill.source) {
-                (SkillSource::BuiltIn | SkillSource::Global, SkillSource::ProjectLocal { .. })
-                | (SkillSource::BuiltIn, SkillSource::Global) => {
+            Some(existing) => {
+                if skill.source.precedence() > existing.source.precedence() {
                     log::warn!(
                         "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
@@ -2995,8 +2995,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
                         existing.skill_file_path.display(),
                     );
                     by_name.insert(skill.name.as_str(), skill);
-                }
-                _ => {
+                } else {
                     log::warn!(
                         "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
                         skill.name,
@@ -3004,7 +3003,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
                         existing.skill_file_path.display(),
                     );
                 }
-            },
+            }
             None => {
                 by_name.insert(skill.name.as_str(), skill);
             }
@@ -3031,17 +3030,7 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                let dominated = match (&result[idx].source, &skill.source) {
-                    // Project-local overrides both global and built-in
-                    (
-                        SkillSource::BuiltIn | SkillSource::Global,
-                        SkillSource::ProjectLocal { .. },
-                    ) => true,
-                    // Global overrides built-in
-                    (SkillSource::BuiltIn, SkillSource::Global) => true,
-                    _ => false,
-                };
-                if dominated {
+                if skill.source.precedence() > result[idx].source.precedence() {
                     result[idx] = skill.clone();
                 }
             }
@@ -3098,6 +3087,18 @@ mod internal_tests {
         }
     }
 
+    fn make_builtin_skill(name: &str, description: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            source: SkillSource::BuiltIn,
+            directory_path: PathBuf::from(format!("/builtin/{name}")),
+            skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
+            disable_model_invocation: false,
+            embedded_body: Some("built-in body"),
+        }
+    }
+
     #[test]
     fn test_combine_skills_keeps_every_entry_for_autocomplete() {
         // The autocomplete popup needs both same-named entries so the
@@ -3145,6 +3146,51 @@ mod internal_tests {
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].description, "First");
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_global_wins_over_builtin() {
+        // A global skill with the same name as a built-in must shadow
+        // the built-in in the model-facing projection, regardless of
+        // iteration order.
+        let built_in = make_builtin_skill("create-skill", "Built-in version");
+        let global = make_global_skill("create-skill", "User override");
+
+        let resolved = apply_skill_overrides(&[built_in, global]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "User override");
+        assert!(matches!(resolved[0].source, SkillSource::Global));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_builtin() {
+        let built_in = make_builtin_skill("create-skill", "Built-in version");
+        let project = make_project_skill("create-skill", "Project override", "my-project");
+
+        let resolved = apply_skill_overrides(&[built_in, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project override");
+        assert!(matches!(
+            resolved[0].source,
+            SkillSource::ProjectLocal { .. }
+        ));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_builtin_and_global() {
+        // All three sources present — the project-local must win and
+        // both lower-precedence entries must be dropped from the
+        // model-facing projection.
+        let built_in = make_builtin_skill("create-skill", "Built-in");
+        let global = make_global_skill("create-skill", "Global");
+        let project = make_project_skill("create-skill", "Project", "my-project");
+
+        let resolved = apply_skill_overrides(&[built_in, global, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project");
     }
 
     #[test]

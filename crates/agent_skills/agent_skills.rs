@@ -87,6 +87,23 @@ pub enum SkillSource {
 }
 
 impl SkillSource {
+    /// Precedence for resolving same-named skills. Higher values shadow
+    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
+    /// returning equal precedence (e.g. two project-local skills from
+    /// different worktrees) leave the winner up to the caller, which by
+    /// convention keeps the first one in iteration order.
+    ///
+    /// Adding a new `SkillSource` variant should be a one-line change
+    /// here — every consumer routes through this method so the hierarchy
+    /// stays in sync.
+    pub fn precedence(&self) -> u8 {
+        match self {
+            Self::BuiltIn => 0,
+            Self::Global => 1,
+            Self::ProjectLocal { .. } => 2,
+        }
+    }
+
     /// Scope prefix used in the `/<prefix>:<name>` slash-command
     /// syntax that the autocomplete popup inserts. Global skills use
     /// an empty prefix (so the inserted text is `/:<name>`), and
@@ -730,6 +747,34 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_skill_source_precedence_is_total_and_ordered() {
+        // Pin the hierarchy: project-local > global > built-in. Every
+        // override and conflict-resolution site routes through this,
+        // so the rest of the codebase relies on it being correct.
+        let built_in = SkillSource::BuiltIn.precedence();
+        let global = SkillSource::Global.precedence();
+        let project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(1),
+            worktree_root_name: "my-project".into(),
+        }
+        .precedence();
+
+        assert!(built_in < global, "global must shadow built-in");
+        assert!(global < project, "project-local must shadow global");
+
+        // Two project-local skills from different worktrees tie. The
+        // "first wins" convention is enforced by the callers, but the
+        // precedence itself must be equal so neither silently shadows
+        // the other.
+        let other_project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(2),
+            worktree_root_name: "other-project".into(),
+        }
+        .precedence();
+        assert_eq!(project, other_project);
+    }
 
     #[test]
     fn test_parse_valid_skill() {
