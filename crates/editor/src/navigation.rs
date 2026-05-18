@@ -2085,6 +2085,9 @@ impl Editor {
                 }))
             }
 
+            let final_snapshot = multibuffer.snapshot(cx);
+            ranges.sort_by(|a, b| a.start.cmp(&b.start, &final_snapshot));
+
             multibuffer.with_title(title)
         });
         let existing = workspace.active_pane().update(cx, |pane, cx| {
