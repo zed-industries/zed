@@ -346,8 +346,13 @@ impl MentionUri {
         }
     }
 
-    pub fn disambiguated_name(&self, needs_disambiguation: bool) -> String {
-        if !needs_disambiguation {
+    /// Returns a label for this mention at the given disambiguation `detail`
+    /// level. `detail == 0` is the base name returned by [`Self::name`]; higher
+    /// levels include progressively more context (e.g. additional parent path
+    /// components for files, or the source for skills) until a fixed point is
+    /// reached. Intended to be driven by [`util::disambiguate::compute_disambiguation_details`].
+    pub fn disambiguated_name(&self, detail: usize) -> String {
+        if detail == 0 {
             return self.name();
         }
 
@@ -360,14 +365,7 @@ impl MentionUri {
                 }
             }
             MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
-                let path = Path::new(abs_path);
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-                match path.parent().and_then(|p| p.file_name()) {
-                    Some(parent) => {
-                        format!("{}/{}", parent.to_string_lossy(), file_name)
-                    }
-                    None => file_name.into_owned(),
-                }
+                project::path_suffix(abs_path, detail)
             }
             _ => self.name(),
         }
@@ -1103,9 +1101,21 @@ mod tests {
         };
         assert_eq!(file_a.name(), "README.md");
         assert_eq!(file_b.name(), "README.md");
-        assert_eq!(file_a.disambiguated_name(false), "README.md");
-        assert_eq!(file_a.disambiguated_name(true), "src/README.md");
-        assert_eq!(file_b.disambiguated_name(true), "docs/README.md");
+        assert_eq!(file_a.disambiguated_name(0), "README.md");
+        assert_eq!(file_a.disambiguated_name(1), "src/README.md");
+        assert_eq!(file_b.disambiguated_name(1), "docs/README.md");
+
+        // Files that still collide at one parent should grow further.
+        let deep_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/a/src/foo.rs")),
+        };
+        let deep_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/b/src/foo.rs")),
+        };
+        assert_eq!(deep_a.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_a.disambiguated_name(2), "a/src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(2), "b/src/foo.rs");
 
         // Two skills with the same name — should disambiguate with source
         let global_skill = MentionUri::Skill {
@@ -1119,28 +1129,28 @@ mod tests {
             skill_file_path: PathBuf::from("/project/create-skill/SKILL.md"),
         };
         assert_eq!(global_skill.name(), "create-skill");
-        assert_eq!(global_skill.disambiguated_name(false), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(0), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(1), "create-skill (global)");
         assert_eq!(
-            global_skill.disambiguated_name(true),
-            "create-skill (global)"
-        );
-        assert_eq!(
-            project_skill.disambiguated_name(true),
+            project_skill.disambiguated_name(1),
             "create-skill (my-project)"
         );
 
-        // A type without special disambiguation (Thread) — flag has no effect
+        // A type without special disambiguation (Thread) — detail has no effect
+        // (the value is a fixed point so the disambiguation loop terminates).
         let thread = MentionUri::Thread {
             id: acp::SessionId::new("123"),
             name: "My Thread".into(),
         };
-        assert_eq!(thread.disambiguated_name(false), "My Thread");
-        assert_eq!(thread.disambiguated_name(true), "My Thread");
+        assert_eq!(thread.disambiguated_name(0), "My Thread");
+        assert_eq!(thread.disambiguated_name(1), "My Thread");
+        assert_eq!(thread.disambiguated_name(5), "My Thread");
 
         // Edge case: file at filesystem root has no parent to show
         let root_file = MentionUri::File {
             abs_path: PathBuf::from(path!("/README.md")),
         };
-        assert_eq!(root_file.disambiguated_name(true), "README.md");
+        assert_eq!(root_file.disambiguated_name(1), "README.md");
+        assert_eq!(root_file.disambiguated_name(5), "README.md");
     }
 }

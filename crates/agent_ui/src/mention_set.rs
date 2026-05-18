@@ -710,24 +710,22 @@ impl MentionSet {
 }
 
 /// Computes disambiguated labels for a set of mentions. When multiple mentions
-/// share the same base name, their labels include extra context (parent directory
-/// for files, source for skills) so the user can tell them apart.
+/// share the same base name, their labels include extra context (additional
+/// parent path components for files/directories, source for skills) so the user
+/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
+/// which is the same utility used for buffer tab titles and the sidebar.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
     let mentions: Vec<_> = mentions.collect();
-
-    let mut name_counts: HashMap<String, u32> = HashMap::default();
-    for (_, uri) in &mentions {
-        *name_counts.entry(uri.name()).or_default() += 1;
-    }
-
+    let details =
+        util::disambiguate::compute_disambiguation_details(&mentions, |(_, uri), detail| {
+            uri.disambiguated_name(detail)
+        });
     mentions
         .into_iter()
-        .map(|(id, uri)| {
-            let needs_disambiguation = name_counts.get(&uri.name()).copied().unwrap_or(0) > 1;
-            (id, uri.disambiguated_name(needs_disambiguation).into())
-        })
+        .zip(details)
+        .map(|((id, uri), detail)| (id, uri.disambiguated_name(detail).into()))
         .collect()
 }
 
