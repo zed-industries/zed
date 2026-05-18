@@ -1302,6 +1302,7 @@ dependencies = [
  "gpui",
  "markdown_preview",
  "notifications",
+ "prompt_store",
  "release_channel",
  "semver",
  "serde",

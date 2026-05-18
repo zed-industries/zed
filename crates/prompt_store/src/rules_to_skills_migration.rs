@@ -62,15 +62,15 @@ pub const MIGRATION_DONE_KEY: &str = "rules_to_skills_migration_done";
 
 /// Global KVP key for the JSON-serialized [`MigrationResult`] produced by
 /// the most recent migration run — the lists of source-Rule titles that
-/// were migrated to each destination. The title-bar banner and its
-/// explainer modal read this to decide what (if anything) to tell the
-/// user about what changed.
+/// were migrated to each destination. The skills announcement toast
+/// reads this to decide whether to mention the migration in its copy.
 pub const MIGRATION_RESULT_KEY: &str = "rules_to_skills_migration_result";
 
 /// A persistent record of what the rules-to-skills migration actually
 /// migrated. Persisted in [`GlobalKeyValueStore`] under
-/// [`MIGRATION_RESULT_KEY`] and read back by the announcement UI so the
-/// modal can list specific rule names instead of vaguely gesturing.
+/// [`MIGRATION_RESULT_KEY`] and read back by the skills announcement
+/// toast so it can tailor its copy to users who actually had Rules to
+/// migrate.
 ///
 /// All three lists hold the *original* user-facing Rule titles, not the
 /// derived skill slug or any other transformed identifier — those are
@@ -92,10 +92,9 @@ pub struct MigrationResult {
 
 impl MigrationResult {
     /// `true` if the migration didn't actually move any Rule anywhere —
-    /// i.e. the user had no Rules of any kind to migrate. The
-    /// announcement banner/modal uses this to switch between the
-    /// "Introducing: Skills" generic intro and the "Skills have replaced
-    /// Rules" migration summary.
+    /// i.e. the user had no Rules of any kind to migrate. The skills
+    /// announcement toast uses this to omit the migration-flavored
+    /// bullet for users who never had any Rules.
     pub fn is_empty(&self) -> bool {
         self.skill_names.is_empty()
             && self.agents_md_names.is_empty()
