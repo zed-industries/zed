@@ -855,7 +855,7 @@ impl TerminalView {
         });
     }
 
-    fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
+    pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
         let mut text = paths.iter().map(|path| format!(" {path:?}")).join("");
         text.push(' ');
         window.focus(&self.focus_handle(cx), cx);

@@ -23,9 +23,9 @@ use settings::{LanguageModelProviderSetting, LanguageModelSelection};
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
     agent::{
-        AddSelectionToThread, ConflictContent, OpenSettings, ReauthenticateAgent, ResetAgentZoom,
-        ResetOnboarding, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
-        ReviewBranchDiff,
+        AddSelectionToThread, ConflictContent, LogoutAgent, OpenSettings, ReauthenticateAgent,
+        ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
+        ResolveConflictsWithAgent, ReviewBranchDiff,
     },
     assistant::{FocusAgent, OpenRulesLibrary, Toggle, ToggleFocus},
 };
@@ -60,6 +60,7 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -2094,7 +2095,15 @@ impl AgentPanel {
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
-                if focus {
+                // If we're already viewing the draft as the base view but an
+                // overlay (e.g. Settings) is covering it, clear the overlay
+                // so the user actually sees the draft they asked for.
+                // Otherwise pressing "New Thread" from the Settings panel is
+                // a silent no-op because the early return below would leave
+                // the overlay on top of the draft.
+                if self.overlay_view.is_some() {
+                    self.clear_overlay(focus, window, cx);
+                } else if focus {
                     self.focus_handle(cx).focus(window, cx);
                 }
                 return;
@@ -3944,6 +3953,14 @@ impl AgentPanel {
         }
     }
 
+    fn should_show_title_edit(&self, window: &Window, cx: &Context<Self>) -> bool {
+        matches!(
+            self.visible_surface(),
+            VisibleSurface::AgentThread(_) | VisibleSurface::Terminal(_)
+        ) && self.has_open_project(cx)
+            && !self.is_title_editor_focused(window, cx)
+    }
+
     fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
         let content = match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => {
@@ -4087,24 +4104,21 @@ impl AgentPanel {
             .max_w_full()
             .overflow_x_hidden()
             .child(content)
-            .when(
-                self.has_open_project(cx) && !self.is_title_editor_focused(window, cx),
-                |this| {
-                    this.child(gradient_overlay).child(
-                        h_flex()
-                            .visible_on_hover("title_editor")
-                            .absolute()
-                            .right_0()
-                            .h_full()
-                            .bg(cx.theme().colors().tab_bar_background)
-                            .child(
-                                IconButton::new("edit_tile", IconName::Pencil)
-                                    .icon_size(IconSize::Small)
-                                    .tooltip(Tooltip::text("Edit Thread Title")),
-                            ),
-                    )
-                },
-            )
+            .when(self.should_show_title_edit(window, cx), |this| {
+                this.child(gradient_overlay).child(
+                    h_flex()
+                        .visible_on_hover("title_editor")
+                        .absolute()
+                        .right_0()
+                        .h_full()
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .child(
+                            IconButton::new("edit_tile", IconName::Pencil)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Edit Thread Title")),
+                        ),
+                )
+            })
             .into_any()
     }
 
@@ -4147,6 +4161,9 @@ impl AgentPanel {
             }
             _ => false,
         };
+        let supports_logout = self
+            .active_conversation_view()
+            .is_some_and(|conversation_view| conversation_view.read(cx).supports_logout(cx));
 
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
@@ -4168,6 +4185,12 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
+                    // When the Skills feature flag is on, hide the legacy Rules menu entry.
+                    // The flag is read from a global store populated asynchronously, and
+                    // this menu builder runs on every open, so the latest resolved value is
+                    // reflected when the user clicks the ellipsis.
+                    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
+
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(focus_handle.clone());
 
@@ -4202,9 +4225,13 @@ impl AgentPanel {
                                     }),
                                 )
                                 .action("Add Custom Server…", Box::new(AddContextServer))
-                                .separator()
-                                .action("Rules", Box::new(OpenRulesLibrary::default()))
-                                .action("Profiles", Box::new(ManageProfiles::default()));
+                                .separator();
+
+                            if !skills_enabled {
+                                menu = menu.action("Rules", Box::new(OpenRulesLibrary::default()));
+                            }
+
+                            menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
                         menu = menu
@@ -4214,6 +4241,9 @@ impl AgentPanel {
 
                         if has_auth_methods {
                             menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
+                        }
+                        if supports_logout {
+                            menu = menu.action("Log Out", Box::new(LogoutAgent))
                         }
 
                         menu
@@ -4881,30 +4911,77 @@ impl AgentPanel {
                 }),
             )
             .on_drop(cx.listener(move |this, paths: &ExternalPaths, window, cx| {
-                let tasks = paths
-                    .paths()
-                    .iter()
-                    .map(|path| {
-                        Workspace::project_path_for_path(this.project.clone(), path, false, cx)
-                    })
-                    .collect::<Vec<_>>();
-                cx.spawn_in(window, async move |this, cx| {
-                    let mut paths = vec![];
-                    let mut added_worktrees = vec![];
-                    let opened_paths = futures::future::join_all(tasks).await;
-                    for entry in opened_paths {
-                        if let Some((worktree, project_path)) = entry.log_err() {
-                            added_worktrees.push(worktree);
-                            paths.push(project_path);
-                        }
-                    }
-                    this.update_in(cx, |this, window, cx| {
-                        this.handle_drop(paths, added_worktrees, window, cx);
-                    })
-                    .ok();
-                })
-                .detach();
+                this.handle_external_paths_drop(paths, window, cx);
             }))
+    }
+
+    fn handle_external_paths_drop(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(&self.base_view, BaseView::Terminal { .. }) {
+            // Terminal drops should match normal terminal views by pasting raw OS paths.
+            // The agent-thread path below converts paths to project paths, which can add
+            // worktrees and is only needed when attaching files to a conversation.
+            self.paste_external_paths_into_active_terminal(paths, window, cx);
+            return;
+        }
+
+        let BaseView::AgentThread { conversation_view } = &self.base_view else {
+            return;
+        };
+        let conversation_view = conversation_view.clone();
+        let tasks = paths
+            .paths()
+            .iter()
+            .map(|path| Workspace::project_path_for_path(self.project.clone(), path, false, cx))
+            .collect::<Vec<_>>();
+        cx.spawn_in(window, async move |_this, cx| {
+            let mut paths = vec![];
+            let mut added_worktrees = vec![];
+            let opened_paths = futures::future::join_all(tasks).await;
+            for entry in opened_paths {
+                if let Some((worktree, project_path)) = entry.log_err() {
+                    added_worktrees.push(worktree);
+                    paths.push(project_path);
+                }
+            }
+            conversation_view
+                .update_in(cx, |conversation_view, window, cx| {
+                    conversation_view.insert_dragged_files(paths, added_worktrees, window, cx);
+                })
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn paste_external_paths_into_active_terminal(
+        &mut self,
+        paths: &ExternalPaths,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let BaseView::Terminal { terminal_id } = &self.base_view else {
+            return;
+        };
+
+        if !self.project.read(cx).is_local() {
+            return;
+        }
+
+        let Some(terminal_view) = self
+            .terminals
+            .get(terminal_id)
+            .map(|terminal| terminal.view.clone())
+        else {
+            return;
+        };
+
+        terminal_view.update(cx, |terminal_view, cx| {
+            terminal_view.add_paths_to_terminal(paths.paths(), window, cx);
+        });
     }
 
     fn handle_drop(
@@ -4920,7 +4997,30 @@ impl AgentPanel {
                     conversation_view.insert_dragged_files(paths, added_worktrees, window, cx);
                 });
             }
-            BaseView::Terminal { .. } | BaseView::Uninitialized => {}
+            BaseView::Terminal { terminal_id } => {
+                let paths = {
+                    let project = self.project.read(cx);
+                    paths
+                        .iter()
+                        .filter_map(|project_path| project.absolute_path(project_path, cx))
+                        .collect::<Vec<_>>()
+                };
+
+                if paths.is_empty() {
+                    return;
+                }
+
+                if let Some(terminal_view) = self
+                    .terminals
+                    .get(terminal_id)
+                    .map(|terminal| terminal.view.clone())
+                {
+                    terminal_view.update(cx, |terminal_view, cx| {
+                        terminal_view.add_paths_to_terminal(&paths, window, cx);
+                    });
+                }
+            }
+            BaseView::Uninitialized => {}
         }
     }
 
@@ -4969,6 +5069,13 @@ impl Render for AgentPanel {
                     })
                 }
             }))
+            .on_action(cx.listener(|this, _: &LogoutAgent, window, cx| {
+                if let Some(conversation_view) = this.active_conversation_view() {
+                    conversation_view.update(cx, |conversation_view, cx| {
+                        conversation_view.logout(window, cx)
+                    })
+                }
+            }))
             .child(self.render_toolbar(window, cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
@@ -4979,7 +5086,9 @@ impl Render for AgentPanel {
                 VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
                     .child(self.render_drag_target(cx)),
-                VisibleSurface::Terminal(terminal_view) => parent.child(terminal_view.clone()),
+                VisibleSurface::Terminal(terminal_view) => parent
+                    .child(terminal_view.clone())
+                    .child(self.render_drag_target(cx)),
                 VisibleSurface::Configuration(configuration) => {
                     parent.children(configuration.cloned())
                 }
@@ -5255,7 +5364,7 @@ mod tests {
     use std::any::Any;
 
     use serde_json::json;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::time::Instant;
 
@@ -6645,6 +6754,175 @@ mod tests {
         (panel, cx)
     }
 
+    fn expected_terminal_drop_text(paths: &[PathBuf]) -> String {
+        let mut text = String::new();
+        for path in paths {
+            text.push(' ');
+            text.push_str(&format!("{path:?}"));
+        }
+        text.push(' ');
+        text
+    }
+
+    #[gpui::test]
+    async fn test_terminal_external_image_drop_writes_path(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Image Upload", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        let terminal = panel.read_with(&cx, |panel, cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel")
+                .view
+                .read(cx)
+                .terminal()
+                .clone()
+        });
+        terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+
+        let image_path = PathBuf::from("/tmp/dropped-image.png");
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let external_paths = ExternalPaths(vec![image_path.clone()].into());
+            panel.paste_external_paths_into_active_terminal(&external_paths, window, cx);
+        });
+
+        let mut input_log = terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+        assert_eq!(input_log.len(), 1, "expected one write to the terminal");
+        let written =
+            String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
+        assert_eq!(
+            written,
+            expected_terminal_drop_text(std::slice::from_ref(&image_path))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_external_paths_drop_handler_writes_image_path(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Image Upload", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        let terminal = panel.read_with(&cx, |panel, cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel")
+                .view
+                .read(cx)
+                .terminal()
+                .clone()
+        });
+        terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+
+        let image_path = PathBuf::from("/tmp/dropped-image.png");
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let external_paths = ExternalPaths(vec![image_path.clone()].into());
+            panel.handle_external_paths_drop(&external_paths, window, cx);
+        });
+
+        let mut input_log = terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+        assert_eq!(input_log.len(), 1, "expected one write to the terminal");
+        let written =
+            String::from_utf8(input_log.remove(0)).expect("terminal write should be valid UTF-8");
+        assert_eq!(
+            written,
+            expected_terminal_drop_text(std::slice::from_ref(&image_path))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_external_file_drop_on_thread_does_not_paste_into_later_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "file.txt": "content" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        let thread_id = active_thread_id(&panel, &cx);
+
+        let file_path = PathBuf::from("/project/file.txt");
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let external_paths = ExternalPaths(vec![file_path.clone()].into());
+            panel.handle_external_paths_drop(&external_paths, window, cx);
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Drop Target", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        let terminal = panel.read_with(&cx, |panel, cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should remain in the panel")
+                .view
+                .read(cx)
+                .terminal()
+                .clone()
+        });
+        terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+
+        cx.run_until_parked();
+
+        let input_log = terminal.update(&mut cx, |terminal, _cx| terminal.take_input_log());
+        assert!(
+            input_log.is_empty(),
+            "thread drop completion should not write to the active terminal"
+        );
+
+        let expected_uri = MentionUri::File {
+            abs_path: file_path,
+        }
+        .to_uri()
+        .to_string();
+        let expected_text = format!("[@file.txt]({expected_uri}) ");
+        let actual_text = panel.read_with(&cx, |panel, cx| panel.editor_text(thread_id, cx));
+        assert_eq!(actual_text.as_deref(), Some(expected_text.as_str()));
+    }
+
     #[gpui::test]
     async fn test_terminal_entry_kind_controls_new_entry(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
@@ -6678,6 +6956,63 @@ mod tests {
             assert_eq!(panel.active_terminal_id(), None);
             assert!(panel.has_terminal(terminal_id));
             assert!(!panel.should_create_terminal_for_new_entry(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_dismisses_settings_overlay(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        // Put the panel on its ephemeral new-draft view so the base view
+        // already contains the draft that `NewThread` would activate.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.active_view_is_new_draft(cx),
+                "precondition: base view should be the ephemeral draft"
+            );
+            assert!(!panel.is_overlay_open());
+        });
+
+        // Simulate the Settings overlay being open on top of the draft.
+        // We don't go through `open_configuration` here because it would
+        // build provider configuration views, which call into
+        // `LanguageModelProvider::configuration_view` — unimplemented for
+        // the fake provider used in tests. The bug being exercised lives
+        // entirely in the overlay/base-view bookkeeping, so toggling the
+        // overlay flag directly is sufficient.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.set_overlay(OverlayView::Configuration, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.is_overlay_open(),
+                "precondition: Settings overlay should be open"
+            );
+        });
+
+        // Dispatching `NewThread` while Settings is open must dismiss the
+        // overlay so the user actually sees the new thread. Previously
+        // this was a silent no-op: `activate_draft` early-returned without
+        // clearing the overlay because the base view already held the
+        // draft.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_thread(&NewThread, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                !panel.is_overlay_open(),
+                "Settings overlay should be dismissed when invoking NewThread"
+            );
+            assert!(panel.active_view_is_new_draft(cx));
         });
     }
 
@@ -6743,6 +7078,42 @@ mod tests {
                 .get(&terminal_id)
                 .expect("terminal should remain in the panel");
             assert_eq!(terminal.title(cx).as_ref(), "Shell Breadcrumb");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_title_edit_affordance_matches_threads_and_terminals(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(matches!(
+                panel.visible_surface(),
+                VisibleSurface::AgentThread(_)
+            ));
+            assert!(panel.should_show_title_edit(window, cx));
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(matches!(
+                panel.visible_surface(),
+                VisibleSurface::Terminal(_)
+            ));
+            assert!(panel.should_show_title_edit(window, cx));
+
+            panel.edit_terminal_title(terminal_id, window, cx);
+            assert!(!panel.should_show_title_edit(window, cx));
         });
     }
 
