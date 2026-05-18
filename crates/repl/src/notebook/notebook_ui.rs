@@ -11,7 +11,7 @@ use futures::FutureExt;
 use futures::future::Shared;
 use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, ListScrollEvent, ListState,
-    Point, Task, actions, list, prelude::*,
+    Point, PromptLevel, Task, actions, list, prelude::*,
 };
 use jupyter_protocol::JupyterKernelspec;
 use language::{Language, LanguageRegistry};
@@ -20,6 +20,7 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings as _;
 use ui::{CommonAnimationExt, Tooltip, prelude::*};
 use workspace::item::{ItemEvent, SaveOptions, TabContentParams};
+use workspace::notifications::DetachAndPromptErr;
 use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, Pane, ProjectItem, ToolbarItemLocation};
 
@@ -786,7 +787,37 @@ impl NotebookEditor {
         cx.notify();
     }
 
-    fn delete_current_cell(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn delete_current_cell(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.cell_order.is_empty() {
+            return;
+        }
+
+        let prompt = window.prompt(
+            PromptLevel::Warning,
+            "Delete current cell?",
+            None,
+            &["Delete", "Cancel"],
+            cx,
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = prompt.await?;
+            if answer != 0 {
+                return Ok(());
+            }
+
+            this.update_in(cx, |this, window, cx| {
+                this.delete_current_cell_confirmed(window, cx);
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to delete cell", window, cx, |e, _, _| {
+            Some(format!("{e}"))
+        });
+    }
+
+    fn delete_current_cell_confirmed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.cell_order.is_empty() {
             return;
         }
