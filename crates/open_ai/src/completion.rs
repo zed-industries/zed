@@ -552,10 +552,13 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
-        if let Some(usage) = event.usage {
+        if let Some(usage) = event.usage
+            && let Some(prompt_tokens) = usage.prompt_tokens
+            && let Some(completion_tokens) = usage.completion_tokens
+        {
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
+                input_tokens: prompt_tokens,
+                output_tokens: completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
             })));
