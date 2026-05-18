@@ -1146,4 +1146,77 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn test_multibyte_char_with_trailing_backslash() {
+        // Reproduces a panic where the stored `old_text_emitted_len` from a previous
+        // partial lands inside a multi-byte UTF-8 character in the current partial.
+        //
+        // Scenario: The JSON fixer produces a literal backslash when the stream cuts
+        // mid-escape. If the *next* partial replaces that backslash with a multi-byte
+        // character (e.g., em-dash '—'), the stored byte position is no longer valid.
+        let mut parser = StreamingParser::default();
+
+        // First partial: text ends with backslash (held back by safe_emit_end).
+        // "abc" = 3 bytes, backslash held back, so emitted_len = 3.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("abc\\".into()),
+            new_text: None,
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "abc".into(),
+                done: false,
+            }]
+        );
+
+        // Second partial: the backslash is replaced by em-dash '—' (3 bytes: E2 80 94).
+        // "ab—" = 2 + 3 = 5 bytes total, with em-dash at bytes 2..5.
+        // The stored emitted_len (3) is inside the em-dash!
+        // This should NOT panic.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ab—".into()),
+            new_text: None,
+        }]);
+        // The parser should handle this gracefully.
+        let _ = events;
+    }
+
+    #[test]
+    fn test_emitted_len_inside_multibyte_char_boundary() {
+        // More direct reproduction: emitted_len points inside a multi-byte character.
+        //
+        // This can happen when:
+        // 1. First partial has text where byte N is a valid boundary
+        // 2. Second partial has *different* text where byte N is inside a multi-byte char
+        let mut parser = StreamingParser::default();
+
+        // First partial: "ab" (2 bytes), backslash held back.
+        // After processing: emitted_len = 2
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("ab\\".into()),
+            new_text: None,
+        }]);
+        assert_eq!(
+            events.as_slice(),
+            &[EditEvent::OldTextChunk {
+                edit_index: 0,
+                chunk: "ab".into(),
+                done: false,
+            }]
+        );
+
+        // Second partial: "a—" where em-dash starts at byte 1 and spans bytes 1-3.
+        // Stored emitted_len = 2, but byte 2 is inside the em-dash!
+        // This should NOT panic.
+        let events = parser.push_edits(&[PartialEdit {
+            old_text: Some("a—".into()),
+            new_text: None,
+        }]);
+        // The parser should handle this gracefully.
+        // We don't care exactly what it emits, just that it doesn't panic.
+        let _ = events;
+    }
 }
