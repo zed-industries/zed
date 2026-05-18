@@ -795,8 +795,7 @@ impl NotebookEditor {
         self.cell_map.remove(&cell_id);
 
         if !self.cell_order.is_empty() {
-            self.selected_cell_index =
-                self.selected_cell_index.min(self.cell_order.len() - 1);
+            self.selected_cell_index = self.selected_cell_index.min(self.cell_order.len() - 1);
         } else {
             self.selected_cell_index = 0;
         }
@@ -1038,7 +1037,11 @@ impl NotebookEditor {
                                 )
                                 .disabled(self.cell_order.is_empty())
                                 .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Delete current cell", &DeleteCurrentCell, cx)
+                                    Tooltip::for_action(
+                                        "Delete current cell",
+                                        &DeleteCurrentCell,
+                                        cx,
+                                    )
                                 })
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(Box::new(DeleteCurrentCell), cx);
@@ -1277,9 +1280,9 @@ impl Render for NotebookEditor {
             .on_action(
                 cx.listener(|this, _: &AddCodeBlock, window, cx| this.add_code_block(window, cx)),
             )
-            .on_action(
-                cx.listener(|this, _: &DeleteCurrentCell, window, cx| this.delete_current_cell(window, cx)),
-            )
+            .on_action(cx.listener(|this, _: &DeleteCurrentCell, window, cx| {
+                this.delete_current_cell(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &MoveUp, window, cx| {
                 this.select_previous(&menu::SelectPrevious, window, cx);
                 if let Some(cell_id) = this.cell_order.get(this.selected_cell_index) {
