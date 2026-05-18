@@ -159,7 +159,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
     /// The name of the model.
     ///
     /// Default: ""
@@ -185,11 +185,12 @@ pub struct CustomEditPredictionProviderSettingsContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum EditPredictionPromptFormat {
+pub enum EditPredictionPromptFormatContent {
     #[default]
     Infer,
     Zeta,
     Zeta2,
+    Zeta2_1,
     CodeLlama,
     StarCoder,
     DeepseekCoder,
@@ -280,7 +281,7 @@ pub struct OllamaEditPredictionSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
 }
 
 /// Controls whether Zed collects training data when using Zed's Edit Predictions.

@@ -12,7 +12,7 @@ use project::{
 };
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use settings::Settings;
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle};
 use workspace::{AppState, MultiWorkspace, Workspace};
 
 use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
@@ -77,9 +77,13 @@ fn archived_worktree_ref_name(id: i64) -> String {
 /// This intentionally reads the *global* `git.worktree_directory` setting
 /// rather than any project-local override, because Zed always uses the
 /// global value when creating worktrees and the archive check must match.
-fn worktrees_base_for_repo(main_repo_path: &Path, cx: &App) -> Option<PathBuf> {
+fn worktrees_base_for_repo(
+    main_repo_path: &Path,
+    path_style: PathStyle,
+    cx: &App,
+) -> Option<PathBuf> {
     let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
-    worktrees_directory_for_repo(main_repo_path, setting).log_err()
+    worktrees_directory_for_repo(main_repo_path, setting, path_style).log_err()
 }
 
 /// Builds a [`RootPlan`] for archiving the git worktree at `path`.
@@ -160,12 +164,12 @@ pub fn build_root_plan(
     // Only linked worktrees can be archived to disk via `git worktree remove`.
     // Main worktrees must be left alone — git refuses to remove them.
     let (linked_snapshot, repo) = linked_repo?;
-    let main_repo_path = linked_snapshot.original_repo_abs_path.to_path_buf();
+    let main_repo_path = linked_snapshot.main_worktree_abs_path()?.to_path_buf();
 
     // Only archive worktrees that live inside the Zed-managed worktrees
     // directory (configured via `git.worktree_directory`). Worktrees the
     // user created outside that directory should be left untouched.
-    let worktrees_base = worktrees_base_for_repo(&main_repo_path, cx)?;
+    let worktrees_base = worktrees_base_for_repo(&main_repo_path, linked_snapshot.path_style, cx)?;
     if !path.starts_with(&worktrees_base) {
         return None;
     }
