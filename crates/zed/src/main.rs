@@ -719,6 +719,7 @@ fn main() {
             false,
             cx,
         );
+        zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -1025,16 +1026,35 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
-                    let (client, thread_store) =
-                        multi_workspace.update(cx, |_, _window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                let client = workspace.project().read(cx).client();
-                                let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
-                                    .panel::<AgentPanel>(cx)
-                                    .map(|panel| panel.read(cx).thread_store().clone());
-                                anyhow::Ok((client, thread_store))
-                            })
-                        })??;
+                    let import_state = multi_workspace.update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            if workspace.root_paths(cx).is_empty() {
+                                workspace.focus_panel::<AgentPanel>(window, cx);
+
+                                struct OpenProjectForSharedThreadToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<OpenProjectForSharedThreadToast>(),
+                                        "Open a project to import shared threads",
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+
+                                return anyhow::Ok(None);
+                            }
+
+                            let client = workspace.project().read(cx).client();
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
+                                .panel::<AgentPanel>(cx)
+                                .map(|panel| panel.read(cx).thread_store().clone());
+                            anyhow::Ok(Some((client, thread_store)))
+                        })
+                    })??;
+
+                    let Some((client, thread_store)) = import_state else {
+                        return Ok(());
+                    };
 
                     let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");

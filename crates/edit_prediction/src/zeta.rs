@@ -396,6 +396,7 @@ pub fn request_prediction_with_zeta(
             &edited_buffer_snapshot,
             edits.into(),
             cursor_position,
+            Some(edited_buffer_snapshot.anchor_range_inside(editable_range_in_buffer.clone())),
             inputs,
             model_version,
             request_duration,
@@ -410,6 +411,7 @@ pub fn request_prediction_with_zeta(
             let edited_buffer_snapshot = edited_buffer_snapshot.clone();
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
+            let model_version = prediction.model_version.clone();
             let example_task = capture_data.and_then(|stored_events| {
                 cx.update(|cx| {
                     crate::capture_example(
@@ -439,6 +441,7 @@ pub fn request_prediction_with_zeta(
                             editable_range_in_buffer,
                             &edit_preview,
                             example_spec,
+                            model_version,
                             request_duration,
                             cx,
                         );

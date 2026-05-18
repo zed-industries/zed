@@ -29,6 +29,7 @@ profiling.workspace = true
 raw-window-handle = "0.6"
 smallvec.workspace = true
 swash = "0.2.6"
+unicode-segmentation.workspace = true
 gpui_util.workspace = true
 wgpu.workspace = true
 
@@ -44,3 +45,10 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
 js-sys = "0.3"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "layout_line"
+harness = false

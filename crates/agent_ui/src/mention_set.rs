@@ -140,6 +140,9 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => self.confirm_mention_for_skill(skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -289,6 +292,9 @@ impl MentionSet {
                 ..
             } => self.confirm_mention_for_symbol(abs_path, line_range, cx),
             MentionUri::Rule { id, .. } => self.confirm_mention_for_rule(id, cx),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => self.confirm_mention_for_skill(skill_file_path, cx),
             MentionUri::Diagnostics {
                 include_errors,
                 include_warnings,
@@ -437,6 +443,26 @@ impl MentionSet {
                 }
             });
             Ok(mention)
+        })
+    }
+
+    fn confirm_mention_for_skill(
+        &self,
+        skill_file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Mention>> {
+        cx.background_spawn(async move {
+            let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
+                anyhow!(
+                    "Failed to read skill file {}: {}",
+                    skill_file_path.display(),
+                    e
+                )
+            })?;
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: Vec::new(),
+            })
         })
     }
 

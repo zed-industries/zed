@@ -140,6 +140,7 @@ members = [
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/oauth_callback_server",
     "crates/ollama",
     "crates/onboarding",
     "crates/opencode",
@@ -399,6 +400,7 @@ nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+oauth_callback_server = { path = "crates/oauth_callback_server" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 opencode = { path = "crates/opencode" }
@@ -498,7 +500,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }
+agent-client-protocol = { version = "=0.12.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
@@ -551,6 +553,7 @@ circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
+const_format = "0.2"
 convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
@@ -889,13 +892,22 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 16
+debug = "limited"
 
 # mirror configuration for crates compiled for the build platform
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
 codegen-units = 16
 split-debuginfo = "unpacked"
-debug = true
+debug = "limited"
+
+# "debug" is a reserved profile name.
+[profile.dbg]
+inherits = "dev"
+debug = "full"
+
+[profile.dbg.build-override]
+debug = "full"
 
 [profile.dev.package]
 # proc-macros start

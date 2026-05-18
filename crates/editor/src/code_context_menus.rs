@@ -13,7 +13,7 @@ use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use multi_buffer::Anchor;
 use ordered_float::OrderedFloat;
 use project::lsp_store::CompletionDocumentation;
-use project::{CodeAction, Completion, TaskSourceKind};
+use project::{CodeAction, Completion, CompletionGroup, TaskSourceKind};
 use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
@@ -29,8 +29,8 @@ use std::{
 };
 use task::ResolvedTask;
 use ui::{
-    Color, IntoElement, ListItem, Pixels, Popover, ScrollAxes, Scrollbars, Styled, Tooltip,
-    WithScrollbar, prelude::*,
+    Divider, ListItem, ListSubHeader, Popover, ScrollAxes, Scrollbars, Tooltip, WithScrollbar,
+    prelude::*,
 };
 use util::ResultExt;
 
@@ -67,6 +67,26 @@ const MARKDOWN_CACHE_AFTER_ITEMS: usize = 2;
 // Number of items beyond the visible items to resolve documentation.
 const RESOLVE_BEFORE_ITEMS: usize = 4;
 const RESOLVE_AFTER_ITEMS: usize = 4;
+
+#[derive(Clone, Debug)]
+pub enum CompletionMenuEntry {
+    Match(StringMatch),
+    Divider,
+    GroupHeader(SharedString),
+}
+
+impl CompletionMenuEntry {
+    pub fn as_match(&self) -> Option<&StringMatch> {
+        match self {
+            CompletionMenuEntry::Match(m) => Some(m),
+            CompletionMenuEntry::Divider | CompletionMenuEntry::GroupHeader(_) => None,
+        }
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        matches!(self, CompletionMenuEntry::Match(_))
+    }
+}
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -235,7 +255,7 @@ pub struct CompletionsMenu {
     /// String match candidate for each completion, grouped by `match_start`.
     match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
     /// Entries displayed in the menu, which is a filtered and sorted subset of `match_candidates`.
-    pub entries: Rc<RefCell<Box<[StringMatch]>>>,
+    pub entries: Rc<RefCell<Box<[CompletionMenuEntry]>>>,
     pub selected_item: usize,
     filter_task: Task<()>,
     cancel_filter: Arc<AtomicBool>,
@@ -376,6 +396,7 @@ impl CompletionsMenu {
                 confirm: None,
                 insert_text_mode: None,
                 source: CompletionSource::Custom,
+                group: None,
             })
             .collect();
 
@@ -390,11 +411,13 @@ impl CompletionsMenu {
         let entries = choices
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatch {
-                candidate_id: id,
-                score: 1.,
-                positions: vec![],
-                string: completion.clone(),
+            .map(|(id, completion)| {
+                CompletionMenuEntry::Match(StringMatch {
+                    candidate_id: id,
+                    score: 1.,
+                    positions: vec![],
+                    string: completion.clone(),
+                })
             })
             .collect();
         Self {
@@ -430,12 +453,20 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let index = if self.scroll_handle.y_flipped() {
-            self.entries.borrow().len() - 1
+        let entries = self.entries.borrow();
+        if entries.is_empty() {
+            return;
+        }
+        let start = if self.scroll_handle.y_flipped() {
+            entries.len() - 1
         } else {
             0
         };
-        self.update_selection_index(index, provider, window, cx);
+        drop(entries);
+        let index = self.find_selectable_entry(start, !self.scroll_handle.y_flipped());
+        if let Some(index) = index {
+            self.update_selection_index(index, provider, window, cx);
+        }
     }
 
     fn select_last(
@@ -444,12 +475,20 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        let index = if self.scroll_handle.y_flipped() {
+        let entries = self.entries.borrow();
+        if entries.is_empty() {
+            return;
+        }
+        let start = if self.scroll_handle.y_flipped() {
             0
         } else {
-            self.entries.borrow().len() - 1
+            entries.len() - 1
         };
-        self.update_selection_index(index, provider, window, cx);
+        drop(entries);
+        let index = self.find_selectable_entry(start, self.scroll_handle.y_flipped());
+        if let Some(index) = index {
+            self.update_selection_index(index, provider, window, cx);
+        }
     }
 
     fn select_prev(
@@ -494,18 +533,70 @@ impl CompletionsMenu {
     }
 
     fn prev_match_index(&self) -> usize {
-        if self.selected_item > 0 {
+        let entries = self.entries.borrow();
+        let len = entries.len();
+        if len == 0 {
+            return 0;
+        }
+        let mut index = if self.selected_item > 0 {
             self.selected_item - 1
         } else {
-            self.entries.borrow().len() - 1
+            len - 1
+        };
+        let start = index;
+        loop {
+            if entries[index].is_selectable() {
+                return index;
+            }
+            index = if index > 0 { index - 1 } else { len - 1 };
+            if index == start {
+                return self.selected_item;
+            }
         }
     }
 
     fn next_match_index(&self) -> usize {
-        if self.selected_item + 1 < self.entries.borrow().len() {
+        let entries = self.entries.borrow();
+        let len = entries.len();
+        if len == 0 {
+            return 0;
+        }
+        let mut index = if self.selected_item + 1 < len {
             self.selected_item + 1
         } else {
             0
+        };
+        let start = index;
+        loop {
+            if entries[index].is_selectable() {
+                return index;
+            }
+            index = if index + 1 < len { index + 1 } else { 0 };
+            if index == start {
+                return self.selected_item;
+            }
+        }
+    }
+
+    fn find_selectable_entry(&self, start: usize, forward: bool) -> Option<usize> {
+        let entries = self.entries.borrow();
+        let len = entries.len();
+        if len == 0 {
+            return None;
+        }
+        let mut index = start;
+        loop {
+            if entries[index].is_selectable() {
+                return Some(index);
+            }
+            if forward {
+                index = if index + 1 < len { index + 1 } else { 0 };
+            } else {
+                index = if index > 0 { index - 1 } else { len - 1 };
+            }
+            if index == start {
+                return None;
+            }
         }
     }
 
@@ -520,7 +611,7 @@ impl CompletionsMenu {
         if let Some(provider) = provider {
             let entries = self.entries.borrow();
             let entry = if self.selected_item < entries.len() {
-                Some(&entries[self.selected_item])
+                entries[self.selected_item].as_match()
             } else {
                 None
             };
@@ -590,12 +681,19 @@ impl CompletionsMenu {
         // This filtering doesn't happen if the completions are currently being updated.
         let completions = self.completions.borrow();
         let candidate_ids = entry_indices
-            .map(|i| entries[i].candidate_id)
+            .filter_map(|i| entries[i].as_match().map(|m| m.candidate_id))
             .filter(|i| completions[*i].documentation.is_none());
 
         // Current selection is always resolved even if it already has documentation, to handle
         // out-of-spec language servers that return more results later.
-        let selected_candidate_id = entries[self.selected_item].candidate_id;
+        let Some(selected_candidate_id) = entries[self.selected_item]
+            .as_match()
+            .map(|m| m.candidate_id)
+        else {
+            drop(entries);
+            drop(completions);
+            return;
+        };
         let candidate_ids = iter::once(selected_candidate_id)
             .chain(candidate_ids.filter(|id| *id != selected_candidate_id))
             .collect::<Vec<usize>>();
@@ -658,7 +756,7 @@ impl CompletionsMenu {
         if index >= entries.len() {
             return None;
         }
-        let candidate_id = entries[index].candidate_id;
+        let candidate_id = entries[index].as_match()?.candidate_id;
         let completions = self.completions.borrow();
         match &completions[candidate_id].documentation {
             Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => self
@@ -767,7 +865,7 @@ impl CompletionsMenu {
     }
 
     pub fn visible(&self) -> bool {
-        !self.entries.borrow().is_empty()
+        self.entries.borrow().iter().any(|e| e.as_match().is_some())
     }
 
     fn origin(&self) -> ContextMenuOrigin {
@@ -792,6 +890,7 @@ impl CompletionsMenu {
                 .borrow()
                 .iter()
                 .enumerate()
+                .filter_map(|(ix, entry)| entry.as_match().map(|m| (ix, m)))
                 .max_by_key(|(_, mat)| {
                     let completion = &completions[mat.candidate_id];
                     let documentation = &completion.documentation;
@@ -828,8 +927,23 @@ impl CompletionsMenu {
                 entries.borrow()[range]
                     .iter()
                     .enumerate()
-                    .map(|(ix, mat)| {
+                    .map(|(ix, entry)| {
                         let item_ix = start_ix + ix;
+
+                        let Some(mat) = entry.as_match() else {
+                            return match entry {
+                                CompletionMenuEntry::GroupHeader(label) => div()
+                                    .child(ListSubHeader::new(label.clone()).inset(true))
+                                    .into_any_element(),
+                                CompletionMenuEntry::Divider => h_flex()
+                                    .flex_1()
+                                    .size_full()
+                                    .child(Divider::horizontal())
+                                    .into_any_element(),
+                                CompletionMenuEntry::Match(_) => unreachable!(),
+                            };
+                        };
+
                         let completion = &completions_guard[mat.candidate_id];
                         let documentation = if show_completion_documentation {
                             &completion.documentation
@@ -1033,6 +1147,7 @@ impl CompletionsMenu {
                                     )
                                     .end_slot::<Label>(documentation_label),
                             )
+                            .into_any_element()
                     })
                     .collect()
             }),
@@ -1072,7 +1187,10 @@ impl CompletionsMenu {
             return None;
         }
 
-        let mat = &self.entries.borrow()[self.selected_item];
+        let entries = self.entries.borrow();
+        let Some(mat) = entries[self.selected_item].as_match() else {
+            return None;
+        };
         let completions = self.completions.borrow();
         let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
             Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
@@ -1258,8 +1376,27 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        *self.entries.borrow_mut() = matches.into_boxed_slice();
-        self.selected_item = 0;
+        let completions = self.completions.borrow();
+        let mut entries: Vec<CompletionMenuEntry> = Vec::with_capacity(matches.len());
+        let mut last_group: Option<&CompletionGroup> = None;
+        for mat in matches {
+            let group = completions[mat.candidate_id].group.as_ref();
+            if group != last_group {
+                if group.is_some() || last_group.is_some() {
+                    if !entries.is_empty() {
+                        entries.push(CompletionMenuEntry::Divider);
+                    }
+                    if let Some(label) = group.and_then(|g| g.label.as_ref()) {
+                        entries.push(CompletionMenuEntry::GroupHeader(label.clone()));
+                    }
+                }
+                last_group = group;
+            }
+            entries.push(CompletionMenuEntry::Match(mat));
+        }
+        drop(completions);
+        *self.entries.borrow_mut() = entries.into_boxed_slice();
+        self.selected_item = self.find_selectable_entry(0, true).unwrap_or(0);
         self.handle_selection_changed(provider.as_deref(), window, cx);
     }
 

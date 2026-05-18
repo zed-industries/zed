@@ -83,6 +83,7 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -136,7 +137,9 @@ impl Focusable for CommitTagPicker {
 
 impl Render for CommitTagPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(18.)).child(self.picker.clone())
+        v_flex()
+            .w(COMMIT_TAG_LIST_WIDTH_IN_REMS)
+            .child(self.picker.clone())
     }
 }
 

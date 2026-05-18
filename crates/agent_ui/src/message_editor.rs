@@ -3,8 +3,9 @@ use crate::SendImmediately;
 use crate::{
     ChatWithFollow,
     completion_provider::{
-        AgentContextSelection, PromptCompletionProvider, PromptCompletionProviderDelegate,
-        PromptContextAction, PromptContextType, SlashCommandCompletion,
+        AgentContextSelection, AvailableCommand, AvailableSkill, PromptCompletionProvider,
+        PromptCompletionProviderDelegate, PromptContextAction, PromptContextType,
+        SlashCommandCompletion,
     },
     mention_set::{Mention, MentionImage, MentionSet, insert_crease_for_mention},
 };
@@ -47,17 +48,27 @@ use zed_actions::agent::{Chat, PasteRaw};
 pub struct SessionCapabilities {
     prompt_capabilities: acp::PromptCapabilities,
     available_commands: Vec<acp::AvailableCommand>,
+    available_skills: Vec<AvailableSkill>,
 }
 
 impl SessionCapabilities {
     pub fn new(
         prompt_capabilities: acp::PromptCapabilities,
         available_commands: Vec<acp::AvailableCommand>,
+        available_skills: Vec<AvailableSkill>,
     ) -> Self {
         Self {
             prompt_capabilities,
             available_commands,
+            available_skills,
         }
+    }
+
+    pub fn from_acp_commands(
+        prompt_capabilities: acp::PromptCapabilities,
+        available_commands: Vec<acp::AvailableCommand>,
+    ) -> Self {
+        Self::new(prompt_capabilities, available_commands, Vec::new())
     }
 
     pub fn supports_images(&self) -> bool {
@@ -72,6 +83,14 @@ impl SessionCapabilities {
         &self.available_commands
     }
 
+    pub fn available_skills(&self) -> &[AvailableSkill] {
+        &self.available_skills
+    }
+
+    pub fn has_slash_completions(&self) -> bool {
+        !self.available_commands.is_empty() || !self.available_skills.is_empty()
+    }
+
     fn supported_modes(&self, has_thread_store: bool) -> Vec<PromptContextType> {
         let mut supported = vec![PromptContextType::File, PromptContextType::Symbol];
         if self.prompt_capabilities.embedded_context {
@@ -81,23 +100,27 @@ impl SessionCapabilities {
             supported.extend(&[
                 PromptContextType::Diagnostics,
                 PromptContextType::Fetch,
-                PromptContextType::Rules,
+                PromptContextType::Skill,
                 PromptContextType::BranchDiff,
             ]);
         }
         supported
     }
 
-    pub fn completion_commands(&self) -> Vec<crate::completion_provider::AvailableCommand> {
+    pub fn completion_commands(&self) -> Vec<AvailableCommand> {
         self.available_commands
             .iter()
-            .map(|cmd| crate::completion_provider::AvailableCommand {
-                name: cmd.name.clone().into(),
-                description: cmd.description.clone().into(),
-                requires_argument: cmd.input.is_some(),
-                source: acp_thread::skill_source_from_meta(&cmd.meta),
+            .map(|command| AvailableCommand {
+                name: command.name.clone().into(),
+                description: command.description.clone().into(),
+                requires_argument: command.input.is_some(),
+                source: None,
             })
             .collect()
+    }
+
+    pub fn completion_skills(&self) -> Vec<AvailableSkill> {
+        self.available_skills.clone()
     }
 
     pub fn set_prompt_capabilities(&mut self, prompt_capabilities: acp::PromptCapabilities) {
@@ -106,6 +129,10 @@ impl SessionCapabilities {
 
     pub fn set_available_commands(&mut self, available_commands: Vec<acp::AvailableCommand>) {
         self.available_commands = available_commands;
+    }
+
+    pub fn set_available_skills(&mut self, available_skills: Vec<AvailableSkill>) {
+        self.available_skills = available_skills;
     }
 }
 
@@ -128,8 +155,12 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
             .supported_modes(self.has_thread_store)
     }
 
-    fn available_commands(&self, _cx: &App) -> Vec<crate::completion_provider::AvailableCommand> {
+    fn available_commands(&self, _cx: &App) -> Vec<AvailableCommand> {
         self.session_capabilities.read().completion_commands()
+    }
+
+    fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
+        self.session_capabilities.read().completion_skills()
     }
 
     fn slash_autocomplete_invoked(&self, cx: &mut App) {
@@ -485,7 +516,6 @@ impl MessageEditor {
             },
             editor.downgrade(),
             mention_set.clone(),
-            prompt_store.clone(),
             workspace.clone(),
         ));
         editor.update(cx, |editor, _cx| {
@@ -606,7 +636,7 @@ impl MessageEditor {
         let command_name = parsed_command.command?;
         let available_command = available_commands
             .iter()
-            .find(|command| command.name == command_name)?;
+            .find(|available_command| available_command.name == command_name)?;
 
         let acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput {
             mut hint,
@@ -717,9 +747,13 @@ impl MessageEditor {
     fn validate_slash_commands(
         text: &str,
         available_commands: &[acp::AvailableCommand],
+        available_skills: &[AvailableSkill],
         agent_id: &AgentId,
     ) -> Result<()> {
         if let Some(parsed_command) = SlashCommandCompletion::try_parse(text, 0) {
+            if parsed_command.source_range.start != 0 {
+                return Ok(());
+            }
             if let Some(command_name) = parsed_command.command {
                 // Two acceptance paths:
                 //
@@ -729,7 +763,7 @@ impl MessageEditor {
                 //    (`/github.create_pr`), and skills (whose bare name
                 //    is registered for the unqualified `/<name>` form).
                 //
-                // 2. Skill scope qualifier `/<scope>:<name>`. The popup
+                // 2. Trusted native skill scope qualifier `/<scope>:<name>`. The popup
                 //    inserts this colon-separated form to disambiguate
                 //    same-named skills, so the validator splits on the
                 //    LAST `:` to recover scope + bare name. Skill
@@ -740,58 +774,62 @@ impl MessageEditor {
                 //    scope is allowed to be empty: `/:<name>` is the
                 //    qualified form for a global skill (see
                 //    `SkillSource::scope_prefix`). The validator then
-                //    confirms an available command with that bare
-                //    name has a `zed.skill_source` meta tag whose
-                //    value equals the typed scope (including empty
-                //    for globals). Without this branch, every
-                //    autocomplete pick of a same-named skill would be
-                //    rejected as "not supported" before reaching the
-                //    resolver.
+                //    checks the `available_skills` slice for an entry
+                //    whose `skill.name` matches the bare name and
+                //    whose `skill.source` equals the typed scope
+                //    (including empty for globals). Without this
+                //    branch, every autocomplete pick of a same-named
+                //    skill would be rejected as "not supported"
+                //    before reaching the resolver.
                 let direct_match = available_commands
                     .iter()
-                    .any(|cmd| cmd.name == command_name);
+                    .any(|available_command| available_command.name == command_name)
+                    || available_skills
+                        .iter()
+                        .any(|skill| skill.name.as_ref() == command_name);
                 let scope_match = !direct_match
                     && command_name.rsplit_once(':').is_some_and(|(scope, bare)| {
                         !bare.is_empty()
-                            && available_commands.iter().any(|cmd| {
-                                cmd.name == bare
-                                    && acp_thread::skill_source_str_from_meta(&cmd.meta)
-                                        == Some(scope)
+                            && available_skills.iter().any(|skill| {
+                                skill.name.as_ref() == bare && skill.source.as_ref() == scope
                             })
                     });
 
                 if !direct_match && !scope_match {
-                    return Err(anyhow!(
-                        "The /{} command is not supported by {}.\n\nAvailable commands: {}",
-                        command_name,
-                        agent_id,
-                        Self::format_available_commands(available_commands),
-                    ));
+                    return Err(anyhow!(indoc::formatdoc!(
+                        "/{command_name} is not a recognized command in {agent_id}. \
+                         Messages that start with `/` are interpreted as commands.
+
+                         If you are trying to send a message and not run a command, \
+                         try preceding the `/` with a space.
+
+                         Available commands for {agent_id}: {commands}",
+                        commands =
+                            Self::format_available_commands(available_commands, available_skills),
+                    )));
                 }
             }
         }
         Ok(())
     }
 
-    /// Render the available-commands list for error messages. Skills
+    /// Render the available-commands list for error messages. Trusted native skills
     /// are shown in their qualified `/<scope>:<name>` form so users
     /// see the exact text the popup would insert — otherwise the
     /// listing would contain confusing duplicates like `/foo, /foo`
     /// when both a global and a project-local skill share a name.
     /// Globals carry an empty scope and so render as `/:<name>`.
-    fn format_available_commands(commands: &[acp::AvailableCommand]) -> String {
-        if commands.is_empty() {
+    fn format_available_commands(
+        commands: &[acp::AvailableCommand],
+        skills: &[AvailableSkill],
+    ) -> String {
+        if commands.is_empty() && skills.is_empty() {
             return "none".to_string();
         }
-        commands
+        skills
             .iter()
-            .map(|cmd| {
-                if let Some(scope) = acp_thread::skill_source_str_from_meta(&cmd.meta) {
-                    format!("/{}:{}", scope, cmd.name)
-                } else {
-                    format!("/{}", cmd.name)
-                }
-            })
+            .map(|skill| format!("/{}:{}", skill.source, skill.name))
+            .chain(commands.iter().map(|command| format!("/{}", command.name)))
             .collect::<Vec<_>>()
             .join(", ")
     }
@@ -802,16 +840,23 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>> {
         let text = self.editor.read(cx).text(cx);
-        let available_commands = self
-            .session_capabilities
-            .read()
-            .available_commands()
-            .to_vec();
+        let (available_commands, available_skills) = {
+            let session_capabilities = self.session_capabilities.read();
+            (
+                session_capabilities.available_commands().to_vec(),
+                session_capabilities.available_skills().to_vec(),
+            )
+        };
         let agent_id = self.agent_id.clone();
         let build_task = self.build_content_blocks(full_mention_content, cx);
 
         cx.spawn(async move |_, _cx| {
-            Self::validate_slash_commands(&text, &available_commands, &agent_id)?;
+            Self::validate_slash_commands(
+                &text,
+                &available_commands,
+                &available_skills,
+                &agent_id,
+            )?;
             build_task.await
         })
     }
@@ -2113,7 +2158,7 @@ mod tests {
     use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, MultiWorkspace, Workspace};
 
-    use crate::completion_provider::{AgentContextSelection, PromptContextType};
+    use crate::completion_provider::{AgentContextSelection, AvailableSkill, PromptContextType};
     use crate::{
         conversation_view::tests::init_test,
         mention_set::insert_crease_for_mention,
@@ -2123,56 +2168,85 @@ mod tests {
     };
 
     #[test]
+    fn test_session_capabilities_keep_commands_and_skills_separate() {
+        let skill_file_path = PathBuf::from("/tmp/SKILL.md");
+        let skill = AvailableSkill {
+            name: "deploy".into(),
+            description: "Deploy the app".into(),
+            source: "".into(),
+            skill_file_path: skill_file_path.clone(),
+        };
+        let session_capabilities = SessionCapabilities::new(
+            acp::PromptCapabilities::default(),
+            vec![acp::AvailableCommand::new("help", "Get help")],
+            vec![skill],
+        );
+
+        assert_eq!(session_capabilities.completion_commands().len(), 1);
+        let skills = session_capabilities.completion_skills();
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name.as_ref(), "deploy");
+        assert_eq!(skills[0].skill_file_path, skill_file_path);
+    }
+
+    #[test]
     fn test_validate_slash_commands_accepts_scope_qualified_skill() {
         let agent_id = AgentId::from("Zed");
-        let make_skill_command = |name: &str, scope: &str| {
-            acp::AvailableCommand::new(name, "desc").meta(acp_thread::meta_with_skill_source(scope))
+        let make_skill = |name: &str, source: &str| AvailableSkill {
+            name: name.into(),
+            description: "desc".into(),
+            source: source.into(),
+            skill_file_path: PathBuf::from(format!("/tmp/{source}-{name}/SKILL.md")),
         };
 
         // Global skills carry an empty scope (so the popup inserts
         // `/:<name>`); project-local skills carry their worktree root
         // name. The empty-scope encoding means a worktree literally
         // named `global` no longer collides with the global source.
-        let commands = vec![
-            make_skill_command("deploy", ""),
-            make_skill_command("deploy", "zed"),
-            acp::AvailableCommand::new("help", "Get help"),
-        ];
+        let commands = vec![acp::AvailableCommand::new("help", "Get help")];
+        let skills = vec![make_skill("deploy", ""), make_skill("deploy", "zed")];
+        let no_skills = Vec::new();
 
         // Bare name still works (current behavior — the resolver
         // applies project-overrides-global for unqualified commands).
-        MessageEditor::validate_slash_commands("/deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/deploy", &commands, &skills, &agent_id)
             .expect("bare /deploy should validate when a skill named `deploy` exists");
+        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &no_skills, &agent_id)
+            .expect_err("scope-qualified skills should require a first-class available skill");
 
         // Scope-qualified forms both validate, each pointing at the
         // matching source. `/:<name>` is the qualified form for a
         // global skill; `/<worktree>:<name>` is the qualified form
         // for a project-local skill.
-        MessageEditor::validate_slash_commands("/:deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/:deploy", &commands, &skills, &agent_id)
             .expect("/:deploy should validate when a global skill named `deploy` exists");
-        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &agent_id).expect(
+        MessageEditor::validate_slash_commands("/zed:deploy", &commands, &skills, &agent_id).expect(
             "/zed:deploy should validate when a project skill named `deploy` exists in the `zed` worktree",
         );
 
         // Hand-typed `/global:<name>` is NOT an alias for `/:<name>`.
         // It looks for a project-local skill from a worktree named
         // `global`, and fails when no such worktree skill exists.
-        MessageEditor::validate_slash_commands("/global:deploy", &commands, &agent_id).expect_err(
-            "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
-        );
+        MessageEditor::validate_slash_commands("/global:deploy", &commands, &skills, &agent_id)
+            .expect_err(
+                "/global:deploy should fail when no worktree named `global` has a `deploy` skill",
+            );
 
         // The `:` separator is what distinguishes a skill scope from
         // an MCP server prefix — the dotted form `/zed.deploy` is an
         // MCP-style lookup, which doesn't match here.
-        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &agent_id)
+        MessageEditor::validate_slash_commands("/zed.deploy", &commands, &skills, &agent_id)
             .expect_err("/zed.deploy (dotted) should be treated as an MCP-style prefix and fail");
 
         // Wrong scope is rejected so the resolver doesn't silently
         // fall through when the user meant a skill. `zed:help` looks
         // like a skill scope qualifier but no skill named `help`
         // exists in the `zed` worktree (it's an MCP command).
-        let err = MessageEditor::validate_slash_commands("/zed:help", &commands, &agent_id)
-            .expect_err("/zed:help should fail — `help` is an MCP command, not a worktree skill");
+        let err =
+            MessageEditor::validate_slash_commands("/zed:help", &commands, &skills, &agent_id)
+                .expect_err(
+                    "/zed:help should fail — `help` is an MCP command, not a worktree skill",
+                );
         let err_message = err.to_string();
         assert!(
             err_message.contains("/zed:help"),
@@ -2193,6 +2267,24 @@ mod tests {
             err_message.contains("/help"),
             "error listing should still show bare MCP commands: {err_message}"
         );
+
+        // Slashes that appear mid-text (paths, URLs, pasted logs)
+        // should NOT be validated as commands.
+        MessageEditor::validate_slash_commands(
+            "check /docs for info",
+            &commands,
+            &skills,
+            &agent_id,
+        )
+        .expect("mid-text /docs should not be treated as a slash command");
+
+        MessageEditor::validate_slash_commands(
+            "see /usr/local/bin/foo",
+            &commands,
+            &skills,
+            &agent_id,
+        )
+        .expect("file paths containing slashes should not trigger validation");
     }
 
     #[test]
@@ -2393,7 +2485,7 @@ mod tests {
 
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let thread_store = None;
-        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp::PromptCapabilities::default(),
             vec![],
         )));
@@ -2435,8 +2527,8 @@ mod tests {
         // Should fail because available_commands is empty (no commands supported)
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Agent"));
-        assert!(error_message.contains("Available commands: none"));
+        assert!(error_message.contains("is not a recognized command in Claude Agent"));
+        assert!(error_message.contains("Available commands for Claude Agent: none"));
 
         // Now simulate Claude providing its list of available commands (which doesn't include file)
         session_capabilities
@@ -2454,9 +2546,9 @@ mod tests {
 
         assert!(contents_result.is_err());
         let error_message = contents_result.unwrap_err().to_string();
-        assert!(error_message.contains("not supported by Claude Agent"));
+        assert!(error_message.contains("is not a recognized command in Claude Agent"));
         assert!(error_message.contains("/file"));
-        assert!(error_message.contains("Available commands: /help"));
+        assert!(error_message.contains("Available commands for Claude Agent: /help"));
 
         // Test that supported commands work fine
         editor.update_in(cx, |editor, window, cx| {
@@ -2555,7 +2647,7 @@ mod tests {
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
         let thread_store = None;
-        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp::PromptCapabilities::default(),
             vec![
                 acp::AvailableCommand::new("quick-math", "2 + 2 = 4 - 1 = 3"),
@@ -2729,7 +2821,7 @@ mod tests {
 
         let mut cx = VisualTestContext::from_window(window.into(), cx);
 
-        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp::PromptCapabilities::default(),
             vec![acp::AvailableCommand::new("hello", "Say hello")],
         )));
@@ -2884,7 +2976,7 @@ mod tests {
         }
 
         let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::new(
+        let session_capabilities = Arc::new(RwLock::new(SessionCapabilities::from_acp_commands(
             acp::PromptCapabilities::default(),
             vec![],
         )));

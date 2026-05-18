@@ -5,7 +5,6 @@ pub mod entities;
 pub mod env;
 pub mod executor;
 pub mod rpc;
-pub mod seed;
 pub mod services;
 
 use anyhow::Context as _;
@@ -17,7 +16,7 @@ use axum::{
 use db::Database;
 use executor::Executor;
 use serde::Deserialize;
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use util::ResultExt;
 
 use crate::services::{CloudUserService, UserService};
@@ -122,7 +121,6 @@ impl std::error::Error for Error {}
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
-    pub seed_path: Option<PathBuf>,
     pub database_max_connections: u32,
     pub livekit_server: Option<String>,
     pub livekit_key: Option<String>,
@@ -184,7 +182,6 @@ impl Config {
             blob_store_secret_key: None,
             blob_store_bucket: None,
             zed_client_checksum_seed: None,
-            seed_path: None,
             kinesis_region: None,
             kinesis_access_key: None,
             kinesis_secret_key: None,
