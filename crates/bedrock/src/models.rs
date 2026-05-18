@@ -540,30 +540,6 @@ impl Model {
         }
     }
 
-    pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
-        match self {
-            Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4_5
-            | Self::ClaudeOpus4_1
-            | Self::ClaudeOpus4_5
-            | Self::ClaudeOpus4_6
-            | Self::ClaudeOpus4_7
-            | Self::ClaudeSonnet4_6 => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 1024,
-            }),
-            Self::ClaudeHaiku4_5 => Some(BedrockModelCacheConfiguration {
-                max_cache_anchors: 4,
-                min_total_token: 2048,
-            }),
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.clone(),
-            _ => None,
-        }
-    }
-
     pub fn supports_thinking(&self) -> bool {
         matches!(
             self,
