@@ -235,6 +235,10 @@ fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
     const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
 
     let fs_type = (stat.f_type as u64) & 0xFFFF_FFFF;
+    if fs_type == FUSE_SUPER_MAGIC && is_virtiofs(path) {
+        return false;
+    }
+
     if fs_type == V9FS_MAGIC
         || fs_type == NFS_SUPER_MAGIC
         || fs_type == CIFS_MAGIC
@@ -259,6 +263,37 @@ fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
     }
 
     false
+}
+
+#[cfg(target_os = "linux")]
+fn is_virtiofs(path: &Path) -> bool {
+    let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+
+    let mut best_mount = None;
+    for line in mountinfo.lines() {
+        let fields = line.split(' ').collect::<Vec<_>>();
+        let Some(separator) = fields.iter().position(|field| *field == "-") else {
+            continue;
+        };
+        let (Some(mount_point), Some(fs_type)) = (fields.get(4), fields.get(separator + 1)) else {
+            continue;
+        };
+
+        let mount_point = mount_point
+            .replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\");
+        if path.starts_with(&mount_point)
+            && best_mount.is_none_or(|(length, _)| mount_point.len() > length)
+        {
+            best_mount = Some((mount_point.len(), *fs_type));
+        }
+    }
+
+    best_mount.is_some_and(|(_, fs_type)| fs_type == "virtiofs" || fs_type == "fuse.virtiofs")
 }
 
 #[cfg(target_os = "linux")]
