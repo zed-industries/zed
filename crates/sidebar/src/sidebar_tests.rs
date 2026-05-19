@@ -2054,7 +2054,7 @@ async fn test_terminal_close_event_deletes_empty_draft_when_linked_worktree_has_
 }
 
 #[gpui::test]
-async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_non_text_draft(
+async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_editor_draft(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
@@ -2158,27 +2158,19 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_non
     assert_eq!(
         editor_text,
         Some(None),
-        "audio-only draft should be in memory with empty editor text"
+        "draft should be in memory with empty editor text before editing"
     );
-    let active_thread = worktree_panel.read_with(cx, |panel, cx| {
+
+    let message_editor = worktree_panel.read_with(cx, |panel, cx| {
         panel
-            .active_agent_thread(cx)
+            .active_thread_view(cx)
             .expect("draft should be loaded in the agent panel")
+            .read(cx)
+            .message_editor
+            .clone()
     });
-    active_thread.update(cx, |thread, cx| {
-        thread.set_draft_prompt(
-            Some(vec![acp::ContentBlock::Audio(acp::AudioContent::new(
-                "audio-data",
-                "audio/wav",
-            ))]),
-            cx,
-        );
-    });
-    cx.update(|_, cx| {
-        assert!(
-            agent_ui::draft_prompt_store::read(draft_id, cx).is_none(),
-            "test should rely on live draft blocks rather than persisted draft prompt fallback"
-        );
+    message_editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("keep this draft", window, cx);
     });
 
     let terminal_id = worktree_panel
@@ -2193,9 +2185,9 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_non
     assert!(
         matches!(
             live_blocks.as_deref(),
-            Some([acp::ContentBlock::Audio(audio)]) if audio.data == "audio-data"
+            Some([acp::ContentBlock::Text(text)]) if text.text == "keep this draft"
         ),
-        "non-text draft should still be readable from the panel after opening the terminal"
+        "edited draft should still be readable from the panel after opening the terminal"
     );
 
     assert_eq!(
@@ -2231,7 +2223,7 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_non
     });
     assert_eq!(
         unarchived_worktree_threads, 1,
-        "non-text draft should remain as a worktree thread reference"
+        "edited draft should remain as a worktree thread reference"
     );
     assert!(
         multi_workspace
@@ -2239,12 +2231,12 @@ async fn test_terminal_close_event_keeps_linked_worktree_workspace_with_live_non
                 multi_workspace.workspace_for_paths(&worktree_folder_paths, None, cx)
             })
             .is_some(),
-        "linked worktree workspace should stay open while a non-text draft references it"
+        "linked worktree workspace should stay open while an edited draft references it"
     );
     assert!(
         fs.is_dir(Path::new("/worktrees/project/feature-a/project"))
             .await,
-        "linked worktree directory should remain on disk while a non-text draft references it"
+        "linked worktree directory should remain on disk while an edited draft references it"
     );
 }
 
