@@ -30,6 +30,7 @@ use gpui::{
     point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
+use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
@@ -405,6 +406,8 @@ actions!(
         Undo,
         /// Redoes the last undone file operation.
         Redo,
+        /// Opens a markdown preview for the selected file.
+        OpenMarkdownPreview,
     ]
 );
 
@@ -1047,6 +1050,10 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
+            let is_markdown = !is_dir
+                && entry.path.extension().is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+                });
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1076,7 +1083,10 @@ impl ProjectPanel {
             let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
-                        menu.when(is_dir, |menu| {
+                        menu.when(is_markdown, |menu| {
+                            menu.action("Open Preview", Box::new(OpenMarkdownPreview))
+                        })
+                        .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
@@ -1093,6 +1103,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_markdown, |menu| {
+                                menu.action("Open Preview", Box::new(OpenMarkdownPreview))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -1636,6 +1649,89 @@ impl ProjectPanel {
             window,
             cx,
         );
+    }
+
+    fn open_markdown_preview(
+        &mut self,
+        _: &OpenMarkdownPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        if !entry.is_file() {
+            return;
+        }
+        let is_markdown = entry.path.extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+        });
+        if !is_markdown {
+            return;
+        }
+
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        let workspace = self.workspace.clone();
+
+        // Snapshot whether this file is already open so we know not to close it later.
+        let was_already_open = workspace
+            .update(cx, |workspace, cx| {
+                workspace.panes().iter().any(|pane| {
+                    pane.read(cx)
+                        .item_for_path(project_path.clone(), cx)
+                        .is_some()
+                })
+            })
+            .unwrap_or(false);
+
+        // Open without activating so the raw editor never becomes the visible tab.
+        let Ok(open_task) = workspace.update(cx, |workspace, cx| {
+            workspace.open_path_preview(project_path, None, false, false, false, window, cx)
+        }) else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |_this, mut cx| {
+            let Some(item) = open_task.await.notify_workspace_async_err(workspace.clone(), &mut cx) else {
+                return;
+            };
+            let item_id = item.item_id();
+            cx.update(|window, cx| {
+                let Some(editor) = item.act_as::<Editor>(cx) else {
+                    return;
+                };
+                let Some((preview, pane)) = workspace
+                    .update(cx, |workspace, cx| {
+                        let language_registry =
+                            workspace.project().read(cx).languages().clone();
+                        let workspace_handle = workspace.weak_handle();
+                        let preview = MarkdownPreviewView::new(
+                            MarkdownPreviewMode::Default,
+                            editor,
+                            workspace_handle,
+                            language_registry,
+                            window,
+                            cx,
+                        );
+                        (preview, workspace.active_pane().clone())
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(preview), true, true, None, window, cx);
+                    if !was_already_open {
+                        pane.remove_item(item_id, false, false, window, cx);
+                    }
+                });
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn open_internal(
@@ -6667,6 +6763,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
+                .on_action(cx.listener(Self::open_markdown_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
