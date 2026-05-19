@@ -32,6 +32,8 @@ two-Project test.
 
 - [x] `active_repo_id` is a single field shared across Projects — moved to `Project::active_repository_id` on this branch. `GitStore` no longer owns active repository state.
 - [ ] `forget_shared_diffs_for(peer)` clears every Project's diffs.
+- [ ] `forget_all_shared_diffs` (called from `Project::unshare_internal`) `.clear()`s `shared_diffs` for every Project's peers. Bug 20. Same fix shape as bug 9 — move `shared_diffs` onto `Project`.
+- [ ] `GitStore::checkpoint` / `restore_checkpoint` / `compare_checkpoints` iterate `self.repositories.values()` host-wide. Used by agent "rewind". Bug 19.
 - [ ] `RepositoryUpdated(_, _, is_active)` still carries host-level `is_active` shape; current branch emits `false` because `GitStore` no longer has project context. Remove/replace this bool with project-scoped handling.
 - [x] `ActiveRepositoryChanged` as a `GitStoreEvent` is no longer emitted by `GitStore`; active repository changes now emit `Project::Event::ActiveRepositoryChanged`. Some raw `GitStoreEvent::ActiveRepositoryChanged` subscribers may still need cleanup as part of the event audit.
 
@@ -40,7 +42,12 @@ two-Project test.
 - [ ] `status_for_buffer_id` can return sibling repo's status.
 - [ ] `project_path_git_status` can return sibling repo's status.
 - [ ] `wait_for_initial_scan` waits on every Project's worktrees.
-- [ ] `handle_synchronize_buffers` doesn't gate on `self.buffers`.
+- [x] `handle_synchronize_buffers` doesn't gate on `self.buffers` — fixed: `project.rs:7222` now skips buffer ids not in `self.buffers` before the shared `BufferStore` lookup. Regression test: `test_synchronize_buffers_does_not_disclose_sibling_project` in `crates/collab/tests/integration/integration_tests.rs` exercises the attack end-to-end through the collab server. Bug 1.
+- [ ] `Project::shared` / `Project::reshared` iterate `git_store.repositories()` host-wide — collab peer joining Project A receives `UpdateRepository`s for every host repo, including Project B's. Bug 16.
+- [ ] `Project::handle_reload_buffers` no ownership gate on `buffer_ids`. Bug 21.
+- [ ] `Project::handle_register_buffer_with_language_servers` no ownership gate; peer can pin sibling buffer into A's LSP state. Bug 22.
+- [ ] `Project::on_breakpoint_store_event` broadcasts `BreakpointsForFile` for any toggled path on the shared store without `self.owns_abs_path` gate. Bug 18.
+- [ ] `git_panel.rs:837` pattern-matches `GitStoreEvent::ActiveRepositoryChanged(_)` but `GitStore` no longer emits it — part of bug 2's touch-all-subscribers fix.
 
 ### `crates/project/src/agent_server_store.rs`, `environment.rs`
 
@@ -54,6 +61,7 @@ two-Project test.
 ### `crates/project/src/buffer_store.rs`
 
 - [ ] `non_searchable_buffers` lives on the shared store — Project A marking bleeds into B's search.
+- [ ] `BufferStore::handle_save_buffer`, `handle_update_buffer`, `handle_update_buffer_file` stay registered on the shared `BufferStore` entity and look up buffers without project-ownership gates — collab peer of Project A can save/update sibling Project B's buffer via A's `project_id`. Bug 17. Fix: move handlers onto `Project` (mirroring Phase 1's move of `handle_close_buffer` / `handle_synchronize_buffers`).
 
 ---
 
@@ -145,6 +153,10 @@ Each needs a product call before the code change.
 - [ ] Two workspaces editing the same buffer share state today. Feature or bug? Document either way.
 - [ ] Two workspaces saving the same file concurrently.
 
+### Snippets
+
+- [ ] `Host::snippets: Entity<SnippetProvider>` is shared across every Project on a machine (`crates/project/src/host.rs:268`; the field carries `// todo! Are there host local snippets?`). Per-workspace snippet config would leak across Projects on the same host. Decide: host-shared (current), or per-Project?
+
 ### Collab + multi-tenant
 
 - [ ] Peer joined to multiple of my shared Projects — what happens to `shared_diffs` / `shared_buffers` when they leave one?
@@ -192,7 +204,7 @@ All known bystander accessors have been migrated:
 ### Missing direct unit tests for the patterns
 
 - [ ] `pending_worktree_paths` race.
-- [ ] `claim_found_worktree` repo back-claim.
+- [x] `claim_found_worktree` repo back-claim — covered by `test_project_claiming_existing_repository_sets_active_repository`.
 - [ ] `RepositoryAdded` re-emit on new worktree association.
 - [ ] `claim_buffer` idempotency.
 - [ ] Distinct `FakeFs` → distinct `Host` (the `HostKey::Local(fs_ptr)` discriminator).

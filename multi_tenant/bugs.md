@@ -6,7 +6,7 @@ iterates the host's full collection where it should be iterating only what this
 `Project` owns. `Project` already carries the filter sets:
 
 - `self.buffers: HashSet<BufferId>`
-- `self.repositories: HashSet<RepositoryId>`
+- `self.repositories: HashMap<RepositoryId, Entity<Repository>>`
 - `self.language_servers: HashSet<LanguageServerId>`
 - helpers `self.worktrees(cx)`, `self.owns_worktree_id`, `self.owns_abs_path`,
   `self.language_server_belongs_to_us` (`crates/project/src/project.rs:4145`,
@@ -17,9 +17,9 @@ the canonical task list; each bug below ties back to one of those checkboxes.
 
 ---
 
-## 🚨 Ship-blockers (live bugs today)
+## ✅ Done
 
-### 1. `Project::handle_synchronize_buffers` — cross-Project info disclosure
+### `Project::handle_synchronize_buffers` — cross-Project info disclosure
 
 `crates/project/src/project.rs:7182`
 
@@ -51,6 +51,18 @@ disclosure path, not just a clobber.
 **Fix:** add `if !this.buffers.contains(&buffer_id) { continue; }` before the
 buffer lookup. Same pattern `handle_close_buffer` already does implicitly via
 `shared_buffers` membership.
+
+**Fixed:** `Project::handle_synchronize_buffers` (`crates/project/src/project.rs:7222`)
+now gates the per-id loop on `self.buffers.contains(&buffer_id)` before the
+shared `BufferStore` lookup. Regression test:
+`test_synchronize_buffers_does_not_disclose_sibling_project` in
+`crates/collab/tests/integration/integration_tests.rs` — builds two local
+Projects on one `FakeFs` (so they share a Phase 2 `Host`), shares only one
+over collab, then has the guest send a hand-rolled `proto::SynchronizeBuffers`
+naming the un-shared Project's buffer id. Test fails on the pre-fix branch
+(`response.buffers.len() == 1`) and passes with the gate in place.
+
+## 🚨 Ship-blockers (live bugs today)
 
 ### 2. `RepositoryUpdated(_, _, is_active)` bool now lies
 
@@ -123,6 +135,109 @@ too**, even servers B uses that A doesn't share at all. Same applies to
 `self.buffers` (mapped to `Entity<Buffer>` via `buffer_store.get`) and calls
 `restart_language_servers_for_buffers` with that set. LSP button calls the
 `Project` method. Make `LspStore::restart_all_language_servers` `pub(crate)`.
+
+### 16. `Project::shared` / `Project::reshared` broadcast every host repository
+
+`crates/project/src/project.rs:3106`, `:3147`
+
+```rust
+// Announce all current repositories to the downstream peer. The
+// diff/send pipeline used to live inside `GitStore::shared`; in
+// Phase 0 it moves here, with `git_repository_snapshots_for_peer`
+// tracking what we last sent so subsequent
+// `RepositorySnapshotForDownstream` events can build incremental
+// updates.
+let initial_snapshots: Vec<RepositorySnapshot> = self
+    .git_store(cx)
+    .read(cx)
+    .repositories()       // host-wide
+    .values()
+    .map(|repo| repo.read(cx).snapshot())
+    .collect();
+for snapshot in initial_snapshots {
+    for chunk in proto::split_repository_update(snapshot.initial_update(project_id)) {
+        self.collab_client.send(chunk).log_err();
+    }
+    self.git_repository_snapshots_for_peer.insert(snapshot.id, snapshot);
+}
+```
+
+`Project::shared` (collab share) and `Project::reshared` (peer rejoins) both
+iterate `git_store.repositories()` host-wide and broadcast a full
+`UpdateRepository` chunk stream to the collab peer under _this_ Project's
+`project_id`. In multi-tenant, that means **every collab peer joining Project
+A receives initial `UpdateRepository`s for every repo on the host, including
+Project B's**.
+
+This is the cross-Project counterpart to the §1 announce-servers loop
+immediately above (which already filters via `my_worktree_ids`). Same shape,
+same fix.
+
+**Fix shape:** filter the iteration by `self.repositories.contains_key(&id)`
+(the strong-handle set Project already maintains) before sending. Same edit
+in both methods.
+
+### 17. Shared `BufferStore` peer handlers don't gate by project ownership
+
+`crates/project/src/buffer_store.rs:1184`, `:1241`, `:1282`
+
+```rust
+pub async fn handle_save_buffer(
+    this: Entity<Self>,                        // <- BufferStore is host-shared
+    envelope: TypedEnvelope<proto::SaveBuffer>,
+    mut cx: AsyncApp,
+) -> Result<proto::BufferSaved> {
+    let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+    let project_id = envelope.payload.project_id;
+    let buffer = this.read_with(&cx, |this, _| this.get_existing(buffer_id))?;
+    // ...saves the buffer; no project-ownership check
+}
+```
+
+`Project::collab_client.subscribe_to_entity(project_id)?.set_entity(&self.buffer_store(cx), ...)`
+attaches the _same_ `BufferStore` entity under both Project A's and Project
+B's `project_id`. The proto router dispatches based on `project_id`, so a
+peer of Project A correctly hits the handler under A's project*id — but the
+handler then fetches the buffer by id from the shared store \_without
+checking that the buffer is owned by Project A*. A peer of A sending
+`SaveBuffer { project_id: A, buffer_id: <B's buffer> }` saves B's buffer
+from A's collab channel.
+
+Same shape applies to `handle_update_buffer` (`L1184`) and
+`handle_update_buffer_file` (`L1241`). `Project::handle_update_buffer`
+(`project.rs:7109`) routes through `Project` but immediately forwards to
+`BufferStore::handle_update_buffer` without a gate.
+
+**Fix shape:** these handlers should move to `Project` (like
+`handle_synchronize_buffers` / `handle_close_buffer` did in BufferStore
+Phase 1) and gate on `self.buffers.contains(&buffer_id)`. Or: keep on
+`BufferStore` and look up the owning `Project` by `project_id` to gate. The
+former is consistent with how Phase 1 moved these.
+
+### 18. `Project::on_breakpoint_store_event` broadcasts sibling breakpoint toggles
+
+`crates/project/src/project.rs:4200`
+
+```rust
+if let BreakpointStoreEvent::BreakpointsUpdated(path, BreakpointUpdatedReason::Toggled) = event {
+    if let ProjectClientState::Shared { remote_id } = &self.client_state {
+        if self.host.read(cx).remote_client.is_none() {
+            let proto = breakpoint_store.read(cx).breakpoints_for_file_proto(path, *remote_id);
+            let _ = self.collab_client.send(proto);
+        }
+    }
+}
+```
+
+The handler sends `proto::BreakpointsForFile` for _any_ path on the
+shared `BreakpointStore` that toggles — there's no
+`self.owns_abs_path(path, cx)` gate. Toggling a breakpoint in Project B's
+file causes Project A to broadcast that path + breakpoints to A's collab
+peers under A's `project_id`. Cross-Project info disclosure to collab.
+
+**Fix shape:** wrap the body in
+`if !self.owns_abs_path(path, cx) { return; }`. The `owns_abs_path` helper
+already exists (`project.rs:5128`).
 
 ---
 
@@ -592,6 +707,117 @@ Two failure modes layered:
   a `Project` in scope — verify in surrounding function). The `is_searchable`
   check becomes `!project.non_searchable_buffers.contains(...)`.
 
+### 19. `GitStore::checkpoint` checkpoints every repo on the host
+
+`crates/project/src/git_store.rs:1086`
+
+```rust
+// todo! This function should filter by repositories on a project
+// we don't want to checkpoint every repository because this is now global
+pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
+    let mut work_directory_abs_paths = Vec::new();
+    let mut checkpoints = Vec::new();
+    for repository in self.repositories.values() { // host-wide
+        ...
+    }
+}
+```
+
+The `todo!` comment is right. `Project::checkpoint` doesn't exist as a
+facade; the callers in `acp_thread` reach in via `project.git_store(cx)`
+and checkpoint every repo on the host. In multi-tenant, agent "rewind"
+checkpoints in Project A snapshot Project B's repositories too — doubling
+(or worse) the time and disk churn, and producing a `GitStoreCheckpoint`
+keyed by `work_directory_abs_path` that contains sibling repos the
+downstream restore path will then try to roll back too.
+
+Same issue applies to `GitStore::restore_checkpoint` and
+`GitStore::compare_checkpoints` (`L1119`, `L1148`) which iterate
+`self.repositories.values()` the same way.
+
+**Fix shape:** add `Project::checkpoint(&self, cx)` that filters on
+`self.repositories` (the strong-handle set the Project owns) and pass that
+set down to a `GitStore::checkpoint_filtered(&self, allowed: &HashMap<RepositoryId, Entity<Repository>>, cx)`
+variant. Mirror for restore/compare.
+
+### 20. `GitStore::forget_all_shared_diffs` wipes every Project on unshare
+
+`crates/project/src/git_store.rs:721`, called from
+`crates/project/src/project.rs:3225`
+
+```rust
+// git_store.rs
+pub fn forget_all_shared_diffs(&mut self) {
+    self.shared_diffs.clear();
+}
+
+// project.rs Project::unshare_internal
+self.git_store(cx).update(cx, |git_store, _| {
+    git_store.forget_all_shared_diffs();
+});
+```
+
+When Project A unshares from collab, it calls `forget_all_shared_diffs` on
+the shared host `GitStore`. This `.clear()`s `shared_diffs: HashMap<PeerId, HashMap<BufferId, SharedDiffs>>`
+for every peer of every Project. Project B's collab peers lose their
+uncommitted/unstaged diff state when A unshares — next scroll over a diff
+block in B's editor will need to reload from scratch.
+
+Sibling of bug 9 (`forget_shared_diffs_for(peer)`). Both are symptoms of
+`shared_diffs` living on the host `GitStore` instead of on `Project`.
+
+**Fix shape:** move `shared_diffs` onto `Project` (same way bug 9 proposes).
+`forget_all_shared_diffs` becomes a per-Project `self.shared_diffs.clear()`
+in `Project::unshare_internal`.
+
+### 21. `Project::handle_reload_buffers` no ownership gate
+
+`crates/project/src/project.rs:7359`
+
+```rust
+async fn handle_reload_buffers(
+    this: Entity<Self>,
+    envelope: TypedEnvelope<proto::ReloadBuffers>,
+    mut cx: AsyncApp,
+) -> Result<proto::ReloadBuffersResponse> {
+    let sender_id = envelope.original_sender_id().unwrap_or_default();
+    let reload = this.update(&mut cx, |this, cx| {
+        let mut buffers = HashSet::default();
+        for buffer_id in &envelope.payload.buffer_ids {
+            let buffer_id = BufferId::new(*buffer_id)?;
+            buffers.insert(this.buffer_store(cx).read(cx).get_existing(buffer_id)?);
+        }
+        ...
+    })?;
+    ...
+}
+```
+
+Looks up each `buffer_id` via the shared `buffer_store.get_existing` with no
+`self.buffers.contains(&buffer_id)` gate. A peer of Project A can request a
+reload of buffers owned by Project B; the reload executes and the resulting
+`ProjectTransaction` is serialized back to A's peer. Same shape as bug 1
+(info disclosure / cross-Project mutation).
+
+**Fix shape:** add the `self.buffers.contains` gate inside the loop; skip
+or error on unowned ids.
+
+### 22. `handle_register_buffer_with_language_servers` no ownership gate
+
+`crates/project/src/project.rs:6689` (Project wrapper),
+`crates/project/src/lsp_store.rs:9508` (`process_register_buffer_with_language_servers`)
+
+The Project wrapper forwards to `LspStore::process_register_buffer_with_language_servers`
+which fetches the buffer by id from the shared store and registers it with
+language servers. No ownership check on either side.
+
+A peer of Project A can pin a sibling-owned buffer into A's
+`Project::shared_buffers[peer_id]` and force a `didOpen` to A's language
+servers for that buffer, polluting A's LSP state with B's buffer.
+
+**Fix shape:** in the Project wrapper, gate on
+`self.buffers.contains(&buffer_id)` before calling into the LSP store.
+
 ---
 
 ## Cross-cutting observations
@@ -614,20 +840,63 @@ Two failure modes layered:
   shouldn't see it.
 - Bug 2's `git_panel.rs` regression is live on the branch today (status-only
   changes never refresh the panel) — worth elevating from "follow-up" to
-  "ship blocker".
+  "ship blocker". Note also a _second_ axis: `git_panel.rs:837` pattern-
+  matches `GitStoreEvent::ActiveRepositoryChanged(_)`, but `GitStore` no
+  longer emits that variant (it moved to `Project::Event::ActiveRepositoryChanged`).
+  Bug 2's fix needs to repoint git_panel (and any other
+  `GitStoreEvent::ActiveRepositoryChanged` subscribers) at the Project event.
+- Bug 17 (shared `BufferStore` peer handlers) and bug 18 (breakpoint
+  toggle broadcast) are the same class as bug 1 / bug 9 / bug 16: handlers
+  registered on host-shared store entities mutate or broadcast data without
+  knowing which `Project` the inbound `project_id` belongs to. The pattern
+  fix is to move the handler onto `Project` (Phase 1 already did this for
+  `handle_synchronize_buffers` / `handle_close_buffer`) and add the
+  ownership gate at the top.
+- The field-comment for `Project::pending_worktree_paths`
+  (`project.rs:251`) claims "Pruned by the continuation; the event handler
+  doesn't prune". Only the `find_worktree` fast path inside
+  `find_or_create_worktree` removes; the
+  `worktree_store.update(|store, cx| store.find_or_create_worktree(...))`
+  continuation never does, and `create_worktree` only inserts. The comment
+  is misleading and the loose-end "`pending_worktree_paths` never removed
+  after successful claim" in shipping plan §4 is real.
+- A few `// todo!`/`// TODO!(project-host)` comments in `editor/` and
+  `lsp_store.rs` flag the missing `Project` facade for resolving completions
+  / applying additional edits but aren't catalogued anywhere:
+  - `editor/src/completions.rs:944` — `// todo! should we narrow this to
+only active worktrees or buffers`
+  - `editor/src/completions.rs:1393` —
+    `// TODO!(project-host): Route through Project::resolve_completions
+once it exists so this call checks that the buffer belongs to this
+Project before touching LspStore.`
+  - `crates/project/src/lsp_store.rs:6548` —
+    `// TODO!(project-host): Route external callers through a Project facade
+that verifies the buffer belongs to the calling Project before resolving
+completions, then make this method pub(crate) so callers cannot bypass
+the project-owned buffer check.`
+    Worth covering as a single audit pass (§2 in the shipping plan).
 
 ---
 
 ## Suggested fix order
 
-1. Bug 1 (info disclosure) — one-line gate.
+1. ~~Bug 1~~ (✅ done — see "Done" section above). Bugs 16, 17, 18, 21, 22
+   (info disclosure / cross-Project handler pollution) — one-line gates
+   each, all the same shape as bug 1; land them as a single PR to keep the
+   collab-path audit contiguous.
 2. Bug 2 (live git panel regression) — touch-all-subscribers, do it before
-   adding more `RepositoryUpdated` consumers.
+   adding more `RepositoryUpdated` consumers. Pair with the
+   `git_panel.rs:837 ActiveRepositoryChanged` repoint noted in
+   cross-cutting observations.
 3. Bug 3 (Restart-All clobber) — visible to anyone clicking the LSP button.
 4. Bugs 11, 12 (env / scan races) — affect remote/SSH multi-project users
    most.
 5. Bug 14 (worktree-add context-server refresh) — one-line addition in
    `Project::on_worktree_store_event`; pair with the fix for bug 13.
-6. Bugs 4-10, 13, 15 — sibling clobbers, fix as a batch via the
+6. Bug 19 (`GitStore::checkpoint` host-wide) — user-visible when the agent
+   "rewind" feature is used with multiple Projects open.
+7. Bug 20 (`forget_all_shared_diffs` on unshare) — fix together with bug 9
+   by moving `shared_diffs` onto `Project`.
+8. Bugs 4-10, 13, 15 — sibling clobbers, fix as a batch via the
    `BufferStore::buffers_in` / `Project::..._filtered` primitives once they
    exist.

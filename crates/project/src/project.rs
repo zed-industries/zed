@@ -7220,6 +7220,10 @@ impl Project {
             this.shared_buffers.entry(guest_id).or_default().clear();
             for buffer in envelope.payload.buffers {
                 let buffer_id = BufferId::new(buffer.id)?;
+                if !this.buffers.contains(&buffer_id) {
+                    continue;
+                }
+
                 let remote_version = language::proto::deserialize_version(&buffer.version);
                 if let Some(buffer) = this.buffer_store(cx).read(cx).get(buffer_id) {
                     this.shared_buffers

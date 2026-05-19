@@ -1836,6 +1836,80 @@ async fn test_project_reconnect(
     buffer_b1.read_with(cx_b, |buffer, _| assert_eq!(buffer.text(), "WXaYZ"));
 }
 
+// Added this as a regression test for multi tenant
+#[gpui::test]
+async fn test_synchronize_buffers_does_not_disclose_sibling_project(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/shared-project"),
+            json!({ "public.txt": "shared content" }),
+        )
+        .await;
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/private-project"),
+            json!({ "secret.txt": "PRIVATE PASSWORD" }),
+        )
+        .await;
+
+    let (project_a_shared, _) = client_a
+        .build_local_project(path!("/shared-project"), cx_a)
+        .await;
+    let (project_a_private, _) = client_a
+        .build_local_project(path!("/private-project"), cx_a)
+        .await;
+
+    let secret_buffer = project_a_private
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer(path!("/private-project/secret.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let secret_buffer_id = secret_buffer.read_with(cx_a, |buffer, _| buffer.remote_id());
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| {
+            call.share_project(project_a_shared.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let _project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let response = client_b
+        .client()
+        .request(rpc::proto::SynchronizeBuffers {
+            project_id,
+            buffers: vec![rpc::proto::BufferVersion {
+                id: secret_buffer_id.to_proto(),
+                version: vec![],
+            }],
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        response.buffers.is_empty(),
+        "host returned version metadata for a sibling Project's buffer; \
+         got {} entries in response",
+        response.buffers.len(),
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_active_call_events(
     executor: BackgroundExecutor,
