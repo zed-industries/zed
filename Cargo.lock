@@ -16553,6 +16553,7 @@ dependencies = [
  "settings",
  "theme_settings",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "worktree",

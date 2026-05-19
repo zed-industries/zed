@@ -7,8 +7,8 @@ use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Rems,
-    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
+    Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
     WindowOptions, actions, point, size,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -21,6 +21,7 @@ use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, DropdownMenu, DropdownStyle, Headline, HeadlineSize, Switch, Tooltip, prelude::*,
 };
+use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
 use workspace::{
     Toast, Workspace, WorkspaceSettings, client_side_decorations, notifications::NotificationId,
@@ -181,8 +182,8 @@ pub struct SkillCreator {
     title_bar: Option<Entity<PlatformTitleBar>>,
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
-    name_editor: Entity<Editor>,
-    description_editor: Entity<Editor>,
+    name_editor: Entity<InputField>,
+    description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
     description_length: usize,
     scopes: Vec<ScopeChoice>,
@@ -224,9 +225,9 @@ impl SkillCreator {
             .unwrap_or_else(|| ScopeChoice::Global.key());
 
         let name_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Name", window, cx);
-            editor
+            InputField::new(window, cx, "Name")
+                .tab_index(NAME_FIELD_TAB_INDEX)
+                .tab_stop(true)
         });
         // Focus the name field on open. Without this, no element inside
         // the window has focus, so dispatching the `Cancel` action from
@@ -237,9 +238,9 @@ impl SkillCreator {
         window.focus(&name_editor.focus_handle(cx), cx);
 
         let description_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Description", window, cx);
-            editor
+            InputField::new(window, cx, "Description")
+                .tab_index(DESCRIPTION_FIELD_TAB_INDEX)
+                .tab_stop(true)
         });
 
         let body_editor = cx.new(|cx| {
@@ -287,13 +288,34 @@ impl SkillCreator {
         })
         .detach();
 
+        let name_input_editor = name_editor.read(cx).editor().clone();
+        let description_input_editor = description_editor.read(cx).editor().clone();
+        let weak = cx.weak_entity();
+        let name_subscription = name_input_editor.subscribe(
+            Box::new(move |event, window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.handle_name_input_event(&event, window, cx);
+                })
+                .ok();
+            }),
+            window,
+            cx,
+        );
+        let weak = cx.weak_entity();
+        let description_subscription = description_input_editor.subscribe(
+            Box::new(move |event, window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.handle_description_input_event(&event, window, cx);
+                })
+                .ok();
+            }),
+            window,
+            cx,
+        );
+
         let subscriptions = vec![
-            cx.subscribe_in(&name_editor, window, Self::handle_name_editor_event),
-            cx.subscribe_in(
-                &description_editor,
-                window,
-                Self::handle_description_editor_event,
-            ),
+            name_subscription,
+            description_subscription,
             cx.subscribe_in(&body_editor, window, Self::handle_body_editor_event),
         ];
 
@@ -323,28 +345,26 @@ impl SkillCreator {
         }
     }
 
-    fn handle_name_editor_event(
+    fn handle_name_input_event(
         &mut self,
-        _: &Entity<Editor>,
-        event: &EditorEvent,
+        event: &ErasedEditorEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(event, EditorEvent::BufferEdited) {
+        if matches!(event, ErasedEditorEvent::BufferEdited) {
             self.recompute_name_error(cx);
             self.save_error = None;
             cx.notify();
         }
     }
 
-    fn handle_description_editor_event(
+    fn handle_description_input_event(
         &mut self,
-        _: &Entity<Editor>,
-        event: &EditorEvent,
+        event: &ErasedEditorEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(event, EditorEvent::BufferEdited) {
+        if matches!(event, ErasedEditorEvent::BufferEdited) {
             self.recompute_description_error(cx);
             self.save_error = None;
             cx.notify();
@@ -515,55 +535,7 @@ impl SkillCreator {
         })
     }
 
-    fn render_text_input(
-        &self,
-        editor: &Entity<Editor>,
-        size: Rems,
-        tab_index: isize,
-        has_error: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let theme = cx.theme().clone();
-        let focus_handle = editor.focus_handle(cx).tab_index(tab_index).tab_stop(true);
-        let border_color = if has_error {
-            theme.status().error_border
-        } else {
-            theme.colors().border
-        };
-        div()
-            .w_full()
-            .track_focus(&focus_handle)
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(border_color)
-            .bg(theme.colors().editor_background)
-            .child(EditorElement::new(
-                editor,
-                EditorStyle {
-                    background: theme.system().transparent,
-                    local_player: theme.players().local(),
-                    text: TextStyle {
-                        color: theme.colors().text,
-                        font_family: settings.ui_font.family.clone(),
-                        font_features: settings.ui_font.features.clone(),
-                        font_size: size.into(),
-                        font_weight: settings.ui_font.weight,
-                        line_height: relative(settings.buffer_line_height.value()),
-                        ..Default::default()
-                    },
-                    syntax: theme.syntax().clone(),
-                    status: theme.status().clone(),
-                    inlay_hints_style: editor::make_inlay_hints_style(cx),
-                    edit_prediction_styles: editor::make_suggestion_styles(cx),
-                    ..EditorStyle::default()
-                },
-            ))
-    }
-
-    fn render_name_field(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_name_field(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let hint: SharedString = if let Some(err) = self.name_error {
             err.into()
         } else {
@@ -579,17 +551,11 @@ impl SkillCreator {
         let has_error = self.name_error.is_some();
         v_flex()
             .gap_1p5()
-            .child(self.render_text_input(
-                &self.name_editor,
-                rems(0.9375),
-                NAME_FIELD_TAB_INDEX,
-                has_error,
-                cx,
-            ))
+            .child(self.name_editor.clone())
             .child(Self::render_hint(hint, has_error))
     }
 
-    fn render_description_field(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_description_field(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         let counter_color = if self.description_length > MAX_SKILL_DESCRIPTION_LEN {
             Color::Error
         } else {
@@ -603,13 +569,7 @@ impl SkillCreator {
         let has_error = self.description_error.is_some();
         v_flex()
             .gap_1p5()
-            .child(self.render_text_input(
-                &self.description_editor,
-                rems(0.9375),
-                DESCRIPTION_FIELD_TAB_INDEX,
-                has_error,
-                cx,
-            ))
+            .child(self.description_editor.clone())
             .child(
                 h_flex()
                     .w_full()
