@@ -1060,9 +1060,14 @@ mod tests {
             message.contains("not a skill directory"),
             "error should explain the conflict is a non-directory, got: {message}"
         );
+        // Path separator differs between platforms (`/` on Unix, `\` on
+        // Windows), so reconstruct the expected `Display` form rather than
+        // hard-coding a separator.
+        let expected_path = Path::new("/skills").join("draft-pr");
+        let expected_path = expected_path.display().to_string();
         assert!(
-            message.contains("/skills/draft-pr"),
-            "error should include the conflicting path, got: {message}"
+            message.contains(&expected_path),
+            "error should include the conflicting path {expected_path:?}, got: {message}"
         );
     }
 }
