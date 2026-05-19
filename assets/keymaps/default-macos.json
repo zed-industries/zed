@@ -336,6 +336,14 @@
     },
   },
   {
+    "context": "AcpThread > MessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "agent::PromptHistoryPrevious",
+      "down": "agent::PromptHistoryNext",
+    },
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
