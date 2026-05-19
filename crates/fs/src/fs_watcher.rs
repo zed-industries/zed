@@ -97,20 +97,25 @@ impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("watcher add: {path:?}");
 
-        let registrations: &BTreeMap<Arc<Path>, FsWatcherRegistration> = &self.registrations.lock();
-        let path_is_covered_by_recursive_registration = path.ancestors().skip(1).any(|ancestor| {
-            registrations.get(ancestor).is_some_and(|registration| {
-                registration.mode == WatcherMode::Poll
-                    || cfg!(any(target_os = "windows", target_os = "macos"))
-            })
-        });
+        let (path_is_covered_by_recursive_registration, path_is_already_watched) = {
+            let registrations = self.registrations.lock();
+            (
+                path.ancestors().skip(1).any(|ancestor| {
+                    registrations.get(ancestor).is_some_and(|registration| {
+                        registration.mode == WatcherMode::Poll
+                            || cfg!(any(target_os = "windows", target_os = "macos"))
+                    })
+                }),
+                registrations.contains_key(path),
+            )
+        };
 
         if path_is_covered_by_recursive_registration {
             log::trace!("path to watch is covered by existing registration: {path:?}");
             return Ok(());
         }
 
-        if self.registrations.lock().contains_key(path) {
+        if path_is_already_watched {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
