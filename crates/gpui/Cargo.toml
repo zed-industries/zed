@@ -83,6 +83,7 @@ resvg = { version = "0.45.0", default-features = false, features = [
 ] }
 usvg = { version = "0.45.0", default-features = false }
 ttf-parser = "0.25"
+unicode-bidi.workspace = true
 util_macros.workspace = true
 schemars.workspace = true
 seahash = "4.1"
