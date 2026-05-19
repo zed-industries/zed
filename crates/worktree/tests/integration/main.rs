@@ -3588,7 +3588,7 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
-        fs.emit_fs_event(dot_git.clone(), Some(PathEventKind::Rescan));
+        fs.emit_fs_event(dot_git, Some(PathEventKind::Rescan));
         fs.unpause_events_and_flush();
         executor.run_until_parked();
 
