@@ -500,7 +500,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }
+agent-client-protocol = { version = "=0.12.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
@@ -812,7 +812,7 @@ which = "6.0.0"
 wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88" }
 windows-core = "0.61"
 yaml-rust2 = "0.8"
 yawc = "0.2.5"

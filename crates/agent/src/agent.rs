@@ -32,7 +32,7 @@ use acp_thread::{
 use agent_client_protocol::schema as acp;
 use agent_skills::{
     MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
-    global_skills_dir, load_skills_from_directory, project_skills_relative_path,
+    builtin_skills, global_skills_dir, load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -104,7 +104,7 @@ impl From<&Skill> for NativeAvailableSkill {
         Self {
             name: skill.name.clone(),
             description: skill.description.clone(),
-            source: skill.source.scope_prefix().to_string().into(),
+            source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
         }
     }
@@ -1644,14 +1644,18 @@ impl NativeAgent {
             // Read the body on demand here — bodies live on disk between
             // materializations to keep memory cost O(total frontmatter)
             // rather than O(total file size).
-            let body = agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "Failed to read skill body from {}",
-                        skill.skill_file_path.display()
-                    )
-                })?;
+            let body = if let Some(embedded) = skill.embedded_body {
+                embedded.to_string()
+            } else {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to read skill body from {}",
+                            skill.skill_file_path.display()
+                        )
+                    })?
+            };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
@@ -2245,9 +2249,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // we don't clone the entire skill list on every prompt
             // (including prompts like `/help` that aren't skills at
             // all). The resolution rule matches the override-applied
-            // view: prefer a project-local with the matching name,
-            // falling back to a global, so the slash command picks the
-            // same entry the model sees in its catalog.
+            // view: among skills with the matching name, pick the one
+            // with the highest source precedence, so the slash command
+            // picks the same entry the model sees in its catalog.
+            // Ties (e.g. two project-local skills from different
+            // worktrees) resolve to the first in iteration order to
+            // match `apply_skill_overrides`.
             if parsed_command.explicit_server_id.is_none()
                 && parsed_command.skill_scope.is_none()
                 && !project_state.skills.is_empty()
@@ -2256,15 +2263,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 let resolved = project_state
                     .skills
                     .iter()
-                    .find(|skill| {
-                        skill.name == prompt_name
-                            && matches!(skill.source, SkillSource::ProjectLocal { .. })
-                    })
-                    .or_else(|| {
-                        project_state
-                            .skills
-                            .iter()
-                            .find(|skill| skill.name == prompt_name)
+                    .filter(|skill| skill.name == prompt_name)
+                    .reduce(|best, candidate| {
+                        if candidate.source.precedence() > best.source.precedence() {
+                            candidate
+                        } else {
+                            best
+                        }
                     });
                 if let Some(skill) = resolved {
                     let skill = skill.clone();
@@ -2428,7 +2433,7 @@ impl AgentSessionList for NativeAgentSessionList {
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
     }
 
-    fn supports_delete(&self) -> bool {
+    fn supports_delete(&self, _cx: &App) -> bool {
         true
     }
 
@@ -2960,7 +2965,9 @@ fn combine_skills(
     global: Vec<Result<Skill, SkillLoadError>>,
     project: impl Iterator<Item = Result<Skill, SkillLoadError>>,
 ) -> (Vec<Skill>, Vec<SkillLoadError>) {
-    let mut skills = Vec::new();
+    // Built-in skills go first (lowest priority) so that global and
+    // project-local skills with the same name shadow them.
+    let mut skills = builtin_skills();
     let mut errors = Vec::new();
     for result in global.into_iter().chain(project) {
         match result {
@@ -2979,17 +2986,16 @@ fn log_skill_conflicts(skills: &[Skill]) {
     let mut by_name: HashMap<&str, &Skill> = HashMap::default();
     for skill in skills {
         match by_name.get(skill.name.as_str()) {
-            Some(existing) => match (&existing.source, &skill.source) {
-                (SkillSource::Global, SkillSource::ProjectLocal { .. }) => {
+            Some(existing) => {
+                if skill.source.precedence() > existing.source.precedence() {
                     log::warn!(
-                        "Project skill '{}' at '{}' overrides global skill at '{}' for the model; both appear in the slash-command popup with their source",
+                        "Skill '{}' at '{}' overrides skill at '{}' for the model; both appear in the slash-command popup with their source",
                         skill.name,
                         skill.skill_file_path.display(),
                         existing.skill_file_path.display(),
                     );
                     by_name.insert(skill.name.as_str(), skill);
-                }
-                _ => {
+                } else {
                     log::warn!(
                         "Skill '{}' at '{}' conflicts with skill at '{}'; the model will see the first one, but both appear in the slash-command popup with their source",
                         skill.name,
@@ -2997,7 +3003,7 @@ fn log_skill_conflicts(skills: &[Skill]) {
                         existing.skill_file_path.display(),
                     );
                 }
-            },
+            }
             None => {
                 by_name.insert(skill.name.as_str(), skill);
             }
@@ -3024,9 +3030,7 @@ fn apply_skill_overrides(skills: &[Skill]) -> Vec<Skill> {
     for skill in skills {
         match indices.get(skill.name.as_str()).copied() {
             Some(idx) => {
-                if matches!(result[idx].source, SkillSource::Global)
-                    && matches!(skill.source, SkillSource::ProjectLocal { .. })
-                {
+                if skill.source.precedence() > result[idx].source.precedence() {
                     result[idx] = skill.clone();
                 }
             }
@@ -3064,6 +3068,7 @@ mod internal_tests {
             directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
+            embedded_body: None,
         }
     }
 
@@ -3078,7 +3083,28 @@ mod internal_tests {
             directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
             disable_model_invocation: false,
+            embedded_body: None,
         }
+    }
+
+    fn make_builtin_skill(name: &str, description: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            source: SkillSource::BuiltIn,
+            directory_path: PathBuf::from(format!("/builtin/{name}")),
+            skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
+            disable_model_invocation: false,
+            embedded_body: Some("built-in body"),
+        }
+    }
+
+    /// Filter to only user-defined (non-built-in) skills for test assertions.
+    fn user_skills(skills: &[Skill]) -> Vec<&Skill> {
+        skills
+            .iter()
+            .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+            .collect()
     }
 
     #[test]
@@ -3092,9 +3118,10 @@ mod internal_tests {
         let (skills, errors) = combine_skills(vec![Ok(global)], vec![Ok(project)].into_iter());
 
         assert!(errors.is_empty());
-        assert_eq!(skills.len(), 2);
-        assert!(matches!(skills[0].source, SkillSource::Global));
-        assert!(matches!(skills[1].source, SkillSource::ProjectLocal { .. }));
+        let user = user_skills(&skills);
+        assert_eq!(user.len(), 2);
+        assert!(matches!(user[0].source, SkillSource::Global));
+        assert!(matches!(user[1].source, SkillSource::ProjectLocal { .. }));
     }
 
     #[test]
@@ -3128,6 +3155,51 @@ mod internal_tests {
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].description, "First");
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_global_wins_over_builtin() {
+        // A global skill with the same name as a built-in must shadow
+        // the built-in in the model-facing projection, regardless of
+        // iteration order.
+        let built_in = make_builtin_skill("create-skill", "Built-in version");
+        let global = make_global_skill("create-skill", "User override");
+
+        let resolved = apply_skill_overrides(&[built_in, global]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "User override");
+        assert!(matches!(resolved[0].source, SkillSource::Global));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_builtin() {
+        let built_in = make_builtin_skill("create-skill", "Built-in version");
+        let project = make_project_skill("create-skill", "Project override", "my-project");
+
+        let resolved = apply_skill_overrides(&[built_in, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project override");
+        assert!(matches!(
+            resolved[0].source,
+            SkillSource::ProjectLocal { .. }
+        ));
+    }
+
+    #[test]
+    fn test_apply_skill_overrides_project_wins_over_builtin_and_global() {
+        // All three sources present — the project-local must win and
+        // both lower-precedence entries must be dropped from the
+        // model-facing projection.
+        let built_in = make_builtin_skill("create-skill", "Built-in");
+        let global = make_global_skill("create-skill", "Global");
+        let project = make_project_skill("create-skill", "Project", "my-project");
+
+        let resolved = apply_skill_overrides(&[built_in, global, project]);
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].description, "Project");
     }
 
     #[test]
@@ -3201,6 +3273,7 @@ mod internal_tests {
                 directory_path: PathBuf::from(format!("/skills/{name}")),
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
                 disable_model_invocation: false,
+                embedded_body: None,
             });
         }
 
@@ -3275,6 +3348,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-01-first"),
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
         let second = Skill {
             name: "skill-02-overflows".to_string(),
@@ -3283,6 +3357,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-02-overflows"),
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
         let third = Skill {
             name: "skill-03-would-fit".to_string(),
@@ -3291,6 +3366,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/skill-03-would-fit"),
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         // Sanity-check the test setup: the third skill is small enough
@@ -3346,6 +3422,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/hidden-huge"),
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
             disable_model_invocation: true,
+            embedded_body: None,
         };
         let visible = Skill {
             name: "visible".to_string(),
@@ -3354,6 +3431,7 @@ mod internal_tests {
             directory_path: PathBuf::from("/skills/visible"),
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         let (kept, errors) = select_catalog_skills(&[hidden, visible]);
@@ -3496,9 +3574,10 @@ mod internal_tests {
         // The pre-existing skill should be loaded into the project state.
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "my-skill");
-            assert_eq!(state.skills[0].description, "First version");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "First version");
         });
 
         // Modify the SKILL.md and verify the project context refreshes.
@@ -3512,8 +3591,9 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].description, "Second version");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].description, "Second version");
         });
     }
 
@@ -3559,8 +3639,8 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
             assert!(
-                state.skills.is_empty(),
-                "expected no skills before the global skills dir exists, got {:?}",
+                user_skills(&state.skills).is_empty(),
+                "expected no user skills before the global skills dir exists, got {:?}",
                 state.skills
             );
         });
@@ -3585,9 +3665,10 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project.entity_id()).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "late-skill");
-            assert_eq!(state.skills[0].description, "Created after startup");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "late-skill");
+            assert_eq!(user[0].description, "Created after startup");
         });
     }
 
@@ -3638,8 +3719,8 @@ mod internal_tests {
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
-                state.skills.is_empty(),
-                "expected no skills before the global skills dir exists, got {:?}",
+                user_skills(&state.skills).is_empty(),
+                "expected no user skills before the global skills dir exists, got {:?}",
                 state.skills
             );
         });
@@ -3656,7 +3737,12 @@ mod internal_tests {
         // empty list — NOT the snapshot that `Thread::new` would have
         // captured.
         cx.update(|cx| {
-            assert!(resolve(cx).is_empty());
+            let all = resolve(cx);
+            let user: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
+            assert!(user.is_empty());
         });
 
         // Now create a SKILL.md AFTER the session was registered. With
@@ -3681,15 +3767,20 @@ mod internal_tests {
         // `state.skills` reflects the new skill (the watcher ran).
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            assert_eq!(state.skills.len(), 1);
-            assert_eq!(state.skills[0].name, "my-skill");
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
         });
 
         // The resolver the `SkillTool` uses must see it too. This is the
         // crux of the regression test: the tool's view of skills is
         // resolved at invocation time, not at thread-construction time.
         cx.update(|cx| {
-            let snapshot = resolve(cx);
+            let all = resolve(cx);
+            let snapshot: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(
                 snapshot.len(),
                 1,
@@ -3777,7 +3868,11 @@ mod internal_tests {
         let parent_resolve =
             cx.update(|_cx| super::skills_resolver_for_project(agent.downgrade(), project_id));
         cx.update(|cx| {
-            let parent_skills = parent_resolve(cx);
+            let all = parent_resolve(cx);
+            let parent_skills: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(parent_skills.len(), 1);
             assert_eq!(parent_skills[0].name, "shared-skill");
         });
@@ -3823,7 +3918,11 @@ mod internal_tests {
         let subagent_resolve = cx
             .update(|_cx| super::skills_resolver_for_project(agent.downgrade(), parent_project_id));
         cx.update(|cx| {
-            let subagent_skills = subagent_resolve(cx);
+            let all = subagent_resolve(cx);
+            let subagent_skills: Vec<_> = all
+                .iter()
+                .filter(|s| !matches!(s.source, SkillSource::BuiltIn))
+                .collect();
             assert_eq!(subagent_skills.len(), 1);
             assert_eq!(subagent_skills[0].name, "shared-skill");
         });
@@ -3919,7 +4018,14 @@ mod internal_tests {
                 .iter()
                 .map(|s| s.name.as_str())
                 .collect();
-            assert_eq!(catalog, vec!["visible-skill"]);
+            assert!(
+                catalog.contains(&"visible-skill"),
+                "visible skill missing from catalog: {catalog:?}"
+            );
+            assert!(
+                !catalog.contains(&"deploy"),
+                "deploy should be excluded from catalog: {catalog:?}"
+            );
         });
     }
 
@@ -3986,7 +4092,7 @@ mod internal_tests {
         agent.read_with(cx, |agent, cx| {
             let state = agent.projects.get(&project_id).unwrap();
             assert!(
-                state.skills.is_empty(),
+                user_skills(&state.skills).is_empty(),
                 "untrusted worktree skills should not load: {:?}",
                 state
                     .skills
@@ -4019,7 +4125,8 @@ mod internal_tests {
 
         agent.read_with(cx, |agent, _cx| {
             let state = agent.projects.get(&project_id).unwrap();
-            let names: Vec<&str> = state.skills.iter().map(|s| s.name.as_str()).collect();
+            let user = user_skills(&state.skills);
+            let names: Vec<&str> = user.iter().map(|s| s.name.as_str()).collect();
             assert_eq!(names, vec!["my-skill"]);
         });
 
