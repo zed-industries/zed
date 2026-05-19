@@ -2697,6 +2697,43 @@ impl AgentPanel {
         }
     }
 
+    pub fn draft_prompt_blocks_if_in_memory(
+        &self,
+        id: ThreadId,
+        cx: &App,
+    ) -> Option<Vec<acp::ContentBlock>> {
+        let cv = self
+            .retained_threads
+            .get(&id)
+            .or_else(|| {
+                self.draft_thread
+                    .as_ref()
+                    .filter(|draft| draft.read(cx).thread_id == id)
+            })
+            .or_else(|| match &self.base_view {
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).thread_id == id =>
+                {
+                    Some(conversation_view)
+                }
+                _ => None,
+            })?;
+        let thread_view = cv.read(cx).root_thread_view()?;
+        let thread_view = thread_view.read(cx);
+        let saved = thread_view
+            .thread
+            .read(cx)
+            .draft_prompt()
+            .map(|blocks| blocks.to_vec())
+            .filter(|blocks| !blocks.is_empty());
+        Some(saved.unwrap_or_else(|| {
+            thread_view
+                .message_editor
+                .read(cx)
+                .draft_content_blocks_snapshot(cx)
+        }))
+    }
+
     fn new_native_agent_thread_from_summary(
         &mut self,
         action: &NewNativeAgentThreadFromSummary,

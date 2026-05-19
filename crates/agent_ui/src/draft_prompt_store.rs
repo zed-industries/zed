@@ -54,6 +54,58 @@ pub fn delete(thread_id: ThreadId, cx: &App) -> Task<anyhow::Result<()>> {
     cx.background_spawn(async move { kvp.scoped(NAMESPACE).delete(key).await })
 }
 
+pub fn draft_has_user_content<'a>(
+    thread_id: ThreadId,
+    workspaces: impl IntoIterator<Item = &'a Entity<Workspace>>,
+    cx: &App,
+) -> bool {
+    live_or_persisted_blocks_for_draft(thread_id, workspaces, cx)
+        .is_some_and(|blocks| blocks_have_user_content(&blocks))
+}
+
+fn live_or_persisted_blocks_for_draft<'a>(
+    thread_id: ThreadId,
+    workspaces: impl IntoIterator<Item = &'a Entity<Workspace>>,
+    cx: &App,
+) -> Option<Vec<acp::ContentBlock>> {
+    workspaces
+        .into_iter()
+        .filter_map(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+        .find_map(|panel| {
+            panel
+                .read(cx)
+                .draft_prompt_blocks_if_in_memory(thread_id, cx)
+        })
+        .or_else(|| read(thread_id, cx))
+}
+
+fn blocks_have_user_content(blocks: &[acp::ContentBlock]) -> bool {
+    blocks.iter().any(content_block_has_user_content)
+}
+
+fn content_block_has_user_content(block: &acp::ContentBlock) -> bool {
+    match block {
+        acp::ContentBlock::Text(text) => !text.text.trim().is_empty(),
+        acp::ContentBlock::Image(image) => {
+            !image.data.is_empty() || image.uri.as_ref().is_some_and(|uri| !uri.trim().is_empty())
+        }
+        acp::ContentBlock::Audio(audio) => !audio.data.is_empty(),
+        acp::ContentBlock::ResourceLink(link) => {
+            !link.uri.trim().is_empty() || !link.name.trim().is_empty()
+        }
+        acp::ContentBlock::Resource(resource) => match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                !text.text.trim().is_empty() || !text.uri.trim().is_empty()
+            }
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                !blob.blob.is_empty() || !blob.uri.trim().is_empty()
+            }
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
 fn thread_id_key(thread_id: ThreadId) -> String {
     thread_id.to_key_string()
 }
