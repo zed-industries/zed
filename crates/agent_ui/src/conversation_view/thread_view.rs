@@ -215,16 +215,16 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
-struct CatNumberedCodeBlock {
-    lines: Vec<CatNumberedCodeLine>,
+struct CatNumberedCodeBlock<'a> {
+    lines: Vec<CatNumberedCodeLine<'a>>,
 }
 
-struct CatNumberedCodeLine {
+struct CatNumberedCodeLine<'a> {
     number: u32,
-    text: String,
+    text: &'a str,
 }
 
-fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<CatNumberedCodeBlock> {
+fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<CatNumberedCodeBlock<'_>> {
     let (_tag, code) = parse_single_fenced_code_block(markdown)?;
     let lines = parse_cat_numbered_lines(code)?;
     Some(CatNumberedCodeBlock { lines })
@@ -246,7 +246,7 @@ fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
     Some((tag, code))
 }
 
-fn parse_cat_numbered_lines(code: &str) -> Option<Vec<CatNumberedCodeLine>> {
+fn parse_cat_numbered_lines(code: &str) -> Option<Vec<CatNumberedCodeLine<'_>>> {
     if code.is_empty() {
         return None;
     }
@@ -266,10 +266,7 @@ fn parse_cat_numbered_lines(code: &str) -> Option<Vec<CatNumberedCodeLine>> {
             return None;
         }
         expected_number = number.checked_add(1);
-        lines.push(CatNumberedCodeLine {
-            number,
-            text: text.to_string(),
-        });
+        lines.push(CatNumberedCodeLine { number, text });
     }
 
     Some(lines)
@@ -290,26 +287,42 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
 }
 
 fn render_cat_numbered_code_block(
-    code_block: CatNumberedCodeBlock,
+    code_block: CatNumberedCodeBlock<'_>,
     language: Option<Arc<Language>>,
     markdown_style: MarkdownStyle,
     copy_button_id: String,
     cx: &App,
 ) -> AnyElement {
-    let mut code = String::new();
-    let mut gutter = String::new();
+    use std::fmt::Write as _;
+
+    let line_count = code_block.lines.len();
     let gutter_width = code_block
         .lines
         .last()
         .map_or(1, |line| line.number.to_string().len());
 
+    // Lines are contiguous and increasing (verified during parsing), and
+    // `gutter_width` is taken from the largest line number, so every line
+    // contributes exactly `gutter_width` bytes to the gutter plus a newline
+    // between adjacent lines.
+    let gutter_capacity = line_count * gutter_width + line_count.saturating_sub(1);
+    let code_capacity = code_block
+        .lines
+        .iter()
+        .map(|line| line.text.len())
+        .sum::<usize>()
+        + line_count.saturating_sub(1);
+
+    let mut code = String::with_capacity(code_capacity);
+    let mut gutter = String::with_capacity(gutter_capacity);
     for (line_ix, line) in code_block.lines.iter().enumerate() {
         if line_ix > 0 {
             code.push('\n');
             gutter.push('\n');
         }
-        code.push_str(&line.text);
-        gutter.push_str(&format!("{:>width$}", line.number, width = gutter_width));
+        code.push_str(line.text);
+        // Writes to a `String` are infallible, so the `Result` can be ignored.
+        let _ = write!(&mut gutter, "{:>width$}", line.number, width = gutter_width);
     }
 
     let mut code_text_style = markdown_style.base_text_style.clone();
@@ -318,22 +331,15 @@ fn render_cat_numbered_code_block(
     let mut gutter_text_style = code_text_style.clone();
     gutter_text_style.color = cx.theme().colors().text_muted;
 
-    let gutter = StyledText::new(gutter).with_runs(vec![
-        gutter_text_style.to_run(
-            code_block
-                .lines
-                .iter()
-                .map(|line| line.number.to_string().len().max(gutter_width))
-                .sum::<usize>()
-                + code_block.lines.len().saturating_sub(1),
-        ),
-    ]);
-    let code_text = StyledText::new(code.clone()).with_runs(highlight_code_runs(
-        &code,
-        language.as_ref(),
-        code_text_style,
-        &markdown_style,
-    ));
+    let gutter_len = gutter.len();
+    let gutter = StyledText::new(gutter).with_runs(vec![gutter_text_style.to_run(gutter_len)]);
+
+    // Share `code` between syntax highlighting, the rendered `StyledText`, and
+    // the copy button via a single `SharedString` (cheap `Arc` clones) instead
+    // of cloning the underlying `String`.
+    let code: SharedString = code.into();
+    let code_runs = highlight_code_runs(&code, language.as_ref(), code_text_style, &markdown_style);
+    let code_text = StyledText::new(code.clone()).with_runs(code_runs);
 
     let code_block_id = format!("read-file-code-block-{copy_button_id}");
     let code_scroll_id = format!("read-file-code-scroll-{copy_button_id}");
@@ -380,7 +386,7 @@ fn render_cat_numbered_code_block(
                 .right_0()
                 .justify_end()
                 .visible_on_hover("read-file-code-block")
-                .child(CopyButton::new(copy_button_id, code).tooltip_label("Copy Code")),
+                .child(CopyButton::new(copy_button_id, code.clone()).tooltip_label("Copy Code")),
         )
         .into_any_element()
 }
