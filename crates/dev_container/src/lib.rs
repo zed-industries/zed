@@ -95,6 +95,7 @@ fn get_safe_id(input: &str) -> String {
     result
 }
 
+/// DevContainerContext holds the dependencies on the filesystem, environment, and other services needed to run a dev container.
 pub struct DevContainerContext {
     pub project_directory: Arc<Path>,
     pub use_podman: bool,
