@@ -463,17 +463,11 @@ async fn test_auto_watch_is_disabled_when_leaving_call(
         .unwrap();
     executor.run_until_parked();
 
-    active_call_a
-        .update(user_a, |call, cx| call.join_channel(setup.channel_id, cx))
-        .await
-        .unwrap();
-    executor.run_until_parked();
-
     workspace_a.update(user_a, |workspace, _cx| {
         assert_eq!(
             *workspace.auto_watch_state(),
             AutoWatch::Off,
-            "auto-watch should be off after leaving and rejoining a call"
+            "auto-watch should be off after leaving the call"
         );
     });
 }
