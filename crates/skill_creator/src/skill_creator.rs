@@ -14,7 +14,7 @@ use gpui::{
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
-use settings::Settings;
+use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
@@ -891,6 +891,13 @@ impl Render for SkillCreator {
                 .id("skill-creator")
                 .key_context("SkillCreator")
                 .track_focus(&self.focus_handle)
+                .on_action(
+                    |action_sequence: &ActionSequence, window: &mut Window, cx: &mut App| {
+                        for action in &action_sequence.0 {
+                            window.dispatch_action(action.boxed_clone(), cx);
+                        }
+                    },
+                )
                 .on_action(cx.listener(Self::save_skill))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::focus_next_field))

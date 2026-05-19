@@ -1561,6 +1561,7 @@
   {
     "context": "SkillCreator",
     "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },
@@ -1568,6 +1569,7 @@
   {
     "context": "SkillCreator > Editor",
     "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
       "tab": "skill_creator::FocusNextField",
       "shift-tab": "skill_creator::FocusPreviousField",
     },
