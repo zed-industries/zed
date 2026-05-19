@@ -13,7 +13,7 @@ const KINETIC_SCROLL_FRICTION: f32 = 4.0;
 const KINETIC_SCROLL_STOP_VELOCITY: f32 = 5.0;
 const KINETIC_SCROLL_MAX_VELOCITY: f32 = 6000.0;
 
-pub(crate) struct KineticScroller {
+pub(crate) struct KineticScrollController {
     history: KineticScrollHistory,
     id: u64,
     scroll: Option<KineticScroll>,
@@ -24,6 +24,7 @@ pub(crate) struct KineticScroller {
 
 struct KineticScrollHistory {
     entries: VecDeque<(Instant, Point<Pixels>)>,
+    displacement: Point<Pixels>,
 }
 
 struct KineticScroll {
@@ -35,7 +36,7 @@ struct KineticScroll {
     last_time: Instant,
 }
 
-impl KineticScroller {
+impl KineticScrollController {
     pub(crate) fn new() -> Self {
         Self {
             history: KineticScrollHistory::new(),
@@ -204,18 +205,25 @@ impl KineticScrollHistory {
     fn new() -> Self {
         Self {
             entries: VecDeque::new(),
+            displacement: point(px(0.0), px(0.0)),
         }
     }
 
     fn push(&mut self, time: Instant, delta: Point<Pixels>) {
         self.entries.push_back((time, delta));
+        self.displacement += delta;
         let cutoff = time - KINETIC_SCROLL_HISTORY_WINDOW;
         while self
             .entries
             .front()
             .is_some_and(|(entry_time, _)| *entry_time < cutoff)
         {
-            self.entries.pop_front();
+            let delta = self
+                .entries
+                .pop_front()
+                .map(|(_instant, delta)| delta)
+                .unwrap_or(point(px(0.0), px(0.0)));
+            self.displacement -= delta;
         }
     }
 
@@ -229,11 +237,7 @@ impl KineticScrollHistory {
             return point(px(0.0), px(0.0));
         }
 
-        let mut delta = point(px(0.0), px(0.0));
-        for (_, entry_delta) in &self.entries {
-            delta.x += entry_delta.x;
-            delta.y += entry_delta.y;
-        }
+        let delta = self.displacement;
 
         point(
             px((f32::from(delta.x) / duration)
@@ -245,6 +249,7 @@ impl KineticScrollHistory {
 
     fn clear(&mut self) {
         self.entries.clear();
+        self.displacement = point(px(0.0), px(0.0));
     }
 }
 
@@ -279,7 +284,10 @@ mod tests {
     fn test_history_velocity_single_entry() {
         let mut history = KineticScrollHistory::new();
         let now = Instant::now();
-        history.push(now - Duration::from_millis(100), point(px(100.0), px(200.0)));
+        history.push(
+            now - Duration::from_millis(100),
+            point(px(100.0), px(200.0)),
+        );
         let velocity = history.velocity(now);
         assert!((f32::from(velocity.x) - 1000.0).abs() < 1.0);
         assert!((f32::from(velocity.y) - 2000.0).abs() < 1.0);
@@ -323,8 +331,14 @@ mod tests {
     fn test_history_prunes_old_entries() {
         let mut history = KineticScrollHistory::new();
         let now = Instant::now();
-        history.push(now - Duration::from_millis(300), point(px(9999.0), px(9999.0)));
-        history.push(now - Duration::from_millis(100), point(px(100.0), px(100.0)));
+        history.push(
+            now - Duration::from_millis(300),
+            point(px(9999.0), px(9999.0)),
+        );
+        history.push(
+            now - Duration::from_millis(100),
+            point(px(100.0), px(100.0)),
+        );
         let velocity = history.velocity(now);
         assert!((f32::from(velocity.x) - 1000.0).abs() < 1.0);
         assert!((f32::from(velocity.y) - 1000.0).abs() < 1.0);
@@ -343,7 +357,7 @@ mod tests {
 
     #[test]
     fn test_touch_phase_sequence() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         assert!(matches!(scroller.touch_phase(), TouchPhase::Moved));
 
         scroller.start_finger_scroll();
@@ -354,7 +368,7 @@ mod tests {
 
     #[test]
     fn test_start_finger_scroll_id_increments() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         let id_before = scroller.id;
         scroller.start_finger_scroll();
         assert_eq!(scroller.id, id_before + 1);
@@ -362,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_start_finger_scroll_resets_stop_pending() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         scroller.start_finger_scroll();
         assert!(scroller.stop_finger_scroll());
         assert!(scroller.has_pending_stop());
@@ -372,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_start_finger_scroll_does_not_reset_active() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         scroller.start_finger_scroll();
         assert!(scroller.finger_active);
         assert!(scroller.finger_start_pending);
@@ -387,14 +401,14 @@ mod tests {
 
     #[test]
     fn test_stop_finger_scroll_when_inactive() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         assert!(!scroller.stop_finger_scroll());
         assert!(!scroller.has_pending_stop());
     }
 
     #[test]
     fn test_stop_finger_scroll_when_active() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         scroller.start_finger_scroll();
         assert!(scroller.stop_finger_scroll());
         assert!(scroller.has_pending_stop());
@@ -402,7 +416,7 @@ mod tests {
 
     #[test]
     fn test_record_delta_and_has_pending_stop() {
-        let mut scroller = KineticScroller::new();
+        let mut scroller = KineticScrollController::new();
         scroller.start_finger_scroll();
         scroller.record_delta(Instant::now(), point(px(10.0), px(20.0)));
         assert_eq!(scroller.history.entries.len(), 1);

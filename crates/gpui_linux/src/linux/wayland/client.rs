@@ -74,7 +74,7 @@ use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
 use super::{
     display::WaylandDisplay,
-    scroll::KineticScroller,
+    scroll::KineticScrollController,
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
@@ -248,7 +248,7 @@ pub(crate) struct WaylandClientState {
     pub mouse_location: Option<Point<Pixels>>,
     continuous_scroll_delta: Option<Point<Pixels>>,
     discrete_scroll_delta: Option<Point<f32>>,
-    kinetic_scroll: KineticScroller,
+    kinetic_scroll: KineticScrollController,
     vertical_modifier: f32,
     horizontal_modifier: f32,
     scroll_event_received: bool,
@@ -720,7 +720,7 @@ impl WaylandClient {
             mouse_location: None,
             continuous_scroll_delta: None,
             discrete_scroll_delta: None,
-            kinetic_scroll: KineticScroller::new(),
+            kinetic_scroll: KineticScrollController::new(),
             vertical_modifier: -1.0,
             horizontal_modifier: -1.0,
             button_pressed: None,
