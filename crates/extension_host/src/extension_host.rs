@@ -98,13 +98,6 @@ const SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
     ])
 });
 
-// If no settings:
-// insert into
-// "agent_servers": { "agent-id": { "type": "registry" } }
-// if exension settings, check for previous id, move to new id
-// if they already have a setting when migrating of type "custom", bail
-// replace "type": "extension" with "type": "registry"
-
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
     SchemaVersion::ZERO..=CURRENT_SCHEMA_VERSION
