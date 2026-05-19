@@ -39,8 +39,8 @@ use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    CommonAnimationExt as _, DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*,
-    vertical_divider,
+    CommonAnimationExt as _, ContextMenu, DiffStat, Divider, DropdownMenu, DropdownStyle,
+    KeyBinding, PopoverMenu, Tooltip, prelude::*, vertical_divider,
 };
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
@@ -78,6 +78,7 @@ pub struct ProjectDiff {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    branch_filter_generation: u64,
     review_comment_count: usize,
     _task: Task<Result<()>>,
     _subscription: Subscription,
@@ -401,25 +402,8 @@ impl ProjectDiff {
                 window,
                 cx,
             );
-            match branch_diff.read(cx).diff_base() {
-                DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {}
-                DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
-            }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_diff_review_button(true, cx);
-
-                match branch_diff.read(cx).diff_base() {
-                    DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {
-                        editor.register_addon(GitPanelAddon {
-                            workspace: workspace.downgrade(),
-                        });
-                    }
-                    DiffBase::Merge { .. } => {
-                        editor.register_addon(BranchDiffAddon {
-                            branch_diff: branch_diff.clone(),
-                        });
-                    }
-                }
             });
             diff_display_editor
         });
@@ -446,6 +430,7 @@ impl ProjectDiff {
                 }
                 BranchDiffEvent::DiffBaseChanged => {
                     this.pending_scroll.take();
+                    this.configure_editor_for_diff_base(cx);
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
                         async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
@@ -481,7 +466,7 @@ impl ProjectDiff {
             async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
         });
 
-        Self {
+        let mut this = Self {
             project,
             workspace: workspace.downgrade(),
             branch_diff,
@@ -490,17 +475,133 @@ impl ProjectDiff {
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
+            branch_filter_generation: 0,
             review_comment_count: 0,
             _task: task,
             _subscription: Subscription::join(
                 branch_diff_subscription,
                 Subscription::join(editor_subscription, review_comment_subscription),
             ),
-        }
+        };
+        this.configure_editor_for_diff_base(cx);
+        this
     }
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    fn empty_state_text(&self, cx: &App) -> SharedString {
+        match self.diff_base(cx) {
+            DiffBase::Head => "No uncommitted changes".into(),
+            DiffBase::Staged => "No staged changes".into(),
+            DiffBase::Unstaged => "No unstaged changes".into(),
+            DiffBase::Merge { base_ref } => format!("No changes since {base_ref}").into(),
+        }
+    }
+
+    fn select_diff_filter(
+        &mut self,
+        diff_filter: DiffFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.branch_filter_generation = self.branch_filter_generation.wrapping_add(1);
+        let generation = self.branch_filter_generation;
+
+        let diff_base = match diff_filter {
+            DiffFilter::Uncommitted => DiffBase::Head,
+            DiffFilter::Staged => DiffBase::Staged,
+            DiffFilter::Unstaged => DiffBase::Unstaged,
+            DiffFilter::Branch => {
+                self.select_branch_diff_filter(generation, window, cx);
+                return;
+            }
+        };
+
+        self.branch_diff.update(cx, |branch_diff, cx| {
+            branch_diff.set_diff_base(diff_base, cx);
+        });
+    }
+
+    fn select_branch_diff_filter(
+        &mut self,
+        generation: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let repo = self.branch_diff.read(cx).repo().cloned().or_else(|| {
+            self.project
+                .read(cx)
+                .git_store()
+                .read(cx)
+                .active_repository()
+        });
+        let Some(repo) = repo else {
+            let error = anyhow!("No active repository");
+            log::error!("{error:?}");
+            self.workspace
+                .update(cx, |workspace, cx| workspace.show_error(&error, cx))
+                .log_err();
+            return;
+        };
+
+        let default_branch = repo.update(cx, |repo, _| repo.default_branch(true));
+        let this = cx.weak_entity();
+        window
+            .spawn(cx, async move |cx| {
+                let default_branch = default_branch.await??;
+                this.update(cx, |project_diff, cx| -> Result<()> {
+                    if project_diff.branch_filter_generation != generation {
+                        return Ok(());
+                    }
+
+                    let default_branch =
+                        default_branch.context("Could not determine default branch")?;
+                    project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                        branch_diff.set_diff_base(
+                            DiffBase::Merge {
+                                base_ref: default_branch,
+                            },
+                            cx,
+                        );
+                    });
+                    Ok(())
+                })??;
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(self.workspace.clone(), window, cx);
+    }
+
+    fn configure_editor_for_diff_base(&mut self, cx: &mut Context<Self>) {
+        let diff_base = self.branch_diff.read(cx).diff_base().clone();
+        let workspace = self.workspace.clone();
+        let branch_diff = self.branch_diff.clone();
+
+        let rhs_editor = self.editor.update(cx, |editor, cx| {
+            if matches!(diff_base, DiffBase::Merge { .. }) {
+                editor.disable_diff_hunk_controls(cx);
+            } else {
+                editor.enable_diff_hunk_controls(cx);
+            }
+
+            editor.rhs_editor().clone()
+        });
+
+        rhs_editor.update(cx, |editor, _| match diff_base {
+            DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {
+                editor.unregister_addon::<BranchDiffAddon>();
+                if editor.addon::<GitPanelAddon>().is_none() {
+                    editor.register_addon(GitPanelAddon { workspace });
+                }
+            }
+            DiffBase::Merge { .. } => {
+                editor.unregister_addon::<GitPanelAddon>();
+                if editor.addon::<BranchDiffAddon>().is_none() {
+                    editor.register_addon(BranchDiffAddon { branch_diff });
+                }
+            }
+        });
     }
 
     pub fn move_to_entry(
@@ -1207,7 +1308,7 @@ impl Render for ProjectDiff {
                         .child(
                             h_flex()
                                 .justify_around()
-                                .child(Label::new("No uncommitted changes")),
+                                .child(Label::new(self.empty_state_text(cx))),
                         )
                         .map(|el| match remote_button {
                             Some(button) => el.child(h_flex().justify_around().child(button)),
@@ -1384,6 +1485,41 @@ pub struct ProjectDiffToolbar {
     workspace: WeakEntity<Workspace>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffFilter {
+    Uncommitted,
+    Staged,
+    Unstaged,
+    Branch,
+}
+
+impl DiffFilter {
+    const ALL: [Self; 4] = [
+        Self::Uncommitted,
+        Self::Staged,
+        Self::Unstaged,
+        Self::Branch,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Uncommitted => "Uncommitted",
+            Self::Staged => "Staged",
+            Self::Unstaged => "Unstaged",
+            Self::Branch => "Branch",
+        }
+    }
+
+    fn from_diff_base(diff_base: &DiffBase) -> Self {
+        match diff_base {
+            DiffBase::Head => Self::Uncommitted,
+            DiffBase::Staged => Self::Staged,
+            DiffBase::Unstaged => Self::Unstaged,
+            DiffBase::Merge { .. } => Self::Branch,
+        }
+    }
+}
+
 impl ProjectDiffToolbar {
     pub fn new(workspace: &Workspace, _: &mut Context<Self>) -> Self {
         Self {
@@ -1394,6 +1530,28 @@ impl ProjectDiffToolbar {
 
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
         self.project_diff.as_ref()?.upgrade()
+    }
+
+    fn selected_diff_filter(&self, cx: &App) -> Option<DiffFilter> {
+        let project_diff = self.project_diff(cx)?;
+        Some(DiffFilter::from_diff_base(
+            project_diff.read(cx).diff_base(cx),
+        ))
+    }
+
+    fn select_diff_filter(
+        &mut self,
+        diff_filter: DiffFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return;
+        };
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.select_diff_filter(diff_filter, window, cx);
+        });
+        cx.notify();
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -1415,7 +1573,7 @@ impl ProjectDiffToolbar {
                     });
                 }
             })
-            .ok();
+            .log_err();
     }
 
     fn unstage_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1428,7 +1586,41 @@ impl ProjectDiffToolbar {
                     panel.unstage_all(&Default::default(), window, cx);
                 });
             })
-            .ok();
+            .log_err();
+    }
+
+    fn render_diff_filter_dropdown(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selected_diff_filter = self
+            .selected_diff_filter(cx)
+            .unwrap_or(DiffFilter::Uncommitted);
+        let toolbar = cx.entity().downgrade();
+        let menu = ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for diff_filter in DiffFilter::ALL {
+                let toolbar = toolbar.clone();
+                menu = menu.toggleable_entry(
+                    diff_filter.label(),
+                    selected_diff_filter == diff_filter,
+                    IconPosition::Start,
+                    None,
+                    move |window, cx| {
+                        toolbar
+                            .update(cx, |toolbar, cx| {
+                                toolbar.select_diff_filter(diff_filter, window, cx);
+                            })
+                            .log_err();
+                    },
+                );
+            }
+            menu
+        });
+
+        DropdownMenu::new("project-diff-filter", selected_diff_filter.label(), menu)
+            .style(DropdownStyle::Subtle)
+            .into_any_element()
     }
 }
 
@@ -1443,7 +1635,6 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx) == &DiffBase::Head)
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1471,13 +1662,14 @@ struct ButtonStates {
 }
 
 impl Render for ProjectDiffToolbar {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(project_diff) = self.project_diff(cx) else {
             return div();
         };
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
+        let is_branch_diff = matches!(project_diff.read(cx).diff_base(cx), DiffBase::Merge { .. });
 
         h_group_xl()
             .my_neg_1()
@@ -1485,142 +1677,146 @@ impl Render for ProjectDiffToolbar {
             .items_center()
             .flex_wrap()
             .justify_between()
-            .child(
-                h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Toggle Staged")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Toggle Staged",
-                                    &ToggleStaged,
-                                    &focus_handle,
-                                ))
-                                .disabled(!button_states.stage && !button_states.unstage)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&ToggleStaged, window, cx)
-                                })),
-                        )
-                    })
-                    .when(!button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Stage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
-                                    &StageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
-                                })),
-                        )
-                        .child(
-                            Button::new("unstage", "Unstage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
-                                    &UnstageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
-                                })),
-                        )
-                    }),
-            )
-            // n.b. the only reason these arrows are here is because we don't
-            // support "undo" for staging so we need a way to go back.
-            .child(
-                h_group_sm()
+            .child(self.render_diff_filter_dropdown(window, cx))
+            .when(!is_branch_diff, |toolbar| {
+                toolbar
+                    .child(vertical_divider())
                     .child(
-                        IconButton::new("up", IconName::ArrowUp)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
-                                &GoToPreviousHunk,
-                                &focus_handle,
-                            ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPreviousHunk, window, cx)
-                            })),
+                        h_group_sm()
+                            .when(button_states.selection, |el| {
+                                el.child(
+                                    Button::new("stage", "Toggle Staged")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Toggle Staged",
+                                            &ToggleStaged,
+                                            &focus_handle,
+                                        ))
+                                        .disabled(!button_states.stage && !button_states.unstage)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&ToggleStaged, window, cx)
+                                        })),
+                                )
+                            })
+                            .when(!button_states.selection, |el| {
+                                el.child(
+                                    Button::new("stage", "Stage")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Stage and go to next hunk",
+                                            &StageAndNext,
+                                            &focus_handle,
+                                        ))
+                                        .disabled(
+                                            !button_states.prev_next
+                                                && !button_states.stage_all
+                                                && !button_states.unstage_all,
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&StageAndNext, window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("unstage", "Unstage")
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Unstage and go to next hunk",
+                                            &UnstageAndNext,
+                                            &focus_handle,
+                                        ))
+                                        .disabled(
+                                            !button_states.prev_next
+                                                && !button_states.stage_all
+                                                && !button_states.unstage_all,
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.dispatch_action(&UnstageAndNext, window, cx)
+                                        })),
+                                )
+                            }),
                     )
+                    // n.b. the only reason these arrows are here is because we don't
+                    // support "undo" for staging so we need a way to go back.
                     .child(
-                        IconButton::new("down", IconName::ArrowDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
-                                &GoToHunk,
-                                &focus_handle,
-                            ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
-                            })),
-                    ),
-            )
-            .child(vertical_divider())
-            .child(
-                h_group_sm()
-                    .when(
-                        button_states.unstage_all && !button_states.stage_all,
-                        |el| {
-                            el.child(
-                                Button::new("unstage-all", "Unstage All")
+                        h_group_sm()
+                            .child(
+                                IconButton::new("up", IconName::ArrowUp)
+                                    .shape(ui::IconButtonShape::Square)
                                     .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
+                                        "Go to previous hunk",
+                                        &GoToPreviousHunk,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(!button_states.prev_next)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&GoToPreviousHunk, window, cx)
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("down", IconName::ArrowDown)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Go to next hunk",
+                                        &GoToHunk,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(!button_states.prev_next)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&GoToHunk, window, cx)
+                                    })),
+                            ),
+                    )
+                    .child(vertical_divider())
+                    .child(
+                        h_group_sm()
+                            .when(
+                                button_states.unstage_all && !button_states.stage_all,
+                                |el| {
+                                    el.child(
+                                        Button::new("unstage-all", "Unstage All")
+                                            .tooltip(Tooltip::for_action_title_in(
+                                                "Unstage all changes",
+                                                &UnstageAll,
+                                                &focus_handle,
+                                            ))
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.unstage_all(window, cx)
+                                            })),
+                                    )
+                                },
+                            )
+                            .when(
+                                !button_states.unstage_all || button_states.stage_all,
+                                |el| {
+                                    el.child(
+                                        // todo make it so that changing to say "Unstaged"
+                                        // doesn't change the position.
+                                        div().child(
+                                            Button::new("stage-all", "Stage All")
+                                                .disabled(!button_states.stage_all)
+                                                .tooltip(Tooltip::for_action_title_in(
+                                                    "Stage all changes",
+                                                    &StageAll,
+                                                    &focus_handle,
+                                                ))
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.stage_all(window, cx)
+                                                })),
+                                        ),
+                                    )
+                                },
+                            )
+                            .child(
+                                Button::new("commit", "Commit")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Commit",
+                                        &Commit,
                                         &focus_handle,
                                     ))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.unstage_all(window, cx)
+                                        this.dispatch_action(&Commit, window, cx);
                                     })),
-                            )
-                        },
+                            ),
                     )
-                    .when(
-                        !button_states.unstage_all || button_states.stage_all,
-                        |el| {
-                            el.child(
-                                // todo make it so that changing to say "Unstaged"
-                                // doesn't change the position.
-                                div().child(
-                                    Button::new("stage-all", "Stage All")
-                                        .disabled(!button_states.stage_all)
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Stage all changes",
-                                            &StageAll,
-                                            &focus_handle,
-                                        ))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.stage_all(window, cx)
-                                        })),
-                                ),
-                            )
-                        },
-                    )
-                    .child(
-                        Button::new("commit", "Commit")
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
-            )
-            // "Send Review to Agent" button (only shown when there are review comments)
-            .when(review_count > 0, |el| {
+            })
+            .when(!is_branch_diff && review_count > 0, |el| {
                 el.child(vertical_divider()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
@@ -1843,7 +2039,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
-    use std::path::Path;
+    use std::{path::Path, sync::Arc};
     use unindent::Unindent as _;
     use util::{
         path,
@@ -1872,6 +2068,407 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
         });
+    }
+
+    async fn build_project(cx: &mut TestAppContext) -> (Entity<Project>, Arc<FakeFs>) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo.txt": "FOO\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        (project, fs)
+    }
+
+    fn project_diff_editor_has_addon<T: Addon>(diff: &Entity<ProjectDiff>, cx: &App) -> bool {
+        diff.read(cx)
+            .editor
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .addon::<T>()
+            .is_some()
+    }
+
+    fn project_diff_renders_empty_hunk_controls(
+        diff: &Entity<ProjectDiff>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let editor = diff.read(cx).editor.clone();
+        SplittableEditor::renders_empty_diff_hunk_controls_for_test(&editor, window, cx)
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_toolbar_stays_attached_for_every_diff_filter(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: None,
+            workspace: workspace.read(cx).weak_handle(),
+        });
+
+        for diff_base in [
+            DiffBase::Head,
+            DiffBase::Staged,
+            DiffBase::Unstaged,
+            DiffBase::Merge {
+                base_ref: "main".into(),
+            },
+        ] {
+            diff.update(cx, |diff, cx| {
+                diff.branch_diff.update(cx, |branch_diff, cx| {
+                    branch_diff.set_diff_base(diff_base.clone(), cx);
+                });
+            });
+
+            let location = cx.update(|window, cx| {
+                toolbar.update(cx, |toolbar, cx| {
+                    toolbar.set_active_pane_item(Some(&diff), window, cx)
+                })
+            });
+            assert_eq!(location, ToolbarItemLocation::PrimaryRight);
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_reapplies_editor_addon_when_diff_filter_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        assert!(cx.update(|_, cx| project_diff_editor_has_addon::<GitPanelAddon>(&diff, cx)));
+        assert!(!cx.update(|_, cx| project_diff_editor_has_addon::<BranchDiffAddon>(&diff, cx)));
+
+        diff.update(cx, |diff, cx| {
+            diff.branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.set_diff_base(
+                    DiffBase::Merge {
+                        base_ref: "main".into(),
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        assert!(!cx.update(|_, cx| project_diff_editor_has_addon::<GitPanelAddon>(&diff, cx)));
+        assert!(cx.update(|_, cx| project_diff_editor_has_addon::<BranchDiffAddon>(&diff, cx)));
+
+        diff.update(cx, |diff, cx| {
+            diff.branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.set_diff_base(DiffBase::Staged, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert!(cx.update(|_, cx| project_diff_editor_has_addon::<GitPanelAddon>(&diff, cx)));
+        assert!(!cx.update(|_, cx| project_diff_editor_has_addon::<BranchDiffAddon>(&diff, cx)));
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_reapplies_hunk_controls_when_diff_filter_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        for (diff_base, hides_hunk_controls) in [
+            (DiffBase::Head, false),
+            (DiffBase::Staged, false),
+            (DiffBase::Unstaged, false),
+            (
+                DiffBase::Merge {
+                    base_ref: "main".into(),
+                },
+                true,
+            ),
+            (DiffBase::Head, false),
+        ] {
+            diff.update(cx, |diff, cx| {
+                diff.branch_diff.update(cx, |branch_diff, cx| {
+                    branch_diff.set_diff_base(diff_base, cx);
+                });
+            });
+            cx.run_until_parked();
+
+            assert_eq!(
+                cx.update(|window, cx| {
+                    project_diff_renders_empty_hunk_controls(&diff, window, cx)
+                }),
+                hides_hunk_controls
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_empty_state_text_tracks_diff_filter(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+
+        for (diff_base, expected) in [
+            (DiffBase::Head, "No uncommitted changes"),
+            (DiffBase::Staged, "No staged changes"),
+            (DiffBase::Unstaged, "No unstaged changes"),
+            (
+                DiffBase::Merge {
+                    base_ref: "origin/main".into(),
+                },
+                "No changes since origin/main",
+            ),
+        ] {
+            diff.update(cx, |diff, cx| {
+                diff.branch_diff.update(cx, |branch_diff, cx| {
+                    branch_diff.set_diff_base(diff_base, cx);
+                });
+            });
+
+            assert_eq!(
+                diff.read_with(cx, |diff, cx| diff.empty_state_text(cx).to_string()),
+                expected
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_toolbar_selects_uncommitted_staged_and_unstaged_filters(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: Some(diff.downgrade()),
+            workspace: workspace.read(cx).weak_handle(),
+        });
+
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Uncommitted)
+        );
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Staged, window, cx)
+            });
+        });
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Staged)
+        );
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Unstaged, window, cx)
+            });
+        });
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Unstaged
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Unstaged)
+        );
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Uncommitted, window, cx)
+            });
+        });
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Head
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Uncommitted)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_toolbar_selects_branch_filter_after_default_branch_resolves(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: Some(diff.downgrade()),
+            workspace: workspace.read(cx).weak_handle(),
+        });
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Branch, window, cx)
+            });
+        });
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Uncommitted)
+        );
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Merge {
+                base_ref: "origin/main".into()
+            }
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Branch)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_toolbar_leaves_previous_filter_active_when_branch_fails(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "foo.txt": "FOO\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: Some(diff.downgrade()),
+            workspace: workspace.read(cx).weak_handle(),
+        });
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Staged, window, cx);
+                toolbar.select_diff_filter(DiffFilter::Branch, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Staged)
+        );
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.notification_ids().is_empty()));
+    }
+
+    #[gpui::test]
+    async fn test_project_diff_toolbar_ignores_stale_branch_filter_resolution(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: Some(diff.downgrade()),
+            workspace: workspace.read(cx).weak_handle(),
+        });
+
+        cx.update(|window, cx| {
+            toolbar.update(cx, |toolbar, cx| {
+                toolbar.select_diff_filter(DiffFilter::Branch, window, cx);
+                toolbar.select_diff_filter(DiffFilter::Staged, window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged
+        );
+        assert_eq!(
+            toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
+            Some(DiffFilter::Staged)
+        );
     }
 
     #[gpui::test]

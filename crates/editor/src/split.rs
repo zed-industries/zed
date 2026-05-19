@@ -471,6 +471,24 @@ impl SplittableEditor {
         });
     }
 
+    /// Restores the standard staging controls after a branch diff hides them.
+    pub fn enable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
+        let render_diff_hunk_controls = Arc::new(crate::git::render_diff_hunk_controls);
+        self.update_editors(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
+        });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn renders_empty_diff_hunk_controls_for_test(
+        editor: &Entity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let rhs_editor = editor.read(cx).rhs_editor.clone();
+        Editor::renders_empty_diff_hunk_controls_for_test(&rhs_editor, window, cx)
+    }
+
     fn focused_side(&self) -> SplitSide {
         if let Some(lhs) = &self.lhs
             && lhs.was_last_focused

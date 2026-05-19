@@ -175,6 +175,30 @@ impl Editor {
         cx.notify();
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn renders_empty_diff_hunk_controls_for_test(
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
+        let status = DiffHunkStatus {
+            kind: buffer_diff::DiffHunkStatusKind::Modified,
+            secondary: buffer_diff::DiffHunkSecondaryStatus::HasSecondaryHunk,
+        };
+        let mut element = render_diff_hunk_controls(
+            0,
+            &status,
+            Anchor::Min..Anchor::Max,
+            false,
+            px(16.),
+            editor,
+            window,
+            cx,
+        );
+        element.downcast_mut::<gpui::Empty>().is_some()
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
@@ -1410,12 +1434,13 @@ impl Editor {
                 &hunks
                     .map(|hunk| buffer_diff::DiffHunk {
                         buffer_range: hunk.buffer_range,
-                        // We don't need to pass in word diffs here because they're only used for rendering and
-                        // this function changes internal state
+                        // Word diffs and point ranges are only used for rendering and summaries;
+                        // this function changes internal state.
                         base_word_diffs: Vec::default(),
                         buffer_word_diffs: Vec::default(),
                         diff_base_byte_range: hunk.diff_base_byte_range.start.0
                             ..hunk.diff_base_byte_range.end.0,
+                        diff_base_range: Point::zero()..Point::zero(),
                         secondary_status: hunk.status.secondary,
                         range: Point::zero()..Point::zero(), // unused
                     })
