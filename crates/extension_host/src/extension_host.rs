@@ -78,7 +78,7 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 ///
 /// These snippets should no longer be downloaded or loaded, because their
 /// functionality has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
+static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
     FxHashSet::from_iter([
         "snippets",
         "ruff",

@@ -569,6 +569,8 @@ mod tests {
     #[test]
     #[cfg(target_os = "windows")]
     fn test_deserialize_manifest_with_windows_separators() {
+        use indoc::indoc;
+
         let content = indoc! {r#"
             id = "test-manifest"
             name = "Test Manifest"
