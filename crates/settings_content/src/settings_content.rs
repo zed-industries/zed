@@ -686,6 +686,11 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub sort_by_path: Option<bool>,
 
+    /// How to group entries in the Git panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
+
     /// Whether to collapse untracked files in the diff panel.
     ///
     /// Default: false
@@ -716,6 +721,27 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 72
     pub commit_title_max_length: Option<usize>,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    #[default]
+    Status,
+    Staging,
 }
 
 #[derive(

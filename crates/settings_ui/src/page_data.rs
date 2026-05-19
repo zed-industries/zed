@@ -5499,7 +5499,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 15] {
+    fn git_panel_section() -> [SettingsPageItem; 16] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5599,6 +5599,19 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .sort_by_path = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Group By",
+                description: "How entries are grouped in the Git panel.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.group_by"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.group_by.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git_panel.get_or_insert_default().group_by = value;
                     },
                 }),
                 metadata: None,
