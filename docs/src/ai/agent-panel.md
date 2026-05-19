@@ -180,13 +180,13 @@ Amp updates terminal titles automatically and can also notify you when it needs 
 }
 ```
 
+Restart Amp after adding the environment variable.
+
 ### OpenCode Notifications {#opencode-notifications}
 
-OpenCode can update terminal titles automatically. For Zed notifications, add an
-OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
+OpenCode can update terminal titles automatically. For Zed notifications, add an OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
 
-Create `.opencode/plugins/zed-bell.js` in your project, or
-`~/.config/opencode/plugins/zed-bell.js` to use it globally:
+Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/plugins/zed-bell.js` to use it globally:
 
 ```js
 export const ZedBell = async () => {
@@ -199,6 +199,24 @@ export const ZedBell = async () => {
   };
 };
 ```
+
+Restart OpenCode after adding the plugin.
+
+### Pi Notifications {#pi-notifications}
+
+Pi can use an extension to emit a notification when it finishes a turn. Create `.pi/extensions/zed-bell.ts` in your project, or `~/.pi/agent/extensions/zed-bell.ts` to use it globally:
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("agent_end", async () => {
+    process.stdout.write("\x07");
+  });
+}
+```
+
+Restart Pi after adding the extension, or run `/reload` if the extension is in one of Pi's auto-discovered extension locations.
 
 ### Codex Terminal Titles {#codex-terminal-titles}
 
