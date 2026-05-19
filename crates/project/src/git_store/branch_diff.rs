@@ -3,7 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashSet;
 use futures::StreamExt;
 use git::{
-    repository::RepoPath,
+    repository::{DiffType, RepoPath},
     status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
 };
 use gpui::{
@@ -18,12 +18,14 @@ use ztracing::instrument;
 
 use crate::{
     Project,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DiffBase {
     Head,
+    Staged,
+    Unstaged,
     Merge { base_ref: SharedString },
 }
 
@@ -31,6 +33,89 @@ impl DiffBase {
     pub fn is_merge_base(&self) -> bool {
         matches!(self, DiffBase::Merge { .. })
     }
+}
+
+pub struct ResolvedDiffFile {
+    pub repo_path: RepoPath,
+    pub file_status: FileStatus,
+    pub diff_type: DiffType,
+    branch_diff: Option<TreeDiffStatus>,
+}
+
+pub fn resolve_diff_files(
+    diff_base: &DiffBase,
+    status_entries: impl IntoIterator<Item = StatusEntry>,
+    tree_diff: Option<&TreeDiff>,
+) -> Vec<ResolvedDiffFile> {
+    let mut resolved = Vec::new();
+    let mut seen = HashSet::default();
+    let track_seen = matches!(diff_base, DiffBase::Merge { .. }) && tree_diff.is_some();
+
+    for entry in status_entries {
+        if track_seen {
+            seen.insert(entry.repo_path.clone());
+        }
+
+        let branch_diff = tree_diff
+            .and_then(|tree_diff| tree_diff.entries.get(&entry.repo_path))
+            .cloned();
+        let status = match diff_base {
+            DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => Some(entry.status),
+            DiffBase::Merge { .. } => merge_statuses(Some(entry.status), branch_diff.as_ref()),
+        };
+
+        let Some(status) = status else {
+            continue;
+        };
+        if !status.has_changes() {
+            continue;
+        }
+
+        let diff_type = match diff_base {
+            DiffBase::Head => DiffType::HeadToWorktree,
+            DiffBase::Staged if status.staging().has_staged() => DiffType::HeadToIndex,
+            DiffBase::Staged => continue,
+            DiffBase::Unstaged if status.staging().has_unstaged() => DiffType::HeadToWorktree,
+            DiffBase::Unstaged => continue,
+            DiffBase::Merge { base_ref } => DiffType::MergeBase {
+                base_ref: base_ref.clone(),
+            },
+        };
+
+        resolved.push(ResolvedDiffFile {
+            repo_path: entry.repo_path,
+            file_status: entry.status,
+            diff_type,
+            branch_diff,
+        });
+    }
+
+    let Some(tree_diff) = tree_diff else {
+        return resolved;
+    };
+    let DiffBase::Merge { base_ref } = diff_base else {
+        return resolved;
+    };
+
+    let mut tree_diff_entries = tree_diff.entries.iter().collect::<Vec<_>>();
+    tree_diff_entries.sort_by_key(|(path, _)| *path);
+
+    for (path, branch_diff) in tree_diff_entries {
+        if seen.contains(path) {
+            continue;
+        }
+
+        resolved.push(ResolvedDiffFile {
+            repo_path: path.clone(),
+            file_status: diff_status_to_file_status(branch_diff),
+            diff_type: DiffType::MergeBase {
+                base_ref: base_ref.clone(),
+            },
+            branch_diff: Some(branch_diff.clone()),
+        });
+    }
+
+    resolved
 }
 
 pub struct BranchDiff {
@@ -229,54 +314,7 @@ impl BranchDiff {
         diff_from_head: Option<FileStatus>,
         diff_from_merge_base: Option<&TreeDiffStatus>,
     ) -> Option<FileStatus> {
-        match (diff_from_head, diff_from_merge_base) {
-            (None, None) => None,
-            (Some(diff_from_head), None) => Some(diff_from_head),
-            (Some(diff_from_head @ FileStatus::Unmerged(_)), _) => Some(diff_from_head),
-
-            // file does not exist in HEAD
-            // but *does* exist in work-tree
-            // and *does* exist in merge-base
-            (
-                Some(FileStatus::Untracked)
-                | Some(FileStatus::Tracked(TrackedStatus {
-                    index_status: StatusCode::Added,
-                    worktree_status: _,
-                })),
-                Some(_),
-            ) => Some(FileStatus::Tracked(TrackedStatus {
-                index_status: StatusCode::Modified,
-                worktree_status: StatusCode::Modified,
-            })),
-
-            // file exists in HEAD
-            // but *does not* exist in work-tree
-            (Some(diff_from_head), Some(diff_from_merge_base)) if diff_from_head.is_deleted() => {
-                match diff_from_merge_base {
-                    TreeDiffStatus::Added => None, // unchanged, didn't exist in merge base or worktree
-                    _ => Some(diff_from_head),
-                }
-            }
-
-            // file exists in HEAD
-            // and *does* exist in work-tree
-            (Some(FileStatus::Tracked(_)), Some(tree_status)) => {
-                Some(FileStatus::Tracked(TrackedStatus {
-                    index_status: match tree_status {
-                        TreeDiffStatus::Added { .. } => StatusCode::Added,
-                        _ => StatusCode::Modified,
-                    },
-                    worktree_status: match tree_status {
-                        TreeDiffStatus::Added => StatusCode::Added,
-                        _ => StatusCode::Modified,
-                    },
-                }))
-            }
-
-            (_, Some(diff_from_merge_base)) => {
-                Some(diff_status_to_file_status(diff_from_merge_base))
-            }
-        }
+        merge_statuses(diff_from_head, diff_from_merge_base)
     }
 
     fn spawn_reload_tree_diff(&mut self, cx: &mut Context<Self>) {
@@ -342,57 +380,19 @@ impl BranchDiff {
         }
 
         self.project.update(cx, |_project, cx| {
-            let mut seen = HashSet::default();
-
-            for item in repo.read(cx).cached_status() {
-                seen.insert(item.repo_path.clone());
-                let branch_diff = self
-                    .tree_diff
-                    .as_ref()
-                    .and_then(|t| t.entries.get(&item.repo_path))
-                    .cloned();
-                let Some(status) = self.merge_statuses(Some(item.status), branch_diff.as_ref())
-                else {
-                    continue;
-                };
-                if !status.has_changes() {
-                    continue;
-                }
-
+            let status_entries = repo.read(cx).cached_status().collect::<Vec<_>>();
+            for file in resolve_diff_files(&self.diff_base, status_entries, self.tree_diff.as_ref())
+            {
                 let Some(project_path) =
-                    repo.read(cx).repo_path_to_project_path(&item.repo_path, cx)
+                    repo.read(cx).repo_path_to_project_path(&file.repo_path, cx)
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(branch_diff, project_path, repo.clone(), cx);
-
+                let task = Self::load_buffer(file.branch_diff, project_path, repo.clone(), cx);
                 output.push(DiffBuffer {
-                    repo_path: item.repo_path.clone(),
+                    repo_path: file.repo_path,
                     load: task,
-                    file_status: item.status,
-                });
-            }
-            let Some(tree_diff) = self.tree_diff.as_ref() else {
-                return;
-            };
-
-            for (path, branch_diff) in tree_diff.entries.iter() {
-                if seen.contains(&path) {
-                    continue;
-                }
-
-                let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
-                    continue;
-                };
-                let task =
-                    Self::load_buffer(Some(branch_diff.clone()), project_path, repo.clone(), cx);
-
-                let file_status = diff_status_to_file_status(branch_diff);
-
-                output.push(DiffBuffer {
-                    repo_path: path.clone(),
-                    load: task,
-                    file_status,
+                    file_status: file.file_status,
                 });
             }
         });
@@ -453,6 +453,58 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
         }),
     };
     file_status
+}
+
+fn merge_statuses(
+    diff_from_head: Option<FileStatus>,
+    diff_from_merge_base: Option<&TreeDiffStatus>,
+) -> Option<FileStatus> {
+    match (diff_from_head, diff_from_merge_base) {
+        (None, None) => None,
+        (Some(diff_from_head), None) => Some(diff_from_head),
+        (Some(diff_from_head @ FileStatus::Unmerged(_)), _) => Some(diff_from_head),
+
+        // file does not exist in HEAD
+        // but *does* exist in work-tree
+        // and *does* exist in merge-base
+        (
+            Some(FileStatus::Untracked)
+            | Some(FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Added,
+                worktree_status: _,
+            })),
+            Some(_),
+        ) => Some(FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Modified,
+            worktree_status: StatusCode::Modified,
+        })),
+
+        // file exists in HEAD
+        // but *does not* exist in work-tree
+        (Some(diff_from_head), Some(diff_from_merge_base)) if diff_from_head.is_deleted() => {
+            match diff_from_merge_base {
+                TreeDiffStatus::Added => None, // unchanged, didn't exist in merge base or worktree
+                _ => Some(diff_from_head),
+            }
+        }
+
+        // file exists in HEAD
+        // and *does* exist in work-tree
+        (Some(FileStatus::Tracked(_)), Some(tree_status)) => {
+            Some(FileStatus::Tracked(TrackedStatus {
+                index_status: match tree_status {
+                    TreeDiffStatus::Added { .. } => StatusCode::Added,
+                    _ => StatusCode::Modified,
+                },
+                worktree_status: match tree_status {
+                    TreeDiffStatus::Added => StatusCode::Added,
+                    _ => StatusCode::Modified,
+                },
+            }))
+        }
+
+        (_, Some(diff_from_merge_base)) => Some(diff_status_to_file_status(diff_from_merge_base)),
+    }
 }
 
 #[derive(Debug)]

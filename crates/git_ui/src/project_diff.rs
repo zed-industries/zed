@@ -402,14 +402,14 @@ impl ProjectDiff {
                 cx,
             );
             match branch_diff.read(cx).diff_base() {
-                DiffBase::Head => {}
+                DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {}
                 DiffBase::Merge { .. } => diff_display_editor.disable_diff_hunk_controls(cx),
             }
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_diff_review_button(true, cx);
 
                 match branch_diff.read(cx).diff_base() {
-                    DiffBase::Head => {
+                    DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {
                         editor.register_addon(GitPanelAddon {
                             workspace: workspace.downgrade(),
                         });
@@ -1006,7 +1006,7 @@ impl Item for ProjectDiff {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         match self.diff_base(cx) {
-            DiffBase::Head => Some("Project Diff".into()),
+            DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => Some("Project Diff".into()),
             DiffBase::Merge { .. } => Some("Branch Diff".into()),
         }
     }
@@ -1024,6 +1024,8 @@ impl Item for ProjectDiff {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         match self.branch_diff.read(cx).diff_base() {
             DiffBase::Head => "Uncommitted Changes".into(),
+            DiffBase::Staged => "Staged Changes".into(),
+            DiffBase::Unstaged => "Unstaged Changes".into(),
             DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
         }
     }

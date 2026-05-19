@@ -1038,6 +1038,7 @@ pub trait GitRepository: Send + Sync {
     fn is_trusted(&self) -> bool;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,

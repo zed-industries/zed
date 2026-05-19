@@ -625,6 +625,252 @@ mod conflict_set_tests {
     }
 }
 
+mod branch_diff_resolver_tests {
+    use collections::HashMap;
+    use git::{
+        repository::{DiffType, RepoPath, repo_path},
+        status::{
+            FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus, UnmergedStatus,
+            UnmergedStatusCode,
+        },
+    };
+    use project::git_store::{
+        StatusEntry,
+        branch_diff::{DiffBase, ResolvedDiffFile, resolve_diff_files},
+    };
+
+    #[test]
+    fn branch_diff_resolver_filters_staged_files() {
+        let resolved = resolve_diff_files(
+            &DiffBase::Staged,
+            status_entries([
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+                (
+                    "partial.rs",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }),
+                ),
+                ("untracked.rs", FileStatus::Untracked),
+                (
+                    "conflict.rs",
+                    FileStatus::Unmerged(UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }),
+                ),
+            ]),
+            None,
+        );
+
+        assert_eq!(
+            paths_and_diff_types(resolved),
+            expected_paths_and_diff_types([
+                ("staged.rs", "head-to-index"),
+                ("partial.rs", "head-to-index")
+            ])
+        );
+    }
+
+    #[test]
+    fn branch_diff_resolver_filters_unstaged_files() {
+        let resolved = resolve_diff_files(
+            &DiffBase::Unstaged,
+            status_entries([
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+                (
+                    "partial.rs",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }),
+                ),
+                ("untracked.rs", FileStatus::Untracked),
+                (
+                    "conflict.rs",
+                    FileStatus::Unmerged(UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }),
+                ),
+            ]),
+            None,
+        );
+
+        assert_eq!(
+            paths_and_diff_types(resolved),
+            expected_paths_and_diff_types([
+                ("unstaged.rs", "head-to-worktree"),
+                ("partial.rs", "head-to-worktree"),
+                ("untracked.rs", "head-to-worktree"),
+                ("conflict.rs", "head-to-worktree")
+            ])
+        );
+    }
+
+    #[test]
+    fn branch_diff_resolver_keeps_all_uncommitted_files_for_head() {
+        let resolved = resolve_diff_files(
+            &DiffBase::Head,
+            status_entries([
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+                (
+                    "partial.rs",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Modified,
+                        worktree_status: StatusCode::Modified,
+                    }),
+                ),
+                ("untracked.rs", FileStatus::Untracked),
+                (
+                    "conflict.rs",
+                    FileStatus::Unmerged(UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }),
+                ),
+                (
+                    "unchanged.rs",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Unmodified,
+                        worktree_status: StatusCode::Unmodified,
+                    }),
+                ),
+            ]),
+            None,
+        );
+
+        assert_eq!(
+            paths_and_diff_types(resolved),
+            expected_paths_and_diff_types([
+                ("staged.rs", "head-to-worktree"),
+                ("unstaged.rs", "head-to-worktree"),
+                ("partial.rs", "head-to-worktree"),
+                ("untracked.rs", "head-to-worktree"),
+                ("conflict.rs", "head-to-worktree")
+            ])
+        );
+    }
+
+    #[test]
+    fn branch_diff_resolver_uses_merge_base_diff_type_for_branch_files() {
+        let tree_diff = TreeDiff {
+            entries: HashMap::from_iter([
+                (repo_path("branch-z.rs"), TreeDiffStatus::Added),
+                (repo_path("branch-a.rs"), TreeDiffStatus::Added),
+                (repo_path("overlap.rs"), TreeDiffStatus::Added),
+            ]),
+        };
+        let resolved = resolve_diff_files(
+            &DiffBase::Merge {
+                base_ref: "origin/main".into(),
+            },
+            status_entries([
+                ("local.rs", StatusCode::Modified.worktree()),
+                ("overlap.rs", StatusCode::Modified.index()),
+            ]),
+            Some(&tree_diff),
+        );
+
+        assert_eq!(
+            paths_diff_types_and_statuses(resolved),
+            expected_paths_diff_types_and_statuses([
+                (
+                    "local.rs",
+                    "merge-base:origin/main",
+                    StatusCode::Modified.worktree()
+                ),
+                (
+                    "overlap.rs",
+                    "merge-base:origin/main",
+                    StatusCode::Modified.index()
+                ),
+                (
+                    "branch-a.rs",
+                    "merge-base:origin/main",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Added,
+                    })
+                ),
+                (
+                    "branch-z.rs",
+                    "merge-base:origin/main",
+                    FileStatus::Tracked(TrackedStatus {
+                        index_status: StatusCode::Added,
+                        worktree_status: StatusCode::Added,
+                    })
+                ),
+            ])
+        );
+    }
+
+    fn paths_and_diff_types(resolved: Vec<ResolvedDiffFile>) -> Vec<(RepoPath, String)> {
+        resolved
+            .into_iter()
+            .map(|file| {
+                let diff_type = match file.diff_type {
+                    DiffType::HeadToIndex => "head-to-index".to_string(),
+                    DiffType::HeadToWorktree => "head-to-worktree".to_string(),
+                    DiffType::MergeBase { base_ref } => format!("merge-base:{base_ref}"),
+                };
+                (file.repo_path, diff_type)
+            })
+            .collect()
+    }
+
+    fn paths_diff_types_and_statuses(
+        resolved: Vec<ResolvedDiffFile>,
+    ) -> Vec<(RepoPath, String, FileStatus)> {
+        resolved
+            .into_iter()
+            .map(|file| {
+                let diff_type = match file.diff_type {
+                    DiffType::HeadToIndex => "head-to-index".to_string(),
+                    DiffType::HeadToWorktree => "head-to-worktree".to_string(),
+                    DiffType::MergeBase { base_ref } => format!("merge-base:{base_ref}"),
+                };
+                (file.repo_path, diff_type, file.file_status)
+            })
+            .collect()
+    }
+
+    fn expected_paths_and_diff_types<const N: usize>(
+        entries: [(&'static str, &'static str); N],
+    ) -> Vec<(RepoPath, String)> {
+        entries
+            .into_iter()
+            .map(|(path, diff_type)| (repo_path(path), diff_type.to_string()))
+            .collect()
+    }
+
+    fn expected_paths_diff_types_and_statuses<const N: usize>(
+        entries: [(&'static str, &'static str, FileStatus); N],
+    ) -> Vec<(RepoPath, String, FileStatus)> {
+        entries
+            .into_iter()
+            .map(|(path, diff_type, status)| (repo_path(path), diff_type.to_string(), status))
+            .collect()
+    }
+
+    fn status_entries<const N: usize>(
+        entries: [(&'static str, FileStatus); N],
+    ) -> Vec<StatusEntry> {
+        entries
+            .into_iter()
+            .map(|(path, status)| StatusEntry {
+                repo_path: repo_path(path),
+                status,
+                diff_stat: None,
+            })
+            .collect()
+    }
+}
+
 mod git_traversal {
     use std::{path::Path, time::Duration};
 
