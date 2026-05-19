@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{Client, proto, telemetry::Telemetry};
 use cloud_api_types::{ExtensionMetadata, ExtensionProvides, GetExtensionsResponse};
-use collections::{BTreeMap, BTreeSet, HashSet, btree_map};
+use collections::{BTreeMap, BTreeSet, FxHashSet, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
@@ -48,6 +48,7 @@ use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     path::{self, Path, PathBuf},
@@ -77,7 +78,32 @@ const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
 ///
 /// These snippets should no longer be downloaded or loaded, because their
 /// functionality has been integrated into the core editor.
-const SUPPRESSED_EXTENSIONS: &[&str] = &["snippets", "ruff", "ty", "basedpyright", "basher"];
+const SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
+    FxHashSet::from_iter([
+        "snippets",
+        "ruff",
+        "ty",
+        "basedpyright",
+        "basher",
+        /* ACP */
+        "opencode",
+        "mistral-vibe",
+        "auggie",
+        "stakpak",
+        "codebuddy",
+        "autohand-acp",
+        "corust-agent",
+        "factory-droid",
+        "qqcode",
+    ])
+});
+
+// If no settings:
+// insert into
+// "agent_servers": { "agent-id": { "type": "registry" } }
+// if exension settings, check for previous id, move to new id
+// if they already have a setting when migrating of type "custom", bail
+// replace "type": "extension" with "type": "registry"
 
 /// Returns the [`SchemaVersion`] range that is compatible with this version of Zed.
 pub fn schema_version_range() -> RangeInclusive<SchemaVersion> {
@@ -604,7 +630,7 @@ impl ExtensionStore {
                     .extension_index
                     .extensions
                     .contains_key(extension_id.as_ref());
-                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref())
+                !is_already_installed && !SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref())
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -687,7 +713,7 @@ impl ExtensionStore {
 
             response
                 .data
-                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(&extension.id.as_ref()));
+                .retain(|extension| !SUPPRESSED_EXTENSIONS.contains(extension.id.as_ref()));
 
             Ok(response.data)
         })
@@ -947,7 +973,7 @@ impl ExtensionStore {
             }
 
             extension_store.update(cx, |_, cx| {
-                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
+                cx.emit(Event::ExtensionUninstalled(dbg!(extension_id.clone())));
                 if let Some(events) = ExtensionEvents::try_global(cx)
                     && let Some(manifest) = extension_manifest
                 {
@@ -1112,9 +1138,16 @@ impl ExtensionStore {
     ) -> Task<()> {
         let old_index = &self.extension_index;
 
-        new_index
-            .extensions
-            .retain(|extension_id, _| !SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()));
+        let mut suppressed_extensions_to_remove = Vec::new();
+
+        new_index.extensions.retain(|extension_id, _| {
+            if SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref()) {
+                suppressed_extensions_to_remove.push(extension_id.clone());
+                false
+            } else {
+                true
+            }
+        });
 
         // Determine which extensions need to be loaded and unloaded, based
         // on the changes to the manifest and the extensions that we know have been
@@ -1155,8 +1188,17 @@ impl ExtensionStore {
             self.modified_extensions.clear();
         }
 
+        let trigger_suppressed_extension_removal =
+            move |this: &mut ExtensionStore, cx: &mut Context<ExtensionStore>| {
+                for id in suppressed_extensions_to_remove.iter() {
+                    this.uninstall_extension(id.clone(), cx)
+                        .detach_and_log_err(cx);
+                }
+            };
+
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
             self.reload_complete_senders.clear();
+            trigger_suppressed_extension_removal(self, cx);
             return Task::ready(());
         }
 
@@ -1496,6 +1538,7 @@ impl ExtensionStore {
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
+                trigger_suppressed_extension_removal(this, cx);
 
                 if let Some(events) = ExtensionEvents::try_global(cx) {
                     events.update(cx, |this, cx| {
@@ -1566,7 +1609,8 @@ impl ExtensionStore {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
 
-        if SUPPRESSED_EXTENSIONS.contains(&extension_id.as_ref()) {
+        // TODO: Perform an uninstall if this happens
+        if SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref()) {
             return Ok(());
         }
 
