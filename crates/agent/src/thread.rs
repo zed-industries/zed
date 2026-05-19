@@ -1,21 +1,23 @@
 use crate::{
-    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DbLanguageModel, DbThread,
-    DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
-    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ProjectSnapshot, ReadFileTool,
-    RestoreFileFromDiskTool, SaveFileTool, SpawnAgentTool, StreamingEditFileTool,
+    ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
+    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
+    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, WebSearchTool, decide_permission_from_settings,
+    UpdatePlanTool, UserAgentsMd, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
-use feature_flags::{FeatureFlagAppExt as _, UpdatePlanToolFeatureFlag};
+use feature_flags::{
+    FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+};
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::{HashMap, HashSet, IndexMap};
@@ -231,6 +233,8 @@ impl UserMessage {
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
         const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
+        const OPEN_SKILLS_TAG: &str =
+            "<skills>\nThe user has attached the following agent skills:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut directory_context = OPEN_DIRECTORIES_TAG.to_string();
@@ -242,6 +246,7 @@ impl UserMessage {
         let mut diagnostics_context = OPEN_DIAGNOSTICS_TAG.to_string();
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
+        let mut skills_context = OPEN_SKILLS_TAG.to_string();
 
         for chunk in &self.content {
             let chunk = match chunk {
@@ -358,6 +363,10 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::Skill { name, source, .. } => {
+                            let label = format!("{} ({})", name, source);
+                            write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -430,6 +439,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(diagnostics_context));
+        }
+
+        if skills_context.len() > OPEN_SKILLS_TAG.len() {
+            skills_context.push_str("</skills>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(skills_context));
         }
 
         if merge_conflict_context.len() > MERGE_CONFLICT_TAG.len() {
@@ -821,9 +837,9 @@ impl ToolPermissionContext {
             } else if tool_name == CopyPathTool::NAME
                 || tool_name == MovePathTool::NAME
                 || tool_name == EditFileTool::NAME
+                || tool_name == WriteFileTool::NAME
                 || tool_name == DeletePathTool::NAME
                 || tool_name == CreateDirectoryTool::NAME
-                || tool_name == SaveFileTool::NAME
             {
                 (
                     extract_path_pattern(value),
@@ -923,6 +939,7 @@ pub struct ToolCallAuthorization {
     pub options: acp_thread::PermissionOptions,
     pub response: oneshot::Sender<acp_thread::SelectedPermissionOutcome>,
     pub context: Option<ToolPermissionContext>,
+    pub kind: acp_thread::AuthorizationKind,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -982,6 +999,7 @@ pub struct Thread {
     ui_scroll_position: Option<gpui::ListOffset>,
     /// Weak references to running subagent threads for cancellation propagation
     running_subagents: Vec<WeakEntity<Thread>>,
+    inherits_parent_model_settings: bool,
 }
 
 impl Thread {
@@ -1015,6 +1033,10 @@ impl Thread {
             depth: parent_thread.read(cx).depth() + 1,
         });
         thread.inherit_parent_settings(parent_thread, cx);
+        if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
+            thread.inherits_parent_model_settings = false;
+            thread.apply_model_selection(&subagent_model, cx);
+        }
         thread
     }
 
@@ -1103,6 +1125,7 @@ impl Thread {
             draft_prompt: None,
             ui_scroll_position: None,
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
         }
     }
 
@@ -1117,6 +1140,29 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+    }
+
+    fn apply_model_selection(
+        &mut self,
+        selection: &LanguageModelSelection,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(model) = Self::resolve_model_from_selection(selection, cx) else {
+            log::warn!(
+                "failed to resolve configured subagent model: {}/{}",
+                selection.provider.0,
+                selection.model
+            );
+            return;
+        };
+
+        self.model = Some(model.clone());
+        self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
+        self.thinking_effort = selection.effort.clone();
+        self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.prompt_capabilities_tx
+            .send(Self::prompt_capabilities(self.model.as_deref()))
+            .log_err();
     }
 
     pub fn id(&self) -> &acp::SessionId {
@@ -1169,10 +1215,10 @@ impl Thread {
         stream: &ThreadEventStream,
         cx: &mut Context<Self>,
     ) {
-        // Extract saved output and status first, so they're available even if tool is not found
         let output = tool_result
             .as_ref()
             .and_then(|result| result.output.clone());
+        let replay_content = tool_result.and_then(Self::tool_result_content_for_replay);
         let status = tool_result
             .as_ref()
             .map_or(acp::ToolCallStatus::Failed, |result| {
@@ -1209,13 +1255,13 @@ impl Thread {
                         .raw_input(tool_use.input.clone()),
                 )))
                 .ok();
-            stream.update_tool_call_fields(
-                &tool_use.id,
-                acp::ToolCallUpdateFields::new()
-                    .status(status)
-                    .raw_output(output),
-                None,
-            );
+            let mut fields = acp::ToolCallUpdateFields::new()
+                .status(status)
+                .raw_output(output);
+            if let Some(content) = replay_content {
+                fields = fields.content(content);
+            }
+            stream.update_tool_call_fields(&tool_use.id, fields, None);
             return;
         };
 
@@ -1228,6 +1274,14 @@ impl Thread {
             kind,
             tool_use.input.clone(),
         );
+
+        if let Some(content) = replay_content {
+            stream.update_tool_call_fields(
+                &tool_use.id,
+                acp::ToolCallUpdateFields::new().content(content),
+                None,
+            );
+        }
 
         if let Some(output) = output.clone() {
             // For replay, we use a dummy cancellation receiver since the tool already completed
@@ -1249,6 +1303,45 @@ impl Thread {
                 .raw_output(output),
             None,
         );
+    }
+
+    fn tool_result_content_for_replay(
+        tool_result: &LanguageModelToolResult,
+    ) -> Option<Vec<acp::ToolCallContent>> {
+        let has_image = tool_result
+            .content
+            .iter()
+            .any(|part| matches!(part, LanguageModelToolResultContent::Image(_)));
+        if !has_image && tool_result.output.is_some() {
+            return None;
+        }
+
+        let content = tool_result
+            .content
+            .iter()
+            .filter_map(|part| match part {
+                LanguageModelToolResultContent::Text(text) => {
+                    if text.is_empty() {
+                        None
+                    } else {
+                        Some(acp::ToolCallContent::Content(acp::Content::new(
+                            acp::ContentBlock::Text(acp::TextContent::new(text.to_string())),
+                        )))
+                    }
+                }
+                LanguageModelToolResultContent::Image(image) => Some(
+                    acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Image(
+                        acp::ImageContent::new(image.source.clone(), "image/png"),
+                    ))),
+                ),
+            })
+            .collect::<Vec<_>>();
+
+        if content.is_empty() {
+            None
+        } else {
+            Some(content)
+        }
     }
 
     pub fn from_db(
@@ -1336,6 +1429,7 @@ impl Thread {
                 offset_in_item: gpui::px(sp.offset_in_item),
             }),
             running_subagents: Vec::new(),
+            inherits_parent_model_settings: true,
         }
     }
 
@@ -1439,7 +1533,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_model(model.clone(), cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_model(model.clone(), cx);
+                    }
+                })
                 .ok();
         }
 
@@ -1476,7 +1574,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_thinking_enabled(enabled, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_enabled(enabled, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1492,7 +1594,9 @@ impl Thread {
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_thinking_effort(effort.clone(), cx)
+                    if thread.inherits_parent_model_settings {
+                        thread.set_thinking_effort(effort.clone(), cx)
+                    }
                 })
                 .ok();
         }
@@ -1508,7 +1612,11 @@ impl Thread {
 
         for subagent in &self.running_subagents {
             subagent
-                .update(cx, |thread, cx| thread.set_speed(speed, cx))
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_speed(speed, cx);
+                    }
+                })
                 .ok();
         }
         cx.notify();
@@ -1542,14 +1650,13 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DiagnosticsTool::new(self.project.clone()));
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
+            self.action_log.clone(),
             language_registry.clone(),
-            Templates::new(),
         ));
-        self.add_tool(StreamingEditFileTool::new(
+        self.add_tool(WriteFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),
@@ -1560,8 +1667,6 @@ impl Thread {
         self.add_tool(GrepTool::new(self.project.clone()));
         self.add_tool(ListDirectoryTool::new(self.project.clone()));
         self.add_tool(MovePathTool::new(self.project.clone()));
-        self.add_tool(NowTool);
-        self.add_tool(OpenTool::new(self.project.clone()));
         if cx.has_flag::<UpdatePlanToolFeatureFlag>() {
             self.add_tool(UpdatePlanTool);
         }
@@ -1570,10 +1675,23 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
-        self.add_tool(SaveFileTool::new(self.project.clone()));
-        self.add_tool(RestoreFileFromDiskTool::new(self.project.clone()));
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
         self.add_tool(WebSearchTool);
+
+        self.add_tool(DiagnosticsTool::new(self.project.clone()));
+
+        let code_action_store: CodeActionStore = cx.new(|_cx| None);
+        self.add_tool(FindReferencesTool::new(self.project.clone()));
+        self.add_tool(GetCodeActionsTool::new(
+            self.project.clone(),
+            code_action_store.clone(),
+        ));
+        self.add_tool(ApplyCodeActionTool::new(
+            self.project.clone(),
+            code_action_store,
+        ));
+        self.add_tool(GoToDefinitionTool::new(self.project.clone()));
+        self.add_tool(RenameTool::new(self.project.clone()));
 
         if self.depth() < MAX_SUBAGENT_DEPTH {
             self.add_tool(SpawnAgentTool::new(environment));
@@ -1692,11 +1810,13 @@ impl Thread {
     pub fn latest_token_usage(&self) -> Option<acp_thread::TokenUsage> {
         let usage = self.latest_request_token_usage()?;
         let model = self.model.clone()?;
+        let input_tokens = total_input_tokens(usage);
+
         Some(acp_thread::TokenUsage {
             max_tokens: model.max_token_count(),
             max_output_tokens: model.max_output_tokens(),
             used_tokens: usage.total_tokens(),
-            input_tokens: usage.input_tokens,
+            input_tokens,
             output_tokens: usage.output_tokens,
         })
     }
@@ -1715,7 +1835,7 @@ impl Thread {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
-                    return Some(usage.input_tokens);
+                    return Some(total_input_tokens(*usage));
                 }
                 previous_user_message_id = Some(&user_msg.id);
             }
@@ -2865,33 +2985,25 @@ impl Thread {
             }
         }
 
-        let use_streaming_edit_tool = model.supports_streaming_tools();
-
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
-                // For streaming_edit_file, check profile against "edit_file" since that's what users configure
-                let profile_tool_name = if tool_name == StreamingEditFileTool::NAME {
-                    EditFileTool::NAME
-                } else {
-                    tool_name.as_ref()
-                };
-
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(profile_tool_name)
+                    && profile.is_tool_enabled(tool_name)
                 {
-                    match (tool_name.as_ref(), use_streaming_edit_tool) {
-                        (StreamingEditFileTool::NAME, false) | (EditFileTool::NAME, true) => None,
-                        (StreamingEditFileTool::NAME, true) => {
-                            // Expose streaming tool as "edit_file"
-                            Some((SharedString::from(EditFileTool::NAME), tool.clone()))
-                        }
-                        _ => Some((truncate(tool_name), tool.clone())),
-                    }
+                    Some((truncate(tool_name), tool.clone()))
                 } else {
                     None
                 }
+            })
+            .filter(|(tool_name, _)| match tool_name.as_ref() {
+                RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+                FindReferencesTool::NAME
+                | GetCodeActionsTool::NAME
+                | ApplyCodeActionTool::NAME
+                | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                _ => true,
             })
             .collect::<BTreeMap<_, _>>();
 
@@ -2956,10 +3068,6 @@ impl Thread {
         self.tools.contains_key(name)
     }
 
-    pub fn registered_tool_names(&self) -> Vec<SharedString> {
-        self.tools.keys().cloned().collect()
-    }
-
     pub(crate) fn register_running_subagent(&mut self, subagent: WeakEntity<Thread>) {
         self.running_subagents.push(subagent);
     }
@@ -3016,10 +3124,13 @@ impl Thread {
             self.messages.len()
         );
 
+        let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
+            date: Local::now().format("%Y-%m-%d").to_string(),
+            user_agents_md,
         }
         .render(&self.templates)
         .context("failed to build system prompt")
@@ -3174,6 +3285,13 @@ impl Thread {
             }),
         }
     }
+}
+
+fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
+    usage
+        .input_tokens
+        .saturating_add(usage.cache_creation_input_tokens)
+        .saturating_add(usage.cache_read_input_tokens)
 }
 
 struct RunningTurn {
@@ -3871,6 +3989,57 @@ impl ToolCallEventStream {
         self.run_authorization_loop(title, options, Some(context), None, cx)
     }
 
+    /// Prompts the user to choose between an explicit set of actions and
+    /// returns the chosen `option_id`.
+    ///
+    /// Unlike [`Self::authorize`] / [`Self::authorize_always_prompt`], this
+    /// does not interpret the user's choice as a permission grant — callers
+    /// are responsible for handling each `option_id` explicitly. Use this
+    /// when a tool needs the user to pick between several side-effecting
+    /// actions (for example, "Save" vs "Discard" for a dirty buffer).
+    pub fn prompt_for_decision(
+        &self,
+        title: Option<String>,
+        message: Option<String>,
+        options: Vec<acp::PermissionOption>,
+        cx: &mut App,
+    ) -> Task<Result<acp::PermissionOptionId>> {
+        let options = acp_thread::PermissionOptions::Flat(options);
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        cx.spawn(async move |_cx| {
+            let mut fields = acp::ToolCallUpdateFields::new();
+            if let Some(title) = title {
+                fields = fields.title(title);
+            }
+            if let Some(message) = message {
+                fields = fields.content(vec![acp::ToolCallContent::from(message)]);
+            }
+
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(tool_use_id.to_string(), fields),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::ActionChoice,
+                    },
+                )))
+            {
+                log::error!("Failed to send tool call decision prompt: {error}");
+                return Err(anyhow!("Failed to send tool call decision prompt: {error}"));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+            Ok(outcome.option_id)
+        })
+    }
+
     /// Prompts the user for authorization.
     ///
     /// When `check_settings` is `Some`, this gate is settings-driven: the
@@ -3918,6 +4087,7 @@ impl ToolCallEventStream {
                         options,
                         response: response_tx,
                         context,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
                     },
                 )))
             {
@@ -4267,7 +4437,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        size: None,
     }
 }
 
@@ -4330,6 +4499,131 @@ mod tests {
             }
             subagents
         })
+    }
+
+    struct ReplayImageTool;
+
+    impl AgentTool for ReplayImageTool {
+        type Input = ();
+        type Output = String;
+
+        const NAME: &'static str = "registered_image_tool";
+
+        fn kind() -> acp::ToolKind {
+            acp::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> SharedString {
+            "Registered Image Tool".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            _cx: &mut App,
+        ) -> Task<Result<Self::Output, Self::Output>> {
+            Task::ready(Ok(String::new()))
+        }
+    }
+
+    #[gpui::test]
+    async fn test_replay_tool_call_replays_image_content(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let registered_tool_use_id = LanguageModelToolUseId::from("registered_tool_id");
+        let missing_tool_use_id = LanguageModelToolUseId::from("missing_tool_id");
+        let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
+        let image = LanguageModelImage {
+            source: image_data.into(),
+        };
+
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(ReplayImageTool);
+
+                let registered_tool_use = LanguageModelToolUse {
+                    id: registered_tool_use_id.clone(),
+                    name: ReplayImageTool::NAME.into(),
+                    raw_input: "null".to_string(),
+                    input: json!(null),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+                let missing_tool_use = LanguageModelToolUse {
+                    id: missing_tool_use_id.clone(),
+                    name: "missing_image_tool".into(),
+                    raw_input: "{}".to_string(),
+                    input: json!({}),
+                    is_input_complete: true,
+                    thought_signature: None,
+                };
+
+                let mut tool_results = IndexMap::default();
+                tool_results.insert(
+                    registered_tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: registered_tool_use_id.clone(),
+                        tool_name: ReplayImageTool::NAME.into(),
+                        is_error: false,
+                        content: vec![
+                            LanguageModelToolResultContent::Text("before".into()),
+                            LanguageModelToolResultContent::Image(image.clone()),
+                            LanguageModelToolResultContent::Text("after".into()),
+                        ],
+                        output: Some(json!("raw output")),
+                    },
+                );
+                tool_results.insert(
+                    missing_tool_use_id.clone(),
+                    LanguageModelToolResult {
+                        tool_use_id: missing_tool_use_id.clone(),
+                        tool_name: "missing_image_tool".into(),
+                        is_error: false,
+                        content: vec![LanguageModelToolResultContent::Image(image.clone())],
+                        output: Some(json!("raw output")),
+                    },
+                );
+
+                thread.messages.push(Message::Agent(AgentMessage {
+                    content: vec![
+                        AgentMessageContent::ToolUse(registered_tool_use),
+                        AgentMessageContent::ToolUse(missing_tool_use),
+                    ],
+                    tool_results,
+                    reasoning_details: None,
+                }));
+
+                thread.replay(cx)
+            })
+        });
+
+        let mut tool_use_ids_with_image_content = HashSet::default();
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            if let ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) =
+                event
+                && let Some(content) = &update.fields.content
+                && content.iter().any(|content| {
+                    matches!(
+                        content,
+                        acp::ToolCallContent::Content(acp::Content {
+                            content: acp::ContentBlock::Image(_),
+                            ..
+                        })
+                    )
+                })
+            {
+                tool_use_ids_with_image_content.insert(update.tool_call_id.to_string());
+            }
+        }
+
+        assert!(tool_use_ids_with_image_content.contains(&registered_tool_use_id.to_string()));
+        assert!(tool_use_ids_with_image_content.contains(&missing_tool_use_id.to_string()));
     }
 
     #[gpui::test]

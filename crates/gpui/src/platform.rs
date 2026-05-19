@@ -212,6 +212,14 @@ pub trait Platform: 'static {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
 
     fn set_cursor_style(&self, style: CursorStyle);
+
+    /// Hides the mouse cursor until the user moves the mouse over one of
+    /// this application's windows.
+    fn hide_cursor_until_mouse_moves(&self);
+
+    /// Returns whether the mouse cursor is currently visible.
+    fn is_cursor_visible(&self) -> bool;
+
     fn should_auto_hide_scrollbars(&self) -> bool;
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
@@ -318,22 +326,22 @@ pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
-pub struct DisplayId(pub(crate) u32);
+pub struct DisplayId(pub(crate) u64);
 
 impl DisplayId {
     /// Create a new `DisplayId` from a raw platform display identifier.
-    pub fn new(id: u32) -> Self {
+    pub fn new(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<u32> for DisplayId {
-    fn from(id: u32) -> Self {
+impl From<u64> for DisplayId {
+    fn from(id: u64) -> Self {
         Self(id)
     }
 }
 
-impl From<DisplayId> for u32 {
+impl From<DisplayId> for u64 {
     fn from(id: DisplayId) -> Self {
         id.0
     }
@@ -1818,9 +1826,6 @@ pub enum CursorStyle {
     /// A cursor indicating that the operation will result in a context menu
     /// corresponds to the CSS cursor value `context-menu`
     ContextualMenu,
-
-    /// Hide the cursor
-    None,
 }
 
 /// A clipboard item that should be copied to the clipboard

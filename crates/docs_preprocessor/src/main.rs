@@ -679,6 +679,12 @@ fn handle_postprocessing() -> Result<()> {
         .to_string();
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
     let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
+    let docs_channel = std::env::var("DOCS_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    let noindex = if docs_channel == "nightly" || docs_channel == "preview" {
+        "<meta name=\"robots\" content=\"noindex, nofollow\">"
+    } else {
+        ""
+    };
 
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
@@ -749,6 +755,7 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#description#", meta_description);
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
+        let contents = contents.replace("#noindex#", noindex);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)

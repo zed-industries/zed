@@ -97,7 +97,7 @@ PointerAlignment: Left
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
 
-You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by enabling format on save.
+You can trigger formatting via {#kb editor::Format} or the {#action editor::Format} action from the command palette or by enabling format on save.
 
 Configure formatting in Settings ({#kb zed::OpenSettings}) under Languages > C++, or add to your settings file:
 

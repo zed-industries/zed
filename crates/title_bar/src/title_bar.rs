@@ -25,11 +25,12 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
+use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div,
+    StatefulInteractiveElement, Styled, Subscription, TaskExt, WeakEntity, Window, actions, div,
     pulsating_between,
 };
 use onboarding_banner::OnboardingBanner;
@@ -190,8 +191,9 @@ impl Render for TitleBar {
         let mut linked_worktree_name = None;
         if let Some(worktree) = self.effective_active_worktree(cx) {
             repository = self.get_repository_for_worktree(&worktree, cx);
-            let worktree = worktree.read(cx);
+            let worktree_abs_path = worktree.read(cx).abs_path();
             project_name = worktree
+                .read(cx)
                 .root_name()
                 .file_name()
                 .map(|name| SharedString::from(name.to_string()));
@@ -210,14 +212,28 @@ impl Render for TitleBar {
                             .then_some(project_name.clone())
                             .flatten()
                     });
+
                 let identity = repo_identity_path(&repo.common_dir_abs_path);
+
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
                     identity.file_stem()
                 } else {
                     identity.file_name()
                 };
-                if let Some(name) = display_name.and_then(|n| n.to_str()) {
-                    project_name = Some(name.into());
+
+                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                    let name = if let Ok(relative) =
+                        worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                    {
+                        if relative.as_os_str().is_empty() {
+                            repo_name.to_string()
+                        } else {
+                            format!("{}/{}", repo_name, relative.display())
+                        }
+                    } else {
+                        repo_name.to_string()
+                    };
+                    project_name = Some(SharedString::from(name));
                 }
             }
         }
@@ -439,6 +455,23 @@ impl TitleBar {
             titlebar
         });
 
+        // The banner label stays static ("Introducing: Skills") regardless
+        // of whether the user had Rules to migrate; the explainer modal
+        // is where the migration-specific summary surfaces. Keeping the
+        // label static avoids the rebuild-on-migration-completion plumbing
+        // we'd otherwise need to dodge the title-bar-vs-migration race.
+        let banner = Some(cx.new(|cx| {
+            OnboardingBanner::new(
+                "Skills Migration Announcement",
+                IconName::Sparkle,
+                "Skills",
+                Some("Introducing:".into()),
+                zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
+                cx,
+            )
+            .visible_when(|cx| cx.has_flag::<SkillsFeatureFlag>())
+        }));
+
         let mut this = Self {
             platform_titlebar,
             application_menu,
@@ -448,7 +481,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            banner: None,
+            banner,
             update_version,
             screen_share_popover_handle: PopoverMenuHandle::default(),
             _diagnostics_subscription: None,
@@ -608,13 +641,8 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                trusted_worktrees
-                    .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
-            })
-            .unwrap_or(false);
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
         if !has_restricted_worktrees {
             return None;
         }
@@ -675,7 +703,7 @@ impl TitleBar {
             .user_store
             .read(cx)
             .participant_indices()
-            .get(&host_user.id)?;
+            .get(&host_user.legacy_id)?;
 
         Some(
             Button::new("project_owner_trigger", host_user.github_login.clone())

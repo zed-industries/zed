@@ -676,6 +676,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Custom,
                         insert_text_mode: None,
+                        group: None,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -787,6 +788,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,
+                        group: None,
                     }
                 })
                 .collect();
