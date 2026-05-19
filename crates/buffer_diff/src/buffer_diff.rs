@@ -2,7 +2,7 @@ use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
 use language::{
-    Capability, Diff, DiffOptions, Language, LanguageName, LanguageRegistry,
+    Capability, Diff, DiffOptions, EditedBufferSnapshot, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
 };
 use rope::Rope;
@@ -23,13 +23,19 @@ pub const MAX_WORD_DIFF_LINE_COUNT: usize = 5;
 
 pub struct BufferDiff {
     pub buffer_id: BufferId,
-    inner: BufferDiffInner<Entity<language::Buffer>>,
+    hunks: SumTree<InternalDiffHunk>,
+    pending_hunks: SumTree<PendingHunk>,
+    base_text_buffer: Entity<language::Buffer>,
+    buffer_snapshot: text::BufferSnapshot,
     secondary_diff: Option<Entity<BufferDiff>>,
 }
 
 #[derive(Clone)]
 pub struct BufferDiffSnapshot {
-    inner: BufferDiffInner<language::BufferSnapshot>,
+    hunks: SumTree<InternalDiffHunk>,
+    pending_hunks: SumTree<PendingHunk>,
+    base_text_snapshot: language::BufferSnapshot,
+    buffer_snapshot: text::BufferSnapshot,
     secondary_diff: Option<Arc<BufferDiffSnapshot>>,
 }
 
@@ -44,25 +50,11 @@ impl std::fmt::Debug for BufferDiffSnapshot {
 
 #[derive(Clone)]
 pub struct BufferDiffUpdate {
-    inner: BufferDiffInner<Arc<str>>,
-    buffer_snapshot: text::BufferSnapshot,
-    base_text_edits: Option<Diff>,
-    base_text_changed: bool,
-}
-
-#[derive(Clone)]
-struct BufferDiffInner<BaseText> {
     hunks: SumTree<InternalDiffHunk>,
+    // todo!() is this needed
     pending_hunks: SumTree<PendingHunk>,
-    base_text: BaseText,
-    base_text_exists: bool,
+    new_base_text: EditedBufferSnapshot,
     buffer_snapshot: text::BufferSnapshot,
-}
-
-impl<BaseText> BufferDiffInner<BaseText> {
-    fn buffer_version(&self) -> &clock::Global {
-        self.buffer_snapshot.version()
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1521,11 +1513,6 @@ pub enum BufferDiffEvent {
     HunksStagedOrUnstaged(Option<Rope>),
 }
 
-struct SetSnapshotResult {
-    change: DiffChanged,
-    base_text_changed: bool,
-}
-
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
 
 impl BufferDiff {
@@ -1686,9 +1673,7 @@ impl BufferDiff {
     pub fn update_diff(
         &self,
         buffer: text::BufferSnapshot,
-        base_text: Option<Arc<str>>,
-        base_text_change: Option<bool>,
-        language: Option<Arc<Language>>,
+        base_text: EditedBufferSnapshot,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
         let base_text = base_text.map(|t| text::LineEnding::normalize_arc(t));
