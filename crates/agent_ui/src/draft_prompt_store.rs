@@ -12,6 +12,7 @@ use agent_client_protocol::schema as acp;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Entity, Task};
+use itertools::Itertools;
 use ui::SharedString;
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -128,7 +129,6 @@ pub fn display_label_for_draft(
             acp::ContentBlock::ResourceLink(link) => Some(link.uri.as_str()),
             _ => None,
         })
-        .collect::<Vec<_>>()
         .join(" ");
     truncate_draft_label(&raw)
 }
