@@ -489,6 +489,32 @@ impl WrappedLineLayout {
         self._index_for_position(position, line_height, true)
     }
 
+    fn wrapped_line_x_range(&self, wrapped_line_ix: usize) -> Option<(Pixels, Pixels)> {
+        if wrapped_line_ix > self.wrap_boundaries.len() {
+            return None;
+        }
+
+        let start_x = if wrapped_line_ix > 0 {
+            self.wrap_boundary_x(self.wrap_boundaries[wrapped_line_ix - 1])?
+        } else {
+            Pixels::ZERO
+        };
+
+        let end_x = if wrapped_line_ix < self.wrap_boundaries.len() {
+            self.wrap_boundary_x(self.wrap_boundaries[wrapped_line_ix])?
+        } else {
+            self.unwrapped_layout.width
+        };
+
+        Some((start_x, end_x))
+    }
+
+    fn wrap_boundary_x(&self, boundary: WrapBoundary) -> Option<Pixels> {
+        let run = self.unwrapped_layout.runs.get(boundary.run_ix)?;
+        let glyph = run.glyphs.get(boundary.glyph_ix)?;
+        Some(glyph.position.x)
+    }
+
     fn _index_for_position(
         &self,
         mut position: Point<Pixels>,
@@ -497,34 +523,17 @@ impl WrappedLineLayout {
     ) -> Result<usize, usize> {
         let wrapped_line_ix = (position.y / line_height) as usize;
 
-        let wrapped_line_start_index;
-        let wrapped_line_start_x;
-        if wrapped_line_ix > 0 {
-            let Some(line_start_boundary) = self.wrap_boundaries.get(wrapped_line_ix - 1) else {
-                return Err(0);
-            };
-            let run = &self.unwrapped_layout.runs[line_start_boundary.run_ix];
-            let glyph = &run.glyphs[line_start_boundary.glyph_ix];
-            wrapped_line_start_index = glyph.index;
-            wrapped_line_start_x = glyph.position.x;
-        } else {
-            wrapped_line_start_index = 0;
-            wrapped_line_start_x = Pixels::ZERO;
+        let Some((wrapped_line_start_x, wrapped_line_end_x)) =
+            self.wrapped_line_x_range(wrapped_line_ix)
+        else {
+            return Err(0);
         };
-
-        let wrapped_line_end_index;
-        let wrapped_line_end_x;
-        if wrapped_line_ix < self.wrap_boundaries.len() {
-            let next_wrap_boundary_ix = wrapped_line_ix;
-            let next_wrap_boundary = self.wrap_boundaries[next_wrap_boundary_ix];
-            let run = &self.unwrapped_layout.runs[next_wrap_boundary.run_ix];
-            let glyph = &run.glyphs[next_wrap_boundary.glyph_ix];
-            wrapped_line_end_index = glyph.index;
-            wrapped_line_end_x = glyph.position.x;
-        } else {
-            wrapped_line_end_index = self.unwrapped_layout.len;
-            wrapped_line_end_x = self.unwrapped_layout.width;
-        };
+        let wrapped_line_start_index = self
+            .unwrapped_layout
+            .closest_index_for_x(wrapped_line_start_x);
+        let wrapped_line_end_index = self
+            .unwrapped_layout
+            .closest_index_for_x(wrapped_line_end_x);
 
         let mut position_in_unwrapped_line = position;
         position_in_unwrapped_line.x += wrapped_line_start_x;
@@ -548,28 +557,19 @@ impl WrappedLineLayout {
 
     /// Returns the pixel position for the given byte index.
     pub fn position_for_index(&self, index: usize, line_height: Pixels) -> Option<Point<Pixels>> {
-        let mut line_start_ix = 0;
-        let mut line_end_indices = self
-            .wrap_boundaries
-            .iter()
-            .map(|wrap_boundary| {
-                let run = &self.unwrapped_layout.runs[wrap_boundary.run_ix];
-                let glyph = &run.glyphs[wrap_boundary.glyph_ix];
-                glyph.index
-            })
-            .chain([self.len()])
-            .enumerate();
-        for (ix, line_end_ix) in line_end_indices {
-            let line_y = ix as f32 * line_height;
-            if index < line_start_ix {
+        let x = self.unwrapped_layout.x_for_index(index);
+
+        for ix in 0..=self.wrap_boundaries.len() {
+            let Some((line_start_x, line_end_x)) = self.wrapped_line_x_range(ix) else {
                 break;
-            } else if index > line_end_ix {
-                line_start_ix = line_end_ix;
+            };
+            let line_y = ix as f32 * line_height;
+            if x < line_start_x {
+                break;
+            } else if x > line_end_x {
                 continue;
             } else {
-                let line_start_x = self.unwrapped_layout.x_for_index(line_start_ix);
-                let x = self.unwrapped_layout.x_for_index(index) - line_start_x;
-                return Some(point(x, line_y));
+                return Some(point(x - line_start_x, line_y));
             }
         }
 
@@ -1309,6 +1309,66 @@ mod tests {
         assert_eq!(layout.index_for_x(px(29.)), Some(0));
         assert_eq!(layout.index_for_x(px(19.)), Some("א".len()));
         assert_eq!(layout.index_for_x(px(9.)), Some("אב".len()));
+    }
+
+    #[test]
+    fn test_wrapped_rtl_positioning_uses_visual_x_ranges() {
+        let text = "אבגד";
+        let mut layout = LineLayout {
+            font_size: px(16.),
+            width: px(40.),
+            ascent: px(12.),
+            descent: px(4.),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs: vec![
+                    glyph_at(0., "אבג".len()),
+                    glyph_at(10., "אב".len()),
+                    glyph_at(20., "א".len()),
+                    glyph_at(30., 0),
+                ],
+            }],
+            len: text.len(),
+            index_positions: Vec::new(),
+        };
+        layout.compute_bidi_index_positions(text);
+
+        let mut wrap_boundaries = SmallVec::new();
+        wrap_boundaries.push(WrapBoundary {
+            run_ix: 0,
+            glyph_ix: 2,
+        });
+        let wrapped = WrappedLineLayout {
+            unwrapped_layout: Arc::new(layout),
+            wrap_boundaries,
+            wrap_width: Some(px(20.)),
+        };
+        let line_height = px(18.);
+
+        assert_eq!(
+            wrapped.position_for_index(0, line_height),
+            Some(point(px(20.), line_height))
+        );
+        assert_eq!(
+            wrapped.position_for_index("אב".len(), line_height),
+            Some(point(px(20.), px(0.)))
+        );
+        assert_eq!(
+            wrapped.position_for_index(text.len(), line_height),
+            Some(point(px(0.), px(0.)))
+        );
+        assert_eq!(
+            wrapped.index_for_position(point(px(19.), line_height), line_height),
+            Ok(0)
+        );
+        assert_eq!(
+            wrapped.index_for_position(point(px(-1.), px(0.)), line_height),
+            Err(text.len())
+        );
+        assert_eq!(
+            wrapped.index_for_position(point(px(21.), line_height), line_height),
+            Err(0)
+        );
     }
 
     #[test]
