@@ -19,7 +19,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, DropdownMenu, DropdownStyle, Headline, HeadlineSize, Switch, Tooltip, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
+    prelude::*,
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
@@ -30,16 +31,7 @@ use worktree::WorktreeId;
 
 actions!(
     skill_creator,
-    [
-        /// Saves the skill being edited to disk.
-        SaveSkill,
-        /// Closes the skill creator window without saving.
-        Cancel,
-        /// Moves focus to the next form field, wrapping around.
-        FocusNextField,
-        /// Moves focus to the previous form field, wrapping around.
-        FocusPreviousField,
-    ]
+    [SaveSkill, Cancel, FocusNextField, FocusPreviousField,]
 );
 
 const NAME_FIELD_TAB_INDEX: isize = 1;
@@ -225,7 +217,8 @@ impl SkillCreator {
             .unwrap_or_else(|| ScopeChoice::Global.key());
 
         let name_editor = cx.new(|cx| {
-            InputField::new(window, cx, "Name")
+            InputField::new(window, cx, "my-new-skill")
+                .label("Name")
                 .tab_index(NAME_FIELD_TAB_INDEX)
                 .tab_stop(true)
         });
@@ -238,9 +231,14 @@ impl SkillCreator {
         window.focus(&name_editor.focus_handle(cx), cx);
 
         let description_editor = cx.new(|cx| {
-            InputField::new(window, cx, "Description")
-                .tab_index(DESCRIPTION_FIELD_TAB_INDEX)
-                .tab_stop(true)
+            InputField::new(
+                window,
+                cx,
+                "e.g., Fill the PR description following this template.",
+            )
+            .label("Description")
+            .tab_index(DESCRIPTION_FIELD_TAB_INDEX)
+            .tab_stop(true)
         });
 
         let body_editor = cx.new(|cx| {
@@ -250,16 +248,12 @@ impl SkillCreator {
                 buffer
             });
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
-            editor.set_placeholder_text("Body", window, cx);
+            editor.set_placeholder_text("Add skill content…", window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_use_modal_editing(true);
-            // Without this, the editor highlights the cursor's line with
-            // a slightly different shade than the surrounding
-            // `editor_background`, which on an empty body looks like a
-            // stray band behind the "Body" placeholder text.
             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
             editor
         });
@@ -435,6 +429,7 @@ impl SkillCreator {
         self.recompute_name_error(cx);
         self.recompute_description_error(cx);
         self.recompute_body_error(cx);
+
         if !self.is_valid(cx) || self.saving {
             cx.notify();
             return;
@@ -527,65 +522,6 @@ impl SkillCreator {
         cx.notify();
     }
 
-    fn render_hint(text: SharedString, is_error: bool) -> impl IntoElement {
-        Label::new(text).size(LabelSize::Small).color(if is_error {
-            Color::Error
-        } else {
-            Color::Muted
-        })
-    }
-
-    fn render_name_field(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let hint: SharedString = if let Some(err) = self.name_error {
-            err.into()
-        } else {
-            // The numeric bound is sourced from the validator's constant
-            // so that the hint, the validator's error message, and the
-            // loader's check all move together when the limit changes.
-            format!(
-                "Lowercase letters, numbers, and hyphens (1\u{2013}{MAX_SKILL_NAME_LEN} chars). \
-                 For example: draft-pr."
-            )
-            .into()
-        };
-        let has_error = self.name_error.is_some();
-        v_flex()
-            .gap_1p5()
-            .child(self.name_editor.clone())
-            .child(Self::render_hint(hint, has_error))
-    }
-
-    fn render_description_field(&self, _cx: &mut Context<Self>) -> impl IntoElement {
-        let counter_color = if self.description_length > MAX_SKILL_DESCRIPTION_LEN {
-            Color::Error
-        } else {
-            Color::Muted
-        };
-        let hint: SharedString = if let Some(err) = self.description_error {
-            err.into()
-        } else {
-            "Shown to the agent so it can decide when to use this skill.".into()
-        };
-        let has_error = self.description_error.is_some();
-        v_flex()
-            .gap_1p5()
-            .child(self.description_editor.clone())
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .child(Self::render_hint(hint, has_error))
-                    .child(
-                        Label::new(format!(
-                            "{} / {MAX_SKILL_DESCRIPTION_LEN} bytes",
-                            self.description_length
-                        ))
-                        .size(LabelSize::Small)
-                        .color(counter_color),
-                    ),
-            )
-    }
-
     fn render_scope_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let scopes = self.scopes.clone();
         let selected = self.selected_scope().cloned();
@@ -608,6 +544,13 @@ impl SkillCreator {
             )),
             None => "Choose where this skill should live.".into(),
         };
+
+        let selected_label = h_flex()
+            .min_w_0()
+            .w_full()
+            .child(Label::new(selected_label).truncate())
+            .into_any_element();
+
         let weak = cx.weak_entity();
 
         let menu = ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
@@ -630,214 +573,159 @@ impl SkillCreator {
             menu
         });
 
-        v_flex()
-            .gap_1p5()
+        h_flex()
+            .min_w_0()
+            .w_full()
+            .gap_3()
+            .justify_between()
             .child(
-                Label::new("Scope")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Label::new("Scope"))
+                    .child(Label::new(scope_hint).color(Color::Muted)),
             )
             .child(
-                DropdownMenu::new("skill-scope-dropdown", selected_label, menu)
-                    .tab_index(SCOPE_FIELD_TAB_INDEX)
-                    .style(DropdownStyle::Outlined)
-                    .full_width(true),
+                div().w_1_3().min_w_0().child(
+                    DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
+                        .tab_index(SCOPE_FIELD_TAB_INDEX)
+                        .style(DropdownStyle::Outlined)
+                        .trigger_size(ButtonSize::Medium)
+                        .full_width(true),
+                ),
             )
-            .child(Self::render_hint(scope_hint, false))
     }
 
     fn render_optional_params(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let toggle_state: ToggleState = self.disable_model_invocation.into();
-        let theme = cx.theme().clone();
-        v_flex()
-            .gap_2()
-            .child(
-                Label::new("Optional Parameters")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(
-                div()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.colors().border)
-                    .bg(theme.colors().elevated_surface_background)
-                    .px_3()
-                    .py_2p5()
-                    .child(
-                        h_flex()
-                            .gap_2p5()
-                            .justify_between()
-                            .child(
-                                v_flex()
-                                    .gap_0p5()
-                                    .child(Label::new("Disable model invocation"))
-                                    .child(
-                                        Label::new(
-                                            "Hide this skill from the model's catalog. \
-                                         It can still be invoked via slash command.",
-                                        )
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
-                                Switch::new("disable-model-invocation", toggle_state)
-                                    .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX)
-                                    .on_click(cx.listener(
-                                        |this, _state: &ToggleState, _window, cx| {
-                                            this.toggle_disable_model_invocation(cx);
-                                        },
-                                    )),
-                            ),
-                    ),
-            )
+
+        SwitchField::new(
+            "disable-model-invocation",
+            Some("Disable model invocation"),
+            Some(
+                "Hide this skill from the model's catalog. It can still be invoked via slash command."
+                    .into(),
+            ),
+            toggle_state,
+            cx.listener(|this, _state: &ToggleState, _window, cx| {
+                this.toggle_disable_model_invocation(cx);
+            }),
+        )
+        .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX).into_any_element()
     }
 
-    fn render_body_field(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_body_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let theme = cx.theme().clone();
+
         let hint: SharedString = if let Some(err) = self.body_error {
             err.into()
         } else {
             "The full instructions the agent will follow when this skill is used. Markdown is supported.".into()
         };
+
         let has_error = self.body_error.is_some();
+
         let focus_handle = self
             .body_editor
             .focus_handle(cx)
             .tab_index(BODY_FIELD_TAB_INDEX)
             .tab_stop(true);
+
         let border_color = if has_error {
             theme.status().error_border
+        } else if focus_handle.contains_focused(window, cx) {
+            theme.colors().border_focused
         } else {
             theme.colors().border
         };
-        // The outer flex column takes the remaining vertical space in
-        // the form (siblings above are natural-sized). `min_h_0` lets
-        // us shrink below the intrinsic editor size on small windows
-        // instead of pushing the action bar out the bottom. The inner
-        // editor container then `flex_grow`s into whatever space is
-        // left, and `Editor` handles scrolling internally if the body
-        // text overflows.
-        v_flex()
+
+        div()
+            .w_full()
             .flex_1()
-            .min_h_0()
-            .gap_1p5()
-            .child(
-                div()
-                    .w_full()
-                    .flex_1()
-                    .min_h(px(160.))
-                    .px_3()
-                    .py_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(border_color)
-                    .bg(theme.colors().editor_background)
-                    .track_focus(&focus_handle)
-                    .overflow_hidden()
-                    .child(EditorElement::new(
-                        &self.body_editor,
-                        EditorStyle {
-                            background: theme.system().transparent,
-                            local_player: theme.players().local(),
-                            text: TextStyle {
-                                color: theme.colors().text,
-                                font_family: settings.buffer_font.family.clone(),
-                                font_features: settings.buffer_font.features.clone(),
-                                font_size: rems(0.875).into(),
-                                font_weight: settings.buffer_font.weight,
-                                line_height: relative(settings.buffer_line_height.value()),
-                                ..Default::default()
-                            },
-                            syntax: theme.syntax().clone(),
-                            status: theme.status().clone(),
-                            inlay_hints_style: editor::make_inlay_hints_style(cx),
-                            edit_prediction_styles: editor::make_suggestion_styles(cx),
-                            ..EditorStyle::default()
-                        },
-                    )),
-            )
-            .child(Self::render_hint(hint, has_error))
+            .min_h(px(160.))
+            .p_2p5()
+            .rounded_md()
+            .border_1()
+            .border_color(border_color)
+            .bg(theme.colors().editor_background)
+            .track_focus(&focus_handle)
+            .overflow_hidden()
+            .child(EditorElement::new(
+                &self.body_editor,
+                EditorStyle {
+                    local_player: theme.players().local(),
+                    text: TextStyle {
+                        color: theme.colors().text,
+                        font_family: settings.buffer_font.family.clone(),
+                        font_features: settings.buffer_font.features.clone(),
+                        font_size: rems(0.875).into(),
+                        font_weight: settings.buffer_font.weight,
+                        line_height: relative(settings.buffer_line_height.value()),
+                        ..Default::default()
+                    },
+                    syntax: theme.syntax().clone(),
+                    inlay_hints_style: editor::make_inlay_hints_style(cx),
+                    edit_prediction_styles: editor::make_suggestion_styles(cx),
+                    ..EditorStyle::default()
+                },
+            ))
     }
 
     fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let valid = self.is_valid(cx);
         let saving = self.saving;
+        let main_action = if saving { "Saving…" } else { "Save Skill" };
+
         h_flex()
             .w_full()
-            .justify_between()
-            .gap_3()
-            .child(
-                div().flex_grow().children(
-                    self.save_error
-                        .clone()
-                        .map(|err| Label::new(err).size(LabelSize::Small).color(Color::Error)),
-                ),
+            .map(|this| {
+                if self.save_error.is_some() {
+                    this.justify_between()
+                } else {
+                    this.justify_end()
+                }
+            })
+            .gap_2()
+            .children(
+                self.save_error
+                    .clone()
+                    .map(|err| Label::new(err).size(LabelSize::Small).color(Color::Error)),
             )
             .child(
                 h_flex()
-                    .gap_2()
+                    .gap_1()
                     .child(
                         Button::new("cancel-skill", "Cancel")
-                            .style(ButtonStyle::Subtle)
                             .disabled(saving)
                             .on_click(|_, window, cx| {
                                 window.dispatch_action(Box::new(Cancel), cx);
                             }),
                     )
                     .child(
-                        Button::new(
-                            "save-skill",
-                            if saving {
-                                "Saving\u{2026}"
-                            } else {
-                                "Save Skill"
-                            },
-                        )
-                        .style(ButtonStyle::Filled)
-                        .disabled(!valid || saving)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::for_action("Save Skill", &SaveSkill, cx)
-                        })
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(SaveSkill), cx);
-                        }),
+                        Button::new("save-skill", main_action)
+                            .style(ButtonStyle::Filled)
+                            .disabled(!valid || saving)
+                            .loading(saving)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(SaveSkill), cx);
+                            }),
                     ),
             )
     }
 
     fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        // On macOS we use a transparent system title bar; the traffic
-        // lights sit at (12, 12) over our content, so the header needs
-        // extra leading space to avoid being overlapped by them. On
-        // other platforms `client_side_decorations` already provides a
-        // chrome row with its own close button above this view, so we
-        // use a uniform horizontal padding instead. Either way the
-        // platform always provides exactly one way to close the
-        // window, so we don't render a redundant close button here.
         let needs_traffic_light_clearance = cfg!(target_os = "macos");
+
         h_flex()
             .w_full()
-            .h(px(56.))
-            .px_5()
+            .h_10()
+            .px_4()
             .when(needs_traffic_light_clearance, |this| this.pl(px(84.)))
             .border_b_1()
             .border_color(theme.colors().border)
-            .bg(theme.colors().title_bar_background)
-            .items_center()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Headline::new("New Skill").size(HeadlineSize::Small))
-                    .child(
-                        Label::new("Define a reusable instruction the agent can follow on demand.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
+            .child(Headline::new("Skill Creator").size(HeadlineSize::XSmall))
     }
 
     fn focus_next_field(
@@ -908,15 +796,10 @@ impl Render for SkillCreator {
                 .overflow_hidden()
                 .font(ui_font)
                 .text_color(theme.colors().text)
+                .bg(theme.colors().panel_background)
                 .children(self.title_bar.clone())
-                .bg(theme.colors().background)
                 .child(self.render_header(cx))
                 .child(
-                    // The form container itself does NOT scroll. The top
-                    // fields render at their natural height; the body
-                    // field below has `flex_1 + min_h_0` so it expands
-                    // into whatever vertical space is left, and the
-                    // markdown editor inside handles its own scrolling.
                     v_flex()
                         .id("skill-creator-form")
                         .tab_index(0)
@@ -924,23 +807,25 @@ impl Render for SkillCreator {
                         .tab_stop(false)
                         .flex_1()
                         .min_h_0()
-                        .gap_5()
-                        .px_6()
-                        .py_5()
-                        .child(self.render_name_field(cx))
-                        .child(self.render_description_field(cx))
-                        .child(self.render_scope_field(window, cx))
+                        .gap_4()
+                        .p_4()
+                        .child(Label::new("Font-matter"))
+                        .child(self.name_editor.clone())
+                        .child(self.description_editor.clone())
                         .child(self.render_optional_params(cx))
-                        .child(self.render_body_field(cx)),
+                        .child(Divider::horizontal())
+                        .child(self.render_scope_field(window, cx))
+                        .child(Divider::horizontal())
+                        .child(Label::new("Skill Content"))
+                        .child(self.render_body_field(window, cx)),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .px_6()
-                        .py_3()
+                        .px_4()
+                        .py_2()
                         .border_t_1()
                         .border_color(theme.colors().border)
-                        .bg(theme.colors().panel_background)
                         .child(self.render_action_bar(cx)),
                 ),
             window,
