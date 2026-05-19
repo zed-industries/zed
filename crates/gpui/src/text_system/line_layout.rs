@@ -197,6 +197,67 @@ impl LineLayout {
         self.width
     }
 
+    /// The visual x ranges covered by a logical UTF-8 byte range.
+    pub fn x_ranges_for_range(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 2]> {
+        let mut ranges = SmallVec::new();
+        if range.start >= range.end {
+            return ranges;
+        }
+
+        if self.index_positions.is_empty() {
+            Self::push_x_range(
+                &mut ranges,
+                self.x_for_index(range.start),
+                self.x_for_index(range.end),
+            );
+            return ranges;
+        }
+
+        let mut positions = self.index_positions.clone();
+        positions.sort_by(|a, b| {
+            a.x.partial_cmp(&b.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.index.cmp(&b.index))
+        });
+
+        for adjacent_positions in positions.windows(2) {
+            let left = adjacent_positions[0];
+            let right = adjacent_positions[1];
+            if left.x == right.x {
+                continue;
+            }
+
+            let logical_start = left.index.min(right.index);
+            let logical_end = left.index.max(right.index);
+            if logical_start < range.end && range.start < logical_end {
+                Self::push_x_range(&mut ranges, left.x, right.x);
+            }
+        }
+
+        ranges
+    }
+
+    fn push_x_range(ranges: &mut SmallVec<[Range<Pixels>; 2]>, start_x: Pixels, end_x: Pixels) {
+        let (start_x, end_x) = if start_x <= end_x {
+            (start_x, end_x)
+        } else {
+            (end_x, start_x)
+        };
+
+        if start_x == end_x {
+            return;
+        }
+
+        if let Some(last_range) = ranges.last_mut()
+            && last_range.end == start_x
+        {
+            last_range.end = end_x;
+            return;
+        }
+
+        ranges.push(start_x..end_x);
+    }
+
     pub(crate) fn compute_bidi_index_positions(&mut self, text: &str) {
         self.index_positions.clear();
         if text.is_empty() || !contains_rtl_or_bidi_control(text) {
@@ -1309,6 +1370,14 @@ mod tests {
         assert_eq!(layout.index_for_x(px(29.)), Some(0));
         assert_eq!(layout.index_for_x(px(19.)), Some("א".len()));
         assert_eq!(layout.index_for_x(px(9.)), Some("אב".len()));
+        assert_eq!(
+            layout.x_ranges_for_range(0.."א".len()).as_slice(),
+            [px(20.)..px(30.)]
+        );
+        assert_eq!(
+            layout.x_ranges_for_range(0..text.len()).as_slice(),
+            [px(0.)..px(30.)]
+        );
     }
 
     #[test]
@@ -1456,6 +1525,14 @@ mod tests {
         assert_eq!(layout.closest_index_for_x(px(51.)), gimel);
         assert_eq!(layout.index_for_x(px(55.)), Some(bet));
         assert_eq!(layout.index_for_x(px(45.)), Some(gimel));
+        assert_eq!(
+            layout.x_ranges_for_range(alef..after_gimel).as_slice(),
+            [px(40.)..px(70.)]
+        );
+        assert_eq!(
+            layout.x_ranges_for_range(bet..gimel).as_slice(),
+            [px(50.)..px(60.)]
+        );
     }
 
     #[test]

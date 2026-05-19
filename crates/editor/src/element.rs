@@ -7407,37 +7407,43 @@ impl EditorElement {
                             &layout.position_map.line_layouts[row.minus(start_row) as usize];
                         let alignment_offset =
                             line_layout.alignment_offset(layout.text_align, layout.content_width);
-                        HighlightedRangeLine {
-                            start_x: if row == range.start.row() {
-                                layout.content_origin.x
-                                    + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.start.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
-                                    )
-                            } else {
-                                layout.content_origin.x + alignment_offset
-                                    - Pixels::from(layout.position_map.scroll_pixel_position.x)
-                            },
-                            end_x: if row == range.end.row() {
-                                layout.content_origin.x
-                                    + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.end.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
-                                    )
-                            } else {
-                                Pixels::from(
-                                    ScrollPixelOffset::from(
-                                        layout.content_origin.x
-                                            + line_layout.width
-                                            + alignment_offset
-                                            + line_end_overshoot,
-                                    ) - layout.position_map.scroll_pixel_position.x,
+                        let range_start = if row == range.start.row() {
+                            range.start.column() as usize
+                        } else {
+                            0
+                        };
+                        let range_end = if row == range.end.row() {
+                            range.end.column() as usize
+                        } else {
+                            line_layout.len
+                        };
+                        let x_ranges = line_layout.x_ranges_for_range(range_start..range_end);
+                        let mut start_x = x_ranges.first().map_or_else(
+                            || line_layout.x_for_index(range_start),
+                            |range| range.start,
+                        );
+                        let mut end_x = if row == range.end.row() {
+                            x_ranges.last().map_or_else(
+                                || line_layout.x_for_index(range_end),
+                                |range| range.end,
+                            )
+                        } else {
+                            line_layout.width + line_end_overshoot
+                        };
+                        if start_x > end_x {
+                            mem::swap(&mut start_x, &mut end_x);
+                        }
+                        let to_screen_x = |x| {
+                            layout.content_origin.x
+                                + Pixels::from(
+                                    ScrollPixelOffset::from(x + alignment_offset)
+                                        - layout.position_map.scroll_pixel_position.x,
                                 )
-                            },
+                        };
+
+                        HighlightedRangeLine {
+                            start_x: to_screen_x(start_x),
+                            end_x: to_screen_x(end_x),
                         }
                     })
                     .collect(),
@@ -9590,6 +9596,75 @@ impl LineWithInvisibles {
         }
 
         fragment_start_x
+    }
+
+    pub fn x_ranges_for_range(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 4]> {
+        let mut ranges = SmallVec::new();
+        if range.start >= range.end {
+            return ranges;
+        }
+
+        let mut fragment_start_x = Pixels::ZERO;
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_index = fragment_start_index + shaped_line.len;
+                    let overlap_start = range.start.max(fragment_start_index);
+                    let overlap_end = range.end.min(fragment_end_index);
+                    if overlap_start < overlap_end {
+                        for x_range in shaped_line.x_ranges_for_range(
+                            (overlap_start - fragment_start_index)
+                                ..(overlap_end - fragment_start_index),
+                        ) {
+                            Self::push_x_range(
+                                &mut ranges,
+                                fragment_start_x + x_range.start,
+                                fragment_start_x + x_range.end,
+                            );
+                        }
+                    }
+                    fragment_start_x += shaped_line.width;
+                    fragment_start_index = fragment_end_index;
+                }
+                LineFragment::Element { len, size, .. } => {
+                    let fragment_end_index = fragment_start_index + len;
+                    if range.start < fragment_end_index && fragment_start_index < range.end {
+                        Self::push_x_range(
+                            &mut ranges,
+                            fragment_start_x,
+                            fragment_start_x + size.width,
+                        );
+                    }
+                    fragment_start_x += size.width;
+                    fragment_start_index = fragment_end_index;
+                }
+            }
+        }
+
+        ranges
+    }
+
+    fn push_x_range(ranges: &mut SmallVec<[Range<Pixels>; 4]>, start_x: Pixels, end_x: Pixels) {
+        let (start_x, end_x) = if start_x <= end_x {
+            (start_x, end_x)
+        } else {
+            (end_x, start_x)
+        };
+
+        if start_x == end_x {
+            return;
+        }
+
+        if let Some(last_range) = ranges.last_mut()
+            && last_range.end == start_x
+        {
+            last_range.end = end_x;
+            return;
+        }
+
+        ranges.push(start_x..end_x);
     }
 
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
