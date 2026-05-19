@@ -71,29 +71,46 @@ impl LineLayout {
         if x >= self.width {
             None
         } else if !self.index_positions.is_empty() {
-            let mut positions_by_x = self.index_positions.clone();
-            positions_by_x
-                .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+            let mut exact_position = None;
+            let mut left_position = None;
+            let mut right_position = None;
 
-            if let Some(first_position) = positions_by_x.first()
-                && x < first_position.x
-            {
-                return Some(first_position.index);
-            }
-
-            for window in positions_by_x.windows(2) {
-                let left = window[0];
-                let right = window[1];
-                if x >= left.x && x < right.x {
-                    return if left.index <= right.index {
-                        Some(left.index)
-                    } else {
-                        Some(right.index)
-                    };
+            for position in &self.index_positions {
+                if position.x == x {
+                    if exact_position
+                        .is_none_or(|exact: IndexPosition| position.index > exact.index)
+                    {
+                        exact_position = Some(*position);
+                    }
+                } else if position.x < x {
+                    if left_position.is_none_or(|left: IndexPosition| {
+                        position.x > left.x || position.x == left.x && position.index > left.index
+                    }) {
+                        left_position = Some(*position);
+                    }
+                } else if right_position.is_none_or(|right: IndexPosition| {
+                    position.x < right.x || position.x == right.x && position.index < right.index
+                }) {
+                    right_position = Some(*position);
                 }
             }
 
-            positions_by_x.last().map(|position| position.index)
+            if let Some(exact) = exact_position {
+                return Some(exact.index);
+            }
+
+            match (left_position, right_position) {
+                (Some(left), Some(right)) => {
+                    if left.index <= right.index {
+                        Some(left.index)
+                    } else {
+                        Some(right.index)
+                    }
+                }
+                (Some(left), None) => Some(left.index),
+                (None, Some(right)) => Some(right.index),
+                (None, None) => None,
+            }
         } else {
             for run in self.runs.iter().rev() {
                 for glyph in run.glyphs.iter().rev() {
@@ -155,7 +172,17 @@ impl LineLayout {
         if let Some(position) = self
             .index_positions
             .iter()
-            .find(|position| position.index >= index)
+            .filter(|position| position.index == index)
+            .max_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            return position.x;
+        }
+
+        if let Some(position) = self
+            .index_positions
+            .iter()
+            .filter(|position| position.index > index)
+            .min_by_key(|position| position.index)
         {
             return position.x;
         }
@@ -265,8 +292,13 @@ impl LineLayout {
             }
         }
 
-        self.index_positions.sort_by_key(|position| position.index);
-        self.index_positions.dedup_by_key(|position| position.index);
+        self.index_positions.sort_by(|a, b| {
+            a.index
+                .cmp(&b.index)
+                .then_with(|| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        self.index_positions
+            .dedup_by(|a, b| a.index == b.index && a.x == b.x);
     }
 
     /// The corresponding Font at the given index
@@ -1275,7 +1307,8 @@ mod tests {
         assert_eq!(layout.closest_index_for_x(px(29.)), 0);
         assert_eq!(layout.closest_index_for_x(px(1.)), text.len());
         assert_eq!(layout.index_for_x(px(29.)), Some(0));
-        assert_eq!(layout.index_for_x(px(1.)), Some(text.len()));
+        assert_eq!(layout.index_for_x(px(19.)), Some("א".len()));
+        assert_eq!(layout.index_for_x(px(9.)), Some("אב".len()));
     }
 
     #[test]
@@ -1312,7 +1345,8 @@ mod tests {
             assert_eq!(layout.closest_index_for_x(px(width - 1.)), 0);
             assert_eq!(layout.closest_index_for_x(px(1.)), text.len());
             assert_eq!(layout.index_for_x(px(width - 1.)), Some(0));
-            assert_eq!(layout.index_for_x(px(1.)), Some(text.len()));
+            let last_character_index = text.char_indices().last().map(|(index, _)| index).unwrap();
+            assert_eq!(layout.index_for_x(px(1.)), Some(last_character_index));
         }
     }
 
@@ -1377,6 +1411,23 @@ mod tests {
             panic!("expected arabic text in test");
         };
         let after_arabic = arabic_end + 'ا'.len_utf8();
+        let arabic_indices = text[arabic_start..after_arabic]
+            .char_indices()
+            .map(|(offset, _)| arabic_start + offset)
+            .collect::<Vec<_>>();
+        let mut glyphs = vec![glyph_at(0., 0), glyph_at(10., 1), glyph_at(20., 2)];
+        glyphs.push(glyph_at(30., after_arabic));
+        glyphs.extend(
+            arabic_indices
+                .iter()
+                .rev()
+                .enumerate()
+                .map(|(position, index)| glyph_at(40. + position as f32 * 10., *index)),
+        );
+        glyphs.extend([
+            glyph_at(90., after_arabic + 1),
+            glyph_at(100., after_arabic + 2),
+        ]);
 
         let mut layout = LineLayout {
             font_size: px(16.),
@@ -1385,19 +1436,7 @@ mod tests {
             descent: px(4.),
             runs: vec![ShapedRun {
                 font_id: FontId(0),
-                glyphs: vec![
-                    glyph_at(0., 0),
-                    glyph_at(10., 1),
-                    glyph_at(20., 2),
-                    glyph_at(30., after_arabic),
-                    glyph_at(40., arabic_end),
-                    glyph_at(50., arabic_second),
-                    glyph_at(60., arabic_start),
-                    glyph_at(70., after_arabic + 1),
-                    glyph_at(80., after_arabic + 2),
-                    glyph_at(90., after_arabic + 3),
-                    glyph_at(100., after_arabic + 4),
-                ],
+                glyphs,
             }],
             len: text.len(),
             index_positions: Vec::new(),
@@ -1405,8 +1444,8 @@ mod tests {
 
         layout.compute_bidi_index_positions(text);
 
-        assert_eq!(layout.index_for_x(px(59.)), Some(arabic_start));
-        assert_eq!(layout.index_for_x(px(49.)), Some(arabic_second));
-        assert_eq!(layout.index_for_x(px(39.)), Some(arabic_end));
+        assert_eq!(layout.index_for_x(px(89.)), Some(arabic_start));
+        assert_eq!(layout.index_for_x(px(79.)), Some(arabic_second));
+        assert_eq!(layout.index_for_x(px(49.)), Some(arabic_end));
     }
 }
