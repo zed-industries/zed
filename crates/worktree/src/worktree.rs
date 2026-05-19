@@ -110,6 +110,7 @@ pub struct LoadedFile {
     pub text: String,
     pub encoding: &'static Encoding,
     pub has_bom: bool,
+    pub is_writable: bool,
 }
 
 pub struct LoadedBinaryFile {
@@ -1491,15 +1492,15 @@ impl LocalWorktree {
             //       if it is too large
             //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
             //       reasonable limit
+            const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
+            let metadata = fs.metadata(&abs_path).await?;
+            if let Some(metadata) = metadata.as_ref()
+                && metadata.len >= FILE_SIZE_MAX
             {
-                const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
-                if let Ok(Some(metadata)) = fs.metadata(&abs_path).await
-                    && metadata.len >= FILE_SIZE_MAX
-                {
-                    anyhow::bail!("File is too large to load");
-                }
+                anyhow::bail!("File is too large to load");
             }
             let (text, encoding, has_bom) = decode_file_text(fs.as_ref(), &abs_path).await?;
+            let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
@@ -1533,6 +1534,7 @@ impl LocalWorktree {
                 text,
                 encoding,
                 has_bom,
+                is_writable,
             })
         })
     }
