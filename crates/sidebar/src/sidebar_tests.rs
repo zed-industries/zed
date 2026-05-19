@@ -1616,6 +1616,20 @@ async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut T
         vec!["v [my-project]"]
     );
     assert_project_header_has_threads(&sidebar, "my-project", false, cx);
+
+    let project_group_key = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        multi_workspace.workspace().read(cx).project_group_key(cx)
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.toggle_collapse(&project_group_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [my-project]"]
+    );
+    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
 }
 
 #[gpui::test]
