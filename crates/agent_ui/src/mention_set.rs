@@ -425,6 +425,26 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
+            let is_binary = cx
+                .background_executor()
+                .spawn({
+                    let abs_path = abs_path.clone();
+                    async move {
+                        use std::io::Read as _;
+                        let mut file = std::fs::File::open(&abs_path)?;
+                        let mut buf = [0u8; 8192];
+                        let n = file.read(&mut buf)?;
+                        anyhow::Ok(buf[..n].contains(&0))
+                    }
+                })
+                .await
+                .unwrap_or(false);
+            if is_binary {
+                return Ok(Mention::Text {
+                    content: abs_path.to_string_lossy().into_owned(),
+                    tracked_buffers: vec![],
+                });
+            }
             let buffer = buffer.await?;
             let buffer_content = outline::get_buffer_content_or_outline(
                 buffer.clone(),
