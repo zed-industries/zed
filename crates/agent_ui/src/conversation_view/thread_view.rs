@@ -399,7 +399,7 @@ fn render_cat_numbered_code_block(
                 .right_0()
                 .justify_end()
                 .visible_on_hover("read-file-code-block")
-                .child(CopyButton::new(copy_button_id, code.clone()).tooltip_label("Copy Code")),
+                .child(CopyButton::new(copy_button_id, code).tooltip_label("Copy Code")),
         )
         .into_any_element()
 }
