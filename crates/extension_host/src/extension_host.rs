@@ -973,7 +973,7 @@ impl ExtensionStore {
             }
 
             extension_store.update(cx, |_, cx| {
-                cx.emit(Event::ExtensionUninstalled(dbg!(extension_id.clone())));
+                cx.emit(Event::ExtensionUninstalled(extension_id.clone()));
                 if let Some(events) = ExtensionEvents::try_global(cx)
                     && let Some(manifest) = extension_manifest
                 {
