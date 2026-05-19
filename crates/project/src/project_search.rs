@@ -32,22 +32,13 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
-/// Default size threshold above which project search uses the streaming
-/// (deferred) path: 10 MiB. See issue 20970.
 pub const DEFAULT_MAX_LOADED_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024;
-/// Default cap on matches captured per file in streaming-mode search.
 pub const DEFAULT_MAX_MATCHES_PER_DEFERRED_FILE: usize = 1000;
 
-/// Bound on the project search result channel between the worker pipeline and
-/// the UI consumer. Combined with the per-file match cap and the streaming
-/// path, this prevents unbounded queue growth on large/match-dense projects
-/// (issue 20970).
 const SEARCH_RESULT_CHANNEL_CAPACITY: usize = 32;
 
-/// Settings governing the streaming-mode threshold and per-file match cap for
-/// project search. Read via the standard `settings::Settings` plumbing rather
-/// than `editor::EditorSettings` because the `editor` crate depends on
-/// `project`, which would create a cycle.
+/// Lives in `project` rather than `editor::EditorSettings` because `editor`
+/// depends on `project`.
 #[derive(Copy, Clone, Debug, RegisterSetting)]
 pub struct ProjectSearchLimitSettings {
     pub max_loaded_file_size_bytes: u64,
@@ -136,11 +127,7 @@ enum FindSearchCandidates {
         /// based on disk contents of a buffer. This step is not performed for buffers we already have in memory.
         confirm_contents_will_match_tx: Sender<MatchingEntry>,
         confirm_contents_will_match_rx: Receiver<MatchingEntry>,
-        /// Channel for files searched in streaming (deferred) mode. Workers send
-        /// `FileMatchSummary` here directly when a file exceeds the size threshold.
-        /// See `handle_find_first_match` and issue 20970.
         deferred_results_tx: Sender<FileMatchSummary>,
-        /// Streaming-mode threshold and per-file match cap.
         limits: ProjectSearchLimitSettings,
     },
     Remote,
@@ -221,10 +208,7 @@ impl Search {
         }
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
-        // Bounded so the worker pipeline applies backpressure when the UI
-        // consumer falls behind. Combined with the streaming/deferred path
-        // for large files, this caps peak channel memory at
-        // `SEARCH_RESULT_CHANNEL_CAPACITY × max_per_result_size`.
+        // Bounded so workers block when the UI consumer falls behind.
         let (tx, rx) = bounded(SEARCH_RESULT_CHANNEL_CAPACITY);
         let (grab_buffer_snapshot_tx, grab_buffer_snapshot_rx) = unbounded();
         let matching_buffers = grab_buffer_snapshot_rx.clone();
@@ -237,10 +221,8 @@ impl Search {
 
                 let (find_all_matches_tx, find_all_matches_rx) =
                     bounded(MAX_CONCURRENT_BUFFER_OPENS);
-                // Shared between the buffer-result forwarder and the deferred-result
-                // forwarder so the project-wide MAX_SEARCH_RESULT_RANGES /
-                // MAX_SEARCH_RESULT_FILES limit is enforced uniformly across both
-                // streams. The first forwarder to detect overflow emits LimitReached.
+                // Shared between the buffer and deferred forwarders so the
+                // project-wide limit fires exactly once across both streams.
                 let limit_tracker = Arc::new(Mutex::new(LimitTracker::default()));
                 let query = Arc::new(query);
                 let (candidate_searcher, tasks) = match self.kind {
@@ -268,10 +250,6 @@ impl Search {
                         let (sorted_search_results_tx, sorted_search_results_rx) = unbounded();
 
                         let (input_paths_tx, input_paths_rx) = unbounded();
-                        // Deferred match summaries from the streaming path. Bounded so
-                        // workers receive backpressure if the UI consumer falls behind;
-                        // capacity matches `SEARCH_RESULT_CHANNEL_CAPACITY` so the two
-                        // result streams have the same headroom.
                         let (deferred_results_tx, deferred_results_rx) =
                             bounded::<FileMatchSummary>(SEARCH_RESULT_CHANNEL_CAPACITY);
                         let tasks = vec![
@@ -649,10 +627,8 @@ impl Search {
                 let Some((buffer, ranges)) = next_buffer_matches.recv().await else {
                     continue;
                 };
-                // Bind the decision to a local so the parking_lot guard is
-                // dropped before we hit the `tx.send().await`. Holding the
-                // mutex across an await would deadlock against the deferred
-                // forwarder, which also locks the same tracker.
+                // Drop the parking_lot guard before awaiting `tx.send`; holding
+                // it across the await would deadlock with the deferred forwarder.
                 let decision = tracker.lock().observe_match(ranges.len());
                 match decision {
                     LimitDecision::Emit => {
@@ -670,10 +646,6 @@ impl Search {
         .await;
     }
 
-    /// Drain `FileMatchSummary` values produced by the streaming/deferred path
-    /// and emit them as `SearchResult::DeferredFile`, sharing the project-wide
-    /// limit tracker with the buffer-result forwarder so the
-    /// MAX_SEARCH_RESULT_FILES / MAX_SEARCH_RESULT_RANGES caps fire exactly once.
     async fn forward_deferred_results(
         rx: Receiver<FileMatchSummary>,
         tx: Sender<SearchResult>,
@@ -682,9 +654,8 @@ impl Search {
         let _ = maybe!(async move {
             while let Ok(summary) = rx.recv().await {
                 let len = summary.matches.len();
-                // See `ensure_matched_ranges_are_reported_in_order` — the
-                // tracker mutex must be released before the bounded
-                // `tx.send().await` to avoid a deadlock between forwarders.
+                // Drop the parking_lot guard before awaiting `tx.send`; holding
+                // it across the await would deadlock with the buffer forwarder.
                 let decision = tracker.lock().observe_match(len);
                 match decision {
                     LimitDecision::Emit => {
@@ -745,27 +716,19 @@ impl Search {
     }
 }
 
-/// Tracks aggregated match/file counts across both the buffer-result forwarder
-/// and the deferred-result forwarder so the project-wide
-/// `MAX_SEARCH_RESULT_FILES` / `MAX_SEARCH_RESULT_RANGES` caps are enforced
-/// uniformly and `SearchResult::LimitReached` is emitted exactly once.
+/// Shared between the buffer and deferred forwarders so `LimitReached` is
+/// emitted exactly once.
 #[derive(Default)]
 struct LimitTracker {
     matched_files: usize,
     matched_ranges: usize,
-    /// Set true after either forwarder emits `LimitReached`. The other
-    /// forwarder will see this and stop without emitting again.
     limit_emitted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LimitDecision {
-    /// Emit the result and update counters.
     Emit,
-    /// Limits exceeded — emit `LimitReached` and stop. Only one forwarder
-    /// receives this; the other receives `Drop`.
     EmitLimitReached,
-    /// `LimitReached` already emitted by the peer forwarder; stop without emitting.
     Drop,
 }
 
@@ -887,9 +850,6 @@ struct RequestHandler<'worker> {
     fs: Option<&'worker dyn Fs>,
     open_entries: &'worker HashSet<ProjectEntryId>,
     confirm_contents_will_match_tx: &'worker Sender<MatchingEntry>,
-    /// `Some` when the worker is processing local candidates (the only kind for
-    /// which the streaming/deferred path is wired up). Remote and open-buffers-only
-    /// modes leave this `None`.
     deferred_results_tx: Option<&'worker Sender<FileMatchSummary>>,
     limits: Option<&'worker ProjectSearchLimitSettings>,
 }
@@ -921,9 +881,6 @@ impl RequestHandler<'_> {
                 .fs
                 .context("Trying to query filesystem in remote project search")?;
 
-            // Streaming/deferred path for files larger than the configured threshold:
-            // search the file directly from disk without ever loading it into a Buffer.
-            // Bounded peak memory per file = max_matches × snippet budget. (issue 20970)
             let deferred_file_size = if let (Some(limits), Some(_)) =
                 (self.limits, self.deferred_results_tx)
                 && limits.max_loaded_file_size_bytes > 0
@@ -972,24 +929,14 @@ impl RequestHandler<'_> {
         .ok();
     }
 
-    /// Stream-search a file from disk and emit a `FileMatchSummary` rather than
-    /// opening it as a `Buffer`. Used when `metadata.len` exceeds
-    /// `max_loaded_file_size_bytes`.
+    /// `entry` is moved in so its `should_scan_tx` drops unfulfilled — that
+    /// signals `maintain_sorted_search_results` that no buffer-open will
+    /// follow and the deferred summary is the only result for this file.
     ///
-    /// The `entry: MatchingEntry` is moved in so its `should_scan_tx` is
-    /// dropped at end of scope without ever being fulfilled — that signals
-    /// downstream `maintain_sorted_search_results` that this path will not
-    /// produce a buffer-open request, and the deferred summary is the only
-    /// result emitted for this file.
-    ///
-    /// Note on result ordering: deferred summaries are sent directly to the
-    /// shared result channel and bypass the buffer-path's ordering machinery
-    /// in `ensure_matched_ranges_are_reported_in_order`. Streaming consumers
-    /// see deferred results in worker-completion order, while buffer results
-    /// remain in path order. The project search UI sorts excerpts by
-    /// `PathKey` in the multibuffer, so the final rendered view is still
-    /// stable regardless of arrival order; this only affects the
-    /// streaming-progress visual cadence.
+    /// Deferred summaries bypass `ensure_matched_ranges_are_reported_in_order`
+    /// and arrive in worker-completion order. The UI sorts by `PathKey` so
+    /// the rendered view is stable; only the streaming-progress cadence
+    /// depends on arrival order.
     async fn run_streaming_search(
         &self,
         entry: MatchingEntry,
@@ -1024,11 +971,10 @@ impl RequestHandler<'_> {
                 .query
                 .search_streaming(file, limits.max_matches_per_deferred_file)
                 .await?;
-            // Skip files we can confirm have no matches at all. For multiline
-            // patterns, `search_streaming` always returns `truncated == true`
-            // because it cannot enumerate without loading the whole file —
-            // those files are surfaced as deferred-empty so the user knows
-            // they were not searched.
+            // Multiline patterns always return `truncated == true` because
+            // they can't enumerate without loading the whole file — those
+            // are surfaced as deferred-empty so the user knows they weren't
+            // searched. Only truly empty results are dropped.
             if matches.is_empty() && !truncated {
                 return Ok(());
             }

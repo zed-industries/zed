@@ -821,8 +821,6 @@ pub struct RowInfo {
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
     pub wrapped_buffer_row: Option<u32>,
-    /// Overrides the gutter line number, when the buffer's `File` provides
-    /// one via `language::File::display_row`. Issue 20970.
     pub display_row: Option<u32>,
 }
 
