@@ -40,6 +40,7 @@ From the "New Thread…" menu you can:
 
 - Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
+- Choose **Terminal** to open a terminal thread directly in the Agent Panel — see [Terminal Threads](#terminal-threads) for details.
 
 {#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
 
@@ -122,6 +123,59 @@ You can accept or reject each individual change hunk, or the whole set of change
 Edit diffs also appear in singleton buffers.
 If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 You can turn this off, though, through the `agent.single_file_review` setting.
+
+## Terminal Threads {#terminal-threads}
+
+The Agent Panel can host terminal threads alongside your agent threads. Each terminal thread appears as its own entry in the [Threads Sidebar](./parallel-agents.md#threads-sidebar) with a terminal icon, letting you switch between conversations and shell sessions from the same list.
+
+External agents like Claude Agent and Codex can also run as terminal threads. Some support terminal signals — such as bell notifications or title updates — that Zed uses to show useful context in the sidebar.
+
+### Opening a Terminal Thread {#opening-a-terminal-thread}
+
+Open the menu using the agent selector button on the left (in the empty state) or the `+` icon in the top-right of the panel toolbar, and choose **Terminal**. The terminal thread opens in the panel body, just like switching to a thread. You can open as many as you like — each gets its own sidebar entry.
+
+### Terminal Thread Titles {#terminal-thread-titles}
+
+The terminal title in the toolbar updates automatically to reflect the running shell or process. You can also set a custom name by clicking the title or the pencil icon that appears on hover.
+
+### Notifications {#terminal-thread-notifications}
+
+When a terminal produces a bell character while not in focus, Zed notifies you the same way it does when an agent finishes — with a visual pop-up and an optional sound. Clicking the notification brings the terminal into focus and clears the indicator. The same `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings apply.
+
+### Closing Terminal Threads {#closing-terminal-threads}
+
+Unlike agent threads, terminal threads are closed rather than archived — they don't go to Thread History. To close one, hover over it in the Threads Sidebar and click the **×** button, or select it and press {#kb agent::ArchiveSelectedThread}.
+
+### Claude Code Notifications {#claude-code-notifications}
+
+Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
+
+```json
+{
+  "preferredNotifChannel": "terminal_bell"
+}
+```
+
+You can also set this from within Claude Code by running `/config`, selecting `Local Notifications`, and choosing `Terminal Bell`.
+
+> If you run Claude Code inside tmux, bell notifications may not reach the outer terminal unless passthrough is enabled. Add this to `~/.tmux.conf`:
+>
+> ```
+> set -g allow-passthrough on
+> ```
+
+For more, see the [Claude Code documentation](https://code.claude.com/docs/en/terminal-config).
+
+### Codex Terminal Titles {#codex-terminal-titles}
+
+Codex can update the terminal title as it works, which Zed uses to show useful context for Codex terminal threads in the sidebar — such as the project, current status, branch, model, or task progress.
+
+To configure this from within Codex, run `/title` and use the picker to choose which fields appear and in what order. Codex saves the selection to `tui.terminal_title` in `~/.codex/config.toml`. You can also edit it directly:
+
+```toml
+[tui]
+terminal_title = ["spinner", "project-name", "run-state", "thread-title"]
+```
 
 ## Adding Context {#adding-context}
 
