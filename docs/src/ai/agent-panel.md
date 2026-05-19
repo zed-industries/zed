@@ -128,7 +128,7 @@ You can turn this off, though, through the `agent.single_file_review` setting.
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, rules files, and diagnostics.
+You can mention files, directories, symbols, previous threads, skills, and diagnostics.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
