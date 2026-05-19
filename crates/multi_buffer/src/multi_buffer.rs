@@ -821,6 +821,9 @@ pub struct RowInfo {
     pub diff_status: Option<buffer_diff::DiffHunkStatus>,
     pub expand_info: Option<ExpandInfo>,
     pub wrapped_buffer_row: Option<u32>,
+    /// Overrides the gutter line number, when the buffer's `File` provides
+    /// one via `language::File::display_row`. Issue 20970.
+    pub display_row: Option<u32>,
 }
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
@@ -7721,6 +7724,7 @@ impl Iterator for MultiBufferRows<'_> {
                 diff_status: None,
                 expand_info: None,
                 wrapped_buffer_row: None,
+                display_row: None,
             });
         }
 
@@ -7748,6 +7752,11 @@ impl Iterator for MultiBufferRows<'_> {
 
                 let expand_info = if self.is_singleton {
                     None
+                } else if buffer_snapshot
+                    .file()
+                    .is_some_and(|f| f.is_preview())
+                {
+                    None
                 } else {
                     let needs_expand_up = first_row == last_row
                         && last_row > 0
@@ -7769,6 +7778,9 @@ impl Iterator for MultiBufferRows<'_> {
                     })
                 };
                 self.point += Point::new(1, 0);
+                let display_row = buffer_snapshot
+                    .file()
+                    .and_then(|f| f.display_row(last_row));
                 return Some(RowInfo {
                     buffer_id: Some(last_excerpt.buffer_id),
                     buffer_row: Some(last_row),
@@ -7776,6 +7788,7 @@ impl Iterator for MultiBufferRows<'_> {
                     diff_status: None,
                     wrapped_buffer_row: None,
                     expand_info,
+                    display_row,
                 });
             } else {
                 return None;
@@ -7784,7 +7797,9 @@ impl Iterator for MultiBufferRows<'_> {
 
         let overshoot = self.point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
-        let expand_info = if self.is_singleton {
+        let expand_info = if self.is_singleton
+            || region.buffer.file().is_some_and(|f| f.is_preview())
+        {
             None
         } else {
             let needs_expand_up = self.point.row == region.range.start.row
@@ -7811,6 +7826,10 @@ impl Iterator for MultiBufferRows<'_> {
             })
         };
 
+        let display_row = region
+            .buffer
+            .file()
+            .and_then(|f| f.display_row(buffer_point.row));
         let result = Some(RowInfo {
             buffer_id: Some(region.buffer.remote_id()),
             buffer_row: Some(buffer_point.row),
@@ -7820,6 +7839,7 @@ impl Iterator for MultiBufferRows<'_> {
                 .filter(|_| self.point < region.range.end),
             expand_info,
             wrapped_buffer_row: None,
+            display_row,
         });
         self.point += Point::new(1, 0);
         result

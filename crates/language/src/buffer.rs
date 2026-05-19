@@ -372,6 +372,26 @@ pub trait File: Send + Sync + Any {
     fn can_open(&self) -> bool {
         !self.is_local()
     }
+
+    /// Override the line number displayed in the gutter for a given buffer
+    /// row. Returns the 0-based row to display (the gutter adds 1 to it);
+    /// `None` (the default) means use the buffer's own row.
+    ///
+    /// Used by deferred-search preview buffers (issue 20970) to surface the
+    /// real on-disk line number for each match without padding the synthetic
+    /// preview buffer with blank lines.
+    fn display_row(&self, buffer_row: u32) -> Option<u32> {
+        let _ = buffer_row;
+        None
+    }
+
+    /// Whether this file is a synthetic placeholder whose contents will be
+    /// hydrated on demand. UI surfaces (e.g. the multibuffer header) can use
+    /// this to suppress edit-locked affordances and show a "load on click"
+    /// indicator instead.
+    fn is_preview(&self) -> bool {
+        false
+    }
 }
 
 /// The file's storage status - whether it's stored (`Present`), and if so when it was last
@@ -2367,6 +2387,9 @@ impl Buffer {
         let Some(file) = self.file.as_ref() else {
             return false;
         };
+        if file.is_preview() {
+            return false;
+        }
         match file.disk_state() {
             DiskState::New => false,
             DiskState::Present { mtime, .. } => match self.saved_mtime {

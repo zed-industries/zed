@@ -183,10 +183,11 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
-    /// Files larger than this size (in bytes) are searched in a streaming mode
-    /// that does not load them into memory. `0` disables streaming mode.
+    /// Whether to stream-search files larger than this size (in bytes) instead
+    /// of loading them into memory. `0` disables streaming mode.
     pub max_loaded_file_size_bytes: u64,
-    /// Maximum match locations captured per deferred (streaming-mode) file.
+    /// Whether to cap match locations captured per deferred (streaming-mode)
+    /// file at this number.
     pub max_matches_per_deferred_file: usize,
 }
 

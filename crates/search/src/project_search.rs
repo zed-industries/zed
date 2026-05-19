@@ -26,11 +26,11 @@ use gpui::{
     div,
 };
 use itertools::Itertools;
-use language::{Buffer, BufferId, Capability, Language, Point as TextPoint};
+use language::{Buffer, BufferId, Capability, DiskState, Language, Point as TextPoint};
 use menu::Confirm;
 use multi_buffer;
 use project::{
-    Project, ProjectPath, SearchResults,
+    Project, ProjectPath, SearchResults, WorktreeId,
     search::{FileMatchSummary, SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
@@ -39,6 +39,7 @@ use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
+    path::PathBuf,
     pin::pin,
     sync::Arc,
 };
@@ -46,7 +47,11 @@ use ui::{
     CommonAnimationExt, IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*,
     utils::SearchInputWidth,
 };
-use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
+use util::{
+    ResultExt as _,
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -238,39 +243,155 @@ const DEFERRED_PLACEHOLDER_TEXT: &str = "matches inside — open file to view";
 /// rendered output.
 const DEFERRED_TRUNCATED_TAIL: &str = "… more matches in this file (open to view)";
 
-/// Build a synthetic read-only `Buffer` that holds one snippet per line and
-/// return the `Range<Point>` for each snippet so the multibuffer can excerpt
-/// them as individual rows. The snippet's `MatchLocation` byte ranges remain
-/// on `summary.matches`; we re-read them at hydration time to drive the
-/// real-buffer anchor calculation.
+/// `language::File` impl attached to deferred-file preview buffers so the
+/// multibuffer's standard excerpt-header renders the real file path instead
+/// of "untitled". The preview buffer is synthetic (its text contains only the
+/// captured snippets), but the file it represents exists on disk; this struct
+/// surfaces the on-disk path and worktree without ever loading the file.
+///
+/// `display_rows[i]` is the 0-based file line number to show in the gutter
+/// for buffer row `i`; `None` means the row has no corresponding file line
+/// (e.g. the truncated-tail decorative row or the multiline-regex
+/// placeholder). The gutter machinery picks this up via
+/// `language::File::display_row`. Issue 20970.
+struct PreviewFile {
+    path: Arc<RelPath>,
+    worktree_id: WorktreeId,
+    file_size: u64,
+    display_rows: Arc<Vec<Option<u32>>>,
+}
+
+#[cfg(test)]
+impl PreviewFile {
+    /// Downcast a buffer's `Option<&Arc<dyn language::File>>` to a `PreviewFile`
+    /// if present. Used by tests to distinguish a preview buffer from a real
+    /// loaded file (both have a non-`None` `file()` now). Mirrors
+    /// `project::File::from_dyn` (`crates/worktree/src/worktree.rs:3551`).
+    fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
+        file.and_then(|f| {
+            let f: &dyn language::File = f.as_ref();
+            let f: &dyn Any = f;
+            f.downcast_ref()
+        })
+    }
+}
+
+impl language::File for PreviewFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        // Intentionally not exposed as local: the LocalFile trait provides
+        // `load`/`load_bytes` which would defeat the streaming bound by
+        // pulling the whole file into memory.
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        // mtime isn't captured at scan time; the header doesn't surface it.
+        // Use a zero mtime + the size we have so downstream `exists()` checks
+        // still see the file as Present.
+        DiskState::Present {
+            mtime: fs::MTime::from_seconds_and_nanos(0, 0),
+            size: self.file_size,
+        }
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        self.path.file_name().unwrap_or("")
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _: &App) -> language::proto::File {
+        // Preview files are local-only display state; they aren't synced
+        // across the wire. If this is ever called, something has wired the
+        // preview into a serialization path it shouldn't be in.
+        unimplemented!("preview files are not synced across the wire")
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+
+    fn can_open(&self) -> bool {
+        // Allow the default `open_buffers_in_workspace` filter at
+        // `crates/editor/src/editor.rs:12668` to keep this entry. Hydration
+        // intercepts the click before the workspace open path runs, so this
+        // flag only matters for degenerate cases where the deferred slot has
+        // been cleared mid-click.
+        true
+    }
+
+    fn display_row(&self, buffer_row: u32) -> Option<u32> {
+        self.display_rows
+            .get(buffer_row as usize)
+            .copied()
+            .flatten()
+    }
+
+    fn is_preview(&self) -> bool {
+        true
+    }
+}
+
+/// Build a compact synthetic read-only `Buffer` with exactly one row per
+/// captured match (plus an optional decorative tail), and a per-row
+/// `display_rows` mapping that the gutter uses to render the real on-disk
+/// line numbers. The buffer text is just the concatenated snippets; the
+/// `MatchLocation` byte ranges remain the source of truth for hydration's
+/// anchor calculation.
 ///
 /// Layout for a file with N matches:
 ///
 /// ```text
-///   row 0: <snippet 0>\n        <- excerpt 0
-///   row 1: <snippet 1>\n        <- excerpt 1
+///   row 0: <snippet 0>\n        <- excerpt 0 (gutter: matches[0].line_number)
+///   row 1: <snippet 1>\n        <- excerpt 1 (gutter: matches[1].line_number)
 ///   ...
 ///   row N-1: <snippet N-1>\n    <- excerpt N-1
 ///   row N: …more matches…\n     <- (only if `truncated`, not an excerpt)
 /// ```
 ///
 /// For the multiline-regex-over-threshold case (`matches.is_empty() &&
-/// truncated`), the stub contains a single placeholder line and one excerpt
-/// covering it; clicking that excerpt opens the file with no preset
-/// selection.
-fn build_stub_buffer_and_ranges(
+/// truncated`), the preview contains a single placeholder line at row 0 and
+/// one excerpt covering it.
+///
+/// `display_rows[i]` is the 0-based file line number for buffer row `i`, or
+/// `None` for the decorative tail / placeholder rows. The gutter routes
+/// through `language::File::display_row` via the `PreviewFile` impl.
+fn build_preview_buffer_and_ranges(
     summary: &FileMatchSummary,
     cx: &mut Context<ProjectSearch>,
-) -> (Entity<Buffer>, Vec<Range<TextPoint>>) {
+) -> (
+    Entity<Buffer>,
+    Vec<Range<TextPoint>>,
+    Vec<Range<language::Anchor>>,
+) {
     let mut text = String::with_capacity(
         summary
             .matches
             .iter()
             .map(|m| m.snippet.len() + 1)
             .sum::<usize>()
-            + 64,
+            + DEFERRED_TRUNCATED_TAIL.len()
+            + DEFERRED_PLACEHOLDER_TEXT.len(),
     );
     let mut ranges: Vec<Range<TextPoint>> = Vec::with_capacity(summary.matches.len().max(1));
+    let mut match_byte_ranges: Vec<Range<usize>> =
+        Vec::with_capacity(summary.matches.len().max(1));
+    let mut display_rows: Vec<Option<u32>> =
+        Vec::with_capacity(summary.matches.len().max(1) + 1);
 
     if summary.matches.is_empty() {
         text.push_str(DEFERRED_PLACEHOLDER_TEXT);
@@ -278,34 +399,74 @@ fn build_stub_buffer_and_ranges(
         ranges.push(
             TextPoint::new(0, 0)..TextPoint::new(0, DEFERRED_PLACEHOLDER_TEXT.len() as u32),
         );
+        display_rows.push(None);
     } else {
-        for (row, m) in summary.matches.iter().enumerate() {
-            let row = row as u32;
+        for (i, m) in summary.matches.iter().enumerate() {
+            let row = i as u32;
             let snippet_len = m.snippet.len() as u32;
             ranges.push(TextPoint::new(row, 0)..TextPoint::new(row, snippet_len));
+            let snippet_start_byte = text.len();
             text.push_str(&m.snippet);
             text.push('\n');
+            let match_start =
+                snippet_start_byte + m.snippet_match_range.start as usize;
+            let match_end = snippet_start_byte
+                + (m.snippet_match_range.end as usize).min(m.snippet.len());
+            match_byte_ranges.push(match_start..match_end);
+            // `line_number` is 1-based on the wire; convert to 0-based for
+            // the gutter (which adds 1 back at render time).
+            display_rows.push(Some(m.line_number.saturating_sub(1)));
         }
         if summary.truncated {
             text.push_str(DEFERRED_TRUNCATED_TAIL);
             text.push('\n');
+            display_rows.push(None);
         }
     }
 
     debug_assert!(text.ends_with('\n'));
 
-    let stub = cx.new(|cx| {
+    let file: Arc<dyn language::File> = Arc::new(PreviewFile {
+        path: summary.path.path.clone(),
+        worktree_id: summary.path.worktree_id,
+        file_size: summary.file_size,
+        display_rows: Arc::new(display_rows),
+    });
+    let preview = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
+        buffer.file_updated(file, cx);
         buffer.set_capability(Capability::ReadOnly, cx);
         buffer
     });
-    (stub, ranges)
+    let match_anchors: Vec<Range<language::Anchor>> = {
+        let buffer = preview.read(cx);
+        match_byte_ranges
+            .iter()
+            .map(|r| buffer.anchor_before(r.start)..buffer.anchor_after(r.end))
+            .collect()
+    };
+    (preview, ranges, match_anchors)
+}
+
+/// Snapshot the multibuffer anchors for every match span across every active
+/// deferred-file preview. Returned as an owned `Vec` so callers can pass it to
+/// `highlight_matches` outside of a `self.entity.update(...)` borrow.
+fn collect_preview_highlights(
+    project_search: &Entity<ProjectSearch>,
+    cx: &App,
+) -> Vec<Range<Anchor>> {
+    let project_search = project_search.read(cx);
+    let mut out = Vec::new();
+    for state in project_search.deferred_files.values() {
+        out.extend(state.match_highlights.iter().cloned());
+    }
+    out
 }
 
 /// State held by `ProjectSearch` for each file emitted as
 /// `SearchResult::DeferredFile`. The file's matches are rendered in the
-/// multibuffer through a synthetic read-only stub buffer; when the user
-/// clicks any of the stub excerpts, the real file is opened and the stub is
+/// multibuffer through a synthetic read-only preview buffer; when the user
+/// clicks any of the preview excerpts, the real file is opened and the preview is
 /// swapped out atomically. Issue 20970.
 pub(crate) struct DeferredFileState {
     /// Streaming-scan summary carrying byte ranges, line numbers, and
@@ -324,6 +485,11 @@ pub(crate) struct DeferredFileState {
     /// Set if the most recent hydration failed (worktree gone, IO error).
     /// Surfaced inline so the user knows why their click didn't work.
     pub(crate) last_error: Option<SharedString>,
+    /// Multibuffer anchors for the match span *within* each preview snippet,
+    /// used to paint `search.match_background` on the highlighted substring
+    /// (mirroring how loaded buffers get their matches highlighted). Kept
+    /// separate from `match_ranges` so find-next continues to skip previews.
+    pub(crate) match_highlights: Vec<Range<Anchor>>,
 }
 
 pub struct ProjectSearch {
@@ -332,7 +498,7 @@ pub struct ProjectSearch {
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
     /// Files emitted by the streaming-search path because they exceeded
-    /// `max_loaded_file_size_bytes`. Rendered as stub-buffer excerpts in the
+    /// `max_loaded_file_size_bytes`. Rendered as preview-buffer excerpts in the
     /// multibuffer and hydrated to real buffers on click. Issue 20970.
     deferred_files: HashMap<PathKey, DeferredFileState>,
     active_query: Option<SearchQuery>,
@@ -465,6 +631,7 @@ impl ProjectSearch {
                                 search_id: state.search_id,
                                 hydration: None,
                                 last_error: state.last_error.clone(),
+                                match_highlights: state.match_highlights.clone(),
                             },
                         )
                     })
@@ -494,8 +661,8 @@ impl ProjectSearch {
             }
             multi_buffer::Event::BuffersRemoved { .. } => {
                 // Issue 20970: hydration of a deferred file swaps the synthetic
-                // stub buffer for the real file under the same PathKey, dropping
-                // the stub's BufferId. Defensively retain match_ranges so any
+                // preview buffer for the real file under the same PathKey, dropping
+                // the preview's BufferId. Defensively retain match_ranges so any
                 // anchor that no longer resolves (whether from this swap or
                 // another excerpt removal) is dropped before the next find-next.
                 let snapshot = excerpts.read(cx).snapshot(cx);
@@ -610,7 +777,7 @@ impl ProjectSearch {
                                     buffers_with_ranges.push((buffer, ranges));
                                 }
                                 project::search::SearchResult::DeferredFile(summary) => {
-                                    // Captured here, but the stub-buffer construction
+                                    // Captured here, but the preview-buffer construction
                                     // and excerpt insertion happen on the foreground
                                     // (next block) because `Buffer::local` requires a
                                     // foreground `Context`. Issue 20970.
@@ -647,17 +814,27 @@ impl ProjectSearch {
                                     // costs nothing.
                                     continue;
                                 }
-                                let (stub_buffer, ranges) =
-                                    build_stub_buffer_and_ranges(&summary, cx);
-                                project_search.excerpts.update(cx, |excerpts, cx| {
-                                    excerpts.set_excerpts_for_path(
-                                        path_key.clone(),
-                                        stub_buffer,
-                                        ranges,
-                                        0,
-                                        cx,
-                                    );
-                                });
+                                let (preview_buffer, ranges, match_anchors) =
+                                    build_preview_buffer_and_ranges(&summary, cx);
+                                let match_highlights = project_search.excerpts.update(
+                                    cx,
+                                    |excerpts, cx| {
+                                        excerpts.set_excerpts_for_path(
+                                            path_key.clone(),
+                                            preview_buffer,
+                                            ranges,
+                                            0,
+                                            cx,
+                                        );
+                                        let snapshot = excerpts.snapshot(cx);
+                                        match_anchors
+                                            .into_iter()
+                                            .filter_map(|r| {
+                                                snapshot.anchor_range_in_buffer(r)
+                                            })
+                                            .collect::<Vec<Range<Anchor>>>()
+                                    },
+                                );
                                 let search_id = project_search.search_id;
                                 project_search.deferred_files.insert(
                                     path_key.clone(),
@@ -665,6 +842,7 @@ impl ProjectSearch {
                                         summary,
                                         path_key,
                                         search_id,
+                                        match_highlights,
                                         hydration: None,
                                         last_error: None,
                                     },
@@ -715,7 +893,9 @@ impl ProjectSearch {
 
             project_search
                 .update(cx, |project_search, cx| {
-                    project_search.search_state = if project_search.match_ranges.is_empty() {
+                    let no_results = project_search.match_ranges.is_empty()
+                        && project_search.deferred_files.is_empty();
+                    project_search.search_state = if no_results {
                         SearchState::Completed(SearchCompletion::NoResults)
                     } else {
                         SearchState::Completed(SearchCompletion::Results { limit_reached })
@@ -743,7 +923,7 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 
 impl Render for ProjectSearchView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.has_matches() {
+        if self.has_matches(cx) {
             div()
                 .flex_1()
                 .size_full()
@@ -1203,7 +1383,7 @@ impl ProjectSearchView {
             editor.set_searchable(false);
             editor.set_in_project_search(true);
             // Issue 20970: route excerpt-open clicks through our handler so we
-            // can intercept clicks on deferred-file stubs and hydrate them
+            // can intercept clicks on deferred-file previews and hydrate them
             // before delegating real-file opens to the workspace.
             editor.set_delegate_open_excerpts(true);
             editor
@@ -1265,7 +1445,7 @@ impl ProjectSearchView {
         subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
             cx.on_next_frame(window, |this, window, cx| {
                 if this.focus_handle.is_focused(window) {
-                    if this.has_matches() {
+                    if this.has_matches(cx) {
                         this.results_editor.focus_handle(cx).focus(window, cx);
                     } else {
                         this.query_editor.focus_handle(cx).focus(window, cx);
@@ -1786,7 +1966,13 @@ impl ProjectSearchView {
                     s.select_ranges([range_to_select])
                 });
             });
-            self.highlight_matches(&match_ranges, Some(new_index), cx);
+            let preview_highlights = collect_preview_highlights(&self.entity, cx);
+            self.highlight_matches(
+                &match_ranges,
+                &preview_highlights,
+                Some(new_index),
+                cx,
+            );
         }
     }
 
@@ -1841,12 +2027,17 @@ impl ProjectSearchView {
 
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
+        let preview_highlights = collect_preview_highlights(&self.entity, cx);
 
         if match_ranges.is_empty() {
             self.active_match_index = None;
-            self.results_editor.update(cx, |editor, cx| {
-                editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
-            });
+            if preview_highlights.is_empty() {
+                self.results_editor.update(cx, |editor, cx| {
+                    editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
+                });
+            } else {
+                self.highlight_matches(&[], &preview_highlights, None, cx);
+            }
         } else {
             self.active_match_index = Some(0);
             self.update_match_index(cx);
@@ -1880,6 +2071,7 @@ impl ProjectSearchView {
         let results_editor = self.results_editor.read(cx);
         let newest_anchor = results_editor.selections.newest_anchor().head();
         let buffer_snapshot = results_editor.buffer().read(cx).snapshot(cx);
+        let preview_highlights = collect_preview_highlights(&self.entity, cx);
         let new_index = self.entity.update(cx, |this, cx| {
             let new_index = active_match_index(
                 Direction::Next,
@@ -1888,7 +2080,7 @@ impl ProjectSearchView {
                 &buffer_snapshot,
             );
 
-            self.highlight_matches(&this.match_ranges, new_index, cx);
+            self.highlight_matches(&this.match_ranges, &preview_highlights, new_index, cx);
             new_index
         });
 
@@ -1902,15 +2094,25 @@ impl ProjectSearchView {
     fn highlight_matches(
         &self,
         match_ranges: &[Range<Anchor>],
+        preview_highlights: &[Range<Anchor>],
         active_index: Option<usize>,
         cx: &mut App,
     ) {
+        let active_count = match_ranges.len();
+        let mut combined: Vec<Range<Anchor>> =
+            Vec::with_capacity(match_ranges.len() + preview_highlights.len());
+        combined.extend(match_ranges.iter().cloned());
+        combined.extend(preview_highlights.iter().cloned());
         self.results_editor.update(cx, |editor, cx| {
             editor.highlight_background(
                 HighlightKey::ProjectSearchView,
-                match_ranges,
+                &combined,
                 move |index, theme| {
-                    if active_index == Some(*index) {
+                    if *index >= active_count {
+                        // Preview highlights are decorative; never paint the
+                        // "active" color since find-next never lands on them.
+                        theme.colors().search_match_background
+                    } else if active_index == Some(*index) {
                         theme.colors().search_active_match_background
                     } else {
                         theme.colors().search_match_background
@@ -1921,8 +2123,9 @@ impl ProjectSearchView {
         });
     }
 
-    pub fn has_matches(&self) -> bool {
+    pub fn has_matches(&self, cx: &App) -> bool {
         self.active_match_index.is_some()
+            || !self.entity.read(cx).deferred_files.is_empty()
     }
 
     fn landing_text_minor(&self, cx: &App) -> impl IntoElement {
@@ -2030,7 +2233,7 @@ impl ProjectSearchView {
 
     /// Receive the editor's `OpenExcerptsRequested` event (we set the
     /// `delegate_open_excerpts` flag on the results editor). For each buffer
-    /// in the event, route clicks on deferred-file stubs through hydration
+    /// in the event, route clicks on deferred-file previews through hydration
     /// and clicks on real loaded buffers through the normal workspace open.
     /// Issue 20970.
     fn handle_open_excerpts(
@@ -2066,12 +2269,14 @@ impl ProjectSearchView {
                 None => continue,
             };
 
-            // Each snippet occupies exactly one row in the stub buffer, so
-            // the clicked offset's row maps directly to the MatchLocation
-            // index. See `build_stub_buffer_and_ranges`.
-            let stub_snapshot = buffer_entity.read(cx).snapshot();
+            // Each snippet occupies exactly one row in the preview buffer
+            // (see `build_preview_buffer_and_ranges`), so the clicked row
+            // maps directly to a `MatchLocation` index. The gutter shows the
+            // real file line via `display_row`, but the buffer row itself is
+            // still the match index.
+            let preview_snapshot = buffer_entity.read(cx).snapshot();
             let clicked_offset = ranges.first().map(|r| r.start.0).unwrap_or(0);
-            let clicked_match_index = stub_snapshot.offset_to_point(clicked_offset).row as usize;
+            let clicked_match_index = preview_snapshot.offset_to_point(clicked_offset).row as usize;
 
             self.hydrate_deferred_file(path_key, clicked_match_index, window, cx);
         }
@@ -2087,7 +2292,7 @@ impl ProjectSearchView {
         }
     }
 
-    /// Open the real file backing a deferred stub, swap the stub's excerpts
+    /// Open the real file backing a deferred preview, swap the preview's excerpts
     /// for real-buffer excerpts under the same `PathKey`, and drive the
     /// results editor's selection to the clicked match.
     ///
@@ -2658,39 +2863,6 @@ impl Render for ProjectSearchBar {
         let project_search = search.entity.read(cx);
         let limit_reached = project_search.search_state.limit_reached();
         let is_search_underway = project_search.pending_search.is_some();
-        let deferred_file_count = project_search.deferred_files.len();
-        let (total_unloaded_matches, has_unenumerated) = {
-            let mut total = 0usize;
-            let mut unenumerated = false;
-            for state in project_search.deferred_files.values() {
-                total += state.summary.matches.len();
-                if state.summary.matches.is_empty() && state.summary.truncated {
-                    unenumerated = true;
-                }
-            }
-            (total, unenumerated)
-        };
-        let deferred_badge_text = if deferred_file_count == 0 {
-            None
-        } else {
-            let file_word = if deferred_file_count == 1 {
-                "file"
-            } else {
-                "files"
-            };
-            let text = if total_unloaded_matches > 0 && has_unenumerated {
-                format!(
-                    "+{total_unloaded_matches} in {deferred_file_count} unloaded {file_word} (some not enumerated)"
-                )
-            } else if total_unloaded_matches > 0 {
-                format!(
-                    "+{total_unloaded_matches} in {deferred_file_count} unloaded {file_word}"
-                )
-            } else {
-                format!("{deferred_file_count} unloaded {file_word} (matches not enumerated)")
-            };
-            Some(SharedString::from(text))
-        };
 
         let color_override = match (
             project_search.search_state,
@@ -2808,26 +2980,7 @@ impl Render for ProjectSearchBar {
                                         .with_rotate_animation(2)
                                         .into_any_element(),
                                 )
-                            })
-                            .when_some(
-                                deferred_badge_text.filter(|_| !limit_reached),
-                                |this, badge_text| {
-                                    this.child(
-                                        h_flex()
-                                            .gap_0p5()
-                                            .child(
-                                                Icon::new(IconName::FolderSearch)
-                                                    .color(Color::Muted)
-                                                    .size(IconSize::Small),
-                                            )
-                                            .child(
-                                                Label::new(badge_text)
-                                                    .size(LabelSize::Small)
-                                                    .color(Color::Muted),
-                                            ),
-                                    )
-                                },
-                            ),
+                            }),
                     )
                     .when(limit_reached, |this| {
                         this.tooltip(Tooltip::text(
@@ -6117,10 +6270,10 @@ pub mod tests {
     }
 
     /// Phase 2: after streaming search emits a `DeferredFile`, the UI should
-    /// surface it as a synthetic stub buffer with one excerpt per match.
+    /// surface it as a synthetic preview buffer with one excerpt per match.
     /// Issue 20970.
     #[gpui::test]
-    async fn test_deferred_file_renders_as_stub_excerpts(cx: &mut TestAppContext) {
+    async fn test_deferred_file_renders_as_preview_excerpts(cx: &mut TestAppContext) {
         init_test(cx);
         override_search_streaming_settings(cx, 256, 1000);
 
@@ -6171,28 +6324,28 @@ pub mod tests {
                 );
                 assert!(!state.summary.truncated);
 
-                // The multibuffer holds the loaded file and the stub. Verify
-                // there's exactly one stub (no `file()`) and it carries 3
+                // The multibuffer holds the loaded file and the preview. Verify
+                // there's exactly one preview (no `file()`) and it carries 3
                 // excerpts mapping 1:1 to the captured matches.
                 let mb = search_view.results_editor.read(cx).buffer().read(cx);
-                let stub_count = mb
+                let preview_count = mb
                     .all_buffers()
                     .iter()
-                    .filter(|b| b.read(cx).file().is_none())
+                    .filter(|b| PreviewFile::from_dyn(b.read(cx).file()).is_some())
                     .count();
-                assert_eq!(stub_count, 1);
-                let stub_text = mb
+                assert_eq!(preview_count, 1);
+                let preview_text = mb
                     .all_buffers()
                     .iter()
-                    .find(|b| b.read(cx).file().is_none())
+                    .find(|b| PreviewFile::from_dyn(b.read(cx).file()).is_some())
                     .map(|b| b.read(cx).text())
                     .unwrap();
-                assert!(stub_text.contains("match ME"));
+                assert!(preview_text.contains("match ME"));
             })
             .unwrap();
     }
 
-    /// Phase 2: find-next and find-prev must skip over deferred-file stubs
+    /// Phase 2: find-next and find-prev must skip over deferred-file previews
     /// — `match_ranges` should only contain anchors from loaded buffers.
     /// Issue 20970.
     #[gpui::test]
@@ -6243,17 +6396,85 @@ pub mod tests {
             .unwrap();
     }
 
-    /// Phase 2: `build_stub_buffer_and_ranges` must produce a single
+    /// Phase 2: a project where *every* matching file is over the
+    /// `max_loaded_file_size_bytes` threshold (so no loaded buffer
+    /// contributes to `match_ranges`) must still render the deferred-file
+    /// previews instead of collapsing to the "No Results" placeholder.
+    /// Issue 20970 — regressed once because `has_matches()` and the search
+    /// state classification ignored `deferred_files`.
+    #[gpui::test]
+    async fn test_all_deferred_project_renders_previews(cx: &mut TestAppContext) {
+        init_test(cx);
+        override_search_streaming_settings(cx, 256, 1000);
+
+        let filler = "X".repeat(80);
+        // Two over-threshold files, no small files: every match must be deferred.
+        let large_content =
+            format!("header\n{filler}\n<tag/>\n{filler}\n<tag/>\n{filler}\n<tag/>\n");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "big-a.xml": large_content.clone(),
+                "big-b.xml": large_content,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx
+            .add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "<tag/>", cx);
+        cx.run_until_parked();
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let project_search = search_view.entity.read(cx);
+                assert!(
+                    project_search.match_ranges.is_empty(),
+                    "no loaded-buffer matches when every matching file is deferred"
+                );
+                assert_eq!(
+                    project_search.deferred_files.len(),
+                    2,
+                    "both large files should produce deferred entries"
+                );
+                assert!(
+                    matches!(
+                        project_search.search_state,
+                        SearchState::Completed(SearchCompletion::Results { .. })
+                    ),
+                    "search must report Results (not NoResults) when previews are present, \
+                     got {:?}",
+                    project_search.search_state,
+                );
+                assert!(
+                    search_view.has_matches(cx),
+                    "has_matches() must return true so the results editor renders \
+                     instead of the No Results placeholder"
+                );
+            })
+            .unwrap();
+    }
+
+    /// Phase 2: `build_preview_buffer_and_ranges` must produce a single
     /// placeholder excerpt for the empty-matches + truncated case
     /// (multiline-regex-over-threshold). Tests the function directly because
     /// the upstream streaming-search classification of multiline regex is
     /// environment-dependent. Issue 20970.
     #[gpui::test]
-    async fn test_build_stub_buffer_handles_truncated_empty(cx: &mut TestAppContext) {
+    async fn test_build_preview_buffer_handles_truncated_empty(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(path!("/dir"), json!({ "dummy.txt": "stub" }))
+        fs.insert_tree(path!("/dir"), json!({ "dummy.txt": "preview" }))
             .await;
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
@@ -6269,11 +6490,15 @@ pub mod tests {
             truncated: true,
         };
 
-        let (stub_buffer, ranges) = search
-            .update(cx, |_, cx| build_stub_buffer_and_ranges(&summary, cx));
+        let (preview_buffer, ranges, match_anchors) = search
+            .update(cx, |_, cx| build_preview_buffer_and_ranges(&summary, cx));
+        assert!(
+            match_anchors.is_empty(),
+            "no per-match highlights when matches list is empty"
+        );
 
         cx.update(|cx| {
-            let buffer = stub_buffer.read(cx);
+            let buffer = preview_buffer.read(cx);
             let text = buffer.text();
             assert!(
                 text.contains(DEFERRED_PLACEHOLDER_TEXT),
@@ -6294,7 +6519,7 @@ pub mod tests {
     }
 
     /// Phase 2: simulating a click on a deferred-file excerpt should hydrate
-    /// the stub via `project.open_buffer`, swap it for the real buffer under
+    /// the preview via `project.open_buffer`, swap it for the real buffer under
     /// the same `PathKey`, and populate `match_ranges` with the file's
     /// matches. Issue 20970.
     #[gpui::test]
@@ -6327,22 +6552,22 @@ pub mod tests {
         perform_search(search_view, "NEEDLE", cx);
         cx.run_until_parked();
 
-        let stub_buffer_id = search_view
+        let preview_buffer_id = search_view
             .update(cx, |search_view, _window, cx| {
                 let project_search = search_view.entity.read(cx);
                 assert_eq!(project_search.deferred_files.len(), 1);
                 let mb = search_view.results_editor.read(cx).buffer().read(cx);
                 mb.all_buffers()
                     .iter()
-                    .find(|b| b.read(cx).file().is_none())
+                    .find(|b| PreviewFile::from_dyn(b.read(cx).file()).is_some())
                     .map(|b| b.read(cx).remote_id())
-                    .expect("stub buffer present")
+                    .expect("preview buffer present")
             })
             .unwrap();
 
         let selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)> =
             HashMap::from_iter([(
-                stub_buffer_id,
+                preview_buffer_id,
                 (vec![BufferOffset(0)..BufferOffset(0)], None),
             )]);
 
@@ -6371,15 +6596,18 @@ pub mod tests {
                 let real_count = mb
                     .all_buffers()
                     .iter()
-                    .filter(|b| b.read(cx).file().is_some())
+                    .filter(|b| {
+                        let file = b.read(cx).file();
+                        file.is_some() && PreviewFile::from_dyn(file).is_none()
+                    })
                     .count();
-                assert_eq!(real_count, 1, "stub should be swapped for the real file");
-                let stub_count = mb
+                assert_eq!(real_count, 1, "preview should be swapped for the real file");
+                let preview_count = mb
                     .all_buffers()
                     .iter()
-                    .filter(|b| b.read(cx).file().is_none())
+                    .filter(|b| PreviewFile::from_dyn(b.read(cx).file()).is_some())
                     .count();
-                assert_eq!(stub_count, 0, "stub buffer should have been removed");
+                assert_eq!(preview_count, 0, "preview buffer should have been removed");
             })
             .unwrap();
     }
@@ -6418,20 +6646,20 @@ pub mod tests {
         perform_search(search_view, "NEEDLE", cx);
         cx.run_until_parked();
 
-        let stub_buffer_id = search_view
+        let preview_buffer_id = search_view
             .update(cx, |search_view, _window, cx| {
                 let mb = search_view.results_editor.read(cx).buffer().read(cx);
                 mb.all_buffers()
                     .iter()
-                    .find(|b| b.read(cx).file().is_none())
+                    .find(|b| PreviewFile::from_dyn(b.read(cx).file()).is_some())
                     .map(|b| b.read(cx).remote_id())
-                    .expect("stub buffer present")
+                    .expect("preview buffer present")
             })
             .unwrap();
 
         let selections_by_buffer: HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)> =
             HashMap::from_iter([(
-                stub_buffer_id,
+                preview_buffer_id,
                 (vec![BufferOffset(0)..BufferOffset(0)], None),
             )]);
         search_view

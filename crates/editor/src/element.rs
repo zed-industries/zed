@@ -3547,9 +3547,13 @@ impl EditorElement {
                 let display_row = DisplayRow(gutter.range.start.0 + ix as u32);
                 line_number.clear();
                 let non_relative_number = if relative.wrapped() {
-                    row_info.buffer_row.or(row_info.wrapped_buffer_row)? + 1
+                    row_info
+                        .display_row
+                        .or(row_info.buffer_row)
+                        .or(row_info.wrapped_buffer_row)?
+                        + 1
                 } else {
-                    row_info.buffer_row? + 1
+                    row_info.display_row.or(row_info.buffer_row)? + 1
                 };
                 let relative_number = relative_rows.get(&display_row);
                 if !(relative_line_numbers_enabled && relative_number.is_some())
@@ -8442,6 +8446,9 @@ pub(crate) fn render_buffer_header(
         .flatten();
     let indicator = multi_buffer.buffer(buffer_id).and_then(|buffer| {
         let buffer = buffer.read(cx);
+        if buffer.file().is_some_and(|f| f.is_preview()) {
+            return None;
+        }
         let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
             (true, _) => Some(Color::Warning),
             (_, true) => Some(Color::Accent),
@@ -8456,6 +8463,7 @@ pub(crate) fn render_buffer_header(
         .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
         .unwrap_or_default();
     let file = buffer.file();
+    let is_preview = file.is_some_and(|file| file.is_preview());
     let can_open_excerpts = file.is_none_or(|file| file.can_open());
     let path_style = file.map(|file| file.path_style(cx));
     let relative_path = buffer.resolve_file_path(include_root, cx);
@@ -8659,7 +8667,12 @@ pub(crate) fn render_buffer_header(
                                         )
                                     })
                                     .when(!buffer.capability.editable(), |el| {
-                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
+                                        let icon = if is_preview {
+                                            IconName::TodoPending
+                                        } else {
+                                            IconName::FileLock
+                                        };
+                                        el.child(Icon::new(icon).color(Color::Muted))
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
                                         let font = theme_settings::ThemeSettings::get_global(cx)
@@ -8678,13 +8691,18 @@ pub(crate) fn render_buffer_header(
                             },
                         ))
                         .when(can_open_excerpts && relative_path.is_some(), |this| {
+                            let (button_id, button_label) = if is_preview {
+                                ("load-file-button", "Load File")
+                            } else {
+                                ("open-file-button", "Open File")
+                            };
                             this.child(
                                 div()
-                                    .when(!is_selected, |this| {
+                                    .when(!is_selected && !is_preview, |this| {
                                         this.visible_on_hover("buffer-header-group")
                                     })
                                     .child(
-                                        Button::new("open-file-button", "Open File")
+                                        Button::new(button_id, button_label)
                                             .style(ButtonStyle::OutlinedGhost)
                                             .when(is_selected, |this| {
                                                 this.key_binding(KeyBinding::for_action_in(
@@ -12829,6 +12847,7 @@ mod tests {
             diff_status: None,
             expand_info: None,
             wrapped_buffer_row: None,
+            display_row: None,
         };
 
         const fn row_info(row: u32) -> RowInfo {

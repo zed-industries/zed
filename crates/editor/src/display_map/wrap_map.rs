@@ -1167,6 +1167,7 @@ impl Iterator for WrapRows<'_> {
                 diff_status,
                 expand_info: None,
                 wrapped_buffer_row: buffer_row.buffer_row,
+                display_row: buffer_row.display_row,
             }
         } else {
             buffer_row

@@ -33,6 +33,7 @@ fn test_empty_singleton(cx: &mut App) {
             diff_status: None,
             expand_info: None,
             wrapped_buffer_row: None,
+            display_row: None,
         }]
     );
 }
@@ -3336,6 +3337,7 @@ impl ReferenceMultibuffer {
                             diff_status: region.status,
                             buffer_row: Some(buffer_row),
                             wrapped_buffer_row: None,
+                            display_row: None,
 
                             multibuffer_row: Some(multibuffer_row),
                             expand_info: maybe!({
