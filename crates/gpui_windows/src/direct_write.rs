@@ -1364,7 +1364,7 @@ impl TextRenderer {
 struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
     components: &'a DirectWriteComponents,
-    index_converter: StringIndexConverter<'a>,
+    index_converter: StringIndexConverter,
     runs: &'b mut Vec<ShapedRun>,
     width: f32,
 }
@@ -1476,6 +1476,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         let glyph_utf16_starts = glyph_utf16_start_indices(cluster_map, glyph_count);
         let is_rtl = glyphrun.bidiLevel % 2 == 1;
         let run_advance = glyph_advances.iter().sum::<f32>();
+        let mut run_right = if is_rtl {
+            baselineoriginx
+        } else {
+            baselineoriginx + run_advance
+        };
         let mut advance = 0.0;
         let mut glyphs = Vec::with_capacity(glyph_count);
         for (glyph_idx, glyph_id) in glyph_ids.iter().enumerate() {
@@ -1488,6 +1493,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             } else {
                 baselineoriginx + advance + offset.advanceOffset
             };
+            run_right = run_right.max(x + glyph_advance);
             let utf16_idx = desc.textPosition as usize + glyph_utf16_starts[glyph_idx];
             glyphs.push(ShapedGlyph {
                 id,
@@ -1503,11 +1509,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 .partial_cmp(&b.position.x)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        context.width = context.width.max(if is_rtl {
-            baselineoriginx
-        } else {
-            baselineoriginx + run_advance
-        });
+        context.width = context.width.max(run_right);
         context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
@@ -1557,58 +1559,36 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
     }
 }
 
-struct StringIndexConverter<'a> {
-    text: &'a str,
-    utf8_ix: usize,
-    utf16_ix: usize,
+struct StringIndexConverter {
+    utf16_to_utf8: Vec<usize>,
 }
 
-impl<'a> StringIndexConverter<'a> {
-    fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            utf8_ix: 0,
-            utf16_ix: 0,
-        }
-    }
-
-    #[allow(dead_code)]
-    fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf8_ix + ix >= utf8_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
-        }
-        self.utf8_ix = self.text.len();
-    }
-
-    fn advance_to_utf16_ix(&mut self, utf16_target: usize) {
-        for (ix, c) in self.text[self.utf8_ix..].char_indices() {
-            if self.utf16_ix >= utf16_target {
-                self.utf8_ix += ix;
-                return;
-            }
-            self.utf16_ix += c.len_utf16();
-        }
-        self.utf8_ix = self.text.len();
-    }
-
-    fn utf8_ix_for_utf16_ix(&mut self, utf16_target: usize) -> usize {
-        if utf16_target >= self.utf16_ix {
-            self.advance_to_utf16_ix(utf16_target);
-            return self.utf8_ix;
-        }
-
+impl StringIndexConverter {
+    fn new(text: &str) -> Self {
+        let mut utf16_to_utf8 = vec![text.len(); text.encode_utf16().count() + 1];
         let mut utf16_ix = 0;
-        for (utf8_ix, c) in self.text.char_indices() {
-            if utf16_ix >= utf16_target {
-                return utf8_ix;
+        for (utf8_ix, c) in text.char_indices() {
+            let next_utf16_ix = utf16_ix + c.len_utf16();
+            let next_utf8_ix = utf8_ix + c.len_utf8();
+            utf16_to_utf8[utf16_ix] = utf8_ix;
+            for target_utf16_ix in utf16_ix + 1..=next_utf16_ix {
+                utf16_to_utf8[target_utf16_ix] = next_utf8_ix;
             }
-            utf16_ix += c.len_utf16();
+            utf16_ix = next_utf16_ix;
         }
-        self.text.len()
+
+        if let Some(last) = utf16_to_utf8.last_mut() {
+            *last = text.len();
+        }
+
+        Self { utf16_to_utf8 }
+    }
+
+    fn utf8_ix_for_utf16_ix(&self, utf16_target: usize) -> usize {
+        self.utf16_to_utf8
+            .get(utf16_target)
+            .copied()
+            .unwrap_or_else(|| self.utf16_to_utf8.last().copied().unwrap_or_default())
     }
 }
 
@@ -1617,36 +1597,28 @@ fn glyph_utf16_start_indices(cluster_map: &[u16], glyph_count: usize) -> Vec<usi
         return (0..glyph_count).collect();
     }
 
-    let mut clusters = Vec::<(usize, usize)>::new();
+    let mut glyph_utf16_starts = vec![usize::MAX; glyph_count];
+    let mut saw_cluster = false;
     for (utf16_idx, glyph_start) in cluster_map.iter().copied().enumerate() {
         let glyph_start = glyph_start as usize;
         if glyph_start >= glyph_count {
             continue;
         }
 
-        if let Some((_, existing_utf16_idx)) = clusters
-            .iter_mut()
-            .find(|(existing_glyph_start, _)| *existing_glyph_start == glyph_start)
-        {
-            *existing_utf16_idx = (*existing_utf16_idx).min(utf16_idx);
-        } else {
-            clusters.push((glyph_start, utf16_idx));
-        }
+        saw_cluster = true;
+        glyph_utf16_starts[glyph_start] = glyph_utf16_starts[glyph_start].min(utf16_idx);
     }
 
-    if clusters.is_empty() {
+    if !saw_cluster {
         return vec![0; glyph_count];
     }
 
-    clusters.sort_by_key(|(glyph_start, _)| *glyph_start);
-
-    let mut glyph_utf16_starts = vec![0; glyph_count];
-    for (cluster_ix, (glyph_start, utf16_idx)) in clusters.iter().copied().enumerate() {
-        let next_glyph_start = clusters
-            .get(cluster_ix + 1)
-            .map_or(glyph_count, |(glyph_start, _)| *glyph_start);
-        for glyph_ix in glyph_start..next_glyph_start {
-            glyph_utf16_starts[glyph_ix] = utf16_idx;
+    let mut last_utf16_idx = 0;
+    for utf16_idx in &mut glyph_utf16_starts {
+        if *utf16_idx == usize::MAX {
+            *utf16_idx = last_utf16_idx;
+        } else {
+            last_utf16_idx = *utf16_idx;
         }
     }
 
@@ -1888,7 +1860,7 @@ const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");
 
 #[cfg(test)]
 mod tests {
-    use crate::direct_write::glyph_utf16_start_indices;
+    use crate::direct_write::{StringIndexConverter, glyph_utf16_start_indices};
 
     #[test]
     fn test_cluster_map() {
@@ -1914,5 +1886,17 @@ mod tests {
             [4, 3, 2, 1, 0]
         );
         assert_eq!(glyph_utf16_start_indices(&[2, 2, 0], 3), [2, 2, 0]);
+    }
+
+    #[test]
+    fn test_string_index_converter_handles_descending_utf16_indices() {
+        let text = "a😀ب";
+        let converter = StringIndexConverter::new(text);
+
+        assert_eq!(converter.utf8_ix_for_utf16_ix(4), text.len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(3), "a😀".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(2), "a😀".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(1), "a".len());
+        assert_eq!(converter.utf8_ix_for_utf16_ix(99), text.len());
     }
 }

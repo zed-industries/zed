@@ -7420,10 +7420,46 @@ impl EditorElement {
                         line_layout.x_for_index(range_start)..line_layout.x_for_index(range_end),
                     );
                 }
-                if row != range.end.row()
-                    && let Some(last_range) = x_ranges.last_mut()
-                {
-                    last_range.end = line_layout.width + line_end_overshoot;
+                if row != range.end.row() {
+                    // Continue multi-line selections from the visual edge that contains the logical line end.
+                    let line_end_x = line_layout.x_for_index(line_layout.len);
+                    let mut nearest_endpoint = None::<(usize, bool, Pixels)>;
+                    for (ix, x_range) in x_ranges.iter().enumerate() {
+                        let start_distance = (x_range.start - line_end_x).abs();
+                        let end_distance = (x_range.end - line_end_x).abs();
+                        let (extend_start, distance) = if start_distance == end_distance {
+                            (
+                                line_layout.len > 0 && line_end_x < line_layout.width,
+                                start_distance,
+                            )
+                        } else if start_distance < end_distance {
+                            (true, start_distance)
+                        } else {
+                            (false, end_distance)
+                        };
+
+                        if nearest_endpoint
+                            .is_none_or(|(_, _, nearest_distance)| distance < nearest_distance)
+                        {
+                            nearest_endpoint = Some((ix, extend_start, distance));
+                        }
+                    }
+
+                    if let Some((ix, extend_start, _)) = nearest_endpoint
+                        && let Some(x_range) = x_ranges.get_mut(ix)
+                    {
+                        if extend_start {
+                            let overshot_start = line_end_x - line_end_overshoot;
+                            if overshot_start < x_range.start {
+                                x_range.start = overshot_start;
+                            }
+                        } else {
+                            let overshot_end = line_end_x + line_end_overshoot;
+                            if overshot_end > x_range.end {
+                                x_range.end = overshot_end;
+                            }
+                        }
+                    }
                 }
 
                 let to_screen_x = |x| {
