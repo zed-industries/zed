@@ -148,7 +148,7 @@ Unlike agent threads, terminal threads are closed rather than archived — they 
 
 ### Claude Code Notifications {#claude-code-notifications}
 
-Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
+Claude Code can notify you when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
 
 ```json
 {
@@ -165,6 +165,20 @@ You can also set this from within Claude Code by running `/config`, selecting `L
 > ```
 
 For more, see the [Claude Code documentation](https://code.claude.com/docs/en/terminal-config).
+
+### Amp Notifications {#amp-notifications}
+
+Amp can also notify you when it needs your attention. To enable notifications in Zed terminal threads, add `AMP_FORCE_BEL=1` to your terminal environment settings:
+
+```json [settings]
+{
+  "terminal": {
+    "env": {
+      "AMP_FORCE_BEL": "1"
+    }
+  }
+}
+```
 
 ### Codex Terminal Titles {#codex-terminal-titles}
 
