@@ -16538,15 +16538,12 @@ version = "0.1.0"
 dependencies = [
  "agent_skills",
  "anyhow",
- "collections",
  "editor",
  "fs",
  "gpui",
  "language",
- "log",
  "menu",
  "platform_title_bar",
- "project",
  "release_channel",
  "serde_json",
  "serde_yaml_ng",
@@ -16557,7 +16554,6 @@ dependencies = [
  "util",
  "workspace",
  "worktree",
- "zed_actions",
 ]
 
 [[package]]
