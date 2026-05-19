@@ -14,7 +14,9 @@ use feature_flags::AcpBetaFeatureFlag;
 
 use crate::message_editor::SharedSessionCapabilities;
 
+use gpui::AnyView;
 use gpui::List;
+use gpui::StyleRefinement;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
 use language_model::{LanguageModelEffortLevel, Speed};
@@ -6505,14 +6507,8 @@ impl ThreadView {
                                 .when(is_raw_input_expanded, |this| {
                                     this.children(tool_call.raw_input_markdown.clone().map(
                                         |input| {
-                                            self.render_markdown(
-                                                input,
-                                                MarkdownStyle::themed(
-                                                    MarkdownFont::Agent,
-                                                    window,
-                                                    cx,
-                                                ),
-                                                cx,
+                                            self.render_raw_input_markdown(
+                                                entry_ix, input, window, cx,
                                             )
                                         },
                                     ))
@@ -6553,11 +6549,7 @@ impl ThreadView {
                                 .child(input_output_header("Raw Input:".into()))
                                 .children(tool_call.raw_input_markdown.clone().map(|input| {
                                     div().id(("tool-call-raw-input-markdown", entry_ix)).child(
-                                        self.render_markdown(
-                                            input,
-                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                            cx,
-                                        ),
+                                        self.render_raw_input_markdown(entry_ix, input, window, cx),
                                     )
                                 }))
                                 .child(input_output_header("Output:".into())),
@@ -8684,6 +8676,39 @@ impl ThreadView {
         cx: &App,
     ) -> MarkdownElement {
         render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
+    }
+
+    /// Render a tool call's `raw_input` markdown as a *cached* `AnyView`.
+    ///
+    /// The view is created once in `EntryViewState::sync_entry` and reused
+    /// across frames. Wrapping it with `AnyView::cached(style)` lets GPUI
+    /// recycle the previous frame's layout and paint when nothing has changed
+    /// (matching the pattern used by `dock.rs` and `pane_group.rs`).
+    fn render_raw_input_markdown(
+        &self,
+        entry_ix: usize,
+        input: Entity<Markdown>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if let Some(view) = self
+            .entry_view_state
+            .read(cx)
+            .entry(entry_ix)
+            .and_then(|entry| entry.markdown_view(&input))
+        {
+            return AnyView::from(view)
+                .cached(StyleRefinement::default())
+                .into_any_element();
+        }
+        // Fallback: sync_entry should have created the view first, but if it
+        // hasn't, render inline so we don't lose content.
+        self.render_markdown(
+            input,
+            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+            cx,
+        )
+        .into_any_element()
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {

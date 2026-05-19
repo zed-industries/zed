@@ -27,7 +27,7 @@ use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use collections::{HashMap, HashSet};
 use gpui::{
@@ -53,6 +53,49 @@ use util::ResultExt;
 use crate::parser::CodeBlockKind;
 
 const HIGHLIGHT_CACHE_MAX_ENTRIES: usize = 16;
+
+// Aggregated rate logging. Logs once per second per source so we can observe
+// the effect of `MarkdownView` + `AnyView::cached` without spamming.
+thread_local! {
+    static ELEMENT_RENDER_STATS: RefCell<RenderRateStats> = RefCell::new(RenderRateStats::new("MarkdownElement::request_layout"));
+    static VIEW_RENDER_STATS: RefCell<RenderRateStats> = RefCell::new(RenderRateStats::new("MarkdownView::render (cache MISS)"));
+    static VIEW_INVALIDATE_MARKDOWN: RefCell<RenderRateStats> = RefCell::new(RenderRateStats::new("MarkdownView invalidated by Markdown notify"));
+    static VIEW_INVALIDATE_SETTINGS: RefCell<RenderRateStats> = RefCell::new(RenderRateStats::new("MarkdownView invalidated by SettingsStore notify"));
+}
+
+struct RenderRateStats {
+    label: &'static str,
+    window_start: Option<Instant>,
+    count: u64,
+}
+
+impl RenderRateStats {
+    fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            window_start: None,
+            count: 0,
+        }
+    }
+
+    fn tick(&mut self) {
+        let now = Instant::now();
+        let window_start = *self.window_start.get_or_insert(now);
+        self.count += 1;
+        let elapsed = now.duration_since(window_start);
+        if elapsed >= Duration::from_secs(1) {
+            log::info!(
+                "{}: {} in {:.2?} ({:.1}/s)",
+                self.label,
+                self.count,
+                elapsed,
+                self.count as f64 / elapsed.as_secs_f64(),
+            );
+            self.window_start = None;
+            self.count = 0;
+        }
+    }
+}
 
 type CachedHighlightRuns = Arc<[(Range<usize>, HighlightId)]>;
 
@@ -1749,6 +1792,7 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        ELEMENT_RENDER_STATS.with(|stats| stats.borrow_mut().tick());
         let highlight_cache = self.markdown.read(cx).highlight_cache.clone();
         let mut builder = MarkdownElementBuilder::new(
             &self.style.container_style,
@@ -3412,6 +3456,63 @@ impl RenderedText {
         self.footnote_refs
             .iter()
             .find(|fref| fref.source_range.contains(&source_index))
+    }
+}
+
+/// A `Render`-implementing view wrapper around a [`Markdown`] entity so it can
+/// be turned into an [`AnyView`] and cached with `AnyView::cached(style)`.
+///
+/// `MarkdownElement` is an immediate-mode `Element` that has to be reconstructed
+/// on every frame, which prevents GPUI's view-level caching from helping. By
+/// stashing a long-lived `Entity<MarkdownView>` on the parent and rendering it
+/// via `markdown_view.clone().into_any().cached(...)`, the previous frame's
+/// layout and paint are reused unless the underlying `Markdown` entity notifies,
+/// the theme changes, or `Window::refresh` is called.
+///
+/// Caveat: do not place editable inputs (`Editor`, etc.) inside cached views;
+/// see https://github.com/zed-industries/zed/issues/50456.
+pub struct MarkdownView {
+    markdown: Entity<Markdown>,
+    style: MarkdownStyle,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl MarkdownView {
+    pub fn new(markdown: Entity<Markdown>, style: MarkdownStyle, cx: &mut Context<Self>) -> Self {
+        let subscriptions = vec![
+            cx.observe(&markdown, |_, _, cx| {
+                VIEW_INVALIDATE_MARKDOWN.with(|stats| stats.borrow_mut().tick());
+                cx.notify();
+            }),
+            cx.observe_global::<SettingsStore>(|_, cx| {
+                VIEW_INVALIDATE_SETTINGS.with(|stats| stats.borrow_mut().tick());
+                cx.notify();
+            }),
+        ];
+        Self {
+            markdown,
+            style,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    pub fn markdown(&self) -> &Entity<Markdown> {
+        &self.markdown
+    }
+
+    /// Replace the rendering style. Call this from the parent when the theme or
+    /// surrounding text style changes, otherwise the cached layout will keep
+    /// using the stale style.
+    pub fn set_style(&mut self, style: MarkdownStyle, cx: &mut Context<Self>) {
+        self.style = style;
+        cx.notify();
+    }
+}
+
+impl Render for MarkdownView {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        VIEW_RENDER_STATS.with(|stats| stats.borrow_mut().tick());
+        MarkdownElement::new(self.markdown.clone(), self.style.clone())
     }
 }
 

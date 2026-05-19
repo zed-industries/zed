@@ -10,6 +10,7 @@ use gpui::{
     ScrollHandle, TextStyleRefinement, WeakEntity, Window,
 };
 use language::language_settings::SoftWrap;
+use markdown::{MarkdownFont, MarkdownStyle, MarkdownView};
 use project::{AgentId, Project};
 use prompt_store::PromptStore;
 use rope::Point;
@@ -117,6 +118,7 @@ impl EntryViewState {
                 let id = tool_call.id.clone();
                 let terminals = tool_call.terminals().cloned().collect::<Vec<_>>();
                 let diffs = tool_call.diffs().cloned().collect::<Vec<_>>();
+                let raw_input_markdown = tool_call.raw_input_markdown.clone();
 
                 let views = if let Some(Entry::ToolCall(tool_call)) = self.entries.get_mut(index) {
                     &mut tool_call.content
@@ -163,6 +165,16 @@ impl EntryViewState {
                             }
                         }
                     }
+                }
+
+                if let Some(raw_input_markdown) = raw_input_markdown {
+                    views
+                        .entry(raw_input_markdown.entity_id())
+                        .or_insert_with(|| {
+                            let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                            cx.new(|cx| MarkdownView::new(raw_input_markdown, style, cx))
+                                .into_any()
+                        });
                 }
 
                 for diff in diffs {
@@ -360,6 +372,16 @@ impl Entry {
             .get(&terminal.entity_id())
             .cloned()
             .map(|entity| entity.downcast::<TerminalView>().unwrap())
+    }
+
+    pub fn markdown_view(
+        &self,
+        markdown: &Entity<markdown::Markdown>,
+    ) -> Option<Entity<MarkdownView>> {
+        self.content_map()?
+            .get(&markdown.entity_id())
+            .cloned()
+            .map(|entity| entity.downcast::<MarkdownView>().unwrap())
     }
 
     pub fn scroll_handle_for_assistant_message_chunk(
