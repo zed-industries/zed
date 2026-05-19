@@ -148,7 +148,7 @@ Unlike agent threads, terminal threads are closed rather than archived — they 
 
 ### Claude Code Notifications {#claude-code-notifications}
 
-Claude Code can ring the terminal bell when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
+Claude Code can notify you when it finishes a task or pauses for permission. To enable this, set `preferredNotifChannel` to `"terminal_bell"` in your Claude Code user settings:
 
 ```json
 {
@@ -165,6 +165,58 @@ You can also set this from within Claude Code by running `/config`, selecting `L
 > ```
 
 For more, see the [Claude Code documentation](https://code.claude.com/docs/en/terminal-config).
+
+### Amp Notifications {#amp-notifications}
+
+Amp updates terminal titles automatically and can also notify you when it needs your attention. To enable notifications in Zed terminal threads, add `AMP_FORCE_BEL=1` to your terminal environment settings:
+
+```json [settings]
+{
+  "terminal": {
+    "env": {
+      "AMP_FORCE_BEL": "1"
+    }
+  }
+}
+```
+
+Restart Amp after adding the environment variable.
+
+### OpenCode Notifications {#opencode-notifications}
+
+OpenCode can update terminal titles automatically. For Zed notifications, add an OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
+
+Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/plugins/zed-bell.js` to use it globally:
+
+```js
+export const ZedBell = async () => {
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.idle" || event.type === "permission.asked") {
+        process.stdout.write("\x07");
+      }
+    },
+  };
+};
+```
+
+Restart OpenCode after adding the plugin.
+
+### Pi Notifications {#pi-notifications}
+
+Pi can use an extension to emit a notification when it finishes a turn. Create `.pi/extensions/zed-bell.ts` in your project, or `~/.pi/agent/extensions/zed-bell.ts` to use it globally:
+
+```ts
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("agent_end", async () => {
+    process.stdout.write("\x07");
+  });
+}
+```
+
+Restart Pi after adding the extension, or run `/reload` if the extension is in one of Pi's auto-discovered extension locations.
 
 ### Codex Terminal Titles {#codex-terminal-titles}
 
