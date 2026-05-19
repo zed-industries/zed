@@ -42,6 +42,11 @@ pub(crate) struct DockerComposeResources {
     config: DockerComposeConfig,
 }
 
+/// DevcontainerManifest should be the centralizing workflow of the devcontainer control plane. It will
+/// - Detect whether an existing devcontainer can be connected to (and return it if so)
+/// - Perform any resource downloads and builds, including docker and GCR (for images and features)
+/// - Execute lifecycle scripts, either on-host or in the container
+/// - Return identifying information for a docker-exec based remote connection to connect to
 struct DevContainerManifest {
     http_client: Arc<dyn HttpClient>,
     fs: Arc<dyn Fs>,
@@ -105,6 +110,7 @@ impl DevContainerManifest {
         })
     }
 
+    /// See https://containers.dev/implementors/json_reference/#variables-in-devcontainerjson
     fn devcontainer_id(&self) -> String {
         let mut labels = self.identifying_labels();
         labels.sort_by_key(|(key, _)| *key);
@@ -118,6 +124,8 @@ impl DevContainerManifest {
         format!("{:016x}", hasher.finish())
     }
 
+    /// The presense of and value of these labels identifies uniquely the devcontainer we want to connect to.
+    /// If a running container has these labels, we'll treat it as an existing container
     fn identifying_labels(&self) -> Vec<(&str, String)> {
         let labels = vec![
             (
