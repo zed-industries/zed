@@ -75,6 +75,11 @@ impl ShapedLine {
             descent: layout.descent,
             runs: layout.runs.clone(),
             len,
+            index_positions: if len == layout.len {
+                layout.index_positions.clone()
+            } else {
+                Vec::new()
+            },
         });
         self
     }
@@ -222,28 +227,36 @@ impl ShapedLine {
         let left_width = x_offset;
         let right_width = self.layout.width - left_width;
 
+        let mut left_layout = LineLayout {
+            font_size: self.layout.font_size,
+            width: left_width,
+            ascent: self.layout.ascent,
+            descent: self.layout.descent,
+            runs: left_runs,
+            len: byte_index,
+            index_positions: Vec::new(),
+        };
+        left_layout.compute_bidi_index_positions(&left_text);
+
+        let mut right_layout = LineLayout {
+            font_size: self.layout.font_size,
+            width: right_width,
+            ascent: self.layout.ascent,
+            descent: self.layout.descent,
+            runs: right_runs,
+            len: self.layout.len - byte_index,
+            index_positions: Vec::new(),
+        };
+        right_layout.compute_bidi_index_positions(&right_text);
+
         let left = ShapedLine {
-            layout: Arc::new(LineLayout {
-                font_size: self.layout.font_size,
-                width: left_width,
-                ascent: self.layout.ascent,
-                descent: self.layout.descent,
-                runs: left_runs,
-                len: byte_index,
-            }),
+            layout: Arc::new(left_layout),
             text: left_text,
             decoration_runs: left_decorations,
         };
 
         let right = ShapedLine {
-            layout: Arc::new(LineLayout {
-                font_size: self.layout.font_size,
-                width: right_width,
-                ascent: self.layout.ascent,
-                descent: self.layout.descent,
-                runs: right_runs,
-                len: self.layout.len - byte_index,
-            }),
+            layout: Arc::new(right_layout),
             text: right_text,
             decoration_runs: right_decorations,
         };
@@ -783,6 +796,7 @@ mod tests {
                     glyphs: shaped_glyphs,
                 }],
                 len: text.len(),
+                index_positions: Vec::new(),
             }),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
@@ -901,6 +915,7 @@ mod tests {
                     },
                 ],
                 len: 6,
+                index_positions: Vec::new(),
             }),
             text: "abcdef".into(),
             decoration_runs: SmallVec::new(),

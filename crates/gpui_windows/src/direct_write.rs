@@ -630,6 +630,7 @@ impl DirectWriteState {
                 descent,
                 runs,
                 len: text.len(),
+                index_positions: Vec::new(),
             })
         }
     }

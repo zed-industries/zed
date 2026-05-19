@@ -789,6 +789,7 @@ tree-sitter-typescript = { git = "https://github.com/zed-industries/tree-sitter-
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 tracing = "0.1.40"
 unicase = "2.6"
+unicode-bidi = "0.3.18"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
 unicode-width = "0.2"
