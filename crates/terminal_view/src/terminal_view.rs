@@ -6,7 +6,8 @@ pub mod terminal_scrollbar;
 
 use editor::{
     CursorAnimationTicker, Editor, EditorSettings, InertialCursorConfig, QuadCursor,
-    actions::SelectAll, blink_manager::BlinkManager, ui_scrollbar_settings_from_raw,
+    actions::SelectAll, blink_manager::BlinkManager, tick_cursor_animation,
+    ui_scrollbar_settings_from_raw,
 };
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
@@ -28,7 +29,7 @@ use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use task::TaskId;
 use terminal::{
@@ -58,7 +59,9 @@ use workspace::{
         HighlightedText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
     },
     register_serializable_item,
-    searchable::{Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
+    },
 };
 use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
@@ -67,7 +70,6 @@ struct ImeState {
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-const MAX_CURSOR_ANIMATION_DT: f32 = 1.0 / 120.0;
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -828,35 +830,7 @@ impl TerminalView {
     }
 
     fn tick_cursor_animations(&mut self) -> bool {
-        let now = Instant::now();
-        let quad_animating = self
-            .quad_cursor
-            .as_ref()
-            .is_some_and(|cursor| cursor.is_animating());
-        if !quad_animating {
-            self.cursor_animation_ticker.stop();
-            return false;
-        }
-
-        let dt = self.cursor_animation_ticker.tick(now);
-        let dt_secs = dt.as_secs_f32();
-        let steps = ((dt_secs / MAX_CURSOR_ANIMATION_DT).ceil() as usize).max(1);
-        let dt_per_step = dt_secs / steps as f32;
-
-        if let Some(cursor) = &mut self.quad_cursor {
-            for _ in 0..steps {
-                cursor.update_physics(dt_per_step);
-            }
-        }
-
-        let still_animating = self
-            .quad_cursor
-            .as_ref()
-            .is_some_and(|cursor| cursor.is_animating());
-        if !still_animating {
-            self.cursor_animation_ticker.stop();
-        }
-        still_animating
+        tick_cursor_animation(self.quad_cursor.as_mut(), &mut self.cursor_animation_ticker)
     }
 
     pub(crate) fn next_cursor_frame(
@@ -875,9 +849,11 @@ impl TerminalView {
         bool,
     ) {
         if should_blink_cursor
-            && self.last_cursor_origin.is_some_and(|previous| previous != cursor_origin)
+            && self
+                .last_cursor_origin
+                .is_some_and(|previous| previous != cursor_origin)
         {
-            self.blink_manager.update(cx, BlinkManager::cursor_moved);
+            self.blink_manager.update(cx, BlinkManager::pause_blinking);
         }
         self.last_cursor_origin = Some(cursor_origin);
 
@@ -899,7 +875,7 @@ impl TerminalView {
 
         let blink_opacity = self
             .blink_manager
-            .update(cx, |manager, cx| manager.opacity(cx));
+            .update(cx, |manager, _cx| manager.opacity());
         let opacity = if !should_show_cursor {
             0.0
         } else if should_blink_cursor {

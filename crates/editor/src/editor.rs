@@ -17,7 +17,6 @@ mod bracket_colorization;
 mod clangd_ext;
 pub mod code_context_menus;
 mod code_lens;
-mod cursor_vfx;
 pub mod display_map;
 mod document_colors;
 mod document_symbols;
@@ -74,7 +73,6 @@ pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
 pub(crate) use completions::split_words;
-pub use cursor_vfx::{CursorVfxConfig, CursorVfxSystem};
 use diagnostics::{ActiveDiagnostic, GlobalDiagnosticRenderer, InlineDiagnostic};
 pub use diagnostics::{DiagnosticRenderer, set_diagnostic_renderer};
 pub use display_map::{
@@ -83,10 +81,9 @@ pub use display_map::{
 };
 pub use edit_prediction_types::Direction;
 pub use editor_settings::{
-    CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, CursorVfx,
-    DiffViewStyle, DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap, SmoothCaret,
-    ui_scrollbar_settings_from_raw,
+    CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
+    DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
+    ScrollbarAxes, SearchSettings, ShowMinimap, SmoothCaret, ui_scrollbar_settings_from_raw,
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
@@ -101,7 +98,9 @@ use git::{
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
 pub use git::{RenderDiffHunkControlsFn, set_blame_renderer};
 pub use hover_popover::hover_markdown_style;
-pub use inertial_cursor::{CursorAnimationTicker, InertialCursorConfig, QuadCursor};
+pub use inertial_cursor::{
+    CursorAnimationTicker, InertialCursorConfig, QuadCursor, tick_cursor_animation,
+};
 pub use inlays::Inlay;
 pub use items::MAX_TAB_TITLE_LEN;
 pub use linked_editing_ranges::LinkedEdits;
@@ -1037,7 +1036,6 @@ pub struct Editor {
     cursor_animation_ticker: inertial_cursor::CursorAnimationTicker,
     cursor_animation_callback_generation: u64,
     active_cursor_animation_callback_generation: Option<u64>,
-    cursor_vfx_system: Option<cursor_vfx::CursorVfxSystem>,
     show_cursor_names: bool,
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
@@ -2372,15 +2370,6 @@ impl Editor {
             cursor_animation_ticker: inertial_cursor::CursorAnimationTicker::new(),
             cursor_animation_callback_generation: 0,
             active_cursor_animation_callback_generation: None,
-            cursor_vfx_system: {
-                let vfx_settings = &EditorSettings::get_global(cx).cursor_vfx;
-                let vfx_config = cursor_vfx::CursorVfxConfig::from_runtime_settings(vfx_settings);
-                if vfx_config.is_enabled() {
-                    Some(cursor_vfx::CursorVfxSystem::new(vfx_config))
-                } else {
-                    None
-                }
-            },
             current_line_highlight: None,
             autoindent_mode: Some(AutoindentMode::EachLine),
             collapse_matches: false,
@@ -3442,58 +3431,11 @@ impl Editor {
         }
     }
 
-    pub fn cursor_vfx_system(&self) -> Option<&cursor_vfx::CursorVfxSystem> {
-        self.cursor_vfx_system.as_ref()
-    }
-
-    pub fn cursor_vfx_system_mut(&mut self) -> Option<&mut cursor_vfx::CursorVfxSystem> {
-        self.cursor_vfx_system.as_mut()
-    }
-
     pub fn tick_cursor_animations(&mut self) -> bool {
-        let now = std::time::Instant::now();
-
-        let quad_animating = self.quad_cursor.as_ref().is_some_and(|c| c.is_animating());
-
-        if !quad_animating {
-            self.cursor_animation_ticker.stop();
-            return false;
-        }
-
-        let dt = self.cursor_animation_ticker.tick(now);
-        let dt_secs = dt.as_secs_f32();
-
-        let steps = ((dt_secs / inertial_cursor::MAX_ANIMATION_DT).ceil() as usize).max(1);
-        let dt_per_step = dt_secs / steps as f32;
-
-        if let Some(cursor) = &mut self.quad_cursor {
-            for _ in 0..steps {
-                cursor.update_physics(dt_per_step);
-            }
-        }
-
-        let still_animating = self
-            .quad_cursor
-            .as_ref()
-            .is_some_and(|cursor| cursor.is_animating());
-
-        if !still_animating {
-            self.cursor_animation_ticker.stop();
-        }
-
-        still_animating
-    }
-
-    pub fn update_cursor_vfx(&mut self, cursor_pos: gpui::Point<gpui::Pixels>) {
-        if let Some(vfx) = &mut self.cursor_vfx_system {
-            vfx.update(cursor_pos);
-        }
-    }
-
-    pub fn is_cursor_vfx_animating(&self) -> bool {
-        self.cursor_vfx_system
-            .as_ref()
-            .is_some_and(|vfx| vfx.is_animating())
+        inertial_cursor::tick_cursor_animation(
+            self.quad_cursor.as_mut(),
+            &mut self.cursor_animation_ticker,
+        )
     }
 
     pub fn set_current_line_highlight(
@@ -17187,18 +17129,6 @@ impl Editor {
                 }
             } else {
                 self.quad_cursor = None;
-            }
-
-            let vfx_config =
-                cursor_vfx::CursorVfxConfig::from_runtime_settings(&editor_settings.cursor_vfx);
-            if vfx_config.is_enabled() {
-                if let Some(vfx) = &mut self.cursor_vfx_system {
-                    vfx.set_config(vfx_config);
-                } else {
-                    self.cursor_vfx_system = Some(cursor_vfx::CursorVfxSystem::new(vfx_config));
-                }
-            } else {
-                self.cursor_vfx_system = None;
             }
 
             // Update smooth blink setting (after editor_settings is no longer used)

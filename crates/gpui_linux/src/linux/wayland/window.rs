@@ -1375,7 +1375,7 @@ impl PlatformWindow for WaylandWindow {
         self.0.callbacks.borrow_mut().button_layout_changed = Some(callback);
     }
 
-    fn draw(&self, scene: &Scene, _overlay: Option<&Scene>) {
+    fn draw(&self, scene: &Scene) {
         let mut state = self.borrow_mut();
 
         if state.renderer.device_lost() {

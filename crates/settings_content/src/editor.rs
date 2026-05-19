@@ -37,11 +37,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: false
     pub smooth_caret: Option<SmoothCaretSetting>,
-    /// Cursor visual effects (particle animations).
-    /// Enables effects like particle trails when cursor moves.
-    ///
-    /// Default: mode is "none" (disabled)
-    pub cursor_vfx: Option<CursorVfxContent>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -831,7 +826,7 @@ pub enum CursorShape {
 /// Detailed smooth cursor animation settings.
 /// Allows fine-grained control over cursor animation behavior.
 /// Recommended opt-in preset for Neovide-like motion:
-/// `{ "smooth_caret": { "enabled": true, "animation_time_ms": 150, "short_animation_time_ms": 40, "trail_size": 0.7, "animate_in_insert_mode": true, "smooth_blink": true }, "cursor_vfx": { "mode": "none" } }`
+/// `{ "smooth_caret": { "enabled": true, "animation_time_ms": 150, "short_animation_time_ms": 40, "trail_size": 0.7, "animate_in_insert_mode": true, "smooth_blink": true } }`
 #[with_fallible_options]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct SmoothCaretContent {
@@ -888,41 +883,6 @@ impl Default for SmoothCaretSetting {
     fn default() -> Self {
         SmoothCaretSetting::Bool(true)
     }
-}
-
-/// Cursor visual effect mode for particle animations.
-/// Provides enhanced visual feedback during cursor movement.
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    PartialEq,
-    Eq,
-    JsonSchema,
-    MergeFrom,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum CursorVfxModeContent {
-    /// No visual effects
-    #[default]
-    None,
-    /// Burst effect at cursor stop point
-    Sonicboom,
-}
-
-/// Cursor visual effects settings.
-#[with_fallible_options]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
-pub struct CursorVfxContent {
-    /// Visual effect mode. Set to "none" to disable effects, or "sonicboom" for burst effect.
-    ///
-    /// Default: none
-    pub mode: Option<CursorVfxModeContent>,
 }
 
 /// What to do when go to definition yields no results.

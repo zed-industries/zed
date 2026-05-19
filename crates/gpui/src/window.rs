@@ -788,9 +788,14 @@ pub(crate) struct DeferredDraw {
     paint_range: Range<PaintIndex>,
 }
 
-/// Cached scene data for animation-only frames.
-/// This allows fast re-rendering of animated elements without full layout.
+/// A cursor-free base scene captured on the last full frame.
+///
+/// Animation-only frames replay this scene instead of re-running layout, then
+/// paint just the animated cursor on top of it. This keeps continuous cursor
+/// animation cheap without changing any platform renderer.
 pub(crate) struct CachedScene {
+    /// The captured base scene, without the animated cursor.
+    scene: Scene,
     /// Cache validity key - viewport size
     viewport_size: Size<Pixels>,
     /// Cache validity key - scale factor
@@ -811,7 +816,6 @@ pub(crate) struct Frame {
     pub(crate) mouse_listeners: Vec<Option<AnyMouseListener>>,
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
-    pub(crate) overlay_scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
     pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
@@ -858,7 +862,6 @@ impl Frame {
             mouse_listeners: Vec::new(),
             dispatch_tree,
             scene: Scene::default(),
-            overlay_scene: Scene::default(),
             hitboxes: Vec::new(),
             window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
@@ -884,7 +887,6 @@ impl Frame {
         self.mouse_listeners.clear();
         self.dispatch_tree.clear();
         self.scene.clear();
-        self.overlay_scene.clear();
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
@@ -961,7 +963,6 @@ impl Frame {
         }
 
         self.scene.finish();
-        self.overlay_scene.finish();
     }
 }
 
@@ -969,12 +970,6 @@ impl Frame {
 enum InputModality {
     Mouse,
     Keyboard,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PaintTarget {
-    Base,
-    Overlay,
 }
 
 /// Holds the state for a specific window.
@@ -1036,7 +1031,6 @@ pub struct Window {
     animation_frame_requested: bool,
     animation_callbacks: Vec<Box<dyn FnOnce(&mut Window, &mut App) + 'static>>,
     cached_scene: Option<CachedScene>,
-    paint_target: PaintTarget,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -1653,7 +1647,6 @@ impl Window {
             animation_frame_requested: false,
             animation_callbacks: Vec::new(),
             cached_scene: None,
-            paint_target: PaintTarget::Base,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -2557,8 +2550,6 @@ impl Window {
         debug_assert!(self.rendered_entity_stack.is_empty());
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
-        self.next_frame.overlay_scene.clear();
-        self.paint_target = PaintTarget::Base;
 
         // Restore the previously-used input handler.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
@@ -2579,17 +2570,25 @@ impl Window {
         let mut used_animation_frame = false;
         if !cx.mode.skip_drawing() {
             if can_use_animation_frame {
-                // Animation-only frame: reuse base scene and paint overlay callbacks only
+                // Animation-only frame: replay the cached base scene and paint
+                // the animated cursor on top of it, skipping layout entirely.
                 self.draw_animation_frame(cx);
                 used_animation_frame = true;
             } else {
-                // Full frame: do normal layout + paint + cache the scene
+                // Full frame: normal layout + paint.
                 self.draw_roots(cx);
-                self.cache_current_scene();
 
-                // Run animation callbacks AFTER caching so animated elements
-                // are painted into the overlay scene (not included in cache)
-                self.run_animation_callbacks(cx);
+                // A cursor animation callback is registered during layout only
+                // while the cursor is animating. When one is present, cache the
+                // cursor-free base scene so subsequent animation-only frames can
+                // replay it, then run the callbacks to paint the cursor into
+                // this frame (after caching, so it stays out of the cache).
+                // When nothing animates this is skipped entirely, so the common
+                // path pays no extra cost.
+                if !self.animation_callbacks.is_empty() {
+                    self.cache_current_scene();
+                    self.run_animation_callbacks(cx);
+                }
             }
         }
 
@@ -2666,17 +2665,28 @@ impl Window {
         ArenaClearNeeded::new(&cx.element_arena)
     }
 
-    /// Cache the current scene for animation-only frames
+    /// Capture the just-drawn base scene so later animation-only frames can
+    /// replay it. Called before animation callbacks run, so the cached scene
+    /// never contains the animated cursor.
     fn cache_current_scene(&mut self) {
         self.cached_scene = Some(CachedScene {
+            scene: self.next_frame.scene.clone(),
             viewport_size: self.viewport_size,
             scale_factor: self.scale_factor,
         });
     }
 
-    /// Draw an animation-only frame by running animation callbacks into the overlay scene.
+    /// Draw an animation-only frame by replaying the cached base scene into the
+    /// next frame, then running animation callbacks to paint the cursor on top.
     fn draw_animation_frame(&mut self, cx: &mut App) {
-        self.next_frame.overlay_scene.clear();
+        self.next_frame.scene.clear();
+        if let Some(cached) = self.cached_scene.take() {
+            let operation_count = cached.scene.paint_operations.len();
+            self.next_frame
+                .scene
+                .replay(0..operation_count, &cached.scene);
+            self.cached_scene = Some(cached);
+        }
         self.run_animation_callbacks(cx);
     }
 
@@ -2711,7 +2721,9 @@ impl Window {
             &mut self.next_frame.deferred_draws,
             &mut self.rendered_frame.deferred_draws,
         );
-        mem::swap(&mut self.next_frame.scene, &mut self.rendered_frame.scene);
+        // Note: `scene` is intentionally not swapped. On an animation-only
+        // frame `next_frame.scene` already holds the replayed base scene plus
+        // the freshly painted cursor, so it is the scene we want to present.
         mem::swap(
             &mut self.next_frame.input_handlers,
             &mut self.rendered_frame.input_handlers,
@@ -2749,23 +2761,20 @@ impl Window {
         }
     }
 
-    /// Execute animation callbacks to paint animated elements.
-    /// Used by both full frames (after caching) and animation-only frames.
+    /// Execute animation callbacks to paint the animated cursor into the
+    /// current frame's scene. Used by both full frames (after the base scene is
+    /// cached) and animation-only frames (after the cached scene is replayed).
     fn run_animation_callbacks(&mut self, cx: &mut App) {
         if self.animation_callbacks.is_empty() {
             return;
         }
 
-        // Set paint phase for animation callbacks
         self.invalidator.set_phase(DrawPhase::Paint);
 
-        // Execute animation callbacks to paint animated elements into the overlay scene.
         let callbacks = std::mem::take(&mut self.animation_callbacks);
-        self.with_paint_target(PaintTarget::Overlay, |window| {
-            for callback in callbacks {
-                callback(window, cx);
-            }
-        });
+        for callback in callbacks {
+            callback(self, cx);
+        }
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -2792,10 +2801,7 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
-        let overlay = (!self.rendered_frame.overlay_scene.is_empty())
-            .then_some(&self.rendered_frame.overlay_scene);
-        self.platform_window
-            .draw(&self.rendered_frame.scene, overlay);
+        self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "input-latency-histogram")]
         self.input_latency_tracker.record_frame_presented();
         self.needs_present.set(false);
@@ -3616,21 +3622,6 @@ impl Window {
         });
     }
 
-    fn active_scene_mut(&mut self) -> &mut Scene {
-        match self.paint_target {
-            PaintTarget::Base => &mut self.next_frame.scene,
-            PaintTarget::Overlay => &mut self.next_frame.overlay_scene,
-        }
-    }
-
-    fn with_paint_target<R>(&mut self, target: PaintTarget, f: impl FnOnce(&mut Self) -> R) -> R {
-        let previous = self.paint_target;
-        self.paint_target = target;
-        let result = f(self);
-        self.paint_target = previous;
-        result
-    }
-
     /// Creates a new painting layer for the specified bounds. A "layer" is a batch
     /// of geometry that are non-overlapping and have the same draw order. This is typically used
     /// for performance reasons.
@@ -3643,13 +3634,13 @@ impl Window {
         let clipped_bounds = bounds.intersect(&content_mask.bounds);
         if !clipped_bounds.is_empty() {
             let layer_bounds = self.cover_bounds(clipped_bounds);
-            self.active_scene_mut().push_layer(layer_bounds);
+            self.next_frame.scene.push_layer(layer_bounds);
         }
 
         let result = f(self);
 
         if !clipped_bounds.is_empty() {
-            self.active_scene_mut().pop_layer();
+            self.next_frame.scene.pop_layer();
         }
 
         result
@@ -3672,7 +3663,7 @@ impl Window {
         for shadow in shadows {
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             let cover_bounds = self.cover_bounds(shadow_bounds);
-            self.active_scene_mut().insert_primitive(Shadow {
+            self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
                 bounds: cover_bounds,
@@ -3700,7 +3691,7 @@ impl Window {
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
         let content_mask = self.snapped_content_mask();
         let scale_factor = self.scale_factor();
-        self.active_scene_mut().insert_primitive(Quad {
+        self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: snapped_bounds,
             content_mask,
@@ -3724,7 +3715,8 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.active_scene_mut()
+        self.next_frame
+            .scene
             .insert_primitive(path.scale(scale_factor));
     }
 
@@ -3753,7 +3745,7 @@ impl Window {
         let element_opacity = self.element_opacity();
         let content_mask = self.snapped_content_mask();
 
-        self.active_scene_mut().insert_primitive(Underline {
+        self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
             bounds,
@@ -3785,7 +3777,7 @@ impl Window {
         let content_mask = self.snapped_content_mask();
         let stroke_thickness = self.snap_stroke(style.thickness);
 
-        self.active_scene_mut().insert_primitive(Underline {
+        self.next_frame.scene.insert_primitive(Underline {
             order: 0,
             pad: 0,
             bounds,
@@ -3858,7 +3850,7 @@ impl Window {
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
-                self.active_scene_mut().insert_primitive(SubpixelSprite {
+                self.next_frame.scene.insert_primitive(SubpixelSprite {
                     order: 0,
                     pad: 0,
                     bounds,
@@ -3868,7 +3860,7 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                self.active_scene_mut().insert_primitive(MonochromeSprite {
+                self.next_frame.scene.insert_primitive(MonochromeSprite {
                     order: 0,
                     pad: 0,
                     bounds,
@@ -3949,7 +3941,7 @@ impl Window {
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
-            self.active_scene_mut().insert_primitive(PolychromeSprite {
+            self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 pad: 0,
                 grayscale: false,
@@ -4015,7 +4007,7 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.active_scene_mut().insert_primitive(MonochromeSprite {
+        self.next_frame.scene.insert_primitive(MonochromeSprite {
             order: 0,
             pad: 0,
             bounds: final_bounds,
@@ -4064,7 +4056,7 @@ impl Window {
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
 
-        self.active_scene_mut().insert_primitive(PolychromeSprite {
+        self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             pad: 0,
             grayscale,
@@ -4088,7 +4080,7 @@ impl Window {
 
         let bounds = self.snap_bounds(bounds);
         let content_mask = self.snapped_content_mask();
-        self.active_scene_mut().insert_primitive(PaintSurface {
+        self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
             bounds,
             content_mask,

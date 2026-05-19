@@ -5,13 +5,14 @@ use language::CursorShape;
 
 use crate::editor_settings::SmoothCaret;
 
-/// Maximum animation step to prevent large jumps (~8.3ms at 120Hz)
-/// This ensures smooth animation even when frames are skipped.
-pub const MAX_ANIMATION_DT: f32 = 1.0 / 120.0;
-
 /// Fixed timestep for physics simulation (120Hz).
 /// Physics always runs at this rate; rendering interpolates between states.
 const PHYSICS_DT: f32 = 1.0 / 120.0;
+
+/// Largest physics step used when pacing a rendered frame. A long frame is
+/// split into chunks no larger than this so it can never produce a single
+/// oversized jump. Kept equal to `PHYSICS_DT`.
+const MAX_ANIMATION_DT: f32 = PHYSICS_DT;
 
 /// Minimum animation time for corner animation.
 /// Allows near-instant snap for leading corners with high trail_size.
@@ -766,6 +767,33 @@ impl QuadCursor {
             point(Pixels::from(x), Pixels::from(y))
         })
     }
+}
+
+/// Advance cursor physics for one rendered frame, pacing the simulation with
+/// `ticker`. Returns `true` if the cursor is still animating afterward.
+///
+/// Shared by the editor and the terminal so both drive `QuadCursor` identically.
+pub fn tick_cursor_animation(
+    quad_cursor: Option<&mut QuadCursor>,
+    ticker: &mut CursorAnimationTicker,
+) -> bool {
+    let Some(cursor) = quad_cursor.filter(|cursor| cursor.is_animating()) else {
+        ticker.stop();
+        return false;
+    };
+
+    let dt_secs = ticker.tick(Instant::now()).as_secs_f32();
+    let steps = ((dt_secs / MAX_ANIMATION_DT).ceil() as usize).max(1);
+    let dt_per_step = dt_secs / steps as f32;
+    for _ in 0..steps {
+        cursor.update_physics(dt_per_step);
+    }
+
+    let still_animating = cursor.is_animating();
+    if !still_animating {
+        ticker.stop();
+    }
+    still_animating
 }
 
 #[cfg(test)]

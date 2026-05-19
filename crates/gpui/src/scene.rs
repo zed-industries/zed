@@ -179,14 +179,6 @@ impl Scene {
             surfaces_iter: self.surfaces.iter().peekable(),
         }
     }
-
-    pub fn batches_with_overlay<'a>(
-        &'a self,
-        overlay: Option<&'a Scene>,
-    ) -> impl Iterator<Item = PrimitiveBatch> + 'a {
-        self.batches()
-            .chain(overlay.into_iter().flat_map(|scene| scene.batches()))
-    }
 }
 
 impl Clone for Scene {

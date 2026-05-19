@@ -1,15 +1,16 @@
 use crate::{
-    ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
-    ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
-    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
-    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
+    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
     PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
     SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll, blink_manager::BlinkManager,
+    ToggleFold, ToggleFoldAll,
+    blink_manager::BlinkManager,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -42,14 +43,13 @@ use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Context, Corners, CursorStyle, DispatchPhase,
     Edges, Element, ElementInputHandler, Entity, Focusable as _, Font, FontId, FontWeight,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
-    KeybindingKeystroke, Length, Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent,
-    MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement,
-    Pixels, PressureStage, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, anchored, checkerboard, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, pattern_slash, point, px, quad, relative, rgba,
-    size, solid_background, transparent_black,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Length,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, StyledText, TaskExt, TextAlign, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -1801,7 +1801,6 @@ impl EditorElement {
         cx: &mut App,
     ) -> Vec<CursorLayout> {
         let mut autoscroll_bounds = None;
-        let mut cursor_vfx_pos = None;
         let mut animation_state = None;
         let mut newest_cursor_index: Option<usize> = None;
         let editor_handle = self.editor.clone();
@@ -1813,7 +1812,7 @@ impl EditorElement {
             let is_editor_focused = editor.is_focused(window);
             let blink_opacity = editor
                 .blink_manager
-                .update(cx, |blink_manager, cx| blink_manager.opacity(cx));
+                .update(cx, |blink_manager, _cx| blink_manager.opacity());
 
             for (player_color, selections) in selections {
                 for selection in selections {
@@ -1873,25 +1872,23 @@ impl EditorElement {
                         cx.theme().colors().editor_background
                     };
 
-                    let block_text = if selection.cursor_shape == CursorShape::Block
-                        && !is_target_redacted
-                    {
-                        shape_block_cursor_text_for_point(
-                            &snapshot.display_snapshot,
-                            cursor_position,
-                            snapshot.placeholder_text().as_deref(),
-                            &block_cursor_font,
-                            cursor_row_layout.font_size,
-                            block_text_color,
-                            window,
-                        )
-                    } else {
-                        None
-                    };
+                    let block_text =
+                        if selection.cursor_shape == CursorShape::Block && !is_target_redacted {
+                            shape_block_cursor_text_for_point(
+                                &snapshot.display_snapshot,
+                                cursor_position,
+                                snapshot.placeholder_text().as_deref(),
+                                &block_cursor_font,
+                                cursor_row_layout.font_size,
+                                block_text_color,
+                                window,
+                            )
+                        } else {
+                            None
+                        };
                     if let Some(shaped) = &block_text {
                         block_width = block_width.max(shaped.width);
                     }
-                    let block_cursor_font_size = cursor_row_layout.font_size;
 
                     let logical_x = cursor_character_x - scroll_pixel_position.x.into();
                     let logical_y: Pixels = ((cursor_position.row().as_f64() - scroll_position.y)
@@ -1919,10 +1916,6 @@ impl EditorElement {
                     } else {
                         (logical_x, logical_y, None)
                     };
-
-                    if selection.is_newest {
-                        cursor_vfx_pos = Some(point(x, y));
-                    }
 
                     if selection.is_newest {
                         editor.pixel_position_of_newest_cursor = Some(point(
@@ -2018,46 +2011,29 @@ impl EditorElement {
             window.request_autoscroll(bounds);
         }
 
-        // Update VFX and request next frame if still animating
-        // Note: tick_cursor_animations() handles physics with centralized frame pacing
-        let cursor_vfx_pos = cursor_vfx_pos;
-        let update_vfx_in_callback = animation_state.is_some();
-        let is_animating = self.editor.update(cx, move |editor, cx| {
-            let cursor_animating = editor.is_cursor_animating();
-            let vfx_animating = editor.is_cursor_vfx_animating();
-            let blink_animating = editor.blink_manager.read(cx).is_smooth_blink_animating();
-            let is_animating = cursor_animating || vfx_animating || blink_animating;
-
-            // Update VFX system with cursor position from quad cursor
-            if !(is_animating && update_vfx_in_callback) {
-                if let Some(quad) = editor.quad_cursor() {
-                    let pos = quad.visual_pos();
-                    editor.update_cursor_vfx(pos);
-                } else if let Some(pos) = cursor_vfx_pos {
-                    editor.update_cursor_vfx(pos);
-                }
-            }
-
-            is_animating
+        // The cursor animates either because it is moving (quad cursor physics)
+        // or because smooth blink is mid-fade. In both cases the animated cursor
+        // is painted by `paint_cursor_animation_frame` rather than `paint_cursors`.
+        let is_animating = self.editor.update(cx, |editor, cx| {
+            editor.is_cursor_animating()
+                || editor.blink_manager.read(cx).is_smooth_blink_animating()
         });
-        // Request animation-only frame for smooth cursor animation.
-        // This uses scene caching to skip full layout on animation frames.
-        // We register an animation callback to tick physics and paint the cursor
-        // on top of the cached scene.
+
+        // Request an animation-only frame: the cursor is repainted on top of the
+        // cached scene without re-running editor layout. Every visible cursor is
+        // handed to the callback and `cursor_layouts` is returned empty, so
+        // `paint_cursors` paints nothing and the cursor is never double-painted.
         if is_animating && let Some(mut state) = animation_state {
-            if let Some(newest_idx) = newest_cursor_index {
+            if let Some(newest_index) = newest_cursor_index {
                 let mut other_cursors = Vec::with_capacity(cursor_layouts.len().saturating_sub(1));
-                let mut kept = Vec::new();
-                for (i, cursor) in cursor_layouts.into_iter().enumerate() {
-                    if i == newest_idx {
-                        kept.push(cursor);
-                    } else {
+                for (index, cursor) in cursor_layouts.into_iter().enumerate() {
+                    if index != newest_index {
                         other_cursors.push(cursor);
                     }
                 }
-                cursor_layouts = kept;
                 state.other_cursors = other_cursors;
             }
+            cursor_layouts = Vec::new();
 
             let generation = self.editor.update(cx, |editor, _cx| {
                 editor.begin_cursor_animation_callback_cycle()
@@ -7046,37 +7022,11 @@ impl EditorElement {
     }
 
     fn paint_cursors(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
-        // Skip cursor painting during regular paint when animation is active.
-        // The animation callback will handle cursor painting to avoid
-        // the cursor being included in the cached scene.
-        let is_animating = {
-            let editor = self.editor.read(cx);
-            editor.is_cursor_animating() || editor.is_cursor_vfx_animating()
-        };
-
-        if is_animating {
-            return;
-        }
-
+        // While the cursor animates, `layout_visible_cursors` hands every cursor
+        // to the animation callback and leaves `visible_cursors` empty, so this
+        // loop paints nothing and the cursor is never double-painted.
         for cursor in &mut layout.visible_cursors {
             cursor.paint(layout.content_origin, window, cx);
-        }
-
-        // Paint cursor VFX particles if enabled
-        if let Some(vfx_system) = self.editor.read(cx).cursor_vfx_system() {
-            // Use the cursor color from the first visible cursor, or fallback to white
-            let cursor_color =
-                layout
-                    .visible_cursors
-                    .first()
-                    .map(|c| c.color)
-                    .unwrap_or(gpui::Hsla {
-                        h: 0.0,
-                        s: 0.0,
-                        l: 1.0,
-                        a: 1.0,
-                    });
-            vfx_system.paint(layout.content_origin, window, cursor_color);
         }
     }
 
@@ -12633,77 +12583,67 @@ fn paint_cursor_animation_frame(
 
     let blink_opacity = state
         .blink_manager
-        .update(cx, |blink_manager, cx| blink_manager.opacity(cx));
+        .update(cx, |blink_manager, _cx| blink_manager.opacity());
 
-    let (
-        cursor_origin,
-        cursor_corners,
-        cursor_animating,
-        cursor_or_vfx_animating,
-        fresh_block_text,
-        destination_pos,
-    ) = state.editor.update(cx, |editor, cx| {
-        editor.tick_cursor_animations();
+    let (cursor_origin, cursor_corners, cursor_animating, fresh_block_text, destination_pos) =
+        state.editor.update(cx, |editor, cx| {
+            editor.tick_cursor_animations();
 
-        let (origin, quad_corners) = if let Some(quad) = editor.quad_cursor() {
-            let corners = quad.interpolated_corner_positions();
-            (
-                quad_top_left_or_fallback(Some(corners), quad.visual_pos()),
-                Some(corners),
-            )
-        } else {
-            (state.cursor_pos, None)
-        };
+            let (origin, quad_corners) = if let Some(quad) = editor.quad_cursor() {
+                let corners = quad.interpolated_corner_positions();
+                (
+                    quad_top_left_or_fallback(Some(corners), quad.visual_pos()),
+                    Some(corners),
+                )
+            } else {
+                (state.cursor_pos, None)
+            };
 
-        editor.update_cursor_vfx(origin);
+            let cursor_animating = editor.is_cursor_animating();
 
-        let cursor_animating = editor.is_cursor_animating();
-        let cursor_or_vfx_animating = cursor_animating || editor.is_cursor_vfx_animating();
-
-        let fresh_block_text = if state.block_text.is_none()
-            && state.cursor_shape == CursorShape::Block
-            && !state.is_target_redacted
-        {
-            let snapshot = editor.display_snapshot(cx);
-            let placeholder_text = if snapshot.is_empty() {
-                editor.placeholder_text(cx)
+            let fresh_block_text = if state.block_text.is_none()
+                && state.cursor_shape == CursorShape::Block
+                && !state.is_target_redacted
+            {
+                let snapshot = editor.display_snapshot(cx);
+                let placeholder_text = if snapshot.is_empty() {
+                    editor.placeholder_text(cx)
+                } else {
+                    None
+                };
+                shape_block_cursor_text_for_point(
+                    &snapshot,
+                    state.target_display_point,
+                    placeholder_text.as_deref(),
+                    &state.font,
+                    state.font_size,
+                    state.block_text_color,
+                    window,
+                )
             } else {
                 None
             };
-            shape_block_cursor_text_for_point(
-                &snapshot,
-                state.target_display_point,
-                placeholder_text.as_deref(),
-                &state.font,
-                state.font_size,
-                state.block_text_color,
-                window,
+
+            let destination_pos = if cursor_animating
+                && state.cursor_shape == CursorShape::Block
+                && !state.is_target_redacted
+            {
+                editor.quad_cursor().map(|quad| quad.destination_pos())
+            } else {
+                None
+            };
+
+            (
+                origin,
+                quad_corners,
+                cursor_animating,
+                fresh_block_text,
+                destination_pos,
             )
-        } else {
-            None
-        };
-
-        let destination_pos = if cursor_animating
-            && state.cursor_shape == CursorShape::Block
-            && !state.is_target_redacted
-        {
-            editor.quad_cursor().map(|quad| quad.destination_pos())
-        } else {
-            None
-        };
-
-        (
-            origin,
-            quad_corners,
-            cursor_animating,
-            cursor_or_vfx_animating,
-            fresh_block_text,
-            destination_pos,
-        )
-    });
+        });
 
     let blink_animating = state.blink_manager.read(cx).is_smooth_blink_animating();
-    let still_animating = cursor_or_vfx_animating || blink_animating;
+    let still_animating = cursor_animating || blink_animating;
 
     let block_text = state.block_text.clone().or(fresh_block_text);
 
@@ -12737,10 +12677,6 @@ fn paint_cursor_animation_frame(
 
     for other in &mut state.other_cursors {
         other.paint(state.content_origin, window, cx);
-    }
-
-    if let Some(vfx_system) = state.editor.read(cx).cursor_vfx_system() {
-        vfx_system.paint(state.content_origin, window, state.cursor_color);
     }
 
     if !state

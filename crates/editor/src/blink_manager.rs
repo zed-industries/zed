@@ -59,7 +59,13 @@ impl BlinkManager {
         self.last_smooth_blink_update = None;
     }
 
-    pub fn opacity(&mut self, cx: &mut Context<Self>) -> f32 {
+    /// Advance and return the smooth-blink opacity (0.0 = hidden, 1.0 = solid).
+    ///
+    /// Interpolates `current_opacity` toward `target_opacity` using elapsed
+    /// wall-clock time. It deliberately does not call `cx.notify()`: redraws
+    /// during a fade are driven by the cursor animation-frame loop, and
+    /// notifying here would invalidate the window's cached scene every frame.
+    pub fn opacity(&mut self) -> f32 {
         if !self.smooth_blink_enabled {
             return if self.visible { 1.0 } else { 0.0 };
         }
@@ -68,13 +74,7 @@ impl BlinkManager {
         if let Some(last_update) = self.last_smooth_blink_update {
             let dt_ms = now.duration_since(last_update).as_secs_f32() * 1000.0;
             let blend_factor = (dt_ms / SMOOTH_BLINK_FADE_DURATION_MS).clamp(0.0, 1.0);
-
-            let new_opacity =
-                self.current_opacity + (self.target_opacity - self.current_opacity) * blend_factor;
-            if (new_opacity - self.current_opacity).abs() > 0.001 {
-                self.current_opacity = new_opacity;
-                cx.notify();
-            }
+            self.current_opacity += (self.target_opacity - self.current_opacity) * blend_factor;
         }
         self.last_smooth_blink_update = Some(now);
         self.current_opacity
@@ -89,9 +89,9 @@ impl BlinkManager {
         self.blink_epoch
     }
 
-    /// Reset blink state after a logical cursor move.
-    /// Cursor becomes visible immediately and blinking resumes after a short pause.
-    pub fn cursor_moved(&mut self, cx: &mut Context<Self>) {
+    /// Show the cursor immediately and pause blinking briefly. Called when the
+    /// user moves the cursor or types; blinking resumes after a short delay.
+    pub fn pause_blinking(&mut self, cx: &mut Context<Self>) {
         self.show_cursor(cx);
         self.blinking_paused = true;
 
@@ -102,10 +102,6 @@ impl BlinkManager {
             this.update(cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
         })
         .detach();
-    }
-
-    pub fn pause_blinking(&mut self, cx: &mut Context<Self>) {
-        self.cursor_moved(cx);
     }
 
     fn resume_cursor_blinking(&mut self, epoch: usize, cx: &mut Context<Self>) {
@@ -206,9 +202,9 @@ mod tests {
             blink_manager.disable(cx);
             blink_manager.set_smooth_blink_enabled(true);
 
-            assert_eq!(blink_manager.opacity(cx), 0.0);
-            blink_manager.cursor_moved(cx);
-            assert_eq!(blink_manager.opacity(cx), 1.0);
+            assert_eq!(blink_manager.opacity(), 0.0);
+            blink_manager.pause_blinking(cx);
+            assert_eq!(blink_manager.opacity(), 1.0);
             assert!(blink_manager.should_render());
             assert!(!blink_manager.is_smooth_blink_animating());
         });

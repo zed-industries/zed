@@ -10,13 +10,8 @@ pub use settings::{
     MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap,
     SnippetSortOrder,
 };
-use settings::{
-    CursorVfxContent, CursorVfxModeContent, RegisterSetting, RelativeLineNumbers, Settings,
-    SmoothCaretSetting,
-};
+use settings::{RegisterSetting, RelativeLineNumbers, Settings, SmoothCaretSetting};
 use ui::scrollbars::ShowScrollbar;
-
-use crate::cursor_vfx::CursorVfxMode;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
@@ -25,7 +20,6 @@ pub struct EditorSettings {
     pub cursor_blink: bool,
     pub cursor_shape: Option<CursorShape>,
     pub smooth_caret: SmoothCaret,
-    pub cursor_vfx: CursorVfx,
     pub current_line_highlight: CurrentLineHighlight,
     pub selection_highlight: bool,
     pub rounded_selection: bool,
@@ -244,36 +238,6 @@ impl SmoothCaret {
     }
 }
 
-/// Runtime settings for cursor visual effects.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct CursorVfx {
-    pub mode: CursorVfxMode,
-}
-
-impl CursorVfx {
-    pub fn from_setting(setting: Option<CursorVfxContent>) -> Self {
-        Self {
-            mode: setting
-                .and_then(|c| c.mode)
-                .map(Into::into)
-                .unwrap_or(CursorVfxMode::None),
-        }
-    }
-
-    pub fn is_enabled(&self) -> bool {
-        self.mode != CursorVfxMode::None
-    }
-}
-
-impl From<CursorVfxModeContent> for CursorVfxMode {
-    fn from(mode: CursorVfxModeContent) -> Self {
-        match mode {
-            CursorVfxModeContent::None => CursorVfxMode::None,
-            CursorVfxModeContent::Sonicboom => CursorVfxMode::Sonicboom,
-        }
-    }
-}
-
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
@@ -295,7 +259,6 @@ impl Settings for EditorSettings {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
             smooth_caret: SmoothCaret::from_setting(editor.smooth_caret),
-            cursor_vfx: CursorVfx::from_setting(editor.cursor_vfx),
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),
             rounded_selection: editor.rounded_selection.unwrap(),

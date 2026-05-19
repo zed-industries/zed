@@ -937,11 +937,11 @@ impl PlatformWindow for WindowsWindow {
             .set(Some(callback));
     }
 
-    fn draw(&self, scene: &Scene, overlay: Option<&Scene>) {
+    fn draw(&self, scene: &Scene) {
         self.state
             .renderer
             .borrow_mut()
-            .draw(scene, overlay, self.state.background_appearance.get())
+            .draw(scene, self.state.background_appearance.get())
             .log_err();
     }
 
