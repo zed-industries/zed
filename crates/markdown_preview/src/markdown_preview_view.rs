@@ -169,7 +169,7 @@ impl MarkdownPreviewView {
         None
     }
 
-    fn create_markdown_view(
+    pub fn create_markdown_view(
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -278,6 +278,12 @@ impl MarkdownPreviewView {
         {
             self.set_editor(editor, window, cx);
         }
+    }
+
+    pub fn is_markdown_path(path: impl AsRef<Path>) -> bool {
+        path.as_ref()
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
     }
 
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {

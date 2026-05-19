@@ -30,7 +30,7 @@ use gpui::{
     point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
-use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
@@ -1050,10 +1050,7 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
-            let is_markdown = !is_dir
-                && entry.path.extension().is_some_and(|ext| {
-                    ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
-                });
+            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1084,7 +1081,7 @@ impl ProjectPanel {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_markdown, |menu| {
-                            menu.action("Open Preview", Box::new(OpenMarkdownPreview))
+                            menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
                         })
                         .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
@@ -1104,7 +1101,7 @@ impl ProjectPanel {
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
                             .when(is_markdown, |menu| {
-                                menu.action("Open Preview", Box::new(OpenMarkdownPreview))
+                                menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
                             })
                             .when(is_dir, |menu| {
                                 menu.separator()
@@ -1663,10 +1660,7 @@ impl ProjectPanel {
         if !entry.is_file() {
             return;
         }
-        let is_markdown = entry.path.extension().is_some_and(|ext| {
-            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
-        });
-        if !is_markdown {
+        if !MarkdownPreviewView::is_markdown_path(&*entry.path) {
             return;
         }
 
@@ -1705,17 +1699,8 @@ impl ProjectPanel {
                 };
                 let Some((preview, pane)) = workspace
                     .update(cx, |workspace, cx| {
-                        let language_registry =
-                            workspace.project().read(cx).languages().clone();
-                        let workspace_handle = workspace.weak_handle();
-                        let preview = MarkdownPreviewView::new(
-                            MarkdownPreviewMode::Default,
-                            editor,
-                            workspace_handle,
-                            language_registry,
-                            window,
-                            cx,
-                        );
+                        let preview =
+                            MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
                         (preview, workspace.active_pane().clone())
                     })
                     .ok()
