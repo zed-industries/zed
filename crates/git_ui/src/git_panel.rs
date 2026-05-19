@@ -5145,7 +5145,8 @@ impl GitPanel {
                 },
             ));
             self._repo_subscriptions
-                .push(cx.observe(active_repository, |_this, _repo, cx| {
+                .push(cx.observe(active_repository, |this, repo, cx| {
+                    this.update_counts(repo.read(cx));
                     cx.notify();
                 }));
         }
