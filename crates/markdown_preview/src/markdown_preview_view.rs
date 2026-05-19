@@ -18,7 +18,7 @@ use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
     MarkdownOptions, MarkdownStyle,
 };
-use project::Project;
+use project::{Project, ProjectPath};
 use project::search::SearchQuery;
 use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
@@ -30,6 +30,7 @@ use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions};
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
+use workspace::notifications::NotifyResultExt;
 use workspace::{OpenOptions, OpenVisible, Pane, Workspace};
 
 use crate::{
@@ -284,6 +285,61 @@ impl MarkdownPreviewView {
         path.as_ref()
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+    }
+
+    /// Opens a markdown preview for a file that may not yet be open in an editor.
+    /// The raw editor tab is added transiently to load the buffer, then removed unless
+    /// the file was already open before this call.
+    pub fn open_for_project_path<V: 'static>(
+        project_path: ProjectPath,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<V>,
+    ) {
+        let was_already_open = workspace
+            .update(cx, |workspace, cx| {
+                workspace.panes().iter().any(|pane| {
+                    pane.read(cx).item_for_path(project_path.clone(), cx).is_some()
+                })
+            })
+            .unwrap_or(false);
+
+        let Ok(open_task) = workspace.update(cx, |workspace, cx| {
+            workspace.open_path_preview(project_path, None, false, false, false, window, cx)
+        }) else {
+            return;
+        };
+
+        cx.spawn_in(window, async move |_this, mut cx| {
+            let Some(item) = open_task.await.notify_workspace_async_err(workspace.clone(), &mut cx)
+            else {
+                return;
+            };
+            let item_id = item.item_id();
+            cx.update(|window, cx| {
+                let Some(editor) = item.act_as::<Editor>(cx) else {
+                    return;
+                };
+                let Some((preview, pane)) = workspace
+                    .update(cx, |workspace, cx| {
+                        let preview =
+                            Self::create_markdown_view(workspace, editor, window, cx);
+                        (preview, workspace.active_pane().clone())
+                    })
+                    .ok()
+                else {
+                    return;
+                };
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(preview), true, true, None, window, cx);
+                    if !was_already_open {
+                        pane.remove_item(item_id, false, false, window, cx);
+                    }
+                });
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {

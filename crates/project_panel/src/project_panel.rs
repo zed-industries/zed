@@ -1657,66 +1657,14 @@ impl ProjectPanel {
         let Some((worktree, entry)) = self.selected_entry(cx) else {
             return;
         };
-        if !entry.is_file() {
+        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
             return;
         }
-        if !MarkdownPreviewView::is_markdown_path(&*entry.path) {
-            return;
-        }
-
         let project_path = ProjectPath {
             worktree_id: worktree.id(),
             path: entry.path.clone(),
         };
-        let workspace = self.workspace.clone();
-
-        // Snapshot whether this file is already open so we know not to close it later.
-        let was_already_open = workspace
-            .update(cx, |workspace, cx| {
-                workspace.panes().iter().any(|pane| {
-                    pane.read(cx)
-                        .item_for_path(project_path.clone(), cx)
-                        .is_some()
-                })
-            })
-            .unwrap_or(false);
-
-        // Open without activating so the raw editor never becomes the visible tab.
-        let Ok(open_task) = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(project_path, None, false, false, false, window, cx)
-        }) else {
-            return;
-        };
-
-        cx.spawn_in(window, async move |_this, mut cx| {
-            let Some(item) = open_task.await.notify_workspace_async_err(workspace.clone(), &mut cx) else {
-                return;
-            };
-            let item_id = item.item_id();
-            cx.update(|window, cx| {
-                let Some(editor) = item.act_as::<Editor>(cx) else {
-                    return;
-                };
-                let Some((preview, pane)) = workspace
-                    .update(cx, |workspace, cx| {
-                        let preview =
-                            MarkdownPreviewView::create_markdown_view(workspace, editor, window, cx);
-                        (preview, workspace.active_pane().clone())
-                    })
-                    .ok()
-                else {
-                    return;
-                };
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(Box::new(preview), true, true, None, window, cx);
-                    if !was_already_open {
-                        pane.remove_item(item_id, false, false, window, cx);
-                    }
-                });
-            })
-            .ok();
-        })
-        .detach();
+        MarkdownPreviewView::open_for_project_path(project_path, self.workspace.clone(), window, cx);
     }
 
     fn open_internal(
