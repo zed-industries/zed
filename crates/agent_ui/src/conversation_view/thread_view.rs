@@ -215,19 +215,19 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
-struct CatNumberedCodeBlock<'a> {
-    lines: Vec<CatNumberedCodeLine<'a>>,
+/// `cat -n`-style numbered code block, already stripped of its line-number
+/// prefixes and ready to render. Line numbers are guaranteed to be contiguous
+/// starting at `first_number`, so we only store the first number and the line
+/// count rather than allocating a per-line `Vec`.
+struct ParsedCatNumberedCode {
+    code: String,
+    first_number: u32,
+    line_count: usize,
 }
 
-struct CatNumberedCodeLine<'a> {
-    number: u32,
-    text: &'a str,
-}
-
-fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<CatNumberedCodeBlock<'_>> {
+fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<ParsedCatNumberedCode> {
     let (_tag, code) = parse_single_fenced_code_block(markdown)?;
-    let lines = parse_cat_numbered_lines(code)?;
-    Some(CatNumberedCodeBlock { lines })
+    parse_cat_numbered_code(code)
 }
 
 fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
@@ -246,30 +246,47 @@ fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
     Some((tag, code))
 }
 
-fn parse_cat_numbered_lines(code: &str) -> Option<Vec<CatNumberedCodeLine<'_>>> {
+/// Walks `code` exactly once: for each line it validates and strips the
+/// `NNN\t` prefix, then pushes the line's content into the accumulating
+/// code buffer (with `\n` between lines, no trailing newline). Verifies that
+/// the line numbers form a contiguous, increasing sequence.
+fn parse_cat_numbered_code(code: &str) -> Option<ParsedCatNumberedCode> {
     if code.is_empty() {
         return None;
     }
 
-    let mut lines = Vec::new();
+    let mut output = String::with_capacity(code.len());
+    let mut first_number = None;
     let mut expected_number = None;
-    for line in code.split_inclusive('\n') {
-        let line = line
-            .strip_suffix('\n')
-            .unwrap_or(line)
-            .strip_suffix('\r')
-            .unwrap_or_else(|| line.strip_suffix('\n').unwrap_or(line));
+    let mut line_count: usize = 0;
+    for raw_line in code.split_inclusive('\n') {
+        let line = strip_line_ending(raw_line);
         let (number, text) = parse_cat_numbered_line(line)?;
-        if let Some(expected_number) = expected_number
-            && number != expected_number
-        {
-            return None;
+        if let Some(expected) = expected_number {
+            if number != expected {
+                return None;
+            }
+        } else {
+            first_number = Some(number);
         }
         expected_number = number.checked_add(1);
-        lines.push(CatNumberedCodeLine { number, text });
+        if line_count > 0 {
+            output.push('\n');
+        }
+        output.push_str(text);
+        line_count += 1;
     }
 
-    Some(lines)
+    Some(ParsedCatNumberedCode {
+        code: output,
+        first_number: first_number?,
+        line_count,
+    })
+}
+
+fn strip_line_ending(line: &str) -> &str {
+    let without_lf = line.strip_suffix('\n').unwrap_or(line);
+    without_lf.strip_suffix('\r').unwrap_or(without_lf)
 }
 
 fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
@@ -287,7 +304,7 @@ fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
 }
 
 fn render_cat_numbered_code_block(
-    code_block: CatNumberedCodeBlock<'_>,
+    parsed: ParsedCatNumberedCode,
     language: Option<Arc<Language>>,
     markdown_style: MarkdownStyle,
     copy_button_id: String,
@@ -295,34 +312,30 @@ fn render_cat_numbered_code_block(
 ) -> AnyElement {
     use std::fmt::Write as _;
 
-    let line_count = code_block.lines.len();
-    let gutter_width = code_block
-        .lines
-        .last()
-        .map_or(1, |line| line.number.to_string().len());
+    let ParsedCatNumberedCode {
+        code,
+        first_number,
+        line_count,
+    } = parsed;
 
-    // Lines are contiguous and increasing (verified during parsing), and
-    // `gutter_width` is taken from the largest line number, so every line
-    // contributes exactly `gutter_width` bytes to the gutter plus a newline
-    // between adjacent lines.
+    // Line numbers are contiguous (verified during parsing), so the largest
+    // line number is `first_number + line_count - 1`. Sizing the gutter to
+    // that number's digit count means every rendered line contributes exactly
+    // `gutter_width` bytes to the gutter, plus a newline between adjacent
+    // lines.
+    let last_number = first_number
+        .saturating_add(u32::try_from(line_count.saturating_sub(1)).unwrap_or(u32::MAX));
+    let gutter_width = last_number.to_string().len().max(1);
     let gutter_capacity = line_count * gutter_width + line_count.saturating_sub(1);
-    let code_capacity = code_block
-        .lines
-        .iter()
-        .map(|line| line.text.len())
-        .sum::<usize>()
-        + line_count.saturating_sub(1);
 
-    let mut code = String::with_capacity(code_capacity);
     let mut gutter = String::with_capacity(gutter_capacity);
-    for (line_ix, line) in code_block.lines.iter().enumerate() {
-        if line_ix > 0 {
-            code.push('\n');
+    for i in 0..line_count {
+        if i > 0 {
             gutter.push('\n');
         }
-        code.push_str(line.text);
+        let line_number = first_number.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
         // Writes to a `String` are infallible, so the `Result` can be ignored.
-        let _ = write!(&mut gutter, "{:>width$}", line.number, width = gutter_width);
+        let _ = write!(&mut gutter, "{line_number:>gutter_width$}");
     }
 
     let mut code_text_style = markdown_style.base_text_style.clone();
@@ -433,18 +446,24 @@ mod numbered_code_block_tests {
 
     #[test]
     fn parses_cat_numbered_markdown_code_block() {
-        let block = parse_cat_numbered_markdown_code_block(
+        let parsed = parse_cat_numbered_markdown_code_block(
             "```rs zed/crates/example.rs\n     2\tfn main() {\n     3\t    println!(\"hi\");\n     4\t}\n```\n",
         )
         .expect("cat-numbered block should parse");
 
-        assert_eq!(block.lines.len(), 3);
-        assert_eq!(block.lines[0].number, 2);
-        assert_eq!(block.lines[0].text, "fn main() {");
-        assert_eq!(block.lines[1].number, 3);
-        assert_eq!(block.lines[1].text, "    println!(\"hi\");");
-        assert_eq!(block.lines[2].number, 4);
-        assert_eq!(block.lines[2].text, "}");
+        assert_eq!(parsed.line_count, 3);
+        assert_eq!(parsed.first_number, 2);
+        assert_eq!(parsed.code, "fn main() {\n    println!(\"hi\");\n}");
+    }
+
+    #[test]
+    fn parses_cat_numbered_code_with_crlf_line_endings() {
+        let parsed = parse_cat_numbered_code("     1\tline one\r\n     2\tline two\r\n")
+            .expect("crlf-terminated cat-numbered code should parse");
+
+        assert_eq!(parsed.line_count, 2);
+        assert_eq!(parsed.first_number, 1);
+        assert_eq!(parsed.code, "line one\nline two");
     }
 
     #[test]
@@ -8060,10 +8079,10 @@ impl ThreadView {
         }
 
         let markdown = markdown.read(cx);
-        let code_block = parse_cat_numbered_markdown_code_block(markdown.source())?;
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
         let language = markdown.first_code_block_language();
         Some(render_cat_numbered_code_block(
-            code_block,
+            parsed,
             language,
             markdown_style,
             format!("copy-read-file-output-{entry_ix}-{context_ix}"),
