@@ -688,8 +688,8 @@ pub fn builtin_skills() -> Vec<Skill> {
 /// gets a synthetic `<built-in>` path since it doesn't live on disk.
 fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
     let (metadata, body) = extract_frontmatter(content)?;
-    validate_name(&metadata.name)?;
-    validate_description(&metadata.description)?;
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
 
     let synthetic_dir = PathBuf::from(format!("<built-in>/{}", name));
     let synthetic_path = synthetic_dir.join(SKILL_FILE_NAME);
