@@ -2592,6 +2592,7 @@ impl EditPredictionStore {
                             ),
                         )
                     });
+
                 zeta::request_prediction_with_zeta(self, inputs, capture_events, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),

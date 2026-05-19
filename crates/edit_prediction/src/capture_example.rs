@@ -15,7 +15,7 @@ pub fn capture_example(
     project: Entity<Project>,
     buffer: Entity<Buffer>,
     cursor_anchor: language::Anchor,
-    mut events: Vec<StoredEvent>,
+    events: Vec<StoredEvent>,
     recently_opened_files: Vec<RecentFile>,
     recently_viewed_files: Vec<RecentFile>,
     uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
@@ -105,7 +105,7 @@ pub fn capture_example(
                 edit_history.push('\n');
             }
         }
-        let uncommitted_diff_requires_edit_history_rollback = !edit_history.is_empty();
+        let uncommitted_diff_contains_edit_history = !edit_history.is_empty();
 
         // Initialize an empty patch with context lines, to make it easy
         // to write the expected patch by hand.
@@ -140,7 +140,7 @@ pub fn capture_example(
             uncommitted_diff,
             recently_opened_files,
             recently_viewed_files,
-            uncommitted_diff_requires_edit_history_rollback,
+            uncommitted_diff_contains_edit_history,
             cursor_path,
             cursor_position: String::new(),
             edit_history,
@@ -229,21 +229,101 @@ fn compute_uncommitted_diff(
     snapshots_by_path: HashMap<Arc<Path>, (language::BufferSnapshot, BufferDiffSnapshot)>,
 ) -> String {
     let mut uncommitted_diff = String::new();
+    let mut snapshots_by_path = snapshots_by_path.into_iter().collect::<Vec<_>>();
+    snapshots_by_path.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
     for (relative_path, (buffer_snapshot, diff_snapshot)) in snapshots_by_path {
-        if let Some(head_text) = &diff_snapshot.base_text_string() {
-            let file_diff = language::unified_diff(head_text, &buffer_snapshot.text());
-            if !file_diff.is_empty() {
-                let path_str = relative_path.to_string_lossy();
-                writeln!(uncommitted_diff, "--- a/{path_str}").ok();
-                writeln!(uncommitted_diff, "+++ b/{path_str}").ok();
-                uncommitted_diff.push_str(&file_diff);
-                if !uncommitted_diff.ends_with('\n') {
-                    uncommitted_diff.push('\n');
-                }
+        let base_snapshot = diff_snapshot.base_text();
+        let is_existing_file = diff_snapshot.base_text_exists();
+
+        let new_path_str = relative_path.to_string_lossy();
+        let old_path_str = if is_existing_file {
+            new_path_str.as_ref()
+        } else {
+            "/dev/null"
+        };
+        writeln!(
+            uncommitted_diff,
+            "--- {}{old_path_str}",
+            if is_existing_file { "a/" } else { "" }
+        )
+        .ok();
+        writeln!(uncommitted_diff, "+++ b/{new_path_str}").ok();
+
+        if !is_existing_file {
+            let new_text = buffer_snapshot.text();
+            writeln!(
+                uncommitted_diff,
+                "@@ -0,0 +1,{} @@",
+                new_text.lines().count()
+            )
+            .ok();
+            for line in new_text.lines() {
+                writeln!(uncommitted_diff, "+{line}").ok();
             }
+            continue;
+        }
+
+        let mut ranges: Vec<(Range<u32>, Range<u32>)> = Vec::new();
+        for hunk in (&diff_snapshot).hunks(&buffer_snapshot) {
+            let old_start = base_snapshot
+                .offset_to_point(hunk.diff_base_byte_range.start)
+                .row;
+            let old_end =
+                exclusive_end_row(base_snapshot.offset_to_point(hunk.diff_base_byte_range.end));
+            let new_start = hunk.range.start.row;
+            let new_end = exclusive_end_row(hunk.range.end);
+            let old_range = old_start.saturating_sub(3)..old_end + 3;
+            let new_range = new_start.saturating_sub(3)..new_end + 3;
+
+            if let Some((last_old_range, last_new_range)) = ranges.last_mut()
+                && (old_range.start <= last_old_range.end || new_range.start <= last_new_range.end)
+            {
+                last_old_range.end = last_old_range.end.max(old_range.end);
+                last_new_range.end = last_new_range.end.max(new_range.end);
+                continue;
+            }
+            ranges.push((old_range, new_range));
+        }
+
+        for (old_range, new_range) in ranges {
+            uncommitted_diff.push_str(&language::unified_diff_with_offsets(
+                &base_snapshot
+                    .text_for_range(
+                        Point::new(old_range.start, 0)
+                            ..row_start_or_max(base_snapshot, old_range.end),
+                    )
+                    .collect::<String>(),
+                &buffer_snapshot
+                    .text_for_range(
+                        Point::new(new_range.start, 0)
+                            ..row_start_or_max(&buffer_snapshot, new_range.end),
+                    )
+                    .collect::<String>(),
+                old_range.start,
+                new_range.start,
+            ));
+        }
+        if !uncommitted_diff.ends_with('\n') {
+            uncommitted_diff.push('\n');
         }
     }
     uncommitted_diff
+}
+
+fn row_start_or_max(snapshot: &language::BufferSnapshot, row: u32) -> Point {
+    if row >= snapshot.max_point().row {
+        snapshot.max_point()
+    } else {
+        Point::new(row, 0)
+    }
+}
+
+fn exclusive_end_row(point: Point) -> u32 {
+    if point.column == 0 {
+        point.row
+    } else {
+        point.row + 1
+    }
 }
 
 fn generate_timestamp_name() -> String {
@@ -314,7 +394,9 @@ mod tests {
             json!({
                 ".git": {},
                 "src": {
+                    "deleted.rs": "pub fn deleted_file() {\n    deleted();\n}\n",
                     "main.rs": disk_contents,
+                    "new.rs": "pub fn new_file() {\n}\n",
                 }
             }),
         )
@@ -331,7 +413,13 @@ mod tests {
 
         fs.set_head_for_repo(
             Path::new("/project/.git"),
-            &[("src/main.rs", committed_contents.to_string())],
+            &[
+                (
+                    "src/deleted.rs",
+                    "pub fn deleted_file() {\n    deleted();\n}\n".to_string(),
+                ),
+                ("src/main.rs", committed_contents.to_string()),
+            ],
             "abc123def456",
         );
         fs.set_remote_for_repo(
@@ -352,6 +440,21 @@ mod tests {
         let ep_store = cx.read(|cx| EditPredictionStore::try_global(cx).unwrap());
         ep_store.update(cx, |ep_store, cx| {
             ep_store.register_buffer(&buffer, &project, cx)
+        });
+        cx.run_until_parked();
+
+        let deleted_file_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/src/deleted.rs", cx)
+            })
+            .await
+            .unwrap();
+        ep_store.update(cx, |ep_store, cx| {
+            ep_store.register_buffer(&deleted_file_buffer, &project, cx)
+        });
+        cx.run_until_parked();
+        deleted_file_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..buffer.len(), "")], None, cx);
         });
         cx.run_until_parked();
 
@@ -381,6 +484,22 @@ mod tests {
                     }
                 "}
             );
+        });
+        cx.run_until_parked();
+
+        let new_file_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer("/project/src/new.rs", cx)
+            })
+            .await
+            .unwrap();
+        ep_store.update(cx, |ep_store, cx| {
+            ep_store.register_buffer(&new_file_buffer, &project, cx)
+        });
+        cx.run_until_parked();
+        new_file_buffer.update(cx, |buffer, cx| {
+            let point = Point::new(1, 0);
+            buffer.edit([(point..point, "    created();\n")], None, cx);
         });
         cx.run_until_parked();
 
@@ -450,6 +569,12 @@ mod tests {
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: indoc! {"
+                    --- a/src/deleted.rs
+                    +++ b/src/deleted.rs
+                    @@ -1,3 +1,0 @@
+                    -pub fn deleted_file() {
+                    -    deleted();
+                    -}
                     --- a/src/main.rs
                     +++ b/src/main.rs
                     @@ -1,11 +1,15 @@
@@ -468,11 +593,17 @@ mod tests {
                     +    // comment 2
                          nine();
                      }
+                    --- /dev/null
+                    +++ b/src/new.rs
+                    @@ -0,0 +1,3 @@
+                    +pub fn new_file() {
+                    +    created();
+                    +}
                 "}
                 .to_string(),
                 recently_opened_files: Vec::new(),
                 recently_viewed_files: Vec::new(),
-                uncommitted_diff_requires_edit_history_rollback: true,
+                uncommitted_diff_contains_edit_history: true,
                 cursor_path: Path::new("src/main.rs").into(),
                 cursor_position: indoc! {"
                     fn main() {
@@ -494,6 +625,12 @@ mod tests {
                 "}
                 .to_string(),
                 edit_history: indoc! {"
+                    --- a/src/deleted.rs
+                    +++ b/src/deleted.rs
+                    @@ -1,3 +1,0 @@
+                    -pub fn deleted_file() {
+                    -    deleted();
+                    -}
                     --- a/src/main.rs
                     +++ b/src/main.rs
                     @@ -2,8 +2,10 @@
@@ -507,6 +644,12 @@ mod tests {
                          five();
                          six();
                          seven();
+                    --- a/src/new.rs
+                    +++ b/src/new.rs
+                    @@ -1,2 +1,3 @@
+                     pub fn new_file() {
+                    +    created();
+                     }
                 "}
                 .to_string(),
                 expected_patches: vec![

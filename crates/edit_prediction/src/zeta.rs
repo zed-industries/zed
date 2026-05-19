@@ -49,7 +49,7 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_events: Option<(
+    capture_data: Option<(
         Vec<crate::StoredEvent>,
         Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
     )>,
@@ -416,7 +416,7 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_events.map(|(events, uncommitted_diffs)| {
+            let example_task = capture_data.map(|(events, uncommitted_diffs)| {
                 cx.spawn({
                     let project = project.clone();
                     let edited_buffer = edited_buffer.clone();
@@ -426,7 +426,7 @@ pub fn request_prediction_with_zeta(
                     async move |cx| {
                         let uncommitted_diffs = uncommitted_diffs.await?;
                         let Some(task) = cx.update(|cx| {
-                            crate::capture_example(
+                            crate::capture_example::capture_example(
                                 project.clone(),
                                 edited_buffer.clone(),
                                 position,
