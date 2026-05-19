@@ -1051,7 +1051,7 @@ mod tests {
             .await;
 
         // The main worktree starts restricted; trust it explicitly
-        let worktree_store = project.read_with(cx, |project, _| project.worktree_store().clone());
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
         let main_worktree_id = worktree_store.read_with(cx, |store, cx| {
             store
                 .worktrees()
@@ -1109,7 +1109,7 @@ mod tests {
         // The new workspace (linked worktree) should inherit trust
         let new_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let new_worktree_store =
-            new_workspace.read_with(cx, |ws, cx| ws.project().read(cx).worktree_store().clone());
+            new_workspace.read_with(cx, |ws, cx| ws.project().read(cx).worktree_store());
         let new_has_restricted = cx.read(|cx| {
             project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
                 &new_worktree_store,
