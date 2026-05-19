@@ -601,6 +601,7 @@ impl MacTextSystemState {
             descent: max_descent.into(),
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         }
     }
 }

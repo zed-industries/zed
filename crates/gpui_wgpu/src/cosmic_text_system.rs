@@ -559,6 +559,7 @@ impl CosmicTextSystemState {
                 runs: Vec::new(),
                 len: text.len(),
                 index_positions: Vec::new(),
+                visual_index_positions: Vec::new(),
             };
         };
 
@@ -616,6 +617,7 @@ impl CosmicTextSystemState {
             runs,
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         }
     }
 }

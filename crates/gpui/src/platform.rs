@@ -916,6 +916,7 @@ impl PlatformTextSystem for NoopTextSystem {
             runs,
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         }
     }
 

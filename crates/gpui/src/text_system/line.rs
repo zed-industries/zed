@@ -80,6 +80,11 @@ impl ShapedLine {
             } else {
                 Vec::new()
             },
+            visual_index_positions: if len == layout.len {
+                layout.visual_index_positions.clone()
+            } else {
+                Vec::new()
+            },
         });
         self
     }
@@ -149,42 +154,81 @@ impl ShapedLine {
             .layout
             .runs
             .iter()
-            .flat_map(|run| run.glyphs.iter())
+            .enumerate()
+            .flat_map(|(run_ix, run)| {
+                run.glyphs
+                    .iter()
+                    .enumerate()
+                    .map(move |(glyph_ix, glyph)| (run_ix, glyph_ix, glyph))
+            })
             .collect::<Vec<_>>();
         glyph_edges.sort_by(|a, b| {
-            a.position
+            a.2.position
                 .x
-                .partial_cmp(&b.position.x)
+                .partial_cmp(&b.2.position.x)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let mut left_origin = None;
+        let mut left_positions = self
+            .layout
+            .runs
+            .iter()
+            .map(|run| vec![None; run.glyphs.len()])
+            .collect::<Vec<_>>();
+        let mut right_positions = self
+            .layout
+            .runs
+            .iter()
+            .map(|run| vec![None; run.glyphs.len()])
+            .collect::<Vec<_>>();
         let mut left_right = Pixels::ZERO;
-        let mut right_origin = None;
         let mut right_right = Pixels::ZERO;
-
-        for (ix, glyph) in glyph_edges.iter().enumerate() {
-            let glyph_left = glyph.position.x;
-            let glyph_right = glyph_edges[ix + 1..]
-                .iter()
-                .find(|next_glyph| next_glyph.position.x > glyph_left)
-                .map_or(self.layout.width, |next_glyph| next_glyph.position.x);
-
-            if glyph.index < byte_index {
-                left_origin =
-                    Some(left_origin.map_or(glyph_left, |origin: Pixels| origin.min(glyph_left)));
-                left_right = left_right.max(glyph_right);
-            } else {
-                right_origin =
-                    Some(right_origin.map_or(glyph_left, |origin: Pixels| origin.min(glyph_left)));
-                right_right = right_right.max(glyph_right);
+        let mut ix = 0;
+        while ix < glyph_edges.len() {
+            let glyph_left = glyph_edges[ix].2.position.x;
+            let mut next_ix = ix + 1;
+            while next_ix < glyph_edges.len() && glyph_edges[next_ix].2.position.x == glyph_left {
+                next_ix += 1;
             }
+            let glyph_right = glyph_edges
+                .get(next_ix)
+                .map_or(self.layout.width, |(_, _, next_glyph)| {
+                    next_glyph.position.x
+                });
+            let glyph_width = glyph_right - glyph_left;
+            let glyph_group = &glyph_edges[ix..next_ix];
+
+            if glyph_group
+                .iter()
+                .any(|(_, _, glyph)| glyph.index < byte_index)
+            {
+                for (run_ix, glyph_ix, glyph) in glyph_group {
+                    if glyph.index < byte_index {
+                        left_positions[*run_ix][*glyph_ix] =
+                            Some(left_right + (glyph.position.x - glyph_left));
+                    }
+                }
+                left_right += glyph_width;
+            }
+
+            if glyph_group
+                .iter()
+                .any(|(_, _, glyph)| glyph.index >= byte_index)
+            {
+                for (run_ix, glyph_ix, glyph) in glyph_group {
+                    if glyph.index >= byte_index {
+                        right_positions[*run_ix][*glyph_ix] =
+                            Some(right_right + (glyph.position.x - glyph_left));
+                    }
+                }
+                right_right += glyph_width;
+            }
+
+            ix = next_ix;
         }
 
-        let left_origin = left_origin.unwrap_or(Pixels::ZERO);
-        let right_origin = right_origin.unwrap_or(Pixels::ZERO);
-        let left_width = left_right - left_origin;
-        let right_width = right_right - right_origin;
+        let left_width = left_right;
+        let right_width = right_right;
 
         // Partition glyph runs by logical byte index. Glyphs are not guaranteed
         // to be stored in logical order after RTL shaping, so this must not use
@@ -192,22 +236,22 @@ impl ShapedLine {
         let mut left_runs = Vec::new();
         let mut right_runs = Vec::new();
 
-        for run in &self.layout.runs {
+        for (run_ix, run) in self.layout.runs.iter().enumerate() {
             let mut left_glyphs = Vec::new();
             let mut right_glyphs = Vec::new();
 
-            for glyph in &run.glyphs {
-                if glyph.index < byte_index {
+            for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
+                if let Some(x) = left_positions[run_ix][glyph_ix] {
                     left_glyphs.push(ShapedGlyph {
                         id: glyph.id,
-                        position: point(glyph.position.x - left_origin, glyph.position.y),
+                        position: point(x, glyph.position.y),
                         index: glyph.index,
                         is_emoji: glyph.is_emoji,
                     });
-                } else {
+                } else if let Some(x) = right_positions[run_ix][glyph_ix] {
                     right_glyphs.push(ShapedGlyph {
                         id: glyph.id,
-                        position: point(glyph.position.x - right_origin, glyph.position.y),
+                        position: point(x, glyph.position.y),
                         index: glyph.index - byte_index,
                         is_emoji: glyph.is_emoji,
                     });
@@ -284,6 +328,7 @@ impl ShapedLine {
             runs: left_runs,
             len: byte_index,
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
         left_layout.compute_bidi_index_positions(&left_text);
 
@@ -295,6 +340,7 @@ impl ShapedLine {
             runs: right_runs,
             len: self.layout.len - byte_index,
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
         right_layout.compute_bidi_index_positions(&right_text);
 
@@ -845,6 +891,7 @@ mod tests {
             }],
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
         layout.compute_bidi_index_positions(text);
 
@@ -987,6 +1034,7 @@ mod tests {
                 ],
                 len: 6,
                 index_positions: Vec::new(),
+                visual_index_positions: Vec::new(),
             }),
             text: "abcdef".into(),
             decoration_runs: SmallVec::new(),
@@ -1165,6 +1213,24 @@ mod tests {
         assert_eq!(left.text.as_ref(), "abc א");
         assert_eq!(right.text.as_ref(), "בג def");
         assert_eq!(left.len() + right.len(), text.len());
+        assert_eq!(left.width(), px(50.0));
+        assert_eq!(right.width(), px(60.0));
+        assert_eq!(
+            left.runs[0]
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.position.x)
+                .collect::<Vec<_>>(),
+            [px(0.0), px(10.0), px(20.0), px(30.0), px(40.0)]
+        );
+        assert_eq!(
+            right.runs[0]
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.position.x)
+                .collect::<Vec<_>>(),
+            [px(0.0), px(10.0), px(20.0), px(30.0), px(40.0), px(50.0)]
+        );
         assert_glyph_indices_within_text(&left);
         assert_glyph_indices_within_text(&right);
     }
