@@ -831,7 +831,7 @@ impl GitPanel {
                         RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
                         true,
                     )
-                    | GitStoreEvent::RepositoryAdded(_)
+                    | GitStoreEvent::RepositoryAdded(_, _)
                     | GitStoreEvent::RepositoryRemoved(_)
                     | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
@@ -6939,7 +6939,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).git_store(cx).read(cx).repositories().len() == 1)
+            .map(|project| project.read(cx).repositories(cx).len() == 1)
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;

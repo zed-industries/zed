@@ -99,7 +99,13 @@ pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
-    repositories: HashMap<RepositoryId, Entity<Repository>>,
+    /// Weak handles to repositories. Strong ownership lives on `Project`
+    /// (`Project::repositories`), so when every `Project` that owns a repo
+    /// is dropped (or drops the repo via `RepositoryRemoved`), the entity
+    /// is released and `observe_release` (registered when the entity is
+    /// first inserted) prunes the corresponding entry here. This prevents
+    /// the host `GitStore` from outliving its tenants.
+    repositories: HashMap<RepositoryId, WeakEntity<Repository>>,
     worktree_ids: HashMap<RepositoryId, HashSet<WorktreeId>>,
     #[allow(clippy::type_complexity)]
     loading_diffs:
@@ -484,8 +490,11 @@ pub enum GitStoreEvent {
     RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
     /// Fired when a repository is added to the host store. The id lets
     /// `Project` decide ownership against `self.worktrees` before
-    /// claiming the repository in its per-project view.
-    RepositoryAdded(RepositoryId),
+    /// claiming the repository in its per-project view. The strong
+    /// `Entity<Repository>` payload lets the owning project(s) take
+    /// strong ownership of the repository; `GitStore` itself only keeps
+    /// a `WeakEntity` so a dropped tenant doesn't leak its repos.
+    RepositoryAdded(RepositoryId, Entity<Repository>),
     RepositoryRemoved(RepositoryId),
     IndexWriteError(anyhow::Error),
     JobsUpdated,
@@ -551,6 +560,9 @@ impl GitStore {
                     while let Some(_) = watcher.next().await {
                         let Ok(_) = this.update(cx, |this, cx| {
                             for repo in this.repositories.values() {
+                                let Some(repo) = repo.upgrade() else {
+                                    continue;
+                                };
                                 repo.update(cx, |this, cx| {
                                     if this.job_sender.is_closed() {
                                         let (job_sender, state) = (this.refetch_repo_state)(cx);
@@ -1080,6 +1092,9 @@ impl GitStore {
         let mut work_directory_abs_paths = Vec::new();
         let mut checkpoints = Vec::new();
         for repository in self.repositories.values() {
+            let Some(repository) = repository.upgrade() else {
+                continue;
+            };
             repository.update(cx, |repository, _| {
                 work_directory_abs_paths.push(repository.snapshot.work_directory_abs_path.clone());
                 checkpoints.push(repository.checkpoint().map(|checkpoint| checkpoint?));
@@ -1105,6 +1120,7 @@ impl GitStore {
         let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
+            .filter_map(|weak| weak.upgrade())
             .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
             .collect::<HashMap<_, _>>();
 
@@ -1133,6 +1149,7 @@ impl GitStore {
         let repositories_by_work_dir_abs_path = self
             .repositories
             .values()
+            .filter_map(|weak| weak.upgrade())
             .map(|repo| (repo.read(cx).snapshot.work_directory_abs_path.clone(), repo))
             .collect::<HashMap<_, _>>();
 
@@ -1368,8 +1385,13 @@ impl GitStore {
                     })
                     .collect();
                 for repo_id in repos_without_worktree {
+                    // Drop the weak entry up front so that `observe_release`
+                    // (when the projects later drop their strong handles
+                    // in response to `RepositoryRemoved`) doesn't re-emit
+                    // the removal events.
                     self.repositories.remove(&repo_id);
                     self.worktree_ids.remove(&repo_id);
+                    cx.emit(GitStoreEvent::RepositoryRemoved(repo_id));
                     cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(
                         repo_id,
                     ));
@@ -1430,15 +1452,17 @@ impl GitStore {
     ) {
         let mut removed_ids = Vec::new();
         for update in updated_git_repositories.iter() {
-            if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
+            let matched_existing = self.repositories.iter().find_map(|(id, weak)| {
+                let repo = weak.upgrade()?;
                 let existing_work_directory_abs_path =
                     repo.read(cx).work_directory_abs_path.clone();
-                Some(&existing_work_directory_abs_path)
+                let matches = Some(&existing_work_directory_abs_path)
                     == update.old_work_directory_abs_path.as_ref()
                     || Some(&existing_work_directory_abs_path)
-                        == update.new_work_directory_abs_path.as_ref()
-            }) {
-                let repo_id = *id;
+                        == update.new_work_directory_abs_path.as_ref();
+                matches.then_some((*id, repo))
+            });
+            if let Some((repo_id, existing)) = matched_existing {
                 if let Some(new_work_directory_abs_path) =
                     update.new_work_directory_abs_path.clone()
                 {
@@ -1459,7 +1483,7 @@ impl GitStore {
                         // Project that just claimed a worktree at the
                         // same path can now claim this pre-existing
                         // repository too. The handler is idempotent.
-                        cx.emit(GitStoreEvent::RepositoryAdded(repo_id));
+                        cx.emit(GitStoreEvent::RepositoryAdded(repo_id, existing.clone()));
                     }
                 } else {
                     if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
@@ -1504,22 +1528,30 @@ impl GitStore {
                     repo.schedule_scan(cx);
                     repo
                 });
-                // Trigger an empty repository update so listeners can send an initial snapshot.
-                cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(
-                    repo.read(cx).snapshot(),
-                ));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
-                self.repositories.insert(id, repo);
+                self.register_repository(id, &repo, cx);
                 self.worktree_ids.insert(id, HashSet::from([worktree_id]));
-                cx.emit(GitStoreEvent::RepositoryAdded(id));
+                // Emit `RepositoryAdded` before `RepositorySnapshotForDownstream`
+                // so that projects have claimed the repo by the time they
+                // see the initial snapshot event — otherwise the
+                // downstream-forwarding handler in `Project` would skip
+                // the initial snapshot because it doesn't yet own the id.
+                cx.emit(GitStoreEvent::RepositoryAdded(id, repo.clone()));
+                cx.emit(GitStoreEvent::RepositorySnapshotForDownstream(
+                    repo.read(cx).snapshot(),
+                ));
             }
         }
 
         for id in removed_ids {
+            // Same rationale as the `WorktreeRemoved` handler: prune up
+            // front so `observe_release` becomes a no-op.
             self.repositories.remove(&id);
+            self.worktree_ids.remove(&id);
+            cx.emit(GitStoreEvent::RepositoryRemoved(id));
             cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(id));
         }
     }
@@ -1544,7 +1576,7 @@ impl GitStore {
                 .iter()
                 .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
             {
-                if let Some(repo) = self.repositories.get(repo_id) {
+                if let Some(repo) = self.repository(*repo_id) {
                     let repository_state = repo.read(cx).repository_state.clone();
                     cx.background_spawn(async move {
                         if let Ok(RepositoryState::Local(state)) = repository_state.await {
@@ -1714,6 +1746,9 @@ impl GitStore {
         debug_assert!(worktree.read(cx).is_local());
 
         for repository in self.repositories.values() {
+            let Some(repository) = repository.upgrade() else {
+                continue;
+            };
             repository.update(cx, |repository, cx| {
                 let repo_abs_path = &repository.work_directory_abs_path;
                 if changed_repos.iter().any(|update| {
@@ -1726,8 +1761,58 @@ impl GitStore {
         }
     }
 
-    pub fn repositories(&self) -> &HashMap<RepositoryId, Entity<Repository>> {
-        &self.repositories
+    /// Install a newly-created repository in the host store. Stores only a
+    /// `WeakEntity` and registers `observe_release` so that when the last
+    /// project owning a strong handle drops it, the repository is pruned
+    /// from `repositories` / `worktree_ids` and listeners are notified.
+    ///
+    /// Strong ownership lives on `Project::repositories`. The caller is
+    /// responsible for emitting `GitStoreEvent::RepositoryAdded` with the
+    /// strong handle so projects can claim it; if no project claims, the
+    /// entity is released after the event dispatches and the
+    /// `observe_release` callback prunes the entry.
+    fn register_repository(
+        &mut self,
+        id: RepositoryId,
+        repo: &Entity<Repository>,
+        cx: &mut Context<Self>,
+    ) {
+        // todo!: Add a regression test ensuring a stale release observer
+        // for an old repository entity cannot remove a newer repository
+        // registered under the same RepositoryId.
+        self.repositories.insert(id, repo.downgrade());
+        self._subscriptions
+            .push(cx.observe_release(repo, move |this, _repo, cx| {
+                // Only emit removal events if we still consider this id
+                // "live" — a sibling code path (e.g. the
+                // `WorktreeRemoved` handler when `worktree_ids` empties)
+                // may have already pruned and announced the removal.
+                if this.repositories.remove(&id).is_some() {
+                    this.worktree_ids.remove(&id);
+                    cx.emit(GitStoreEvent::RepositoryRemoved(id));
+                    cx.emit(GitStoreEvent::RepositorySnapshotRemovedForDownstream(id));
+                }
+            }));
+    }
+
+    /// Returns the live repositories in the host store as strong handles.
+    /// Entries whose `WeakEntity` no longer upgrades (i.e. every owning
+    /// project has dropped its strong handle) are filtered out. Use
+    /// [`Self::repository`] when only a single id is needed to avoid the
+    /// HashMap allocation.
+    pub fn repositories(&self) -> HashMap<RepositoryId, Entity<Repository>> {
+        self.repositories
+            .iter()
+            .filter_map(|(id, weak)| weak.upgrade().map(|repo| (*id, repo)))
+            .collect()
+    }
+
+    /// Upgrade and return the repository entity for the given id, if it is
+    /// still alive in the host store.
+    pub fn repository(&self, repository_id: RepositoryId) -> Option<Entity<Repository>> {
+        self.repositories
+            .get(&repository_id)
+            .and_then(|weak| weak.upgrade())
     }
 
     /// Returns the set of worktree ids that contain the given repository.
@@ -1756,7 +1841,7 @@ impl GitStore {
                     .get(repo_id)
                     .is_some_and(|ids| ids.contains(&worktree_id))
             })
-            .and_then(|repo_id| self.repositories.get(repo_id))
+            .and_then(|repo_id| self.repository(*repo_id))
             .and_then(|repo| {
                 repo.read(cx)
                     .snapshot()
@@ -1789,9 +1874,10 @@ impl GitStore {
         let abs_path = self.worktree_store.read(cx).absolutize(path, cx)?;
         self.repositories
             .values()
-            .filter_map(|repo| {
+            .filter_map(|weak| {
+                let repo = weak.upgrade()?;
                 let repo_path = repo.read(cx).abs_path_to_repo_path(&abs_path)?;
-                Some((repo.clone(), repo_path))
+                Some((repo, repo_path))
             })
             .max_by_key(|(repo, _)| repo.read(cx).work_directory_abs_path.clone())
     }
@@ -1916,8 +2002,11 @@ impl GitStore {
                 .as_deref()
                 .map(|p| Path::new(p).into());
 
-            let mut repo_subscription = None;
-            let repo = this.repositories.entry(id).or_insert_with(|| {
+            let repo = if let Some(existing) =
+                this.repositories.get(&id).and_then(|weak| weak.upgrade())
+            {
+                existing
+            } else {
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     Repository::remote(
@@ -1932,11 +2021,12 @@ impl GitStore {
                         cx,
                     )
                 });
-                repo_subscription = Some(cx.subscribe(&repo, Self::on_repository_event));
-                cx.emit(GitStoreEvent::RepositoryAdded(id));
+                this._subscriptions
+                    .push(cx.subscribe(&repo, Self::on_repository_event));
+                this.register_repository(id, &repo, cx);
+                cx.emit(GitStoreEvent::RepositoryAdded(id, repo.clone()));
                 repo
-            });
-            this._subscriptions.extend(repo_subscription);
+            };
 
             repo.update(cx, {
                 let update = update.clone();
@@ -3181,7 +3271,7 @@ impl GitStore {
 
         let diff = this
             .update(&mut cx, |this, cx| {
-                let repository = this.repositories().get(&repository_id)?;
+                let repository = this.repository(repository_id)?;
                 Some(repository.update(cx, |repo, cx| repo.diff_tree(diff_type, cx)))
             })
             .context("missing repository")?
@@ -3222,7 +3312,7 @@ impl GitStore {
         let repository_id = RepositoryId(request.payload.repository_id);
         let content = this
             .update(&mut cx, |this, cx| {
-                let repository = this.repositories().get(&repository_id)?;
+                let repository = this.repository(repository_id)?;
                 Some(repository.update(cx, |repo, cx| repo.load_blob_content(oid, cx)))
             })
             .context("missing repository")?
@@ -3390,17 +3480,15 @@ impl GitStore {
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
         this.read_with(cx, |this, _| {
-            this.repositories
-                .get(&id)
-                .context("missing repository handle")
-                .cloned()
+            this.repository(id).context("missing repository handle")
         })
     }
 
     pub fn repo_snapshots(&self, cx: &App) -> HashMap<RepositoryId, RepositorySnapshot> {
         self.repositories
             .iter()
-            .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
+            .filter_map(|(id, weak)| weak.upgrade().map(|repo| (*id, repo)))
+            .map(|(id, repo)| (id, repo.read(cx).snapshot.clone()))
             .collect()
     }
 
@@ -3414,7 +3502,8 @@ impl GitStore {
         let mut repo_paths = self
             .repositories
             .values()
-            .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo.clone()))
+            .filter_map(|weak| weak.upgrade())
+            .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo))
             .collect::<Vec<_>>();
         let mut entries: Vec<_> = updated_entries
             .iter()

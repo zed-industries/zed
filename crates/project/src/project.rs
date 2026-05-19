@@ -282,10 +282,15 @@ pub struct Project {
     /// considers "its own" out of the (potentially shared) host
     /// `GitStore`. A repository is claimed when the host store fires
     /// `RepositoryAdded` and at least one of the repository's worktrees
-    /// is in `self.worktrees`. Pruned by `RepositoryRemoved`. Phase 2
-    /// will use this set to filter `Project::repositories(cx)` and the
-    /// downstream-broadcast paths in `on_git_store_event`.
-    repositories: HashSet<RepositoryId>,
+    /// is in `self.worktrees`. Pruned by `RepositoryRemoved`.
+    ///
+    /// Holds **strong** `Entity<Repository>` handles — `GitStore` itself
+    /// only retains `WeakEntity`s, so when every owning project drops
+    /// its handle, the repository entity is released and the host store
+    /// prunes the corresponding entry via `observe_release`. This is
+    /// what guarantees that a dropped tenant cannot leak repositories
+    /// into the shared host `GitStore`.
+    repositories: HashMap<RepositoryId, Entity<Repository>>,
     /// Per-project active repository. `GitStore` is host-shared, so
     /// active-repository selection must live on the tenant `Project`.
     active_repository_id: Option<RepositoryId>,
@@ -1388,7 +1393,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
-                repositories: HashSet::default(),
+                repositories: HashMap::default(),
                 active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
@@ -1512,7 +1517,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
-                repositories: HashSet::default(),
+                repositories: HashMap::default(),
                 active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
@@ -1771,7 +1776,7 @@ impl Project {
                 git_repository_snapshots_for_peer: HashMap::default(),
                 shared_buffers: HashMap::default(),
                 buffers: HashSet::default(),
-                repositories: HashSet::default(),
+                repositories: HashMap::default(),
                 active_repository_id: None,
                 language_servers: HashSet::default(),
                 pending_worktree_paths: HashSet::default(),
@@ -4062,9 +4067,9 @@ impl Project {
         // First, ownership tracking. These run regardless of whether
         // we're collab-shared.
         match event {
-            GitStoreEvent::RepositoryAdded(id) => {
+            GitStoreEvent::RepositoryAdded(id, repo) => {
                 if self.repository_belongs_to_us(*id, &git_store, cx) {
-                    let inserted = self.repositories.insert(*id);
+                    let inserted = self.repositories.insert(*id, repo.clone()).is_none();
                     if inserted && self.active_repository_id.is_none() {
                         self.set_active_repository_id(Some(*id), cx);
                     }
@@ -4086,7 +4091,7 @@ impl Project {
         };
         match event {
             GitStoreEvent::RepositorySnapshotForDownstream(snapshot) => {
-                if !self.repositories.contains(&snapshot.id) {
+                if !self.repositories.contains_key(&snapshot.id) {
                     return;
                 }
                 let update =
@@ -4118,7 +4123,7 @@ impl Project {
             }
             GitStoreEvent::ForwardRepositoryUpdate(update) => {
                 let id = RepositoryId::from_proto(update.id);
-                if !self.repositories.contains(&id) {
+                if !self.repositories.contains_key(&id) {
                     return;
                 }
                 let mut update = update.clone();
@@ -4127,7 +4132,7 @@ impl Project {
             }
             GitStoreEvent::ForwardRepositoryRemove(update) => {
                 let id = RepositoryId::from_proto(update.id);
-                if !self.repositories.contains(&id) {
+                if !self.repositories.contains_key(&id) {
                     return;
                 }
                 let mut update = update.clone();
@@ -5810,20 +5815,24 @@ impl Project {
 
         let worktree_id = worktree.read(cx).id();
         let git_store = self.git_store(cx);
-        let pre_existing_repos: Vec<RepositoryId> = git_store
+        let pre_existing_repos: Vec<(RepositoryId, Entity<Repository>)> = git_store
             .read(cx)
             .repositories()
-            .keys()
-            .copied()
-            .filter(|repo_id| {
+            .into_iter()
+            .filter(|(repo_id, _)| {
                 git_store
                     .read(cx)
                     .worktree_ids_for_repository(*repo_id)
                     .is_some_and(|ids| ids.contains(&worktree_id))
             })
             .collect();
-        for repo_id in pre_existing_repos {
-            self.repositories.insert(repo_id);
+        let mut claimed_repository = false;
+        for (repo_id, repo) in pre_existing_repos {
+            claimed_repository |= self.repositories.insert(repo_id, repo).is_none();
+        }
+        if claimed_repository && self.active_repository_id.is_none() {
+            let fallback = self.next_active_repository_id(cx);
+            self.set_active_repository_id(fallback, cx);
         }
     }
 
@@ -7980,16 +7989,9 @@ impl Project {
         self.active_repository_id
     }
 
-    pub fn active_repository(&self, cx: &App) -> Option<Entity<Repository>> {
+    pub fn active_repository(&self, _cx: &App) -> Option<Entity<Repository>> {
         let active_repository_id = self.active_repository_id?;
-        if !self.repositories.contains(&active_repository_id) {
-            return None;
-        }
-        self.git_store(cx)
-            .read(cx)
-            .repositories()
-            .get(&active_repository_id)
-            .cloned()
+        self.repositories.get(&active_repository_id).cloned()
     }
 
     pub fn set_active_repository_id(
@@ -7997,7 +7999,7 @@ impl Project {
         repository_id: Option<RepositoryId>,
         cx: &mut Context<Self>,
     ) {
-        let repository_id = repository_id.filter(|id| self.repositories.contains(id));
+        let repository_id = repository_id.filter(|id| self.repositories.contains_key(id));
         if self.active_repository_id != repository_id {
             self.active_repository_id = repository_id;
             cx.emit(Event::ActiveRepositoryChanged(repository_id));
@@ -8060,17 +8062,12 @@ impl Project {
             .next()
     }
 
-    pub fn repositories(&self, cx: &App) -> HashMap<RepositoryId, Entity<Repository>> {
-        // Filter the host store's repository map through `self.repositories`
-        // so a shared GitStore in Phase 2 doesn't leak sibling-Project
-        // repositories through this accessor.
-        let host = self.git_store(cx);
-        let host = host.read(cx);
-        let host_repos = host.repositories();
-        self.repositories
-            .iter()
-            .filter_map(|id| host_repos.get(id).map(|repo| (*id, repo.clone())))
-            .collect()
+    pub fn repositories(&self, _cx: &App) -> HashMap<RepositoryId, Entity<Repository>> {
+        // `Project::repositories` already holds the strong handles for
+        // every repo this Project owns. The host `GitStore` keeps only
+        // `WeakEntity`s, so we don't need to filter through it here —
+        // ownership is encoded by who holds the strong reference.
+        self.repositories.clone()
     }
 
     pub fn status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {

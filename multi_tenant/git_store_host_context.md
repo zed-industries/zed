@@ -43,6 +43,45 @@ For `GitStore`, a leak means:
 - a `Project` still claims a repository id after that repository is no longer associated with one of the project's worktrees; or
 - active-repository state, subscriptions, diffs, jobs, or snapshots keep a project-only repository alive after that project is dropped.
 
+### Ownership inversion: `GitStore` keeps `WeakEntity`
+
+The current branch enforces the leak rule structurally rather than by
+bookkeeping:
+
+- `GitStore.repositories` is `HashMap<RepositoryId, WeakEntity<Repository>>`.
+- `Project.repositories` is `HashMap<RepositoryId, Entity<Repository>>` (strong).
+- `GitStoreEvent::RepositoryAdded(id, Entity<Repository>)` carries the
+  strong handle so the owning project(s) can claim it during dispatch.
+- `GitStore` registers a `cx.observe_release` callback per repository it
+  creates; when the last project drops its strong handle, the callback
+  prunes `repositories` / `worktree_ids` and emits `RepositoryRemoved` +
+  `RepositorySnapshotRemovedForDownstream`.
+- The two pre-existing pruning paths (`WorktreeRemoved` when
+  `worktree_ids` empties, and the per-update `removed_ids` loop in
+  `update_repositories_from_worktree`) now also `cx.emit
+RepositoryRemoved` so projects drop their strong handles and the
+  `observe_release` callback becomes an idempotent no-op.
+
+This is what guarantees that a dropped tenant cannot leak repositories
+into a shared host `GitStore`, and is what the property test in
+`crates/project/tests/integration/multi_tenant.rs` validates.
+
+Future improvement: `GitStore::repositories()` currently upgrades weak
+entries into a newly allocated `HashMap<RepositoryId, Entity<Repository>>`
+for compatibility with existing call sites. Prefer narrower host APIs
+(`repository(id)`, counts, or iterator-style accessors) so callers do not
+need to materialize or accidentally cache host-level strong handles.
+
+### Effect-flush quirk in tests
+
+`cx.run_until_parked()` drains the dispatcher but does **not** trigger
+the effect flush that calls `release_dropped_entities`. Tests that drop
+a `Project` and then expect the host stores to have cleaned up must
+round-trip through `cx.update(|_| {})` (which calls `flush_effects`)
+before (or instead of) `cx.run_until_parked()`. The
+`GitStorePropertyWorld::drop_project` helper does this; ad-hoc tests
+that drop a `Project` need to follow the same pattern.
+
 For other host stores, analogous leaks are project-only buffers, LSP servers, subscriptions, diagnostics, tasks, images, debug sessions, etc. surviving after their owning project drops.
 
 ## GPUI leak detector support
@@ -63,11 +102,16 @@ Useful test-support additions:
 - Assert host stores no longer contain resources owned only by the dropped project.
 - Then drop the remaining projects and rely on GPUI leak detection for global entity leaks.
 
+The `test_project_drop_releases_repository` test in
+`crates/project/tests/integration/multi_tenant.rs` is the targeted
+regression for the `GitStore` slice of this checklist; the property
+test covers it under randomized workloads.
+
 ## Property-test direction
 
 A property test is likely the most complete way to validate host sharing. Instead of hand-writing many scenario tests, generate a sequence of operations against one host and assert invariants after each operation.
 
-Current implementation direction: the property test should read like a small state machine, not a mini framework. It should generate only valid operations from the current state, apply them through real `FakeFs` / `Project` / `GitStore` / `WorktreeStore` flows, and validate via project observe subscriptions plus `GitStore` event subscriptions.
+Current implementation direction: the property test should read like a small state machine, not a mini framework. It should generate only valid operations from the current state, apply them through real `FakeFs` / `Project` / `GitStore` / `WorktreeStore` flows, and validate invariants at operation boundaries after the host store reaches a quiescent state.
 
 ### Model state
 
