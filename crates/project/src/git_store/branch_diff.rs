@@ -388,7 +388,14 @@ impl BranchDiff {
                 else {
                     continue;
                 };
-                let task = Self::load_buffer(file.branch_diff, project_path, repo.clone(), cx);
+                let task = Self::load_buffer(
+                    &self.diff_base,
+                    file.diff_type,
+                    file.branch_diff,
+                    project_path,
+                    repo.clone(),
+                    cx,
+                );
                 output.push(DiffBuffer {
                     repo_path: file.repo_path,
                     load: task,
@@ -401,11 +408,14 @@ impl BranchDiff {
 
     #[instrument(skip_all)]
     fn load_buffer(
+        diff_base: &DiffBase,
+        diff_type: DiffType,
         branch_diff: Option<git::status::TreeDiffStatus>,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
         cx: &Context<'_, Project>,
     ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        let use_unstaged_review_diff = matches!(diff_base, DiffBase::Unstaged);
         let task = cx.spawn(async move |project, cx| {
             let buffer = project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
@@ -425,11 +435,36 @@ impl BranchDiff {
                     })?
                     .await?
             } else {
-                project
-                    .update(cx, |project, cx| {
-                        project.open_uncommitted_diff(buffer.clone(), cx)
-                    })?
-                    .await?
+                match diff_type {
+                    DiffType::HeadToIndex => {
+                        project
+                            .update(cx, |project, cx| {
+                                project.open_staged_diff(buffer.clone(), cx)
+                            })?
+                            .await?
+                    }
+                    DiffType::HeadToWorktree if use_unstaged_review_diff => {
+                        project
+                            .update(cx, |project, cx| {
+                                project.open_unstaged_review_diff(buffer.clone(), cx)
+                            })?
+                            .await?
+                    }
+                    DiffType::HeadToWorktree => {
+                        project
+                            .update(cx, |project, cx| {
+                                project.open_uncommitted_diff(buffer.clone(), cx)
+                            })?
+                            .await?
+                    }
+                    DiffType::MergeBase { .. } => {
+                        project
+                            .update(cx, |project, cx| {
+                                project.open_uncommitted_diff(buffer.clone(), cx)
+                            })?
+                            .await?
+                    }
+                }
             };
             Ok((buffer, changes))
         });

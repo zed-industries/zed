@@ -9043,6 +9043,280 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_staged_diff_for_partially_staged_buffer(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\nfour\nfive\n";
+    let staged_contents = "one\nTWO STAGED\nthree\nfour\nfive\n";
+    let file_contents = "one\nTWO STAGED\nthree\nFOUR UNSTAGED\nfive\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            staged_diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO STAGED\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_diff_marks_overlapping_hunk_unstageable(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\nfour\n";
+    let staged_contents = "one\nTWO STAGED\nTHREE STAGED\nfour\n";
+    let file_contents = "one\nTWO STAGED\nTHREE WORKTREE\nfour\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            staged_diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(
+                1..3,
+                "two\nthree\n",
+                "TWO STAGED\nTHREE WORKTREE\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_unstaged_review_diff_for_partially_staged_buffer(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\nfour\nfive\n";
+    let staged_contents = "one\nTWO STAGED\nthree\nfour\nfive\n";
+    let file_contents = "one\nTWO STAGED\nthree\nFOUR UNSTAGED\nfive\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_review_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &unstaged_diff.base_text_string(cx).unwrap(),
+            &[(
+                3..4,
+                "four\n",
+                "FOUR UNSTAGED\n",
+                DiffHunkStatus::modified(HasSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_single_sided_diff_hunks_update_the_index(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\nfour\nfive\n";
+    let staged_contents = "one\nTWO STAGED\nthree\nfour\nfive\n";
+    let file_contents = "one\nTWO STAGED\nthree\nFOUR UNSTAGED\nfive\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/file.txt", cx)
+        })
+        .await
+        .unwrap();
+
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_review_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let unstaged_hunk = unstaged_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).next().unwrap()
+    });
+    unstaged_diff.update(cx, |diff, cx| {
+        diff.stage_or_unstage_hunks(true, &[unstaged_hunk], &snapshot, true, cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+
+    let index_contents = fs
+        .with_git_state(Path::new("/dir/.git"), false, |state| {
+            state.index_contents.get(&repo_path("file.txt")).cloned()
+        })
+        .unwrap();
+    assert_eq!(index_contents.as_deref(), Some(file_contents));
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert!(diff.snapshot(cx).hunks(&snapshot).next().is_none());
+    });
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+    cx.run_until_parked();
+
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let staged_hunk = staged_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).next().unwrap()
+    });
+    staged_diff.update(cx, |diff, cx| {
+        diff.stage_or_unstage_hunks(false, &[staged_hunk], &snapshot, true, cx)
+            .unwrap();
+    });
+    cx.run_until_parked();
+
+    let index_contents = fs
+        .with_git_state(Path::new("/dir/.git"), false, |state| {
+            state.index_contents.get(&repo_path("file.txt")).cloned()
+        })
+        .unwrap();
+    assert_eq!(index_contents.as_deref(), Some(committed_contents));
+    staged_diff.read_with(cx, |diff, cx| {
+        assert!(diff.snapshot(cx).hunks(&snapshot).next().is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

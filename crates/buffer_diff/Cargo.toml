@@ -19,6 +19,7 @@ clock.workspace = true
 futures.workspace = true
 git2.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 pretty_assertions.workspace = true

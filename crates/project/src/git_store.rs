@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{BufferDiff, BufferDiffEvent};
+use buffer_diff::{BufferDiff, BufferDiffEvent, DiffHunkFilter};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -119,6 +119,8 @@ struct SharedDiffs {
 struct BufferGitState {
     unstaged_diff: Option<WeakEntity<BufferDiff>>,
     uncommitted_diff: Option<WeakEntity<BufferDiff>>,
+    staged_diff: Option<WeakEntity<BufferDiff>>,
+    unstaged_review_diff: Option<WeakEntity<BufferDiff>>,
     oid_diffs: HashMap<Option<git::Oid>, WeakEntity<BufferDiff>>,
     conflict_set: Option<WeakEntity<ConflictSet>>,
     recalculate_diff_task: Option<Task<Result<()>>>,
@@ -162,6 +164,8 @@ enum DiffBasesChange {
 enum DiffKind {
     Unstaged,
     Uncommitted,
+    Staged,
+    UnstagedReview,
     SinceOid(Option<git::Oid>),
 }
 
@@ -898,6 +902,102 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(staged_diff) = diff_state.read(cx).staged_diff()
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+            {
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(staged_diff)
+                });
+            }
+            return Task::ready(Ok(staged_diff));
+        }
+
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+        };
+
+        let task = self
+            .loading_diffs
+            .entry((buffer_id, DiffKind::Staged))
+            .or_insert_with(|| {
+                let changes = repo.update(cx, |repo, cx| {
+                    repo.load_committed_text(buffer_id, repo_path, cx)
+                });
+                cx.spawn(async move |this, cx| {
+                    Self::open_diff_internal(this, DiffKind::Staged, changes.await, buffer, cx)
+                        .await
+                        .map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
+
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_unstaged_review_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        if let Some(diff_state) = self.diffs.get(&buffer_id)
+            && let Some(unstaged_review_diff) = diff_state.read(cx).unstaged_review_diff()
+        {
+            if let Some(task) =
+                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
+            {
+                return cx.background_executor().spawn(async move {
+                    task.await;
+                    Ok(unstaged_review_diff)
+                });
+            }
+            return Task::ready(Ok(unstaged_review_diff));
+        }
+
+        let Some((repo, repo_path)) =
+            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+        else {
+            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
+        };
+
+        let task = self
+            .loading_diffs
+            .entry((buffer_id, DiffKind::UnstagedReview))
+            .or_insert_with(|| {
+                let staged_text = repo.update(cx, |repo, cx| {
+                    repo.load_staged_text(buffer_id, repo_path, cx)
+                });
+                cx.spawn(async move |this, cx| {
+                    Self::open_diff_internal(
+                        this,
+                        DiffKind::UnstagedReview,
+                        staged_text.await.map(DiffBasesChange::SetIndex),
+                        buffer,
+                        cx,
+                    )
+                    .await
+                    .map_err(Arc::new)
+                })
+                .shared()
+            })
+            .clone();
+
+        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
     pub fn open_diff_since(
         &mut self,
         oid: Option<git::Oid>,
@@ -1109,6 +1209,35 @@ impl GitStore {
 
                         diff.update(cx, |diff, _| diff.set_secondary_diff(unstaged_diff));
                         diff_state.uncommitted_diff = Some(diff.downgrade())
+                    }
+                    DiffKind::Staged => {
+                        let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                            diff
+                        } else {
+                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                            diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
+                            unstaged_diff
+                        };
+
+                        diff.update(cx, |diff, _| {
+                            diff.set_secondary_diff(unstaged_diff);
+                            diff.set_hunk_filter(DiffHunkFilter::Staged);
+                        });
+                        diff_state.staged_diff = Some(diff.downgrade())
+                    }
+                    DiffKind::UnstagedReview => {
+                        let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
+                            diff
+                        } else {
+                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                            diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
+                            unstaged_diff
+                        };
+
+                        diff.update(cx, |diff, _| {
+                            diff.set_secondary_diff(unstaged_diff);
+                        });
+                        diff_state.unstaged_review_diff = Some(diff.downgrade())
                     }
                     DiffKind::SinceOid(_) => {
                         unreachable!("open_diff_internal is not used for OID diffs")
@@ -3678,6 +3807,8 @@ impl BufferGitState {
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
+            staged_diff: Default::default(),
+            unstaged_review_diff: Default::default(),
             oid_diffs: Default::default(),
             recalculate_diff_task: Default::default(),
             language: Default::default(),
@@ -3762,6 +3893,16 @@ impl BufferGitState {
 
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {
         self.uncommitted_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn staged_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.staged_diff.as_ref().and_then(|set| set.upgrade())
+    }
+
+    fn unstaged_review_diff(&self) -> Option<Entity<BufferDiff>> {
+        self.unstaged_review_diff
+            .as_ref()
+            .and_then(|set| set.upgrade())
     }
 
     fn oid_diff(&self, oid: Option<git::Oid>) -> Option<Entity<BufferDiff>> {
@@ -3877,6 +4018,8 @@ impl BufferGitState {
             (None, None) => true,
             _ => false,
         };
+        let staged_diff = self.staged_diff();
+        let unstaged_review_diff = self.unstaged_review_diff();
 
         let oid_diffs: Vec<(Option<git::Oid>, Entity<BufferDiff>, Option<Arc<str>>)> = self
             .oid_diffs
@@ -3908,7 +4051,7 @@ impl BufferGitState {
                     cx.update(|cx| {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
-                            index,
+                            index.clone(),
                             index_changed.then_some(false),
                             language.clone(),
                             cx,
@@ -3922,16 +4065,21 @@ impl BufferGitState {
             // for a bit
             yield_now().await;
 
-            let mut new_uncommitted_diff = None;
-            if let Some(uncommitted_diff) = &uncommitted_diff {
-                new_uncommitted_diff = if index_matches_head {
+            let new_unstaged_review_diff = if unstaged_review_diff.is_some() {
+                new_unstaged_diff.clone()
+            } else {
+                None
+            };
+
+            let new_head_to_worktree_diff = if uncommitted_diff.is_some() || staged_diff.is_some() {
+                if index_matches_head {
                     new_unstaged_diff.clone()
-                } else {
+                } else if let Some(diff) = uncommitted_diff.as_ref().or(staged_diff.as_ref()) {
                     Some(
                         cx.update(|cx| {
-                            uncommitted_diff.read(cx).update_diff(
+                            diff.read(cx).update_diff(
                                 buffer.clone(),
-                                head,
+                                head.clone(),
                                 head_changed.then_some(true),
                                 language.clone(),
                                 cx,
@@ -3939,8 +4087,20 @@ impl BufferGitState {
                         })
                         .await,
                     )
+                } else {
+                    None
                 }
-            }
+            } else {
+                None
+            };
+            let new_uncommitted_diff = uncommitted_diff
+                .is_some()
+                .then(|| new_head_to_worktree_diff.clone())
+                .flatten();
+            let new_staged_diff = staged_diff
+                .is_some()
+                .then(|| new_head_to_worktree_diff.clone())
+                .flatten();
 
             // Dropping BufferDiff can be expensive, so yield back to the event loop
             // for a bit
@@ -3987,6 +4147,28 @@ impl BufferGitState {
 
             yield_now().await;
 
+            if let Some((unstaged_review_diff, new_unstaged_review_diff)) = unstaged_review_diff
+                .as_ref()
+                .zip(new_unstaged_review_diff.clone())
+            {
+                unstaged_review_diff
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language.clone(), language_registry.clone(), cx);
+                        }
+                        diff.set_snapshot_with_secondary(
+                            new_unstaged_review_diff,
+                            &buffer,
+                            unstaged_changed_range.clone().flatten(),
+                            true,
+                            cx,
+                        )
+                    })
+                    .await;
+            }
+
+            yield_now().await;
+
             if let Some((uncommitted_diff, new_uncommitted_diff)) =
                 uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
             {
@@ -3998,7 +4180,28 @@ impl BufferGitState {
                         diff.set_snapshot_with_secondary(
                             new_uncommitted_diff,
                             &buffer,
-                            unstaged_changed_range.flatten(),
+                            unstaged_changed_range.clone().flatten(),
+                            true,
+                            cx,
+                        )
+                    })
+                    .await;
+            }
+
+            yield_now().await;
+
+            if let Some((staged_diff, new_staged_diff)) =
+                staged_diff.as_ref().zip(new_staged_diff.clone())
+            {
+                staged_diff
+                    .update(cx, |diff, cx| {
+                        if language_changed {
+                            diff.language_changed(language.clone(), language_registry.clone(), cx);
+                        }
+                        diff.set_snapshot_with_secondary(
+                            new_staged_diff,
+                            &buffer,
+                            unstaged_changed_range.clone().flatten(),
                             true,
                             cx,
                         )
@@ -4655,12 +4858,23 @@ impl Repository {
                                         .uncommitted_diff
                                         .as_ref()
                                         .is_some_and(|set| set.is_upgradable());
+                                    let has_staged_diff = diff_state
+                                        .staged_diff
+                                        .as_ref()
+                                        .is_some_and(|diff| diff.is_upgradable());
+                                    let has_unstaged_review_diff = diff_state
+                                        .unstaged_review_diff
+                                        .as_ref()
+                                        .is_some_and(|diff| diff.is_upgradable());
+                                    let has_head_diff = has_uncommitted_diff || has_staged_diff;
+                                    let has_index_diff =
+                                        has_unstaged_diff || has_unstaged_review_diff;
 
                                     Some((
                                         buffer,
                                         repo_path,
-                                        has_unstaged_diff.then(|| diff_state.index_text.clone()),
-                                        has_uncommitted_diff.then(|| diff_state.head_text.clone()),
+                                        has_index_diff.then(|| diff_state.index_text.clone()),
+                                        has_head_diff.then(|| diff_state.head_text.clone()),
                                     ))
                                 })
                             })

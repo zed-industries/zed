@@ -2283,6 +2283,7 @@ dependencies = [
  "futures 0.3.32",
  "git2",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "log",
  "pretty_assertions",
