@@ -364,7 +364,12 @@ impl SecurityModal {
                 if self.restricted_paths != new_restricted_worktrees {
                     self.trust_parents = false;
                     self.restricted_paths = new_restricted_worktrees;
-                    cx.notify();
+                    if self.restricted_paths.is_empty() {
+                        self.trusted = Some(true);
+                        self.dismiss(cx);
+                    } else {
+                        cx.notify();
+                    }
                 }
             }
         } else if !self.restricted_paths.is_empty() {

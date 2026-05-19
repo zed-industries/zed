@@ -648,9 +648,16 @@ impl Display for ToolCallStatus {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
     Empty,
-    Markdown { markdown: Entity<Markdown> },
-    ResourceLink { resource_link: acp::ResourceLink },
-    Image { image: Arc<gpui::Image> },
+    Markdown {
+        markdown: Entity<Markdown>,
+    },
+    ResourceLink {
+        resource_link: acp::ResourceLink,
+    },
+    Image {
+        image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
+    },
 }
 
 impl ContentBlock {
@@ -692,8 +699,8 @@ impl ContentBlock {
                 };
             }
             (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some(image) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image };
+                if let Some((image, dimensions)) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image, dimensions };
                 } else {
                     let new_content = Self::image_md(image_content);
                     *self = Self::create_markdown_block(new_content, language_registry, cx);
@@ -721,14 +728,36 @@ impl ContentBlock {
         }
     }
 
-    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+    fn decode_image(
+        image_content: &acp::ImageContent,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(image_content.data.as_bytes())
             .ok()?;
         let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
-        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+        let dimensions = Self::image_dimensions(&bytes, format);
+        Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
+    }
+
+    fn image_dimensions(bytes: &[u8], format: gpui::ImageFormat) -> Option<gpui::Size<u32>> {
+        let format = match format {
+            gpui::ImageFormat::Png => image::ImageFormat::Png,
+            gpui::ImageFormat::Jpeg => image::ImageFormat::Jpeg,
+            gpui::ImageFormat::Webp => image::ImageFormat::WebP,
+            gpui::ImageFormat::Gif => image::ImageFormat::Gif,
+            gpui::ImageFormat::Svg => return None,
+            gpui::ImageFormat::Bmp => image::ImageFormat::Bmp,
+            gpui::ImageFormat::Tiff => image::ImageFormat::Tiff,
+            gpui::ImageFormat::Ico => image::ImageFormat::Ico,
+            gpui::ImageFormat::Pnm => image::ImageFormat::Pnm,
+        };
+
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+            .into_dimensions()
+            .ok()
+            .map(|(width, height)| gpui::Size { width, height })
     }
 
     fn create_markdown_block(
@@ -808,9 +837,9 @@ impl ContentBlock {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
-            ContentBlock::Image { image } => Some(image),
+            ContentBlock::Image { image, dimensions } => Some((image, *dimensions)),
             _ => None,
         }
     }
@@ -895,7 +924,7 @@ impl ToolCallContent {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
             Self::ContentBlock(content) => content.image(),
             _ => None,
