@@ -5964,6 +5964,8 @@ dependencies = [
  "settings",
  "shellexpand",
  "terminal_view",
+ "theme",
+ "theme_settings",
  "util",
  "watch",
 ]
