@@ -44,27 +44,52 @@ fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u
 /// line number prefix is `line number + tab` and everything after the tab is
 /// the actual file content to match.
 fn format_with_line_numbers(text: &str, start_line: u32) -> String {
-    use std::fmt::Write as _;
-
     if text.is_empty() {
         return String::new();
     }
 
     let mut output = String::with_capacity(text.len() + text.len() / 4);
-    for (offset, line) in text.split_inclusive('\n').enumerate() {
-        // If ever a file has more than u32 lines, log a warning
-        if offset == u32::MAX as usize {
-            log::warn!(
-                "format_with_line_numbers: file has more than {} lines; \
-                 line numbers past this point will wrap and be incorrect",
-                u32::MAX
-            );
-        }
-        let line_number = start_line.saturating_add(offset as u32);
-        // Writes to a `String` are infallible, so the `Result` can be ignored.
-        let _ = write!(output, "{line_number:>6}\t{line}");
-    }
+    write_lines_numbered(&mut output, std::iter::once(text), start_line);
     output
+}
+
+/// Streams `cat -n`-style line-numbered output directly into `output` from an
+/// iterator of string slices. Chunks do not need to align to line boundaries:
+/// a single chunk may contain multiple newlines, span multiple lines, or end
+/// mid-line. This lets callers consume `Buffer::text_for_range`'s `Chunks`
+/// iterator without materializing the unnumbered text first.
+fn write_lines_numbered<'a>(
+    output: &mut String,
+    chunks: impl IntoIterator<Item = &'a str>,
+    start_line: u32,
+) {
+    use std::fmt::Write as _;
+
+    let mut line_number = start_line;
+    let mut at_line_start = true;
+    for chunk in chunks {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            if at_line_start {
+                // Writes to a `String` are infallible, so the `Result` can be ignored.
+                let _ = write!(output, "{line_number:>6}\t");
+                at_line_start = false;
+            }
+            match rest.find('\n') {
+                Some(nl) => {
+                    let (head, tail) = rest.split_at(nl + 1);
+                    output.push_str(head);
+                    line_number = line_number.saturating_add(1);
+                    at_line_start = true;
+                    rest = tail;
+                }
+                None => {
+                    output.push_str(rest);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Read a file under the global skills directory directly via the filesystem,
@@ -385,7 +410,7 @@ impl AgentTool for ReadFileTool {
 
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
-                let (raw_text, first_line_number) = buffer.read_with(cx, |buffer, _cx| {
+                let result_text = buffer.read_with(cx, |buffer, _cx| {
                     let (start, end) = resolve_line_range(input.start_line, input.end_line);
                     let start_row = start - 1;
                     if start_row <= buffer.max_point().row {
@@ -400,17 +425,23 @@ impl AgentTool for ReadFileTool {
                     // read at least one line.
                     let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
                     let end_anchor = buffer.anchor_before(Point::new(end, 0));
-                    (
-                        buffer.text_for_range(start_anchor..end_anchor).collect::<String>(),
+                    // Stream the numbered output directly from the buffer's
+                    // chunk iterator so the unnumbered range is never
+                    // materialized as its own `String`.
+                    let mut output = String::new();
+                    write_lines_numbered(
+                        &mut output,
+                        buffer.text_for_range(start_anchor..end_anchor),
                         start,
-                    )
+                    );
+                    output
                 });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                Ok(format_with_line_numbers(&raw_text, first_line_number).into())
+                Ok(result_text.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
