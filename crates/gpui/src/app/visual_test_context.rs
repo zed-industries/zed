@@ -385,6 +385,23 @@ impl VisualTestAppContext {
         self.update_window(window, |_, window, _cx| window.render_to_image())?
     }
 
+    /// Captures a frame from `window` into `recorder` using the recorder's default delay.
+    ///
+    /// Calls [`Self::run_until_parked`] before capturing so the rendered frame reflects
+    /// all pending state changes. Use [`Self::capture_screenshot`] directly when you need
+    /// a mid-animation frame or a custom delay.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn record_frame(
+        &mut self,
+        window: AnyWindowHandle,
+        recorder: &mut crate::FrameRecorder,
+    ) -> Result<()> {
+        self.run_until_parked();
+        let image = self.capture_screenshot(window)?;
+        recorder.push_frame(image);
+        Ok(())
+    }
+
     /// Waits for animations to complete by waiting a couple of frames.
     pub async fn wait_for_animations(&self) {
         self.background_executor
