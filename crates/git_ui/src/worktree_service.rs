@@ -282,6 +282,15 @@ fn maybe_propagate_worktree_trust(
         }
     })
     .ok();
+
+    // After trust propagation, refresh the security modal on the new workspace
+    // so it dismisses itself if there are no more restricted worktrees.
+    cx.update(|window, cx| {
+        new_workspace.update(cx, |workspace, cx| {
+            workspace.show_worktree_trust_security_modal(false, window, cx);
+        });
+    })
+    .ok();
 }
 
 /// Handles the `CreateWorktree` action generically, without any agent panel involvement.
