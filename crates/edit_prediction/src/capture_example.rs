@@ -3,13 +3,13 @@ use crate::{
     example_spec::{ExampleSpec, RecentFile},
 };
 use anyhow::Result;
-use buffer_diff::BufferDiffSnapshot;
+use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 use gpui::{App, Entity, Task};
 use language::Buffer;
-use project::{Project, WorktreeId};
+use project::Project;
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
-use text::{BufferSnapshot as TextBufferSnapshot, Point};
+use text::Point;
 
 pub fn capture_example(
     project: Entity<Project>,
@@ -18,6 +18,7 @@ pub fn capture_example(
     mut events: Vec<StoredEvent>,
     recently_opened_files: Vec<RecentFile>,
     recently_viewed_files: Vec<RecentFile>,
+    uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
     populate_expected_patch: bool,
     cx: &mut App,
 ) -> Option<Task<Result<ExampleSpec>>> {
@@ -39,16 +40,39 @@ pub fn capture_example(
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
-    let git_store = project.read(cx).git_store().clone();
+    Some(cx.spawn(async move |cx| {
+        let mut events = events;
+        let mut diff_buffers_by_path: HashMap<Arc<Path>, (Entity<Buffer>, Entity<BufferDiff>)> =
+            HashMap::default();
+        for stored_event in &events {
+            let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+            let Some((project_path, relative_path)) = project.read_with(cx, |project, cx| {
+                let project_path = project
+                    .find_project_path(path, cx)
+                    .filter(|path| path.worktree_id == worktree_id)?;
+                let relative_path: Arc<Path> = project_path.path.as_std_path().into();
+                Some((project_path, relative_path))
+            }) else {
+                continue;
+            };
 
-    Some(cx.spawn(async move |mut cx| {
-        let snapshots_by_path =
-            collect_snapshots(&project, &git_store, worktree_id, &events, &mut cx).await?;
+            if let hash_map::Entry::Vacant(entry) = diff_buffers_by_path.entry(relative_path) {
+                let Some(diff) = uncommitted_diffs_by_path.get(entry.key()).cloned() else {
+                    continue;
+                };
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer(project_path.clone(), cx)
+                    })
+                    .await?;
+                entry.insert((buffer, diff));
+            }
+        }
 
         events.retain(|stored_event| {
             let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
             let relative_path = strip_root_name(path, &root_name);
-            snapshots_by_path.contains_key(relative_path)
+            diff_buffers_by_path.contains_key(relative_path)
         });
 
         let line_comment_prefix = snapshot
@@ -61,9 +85,17 @@ pub fn capture_example(
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
+        let uncommitted_diff_snapshots = diff_buffers_by_path
+            .into_iter()
+            .map(|(relative_path, (buffer, diff))| {
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+                (relative_path, (snapshot, diff_snapshot))
+            })
+            .collect();
         let uncommitted_diff = cx
             .background_executor()
-            .spawn(async move { compute_uncommitted_diff(snapshots_by_path) })
+            .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshots) })
             .await;
 
         let mut edit_history = String::new();
@@ -73,6 +105,7 @@ pub fn capture_example(
                 edit_history.push('\n');
             }
         }
+        let uncommitted_diff_requires_edit_history_rollback = !edit_history.is_empty();
 
         // Initialize an empty patch with context lines, to make it easy
         // to write the expected patch by hand.
@@ -107,6 +140,7 @@ pub fn capture_example(
             uncommitted_diff,
             recently_opened_files,
             recently_viewed_files,
+            uncommitted_diff_requires_edit_history_rollback,
             cursor_path,
             cursor_position: String::new(),
             edit_history,
@@ -191,49 +225,13 @@ fn compute_cursor_excerpt(
     )
 }
 
-async fn collect_snapshots(
-    project: &Entity<Project>,
-    git_store: &Entity<project::git_store::GitStore>,
-    worktree_id: WorktreeId,
-    events: &[StoredEvent],
-    cx: &mut gpui::AsyncApp,
-) -> Result<HashMap<Arc<Path>, (TextBufferSnapshot, BufferDiffSnapshot)>> {
-    let mut snapshots_by_path = HashMap::default();
-    for stored_event in events {
-        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-        if let Some((project_path, relative_path)) = project.read_with(cx, |project, cx| {
-            let project_path = project
-                .find_project_path(path, cx)
-                .filter(|path| path.worktree_id == worktree_id)?;
-            let relative_path: Arc<Path> = project_path.path.as_std_path().into();
-            Some((project_path, relative_path))
-        }) {
-            if let hash_map::Entry::Vacant(entry) = snapshots_by_path.entry(relative_path) {
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.open_buffer(project_path.clone(), cx)
-                    })
-                    .await?;
-                let diff = git_store
-                    .update(cx, |git_store, cx| {
-                        git_store.open_uncommitted_diff(buffer.clone(), cx)
-                    })
-                    .await?;
-                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
-                entry.insert((stored_event.old_snapshot.clone(), diff_snapshot));
-            }
-        }
-    }
-    Ok(snapshots_by_path)
-}
-
 fn compute_uncommitted_diff(
-    snapshots_by_path: HashMap<Arc<Path>, (TextBufferSnapshot, BufferDiffSnapshot)>,
+    snapshots_by_path: HashMap<Arc<Path>, (language::BufferSnapshot, BufferDiffSnapshot)>,
 ) -> String {
     let mut uncommitted_diff = String::new();
-    for (relative_path, (before_text, diff_snapshot)) in snapshots_by_path {
+    for (relative_path, (buffer_snapshot, diff_snapshot)) in snapshots_by_path {
         if let Some(head_text) = &diff_snapshot.base_text_string() {
-            let file_diff = language::unified_diff(head_text, &before_text.text());
+            let file_diff = language::unified_diff(head_text, &buffer_snapshot.text());
             if !file_diff.is_empty() {
                 let path_str = relative_path.to_string_lossy();
                 writeln!(uncommitted_diff, "--- a/{path_str}").ok();
@@ -417,6 +415,13 @@ mod tests {
             "external file edit should be in events"
         );
 
+        let worktree_id = buffer.read_with(cx, |buffer, cx| buffer.file().unwrap().worktree_id(cx));
+        let uncommitted_diffs_by_path = ep_store
+            .update(cx, |store, cx| {
+                store.uncommitted_diffs_for_events(project.clone(), worktree_id, events.clone(), cx)
+            })
+            .await
+            .unwrap();
         let mut example = cx
             .update(|cx| {
                 capture_example(
@@ -426,6 +431,7 @@ mod tests {
                     events,
                     Vec::new(),
                     Vec::new(),
+                    uncommitted_diffs_by_path,
                     true,
                     cx,
                 )
@@ -446,13 +452,16 @@ mod tests {
                 uncommitted_diff: indoc! {"
                     --- a/src/main.rs
                     +++ b/src/main.rs
-                    @@ -1,4 +1,5 @@
+                    @@ -1,11 +1,15 @@
                      fn main() {
                     +    // comment 1
                          one();
                          two();
+                    +    // comment 4
                          three();
-                    @@ -7,5 +8,6 @@
+                         four();
+                    +    // comment 3
+                         five();
                          six();
                          seven();
                          eight();
@@ -463,6 +472,7 @@ mod tests {
                 .to_string(),
                 recently_opened_files: Vec::new(),
                 recently_viewed_files: Vec::new(),
+                uncommitted_diff_requires_edit_history_rollback: true,
                 cursor_path: Path::new("src/main.rs").into(),
                 cursor_position: indoc! {"
                     fn main() {

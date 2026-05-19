@@ -1,4 +1,5 @@
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use client::{Client, EditPredictionUsage, UserStore, global_llm_token};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::{
@@ -41,9 +42,7 @@ use language::{
     File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
     language_settings::all_language_settings,
 };
-use project::{
-    DisableAiSettings, Project, ProjectPath, WorktreeId, buffer_store::BufferStoreEvent,
-};
+use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
@@ -89,7 +88,7 @@ pub mod zeta;
 mod edit_prediction_tests;
 
 use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
-use crate::example_spec::{ExampleSpec, RecentFile};
+use crate::example_spec::ExampleSpec;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
@@ -97,7 +96,6 @@ use crate::onboarding_modal::ZedPredictModal;
 pub use crate::prediction::EditPrediction;
 pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
-pub use capture_example::capture_example;
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -114,7 +112,6 @@ actions!(
 
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 10;
-const RECENT_PATH_COUNT_MAX: usize = 20;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
@@ -241,6 +238,7 @@ pub struct StoredEvent {
     pub old_snapshot: TextBufferSnapshot,
     pub new_snapshot_version: clock::Global,
     pub total_edit_range: Range<Anchor>,
+    pub uncommitted_diff: Option<Entity<BufferDiff>>,
 }
 
 impl StoredEvent {
@@ -319,16 +317,10 @@ fn lines_between_ranges(left: &Range<Point>, right: &Range<Point>) -> u32 {
     0
 }
 
-struct RecentProjectPath {
-    path: ProjectPath,
-    cursor_position: Option<Anchor>,
-}
-
 struct ProjectState {
     events: VecDeque<StoredEvent>,
     last_event: Option<LastEvent>,
-    recently_opened_paths: VecDeque<RecentProjectPath>,
-    recently_viewed_paths: VecDeque<RecentProjectPath>,
+    recent_paths: VecDeque<ProjectPath>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     next_pending_prediction_id: usize,
@@ -339,7 +331,7 @@ struct ProjectState {
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
-    _subscriptions: [gpui::Subscription; 3],
+    _subscriptions: [gpui::Subscription; 2],
     copilot: Option<Entity<Copilot>>,
 }
 
@@ -581,6 +573,7 @@ impl LastEvent {
                 new_snapshot_version: self.new_snapshot.version.clone(),
                 total_edit_range: self.new_snapshot.anchor_before(edit_range.start)
                     ..self.new_snapshot.anchor_before(edit_range.end),
+                uncommitted_diff: None,
             })
         }
     }
@@ -1016,45 +1009,87 @@ impl EditPredictionStore {
             .unwrap_or_default()
     }
 
-    pub fn recent_paths_for_project(
-        &self,
-        project: &Entity<Project>,
-        cx: &App,
-    ) -> (Vec<RecentFile>, Vec<RecentFile>) {
-        self.projects
-            .get(&project.entity_id())
-            .map(|project_state| {
-                (
-                    Self::paths_for_example(project, &project_state.recently_opened_paths, cx),
-                    Self::paths_for_example(project, &project_state.recently_viewed_paths, cx),
-                )
-            })
-            .unwrap_or_default()
-    }
-
-    fn paths_for_example(
-        project: &Entity<Project>,
-        paths: &VecDeque<RecentProjectPath>,
-        cx: &App,
-    ) -> Vec<RecentFile> {
-        let project = project.read(cx);
-        paths
-            .iter()
-            .map(|recent_path| {
-                let cursor_position = recent_path.cursor_position.and_then(|cursor_position| {
-                    let buffer = project
-                        .buffer_store()
-                        .read(cx)
-                        .get_by_path(&recent_path.path)?;
-                    let snapshot = buffer.read(cx).snapshot();
-                    Some(cursor_position.to_offset(&snapshot))
-                });
-                RecentFile {
-                    path: recent_path.path.path.as_std_path().into(),
-                    cursor_position,
+    pub fn uncommitted_diffs_for_events(
+        &mut self,
+        project: Entity<Project>,
+        worktree_id: WorktreeId,
+        events: Vec<StoredEvent>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<HashMap<Arc<Path>, Entity<BufferDiff>>>> {
+        let project_id = project.entity_id();
+        let git_store = project.read(cx).git_store().clone();
+        cx.spawn(async move |this, cx| {
+            let mut diffs_by_path = HashMap::default();
+            for stored_event in events.into_iter().rev() {
+                let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+                let Some(project_path) = project.read_with(cx, |project, cx| {
+                    project
+                        .find_project_path(path, cx)
+                        .filter(|path| path.worktree_id == worktree_id)
+                }) else {
+                    continue;
+                };
+                let relative_path: Arc<Path> = project_path.path.as_std_path().into();
+                if diffs_by_path.contains_key(&relative_path) {
+                    continue;
                 }
-            })
-            .collect()
+
+                let old_snapshot_remote_id = stored_event.old_snapshot.remote_id();
+                let new_snapshot_version = stored_event.new_snapshot_version.clone();
+                let event_path = path.clone();
+                if let Some(diff) = stored_event.uncommitted_diff.or_else(|| {
+                    this.update(cx, |store, _| {
+                        store
+                            .projects
+                            .get(&project_id)?
+                            .events
+                            .iter()
+                            .find(|event| {
+                                event.old_snapshot.remote_id() == old_snapshot_remote_id
+                                    && event.new_snapshot_version == new_snapshot_version
+                            })?
+                            .uncommitted_diff
+                            .clone()
+                    })
+                    .log_err()
+                    .flatten()
+                }) {
+                    diffs_by_path.insert(relative_path, diff);
+                    continue;
+                }
+
+                let buffer = project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                    .await?;
+                let diff = git_store
+                    .update(cx, |git_store, cx| {
+                        git_store.open_uncommitted_diff(buffer.clone(), cx)
+                    })
+                    .await?;
+                this.update(cx, |store, _| {
+                    let Some(project) = store.projects.get_mut(&project_id) else {
+                        return;
+                    };
+                    let Some(target_index) = project.events.iter().position(|event| {
+                        event.old_snapshot.remote_id() == old_snapshot_remote_id
+                            && event.new_snapshot_version == new_snapshot_version
+                    }) else {
+                        return;
+                    };
+                    for event in project.events.iter_mut().take(target_index + 1) {
+                        let zeta_prompt::Event::BufferChange { path, .. } = event.event.as_ref();
+                        if path == &event_path {
+                            event.uncommitted_diff = None;
+                        }
+                    }
+                    project.events[target_index].uncommitted_diff = Some(diff.clone());
+                })
+                .log_err();
+                diffs_by_path.insert(relative_path, diff);
+            }
+
+            Ok(diffs_by_path)
+        })
     }
 
     pub fn context_for_project<'a>(
@@ -1149,66 +1184,8 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
-        let path = Self::project_path_for_buffer(buffer, cx);
         let project_state = self.get_or_init_project(project, cx);
-        if let Some(path) = path {
-            Self::push_recent_path(&mut project_state.recently_opened_paths, path, None);
-        }
         Self::register_buffer_impl(project_state, buffer, project, cx);
-    }
-
-    fn project_path_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Option<ProjectPath> {
-        let buffer = buffer.read(cx);
-        buffer
-            .file()
-            .map(|file| ProjectPath::from_file(file.as_ref(), cx))
-    }
-
-    fn push_recent_path(
-        paths: &mut VecDeque<RecentProjectPath>,
-        path: ProjectPath,
-        cursor_position: Option<Anchor>,
-    ) {
-        if let Some(ix) = paths.iter().position(|probe| probe.path == path) {
-            let mut recent_path = paths.remove(ix).unwrap();
-            recent_path.cursor_position = cursor_position.or(recent_path.cursor_position);
-            paths.push_front(recent_path);
-        } else {
-            paths.push_front(RecentProjectPath {
-                path,
-                cursor_position,
-            });
-        }
-        paths.truncate(RECENT_PATH_COUNT_MAX);
-    }
-
-    fn update_recent_path_position(
-        paths: &mut VecDeque<RecentProjectPath>,
-        path: &ProjectPath,
-        cursor_position: Anchor,
-    ) {
-        if let Some(recent_path) = paths
-            .iter_mut()
-            .find(|recent_path| recent_path.path == *path)
-        {
-            recent_path.cursor_position = Some(cursor_position);
-        }
-    }
-
-    fn record_cursor_position(
-        project_state: &mut ProjectState,
-        buffer: &Entity<Buffer>,
-        path: &ProjectPath,
-        position: Anchor,
-    ) {
-        if let Some(buffer) = project_state
-            .registered_buffers
-            .get_mut(&buffer.entity_id())
-        {
-            buffer.last_position = Some(position);
-        }
-        Self::update_recent_path_position(&mut project_state.recently_opened_paths, path, position);
-        Self::update_recent_path_position(&mut project_state.recently_viewed_paths, path, position);
     }
 
     fn get_or_init_project(
@@ -1217,23 +1194,9 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) -> &mut ProjectState {
         let entity_id = project.entity_id();
-        self.projects.entry(entity_id).or_insert_with(|| {
-            let buffer_store = project.read(cx).buffer_store().clone();
-            let mut recently_opened_paths = VecDeque::new();
-            for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
-                if let Some(path) = Self::project_path_for_buffer(&buffer, cx) {
-                    Self::push_recent_path(&mut recently_opened_paths, path, None);
-                }
-            }
-
-            let mut recently_viewed_paths = VecDeque::new();
-            if let Some(active_entry_id) = project.read(cx).active_entry()
-                && let Some(path) = project.read(cx).path_for_entry(active_entry_id, cx)
-            {
-                Self::push_recent_path(&mut recently_viewed_paths, path, None);
-            }
-
-            ProjectState {
+        self.projects
+            .entry(entity_id)
+            .or_insert_with(|| ProjectState {
                 context: {
                     let related_excerpt_store = cx.new(|cx| RelatedExcerptStore::new(project, cx));
                     cx.subscribe(&related_excerpt_store, move |this, _, event, _| {
@@ -1244,8 +1207,7 @@ impl EditPredictionStore {
                 },
                 events: VecDeque::new(),
                 last_event: None,
-                recently_opened_paths,
-                recently_viewed_paths,
+                recent_paths: VecDeque::new(),
                 debug_tx: None,
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
@@ -1257,20 +1219,13 @@ impl EditPredictionStore {
                 license_detection_watchers: HashMap::default(),
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
-                    cx.subscribe(&buffer_store, {
-                        let project = project.clone();
-                        move |this, _, event, cx| {
-                            this.handle_buffer_store_event(project.clone(), event, cx);
-                        }
-                    }),
                     cx.observe_release(&project, move |this, _, cx| {
                         this.projects.remove(&entity_id);
                         cx.notify();
                     }),
                 ],
                 copilot: None,
-            }
-        })
+            })
     }
 
     pub fn remove_project(&mut self, project: &Entity<Project>) {
@@ -1348,49 +1303,41 @@ impl EditPredictionStore {
         debug_watch_rx
     }
 
-    fn handle_buffer_store_event(
-        &mut self,
-        project: Entity<Project>,
-        event: &BufferStoreEvent,
-        cx: &mut Context<Self>,
-    ) {
-        if let BufferStoreEvent::BufferAdded(buffer) = event {
-            let Some(path) = Self::project_path_for_buffer(buffer, cx) else {
-                return;
-            };
-            let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
-                return;
-            };
-            Self::push_recent_path(&mut project_state.recently_opened_paths, path, None);
-        }
-    }
-
     fn handle_project_event(
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
         cx: &mut Context<Self>,
     ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
+        // TODO [zeta2] init with recent paths
         match event {
             project::Event::ActiveEntryChanged(Some(active_entry_id)) => {
-                let Some(path) = project.read(cx).path_for_entry(*active_entry_id, cx) else {
-                    return;
-                };
                 let Some(project_state) = self.projects.get_mut(&project.entity_id()) else {
                     return;
                 };
-                Self::push_recent_path(&mut project_state.recently_viewed_paths, path, None);
+                let path = project.read(cx).path_for_entry(*active_entry_id, cx);
+                if let Some(path) = path {
+                    if let Some(ix) = project_state
+                        .recent_paths
+                        .iter()
+                        .position(|probe| probe == &path)
+                    {
+                        project_state.recent_paths.remove(ix);
+                    }
+                    project_state.recent_paths.push_front(path);
+                }
             }
-            project::Event::DiagnosticsUpdated { .. }
-                if is_ep_store_provider(
-                    all_language_settings(None, cx).edit_predictions.provider,
-                ) && cx.has_flag::<EditPredictionJumpsFeatureFlag>() =>
-            {
-                self.refresh_prediction_from_diagnostics(
-                    project,
-                    DiagnosticSearchScope::Global,
-                    cx,
-                );
+            project::Event::DiagnosticsUpdated { .. } => {
+                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
+                    self.refresh_prediction_from_diagnostics(
+                        project,
+                        DiagnosticSearchScope::Global,
+                        cx,
+                    );
+                }
             }
             _ => (),
         }
@@ -1605,12 +1552,13 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &App,
     ) -> Option<BufferEditPrediction<'_>> {
-        let path = Self::project_path_for_buffer(buffer, cx);
         let project_state = self.projects.get_mut(&project.entity_id())?;
         if let Some(position) = position
-            && let Some(path) = path
+            && let Some(buffer) = project_state
+                .registered_buffers
+                .get_mut(&buffer.entity_id())
         {
-            Self::record_cursor_position(project_state, buffer, &path, position);
+            buffer.last_position = Some(position);
         }
 
         let CurrentEditPrediction {
@@ -2125,17 +2073,6 @@ impl EditPredictionStore {
         position: language::Anchor,
         cx: &mut Context<Self>,
     ) {
-        let path = Self::project_path_for_buffer(&buffer, cx);
-        let project_state = self.get_or_init_project(&project, cx);
-        if let Some(path) = path {
-            Self::record_cursor_position(project_state, &buffer, &path, position);
-            Self::push_recent_path(
-                &mut project_state.recently_viewed_paths,
-                path,
-                Some(position),
-            );
-        }
-
         self.queue_prediction_refresh(
             project.clone(),
             PredictEditsRequestTrigger::Other,
@@ -2573,17 +2510,6 @@ impl EditPredictionStore {
         trigger: PredictEditsRequestTrigger,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<EditPredictionResult>>> {
-        let path = Self::project_path_for_buffer(active_buffer, cx);
-        let project_state = self.get_or_init_project(project, cx);
-        if let Some(path) = path {
-            Self::record_cursor_position(project_state, active_buffer, &path, position);
-            Self::push_recent_path(
-                &mut project_state.recently_viewed_paths,
-                path,
-                Some(position),
-            );
-        }
-
         self.request_prediction_internal(
             project.clone(),
             active_buffer.clone(),
@@ -2634,6 +2560,7 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
+        let capture_worktree_id = snapshot.file().map(|file| file.worktree_id(cx));
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2649,11 +2576,23 @@ impl EditPredictionStore {
             is_open_source,
         };
 
-        let capture_data = (can_collect_data && rand::random_ratio(1, 1000)).then(|| stored_events);
-
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta => {
-                zeta::request_prediction_with_zeta(self, inputs, capture_data, cx)
+                let capture_events = (can_collect_data && rand::random_ratio(1, 10))
+                    .then(|| capture_worktree_id)
+                    .flatten()
+                    .map(|worktree_id| {
+                        (
+                            stored_events.clone(),
+                            self.uncommitted_diffs_for_events(
+                                project.clone(),
+                                worktree_id,
+                                stored_events,
+                                cx,
+                            ),
+                        )
+                    });
+                zeta::request_prediction_with_zeta(self, inputs, capture_events, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -2971,13 +2910,7 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
-        project_state.recently_opened_paths = paths
-            .into_iter()
-            .map(|path| RecentProjectPath {
-                path,
-                cursor_position: None,
-            })
-            .collect();
+        project_state.recent_paths = paths.into_iter().collect();
     }
 
     fn is_file_open_source(
@@ -3200,6 +3133,7 @@ fn merge_trailing_events_if_needed(
                 new_snapshot_version: newest_snapshot.version.clone(),
                 total_edit_range: newest_snapshot.anchor_before(edit_range.start)
                     ..newest_snapshot.anchor_before(edit_range.end),
+                uncommitted_diff: None,
             },
         };
         events.truncate(events.len() - mergeable_count);

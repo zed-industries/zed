@@ -1,11 +1,12 @@
 use crate::{
     CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore, StoredEvent,
+    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
     ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     prediction::EditPredictionResult,
 };
 use anyhow::Result;
+use buffer_diff::BufferDiff;
 use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
@@ -48,7 +49,10 @@ pub fn request_prediction_with_zeta(
         is_open_source,
         ..
     }: EditPredictionModelInput,
-    capture_data: Option<Vec<StoredEvent>>,
+    capture_events: Option<(
+        Vec<crate::StoredEvent>,
+        Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
+    )>,
     cx: &mut Context<EditPredictionStore>,
 ) -> Task<Result<Option<EditPredictionResult>>> {
     let settings = &all_language_settings(None, cx).edit_predictions;
@@ -412,21 +416,32 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.and_then(|stored_events| {
-                cx.update(|cx| {
+            let example_task = capture_events.map(|(events, uncommitted_diffs)| {
+                cx.spawn({
+                    let project = project.clone();
+                    let edited_buffer = edited_buffer.clone();
                     let (recently_opened_files, recently_viewed_files) = this
                         .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
                         .ok()?;
-                    crate::capture_example(
-                        project.clone(),
-                        edited_buffer.clone(),
-                        position,
-                        stored_events,
-                        recently_opened_files,
-                        recently_viewed_files,
-                        false,
-                        cx,
-                    )
+                    async move |cx| {
+                        let uncommitted_diffs = uncommitted_diffs.await?;
+                        let Some(task) = cx.update(|cx| {
+                            crate::capture_example(
+                                project.clone(),
+                                edited_buffer.clone(),
+                                position,
+                                events,
+                                recently_opened_files,
+                                recently_viewed_files,
+                                uncommitted_diffs,
+                                false,
+                                cx,
+                            )
+                        }) else {
+                            return Err(anyhow::anyhow!("failed to capture example"));
+                        };
+                        task.await
+                    }
                 })
             });
             cx.spawn(async move |cx| {

@@ -36,6 +36,8 @@ pub struct ExampleSpec {
     pub recently_opened_files: Vec<RecentFile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recently_viewed_files: Vec<RecentFile>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub uncommitted_diff_requires_edit_history_rollback: bool,
     pub cursor_path: Arc<Path>,
     pub cursor_position: String,
     pub edit_history: String,
@@ -117,6 +119,12 @@ struct FrontMatter<'a> {
     revision: Cow<'a, str>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    uncommitted_diff_requires_edit_history_rollback: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl ExampleSpec {
@@ -140,6 +148,8 @@ impl ExampleSpec {
             repository_url: Cow::Borrowed(&self.repository_url),
             revision: Cow::Borrowed(&self.revision),
             tags: self.tags.clone(),
+            uncommitted_diff_requires_edit_history_rollback: self
+                .uncommitted_diff_requires_edit_history_rollback,
         };
         let front_matter_toml =
             toml::to_string_pretty(&front_matter).unwrap_or_else(|_| String::new());
@@ -256,6 +266,7 @@ impl ExampleSpec {
             uncommitted_diff: String::new(),
             recently_opened_files: Vec::new(),
             recently_viewed_files: Vec::new(),
+            uncommitted_diff_requires_edit_history_rollback: false,
             cursor_path: Path::new("").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -273,6 +284,8 @@ impl ExampleSpec {
                 spec.repository_url = data.repository_url.into_owned();
                 spec.revision = data.revision.into_owned();
                 spec.tags = data.tags;
+                spec.uncommitted_diff_requires_edit_history_rollback =
+                    data.uncommitted_diff_requires_edit_history_rollback;
             }
             input = rest.trim_start();
         }
@@ -559,6 +572,7 @@ mod tests {
             uncommitted_diff: String::new(),
             recently_opened_files: Vec::new(),
             recently_viewed_files: Vec::new(),
+            uncommitted_diff_requires_edit_history_rollback: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -697,6 +711,7 @@ mod tests {
             uncommitted_diff: String::new(),
             recently_opened_files: Vec::new(),
             recently_viewed_files: Vec::new(),
+            uncommitted_diff_requires_edit_history_rollback: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
@@ -771,6 +786,7 @@ mod tests {
             uncommitted_diff: String::new(),
             recently_opened_files: Vec::new(),
             recently_viewed_files: Vec::new(),
+            uncommitted_diff_requires_edit_history_rollback: false,
             cursor_path: Path::new("test.rs").into(),
             cursor_position: String::new(),
             edit_history: String::new(),
