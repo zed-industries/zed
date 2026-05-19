@@ -152,8 +152,10 @@ impl Model {
         Self {
             display_name: entry.display_name,
             id: entry.id,
-            max_input_tokens: entry.max_input_tokens,
-            max_output_tokens: entry.max_tokens,
+            // Fall back to conservative defaults when the listing endpoint
+            // omits these fields or returns `null` (see `ListModelEntry`).
+            max_input_tokens: entry.max_input_tokens.unwrap_or(200_000),
+            max_output_tokens: entry.max_tokens.unwrap_or(4_096),
             default_temperature: 1.0,
             mode,
             supports_thinking,
@@ -203,12 +205,20 @@ pub async fn stream_completion(
 }
 
 /// A raw model entry returned by the Anthropic models listing endpoint.
+///
+/// `max_input_tokens` and `max_tokens` are nullable in Anthropic's official
+/// OpenAPI schema, and are commonly omitted entirely by third-party
+/// Anthropic-compatible proxies. They are treated as optional here so that
+/// parsing succeeds in both cases; defaults are applied in
+/// [`Model::from_listed`].
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListModelEntry {
     pub id: String,
     pub display_name: String,
-    pub max_input_tokens: u64,
-    pub max_tokens: u64,
+    #[serde(default)]
+    pub max_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_tokens: Option<u64>,
     #[serde(default)]
     pub capabilities: Option<ModelCapabilities>,
 }
@@ -993,8 +1003,8 @@ mod tests {
         ListModelEntry {
             id: id.to_string(),
             display_name: id.to_string(),
-            max_input_tokens: 200_000,
-            max_tokens: 64_000,
+            max_input_tokens: Some(200_000),
+            max_tokens: Some(64_000),
             capabilities: Some(capabilities),
         }
     }
@@ -1071,6 +1081,40 @@ mod tests {
             &model.supported_effort_levels,
             &[Effort::Low, Effort::High, Effort::XHigh, Effort::Max]
         );
+    }
+
+    // Regression test for https://github.com/zed-industries/zed/issues/56880:
+    // Anthropic's official schema marks `max_input_tokens` and `max_tokens` as
+    // nullable, and third-party proxies frequently omit them entirely. Parsing
+    // must succeed in both cases, and `Model::from_listed` must substitute
+    // reasonable defaults.
+    #[test]
+    fn list_model_entry_accepts_missing_and_null_token_fields() {
+        let response = r#"{
+            "data": [
+                {
+                    "id": "missing-tokens",
+                    "display_name": "Missing Tokens"
+                },
+                {
+                    "id": "null-tokens",
+                    "display_name": "Null Tokens",
+                    "max_input_tokens": null,
+                    "max_tokens": null
+                }
+            ]
+        }"#;
+
+        let parsed: ListModelsResponse =
+            serde_json::from_str(response).expect("parsing should succeed");
+        assert_eq!(parsed.data.len(), 2);
+        for entry in parsed.data {
+            assert!(entry.max_input_tokens.is_none());
+            assert!(entry.max_tokens.is_none());
+            let model = Model::from_listed(entry);
+            assert_eq!(model.max_input_tokens, 200_000);
+            assert_eq!(model.max_output_tokens, 4_096);
+        }
     }
 }
 
