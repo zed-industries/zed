@@ -7,9 +7,9 @@ use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, Focusable, Rems, Subscription, Task,
-    TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions,
-    actions, point, size,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Rems,
+    Subscription, Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::{
-    Checkbox, ContextMenu, DropdownMenu, DropdownStyle, Headline, HeadlineSize, Tooltip, prelude::*,
+    ContextMenu, DropdownMenu, DropdownStyle, Headline, HeadlineSize, Switch, Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::{
@@ -34,8 +34,18 @@ actions!(
         SaveSkill,
         /// Closes the skill creator window without saving.
         Cancel,
+        /// Moves focus to the next form field, wrapping around.
+        FocusNextField,
+        /// Moves focus to the previous form field, wrapping around.
+        FocusPreviousField,
     ]
 );
+
+const NAME_FIELD_TAB_INDEX: isize = 1;
+const DESCRIPTION_FIELD_TAB_INDEX: isize = 2;
+const SCOPE_FIELD_TAB_INDEX: isize = 3;
+const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
+const BODY_FIELD_TAB_INDEX: isize = 5;
 
 pub fn init(_cx: &mut App) {}
 
@@ -167,6 +177,7 @@ pub fn open_skill_creator(
 }
 
 pub struct SkillCreator {
+    focus_handle: FocusHandle,
     title_bar: Option<Entity<PlatformTitleBar>>,
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
@@ -198,6 +209,7 @@ impl SkillCreator {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let focus_handle = cx.focus_handle();
         let project_scopes = project_scopes_from_workspace(&workspace, cx);
 
         // Default to first project scope (project-level) when available;
@@ -286,6 +298,7 @@ impl SkillCreator {
         ];
 
         Self {
+            focus_handle,
             title_bar: if !cfg!(target_os = "macos") {
                 Some(cx.new(|cx| PlatformTitleBar::new("skill-creator-title-bar", cx)))
             } else {
@@ -506,11 +519,13 @@ impl SkillCreator {
         &self,
         editor: &Entity<Editor>,
         size: Rems,
+        tab_index: isize,
         has_error: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let theme = cx.theme().clone();
+        let focus_handle = editor.focus_handle(cx).tab_index(tab_index).tab_stop(true);
         let border_color = if has_error {
             theme.status().error_border
         } else {
@@ -518,6 +533,7 @@ impl SkillCreator {
         };
         div()
             .w_full()
+            .track_focus(&focus_handle)
             .px_3()
             .py_2()
             .rounded_md()
@@ -563,7 +579,13 @@ impl SkillCreator {
         let has_error = self.name_error.is_some();
         v_flex()
             .gap_1p5()
-            .child(self.render_text_input(&self.name_editor.clone(), rems(0.9375), has_error, cx))
+            .child(self.render_text_input(
+                &self.name_editor,
+                rems(0.9375),
+                NAME_FIELD_TAB_INDEX,
+                has_error,
+                cx,
+            ))
             .child(Self::render_hint(hint, has_error))
     }
 
@@ -582,8 +604,9 @@ impl SkillCreator {
         v_flex()
             .gap_1p5()
             .child(self.render_text_input(
-                &self.description_editor.clone(),
+                &self.description_editor,
                 rems(0.9375),
+                DESCRIPTION_FIELD_TAB_INDEX,
                 has_error,
                 cx,
             ))
@@ -656,6 +679,7 @@ impl SkillCreator {
             )
             .child(
                 DropdownMenu::new("skill-scope-dropdown", selected_label, menu)
+                    .tab_index(SCOPE_FIELD_TAB_INDEX)
                     .style(DropdownStyle::Outlined)
                     .full_width(true),
             )
@@ -683,14 +707,7 @@ impl SkillCreator {
                     .child(
                         h_flex()
                             .gap_2p5()
-                            .items_start()
-                            .child(div().pt_0p5().child(
-                                Checkbox::new("disable-model-invocation", toggle_state).on_click(
-                                    cx.listener(|this, _state: &ToggleState, _window, cx| {
-                                        this.toggle_disable_model_invocation(cx);
-                                    }),
-                                ),
-                            ))
+                            .justify_between()
                             .child(
                                 v_flex()
                                     .gap_0p5()
@@ -703,6 +720,15 @@ impl SkillCreator {
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                     ),
+                            )
+                            .child(
+                                Switch::new("disable-model-invocation", toggle_state)
+                                    .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX)
+                                    .on_click(cx.listener(
+                                        |this, _state: &ToggleState, _window, cx| {
+                                            this.toggle_disable_model_invocation(cx);
+                                        },
+                                    )),
                             ),
                     ),
             )
@@ -717,6 +743,11 @@ impl SkillCreator {
             "The full instructions the agent will follow when this skill is used. Markdown is supported.".into()
         };
         let has_error = self.body_error.is_some();
+        let focus_handle = self
+            .body_editor
+            .focus_handle(cx)
+            .tab_index(BODY_FIELD_TAB_INDEX)
+            .tab_stop(true);
         let border_color = if has_error {
             theme.status().error_border
         } else {
@@ -744,6 +775,7 @@ impl SkillCreator {
                     .border_1()
                     .border_color(border_color)
                     .bg(theme.colors().editor_background)
+                    .track_focus(&focus_handle)
                     .overflow_hidden()
                     .child(EditorElement::new(
                         &self.body_editor,
@@ -847,6 +879,46 @@ impl SkillCreator {
                     ),
             )
     }
+
+    fn focus_next_field(
+        &mut self,
+        _: &FocusNextField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_next(cx);
+    }
+
+    fn focus_previous_field(
+        &mut self,
+        _: &FocusPreviousField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev(cx);
+    }
+
+    // When focus is on a non-editor tab stop (dropdown button, switch),
+    // Tab dispatches the global `menu::SelectNext` rather than our
+    // custom `FocusNextField`. Catching it here keeps the cycle moving.
+    fn on_menu_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus_next(cx);
+    }
+
+    fn on_menu_prev(
+        &mut self,
+        _: &menu::SelectPrevious,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus_prev(cx);
+    }
+}
+
+impl Focusable for SkillCreator {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
 }
 
 impl Render for SkillCreator {
@@ -858,8 +930,13 @@ impl Render for SkillCreator {
             v_flex()
                 .id("skill-creator")
                 .key_context("SkillCreator")
+                .track_focus(&self.focus_handle)
                 .on_action(cx.listener(Self::save_skill))
                 .on_action(cx.listener(Self::cancel))
+                .on_action(cx.listener(Self::focus_next_field))
+                .on_action(cx.listener(Self::focus_previous_field))
+                .on_action(cx.listener(Self::on_menu_next))
+                .on_action(cx.listener(Self::on_menu_prev))
                 .size_full()
                 .overflow_hidden()
                 .font(ui_font)
@@ -875,6 +952,9 @@ impl Render for SkillCreator {
                     // markdown editor inside handles its own scrolling.
                     v_flex()
                         .id("skill-creator-form")
+                        .tab_index(0)
+                        .tab_group()
+                        .tab_stop(false)
                         .flex_1()
                         .min_h_0()
                         .gap_5()
