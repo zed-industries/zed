@@ -40,6 +40,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
 
     let user_agent = format!(
         "Zed Agent CLI/{} ({}; {})",

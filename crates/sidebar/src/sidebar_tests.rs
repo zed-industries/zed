@@ -96,6 +96,34 @@ fn has_thread_entry(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
 }
 
 #[track_caller]
+fn assert_project_header_has_threads(
+    sidebar: &Entity<Sidebar>,
+    project_name: &str,
+    expected_has_threads: bool,
+    cx: &mut gpui::VisualTestContext,
+) {
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let has_threads = sidebar.contents.entries.iter().find_map(|entry| {
+            if let ListEntry::ProjectHeader {
+                label, has_threads, ..
+            } = entry
+                && label.as_ref() == project_name
+            {
+                Some(*has_threads)
+            } else {
+                None
+            }
+        });
+
+        assert_eq!(
+            has_threads,
+            Some(expected_has_threads),
+            "expected project header `{project_name}` to have has_threads={expected_has_threads}, got {has_threads:?}"
+        );
+    });
+}
+
+#[track_caller]
 fn assert_remote_project_integration_sidebar_state(
     sidebar: &mut Sidebar,
     main_thread_id: &acp::SessionId,
@@ -1538,6 +1566,70 @@ async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAp
         visible_entries_as_strings(&sidebar, cx),
         Vec::<String>::new()
     );
+}
+
+#[gpui::test]
+async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    assert_project_header_has_threads(&sidebar, "my-project", true, cx);
+
+    let (terminal_metadata, terminal_workspace) = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == terminal_id => {
+                    Some((terminal.metadata.clone(), terminal.workspace.clone()))
+                }
+                _ => None,
+            })
+            .expect("terminal should be visible in sidebar")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.close_terminal(&terminal_metadata, &terminal_workspace, window, cx);
+    });
+    cx.run_until_parked();
+
+    panel.read_with(cx, |panel, cx| {
+        assert!(!panel.has_terminal(terminal_id));
+        assert!(
+            panel.active_view_is_new_draft(cx),
+            "closing the active terminal should leave the panel on a hidden empty draft"
+        );
+    });
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]"]
+    );
+    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
+
+    let project_group_key = multi_workspace.read_with(cx, |multi_workspace, cx| {
+        multi_workspace.workspace().read(cx).project_group_key(cx)
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.toggle_collapse(&project_group_key, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["> [my-project]"]
+    );
+    assert_project_header_has_threads(&sidebar, "my-project", false, cx);
 }
 
 #[gpui::test]

@@ -1868,10 +1868,11 @@ impl MentionCompletion {
         offset_to_line: usize,
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
-        // Find the rightmost '@' that has a word boundary before it and no whitespace immediately after
+        // Find the rightmost '@' that has a boundary before it and no whitespace immediately after.
+        // A boundary is the start of the line, whitespace, or an opening bracket.
         let mut last_mention_start = None;
         for (idx, _) in line.rmatch_indices('@') {
-            // No whitespace immediately after '@'
+            // No whitespace immediately after '@'.
             if line[idx + 1..]
                 .chars()
                 .next()
@@ -1880,12 +1881,11 @@ impl MentionCompletion {
                 continue;
             }
 
-            // Must be a word boundary before '@'
             if idx > 0
                 && line[..idx]
                     .chars()
                     .last()
-                    .is_some_and(|c| !c.is_whitespace())
+                    .is_some_and(|c| !c.is_whitespace() && !matches!(c, '(' | '[' | '{'))
             {
                 continue;
             }
@@ -2959,6 +2959,39 @@ mod tests {
                 argument: Some("https://example.com/@".to_string()),
             }),
             "Should parse URL ending with @ (even if URL is incomplete)"
+        );
+
+        // Bracketed mentions: opening brackets count as a boundary before '@' so
+        // typing `(@`, `[@`, or `{@` still opens the completion menu.
+
+        assert_eq!(
+            MentionCompletion::try_parse("(@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '('"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("[@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '['"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse("{@", 0, &supported_modes),
+            Some(MentionCompletion {
+                source_range: 1..2,
+                mode: None,
+                argument: None,
+            }),
+            "Should parse mention immediately after '{{'"
         );
     }
 

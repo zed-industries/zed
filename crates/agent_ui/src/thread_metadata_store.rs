@@ -587,6 +587,12 @@ impl ThreadMetadataStore {
         self.threads.values()
     }
 
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task
+            .clone()
+            .unwrap_or_else(|| Task::ready(()).shared())
+    }
+
     /// Returns all archived threads.
     pub fn archived_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.entries().filter(|t| t.archived)
