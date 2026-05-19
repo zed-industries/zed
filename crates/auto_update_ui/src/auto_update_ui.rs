@@ -199,10 +199,9 @@ impl Dismissable for SkillsAnnouncement {
 
 fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementContent> {
     let version_with_skills = match ReleaseChannel::global(cx) {
-        // TODO DL: Update this with the exact for launch version. We can do it when removing the feature flag.
-        ReleaseChannel::Stable => Version::new(1, 3, 0),
+        ReleaseChannel::Stable => Version::new(1, 4, 0),
         ReleaseChannel::Dev | ReleaseChannel::Nightly | ReleaseChannel::Preview => {
-            Version::new(1, 3, 0)
+            Version::new(1, 4, 0)
         }
     };
 
