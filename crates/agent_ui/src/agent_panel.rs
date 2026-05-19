@@ -4239,6 +4239,18 @@ impl AgentPanel {
             return;
         }
         let working_directory = self.terminal_working_directory(None, cx);
+        self.spawn_initial_terminal(terminal_id, working_directory, source, window, cx);
+    }
+
+    #[cfg(not(test))]
+    fn spawn_initial_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        working_directory: Option<PathBuf>,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.spawn_terminal(
             terminal_id,
             working_directory,
@@ -4251,6 +4263,35 @@ impl AgentPanel {
             window,
             cx,
         );
+    }
+
+    #[cfg(test)]
+    fn spawn_initial_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        working_directory: Option<PathBuf>,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.insert_display_only_terminal(
+            terminal_id,
+            working_directory,
+            None,
+            None,
+            None,
+            true,
+            false,
+            source,
+            window,
+            cx,
+        ) {
+            log::error!("failed to spawn test agent panel terminal: {error:#}");
+            if self.pending_terminal_spawn == Some(terminal_id) {
+                self.pending_terminal_spawn = None;
+                cx.notify();
+            }
+        }
     }
 
     fn destination_has_meaningful_state(&self, cx: &App) -> bool {
