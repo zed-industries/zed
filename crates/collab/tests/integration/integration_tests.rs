@@ -2931,7 +2931,8 @@ async fn test_git_branch_name(
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
-        let repositories = project.repositories(cx).values().collect::<Vec<_>>();
+        let repositories = project.repositories(cx);
+        let repositories = repositories.values().collect::<Vec<_>>();
         assert_eq!(repositories.len(), 1);
         let repository = repositories[0].clone();
         assert_eq!(
@@ -3150,13 +3151,13 @@ async fn test_git_status_sync(
     executor.run_until_parked();
     project_remote.update(cx_b, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });
     project_remote_c.update(cx_c, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });

@@ -1985,7 +1985,7 @@ impl Editor {
             ));
             if let Some(task_inventory) = project
                 .read(cx)
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()
@@ -2000,7 +2000,7 @@ impl Editor {
             };
 
             project_subscriptions.push(cx.subscribe_in(
-                &project.read(cx).breakpoint_store(),
+                &project.read(cx).breakpoint_store(cx),
                 window,
                 |editor, _, event, window, cx| match event {
                     BreakpointStoreEvent::ClearDebugLines => {
@@ -2017,10 +2017,10 @@ impl Editor {
                     _ => {}
                 },
             ));
-            let git_store = project.read(cx).git_store().clone();
+            let git_store = project.read(cx).git_store(cx);
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryAdded = event {
+                if let GitStoreEvent::RepositoryAdded(_, _) = event {
                     this.load_diff_task = Some(
                         update_uncommitted_diff_for_buffer(
                             cx.entity(),
@@ -2061,12 +2061,12 @@ impl Editor {
             };
 
         let bookmark_store = match (&mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).bookmark_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).bookmark_store(cx)),
             _ => None,
         };
 
         let breakpoint_store = match (&mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store(cx)),
             _ => None,
         };
 
@@ -2400,18 +2400,28 @@ impl Editor {
             },
         ));
 
-        if let Some(dap_store) = editor
-            .project
-            .as_ref()
-            .map(|project| project.read(cx).dap_store())
-        {
+        if let Some(project) = editor.project.as_ref().cloned() {
             let weak_editor = cx.weak_entity();
 
+            // Phase 2 multi-tenant: `observe_new` fires for every
+            // `Session` entity created on the host (including sibling
+            // Projects'). Gate the per-session subscription on this
+            // editor's Project owning that session, otherwise we'd
+            // refresh inline values in response to debug events from
+            // unrelated workspaces.
+            let project_for_observe = project.downgrade();
             editor
                 ._subscriptions
                 .push(
                     cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
                         let session_entity = cx.entity();
+                        let session_id = session_entity.read(cx).session_id();
+                        let Some(project) = project_for_observe.upgrade() else {
+                            return;
+                        };
+                        if !project.read(cx).owns_dap_session(session_id) {
+                            return;
+                        }
                         weak_editor
                             .update(cx, |editor, cx| {
                                 editor._subscriptions.push(
@@ -2422,7 +2432,9 @@ impl Editor {
                     }),
                 );
 
-            for session in dap_store.read(cx).sessions().cloned().collect::<Vec<_>>() {
+            // Subscribe only to sessions this Project owns; the host
+            // store may also hold sibling Projects' sessions.
+            for session in project.read(cx).dap_sessions(cx) {
                 editor
                     ._subscriptions
                     .push(cx.subscribe(&session, Self::on_debug_session_event));
@@ -4384,7 +4396,7 @@ impl Editor {
             );
         }
         project.update(cx, |project, cx| {
-            project.task_store().update(cx, |task_store, cx| {
+            project.task_store(cx).update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_task_variables, location, cx)
             })
         })
@@ -9278,7 +9290,7 @@ impl Editor {
                 let (telemetry, is_via_ssh) = {
                     let project = project.read(cx);
                     let telemetry = project.client().telemetry().clone();
-                    let is_via_ssh = project.is_via_remote_server();
+                    let is_via_ssh = project.is_via_remote_server(cx);
                     (telemetry, is_via_ssh)
                 };
                 telemetry.log_edit_event("editor", is_via_ssh);
@@ -9934,7 +9946,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_remote_server(),
+                is_via_ssh = project.is_via_remote_server(cx),
             );
         } else {
             telemetry::event!(
@@ -9944,7 +9956,7 @@ impl Editor {
                 copilot_enabled,
                 copilot_enabled_for_language,
                 edit_predictions_provider,
-                is_via_ssh = project.is_via_remote_server(),
+                is_via_ssh = project.is_via_remote_server(cx),
             );
         };
     }
@@ -10848,13 +10860,13 @@ impl CollaborationHub for Entity<Project> {
     }
 
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex> {
-        self.read(cx).user_store().read(cx).participant_indices()
+        self.read(cx).user_store(cx).read(cx).participant_indices()
     }
 
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read(cx).participant_names(user_ids, cx)
+        this.user_store(cx).read(cx).participant_names(user_ids, cx)
     }
 }
 
@@ -11019,7 +11031,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Vec<Range<BufferRow>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.applicable_inlay_chunks(buffer, ranges, cx)
             })
         })
@@ -11028,7 +11040,7 @@ impl SemanticsProvider for WeakEntity<Project> {
 
     fn invalidate_inlay_hints(&self, for_buffers: &HashSet<BufferId>, cx: &mut App) {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, _| {
+            project.lsp_store(cx).update(cx, |lsp_store, _| {
                 lsp_store.invalidate_inlay_hints(for_buffers)
             })
         })
@@ -11044,7 +11056,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Option<HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.inlay_hints(invalidate, buffer, ranges, known_chunks, cx)
             })
         })
@@ -11058,7 +11070,7 @@ impl SemanticsProvider for WeakEntity<Project> {
         cx: &mut App,
     ) -> Option<Shared<Task<std::result::Result<BufferSemanticTokens, Arc<anyhow::Error>>>>> {
         self.update(cx, |this, cx| {
-            this.lsp_store().update(cx, |lsp_store, cx| {
+            this.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.semantic_tokens(buffer, refresh, cx)
             })
         })

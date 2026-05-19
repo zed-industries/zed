@@ -412,8 +412,9 @@ impl EditToolTest {
             .project
             .read_with(cx, |project, _cx| project.languages().clone());
 
-        let context_server_registry = cx
-            .new(|cx| ContextServerRegistry::new(self.project.read(cx).context_server_store(), cx));
+        let context_server_registry = cx.new(|cx| {
+            ContextServerRegistry::new(self.project.read(cx).context_server_store(cx), cx)
+        });
         let thread = cx.new(|cx| {
             Thread::new(
                 self.project.clone(),

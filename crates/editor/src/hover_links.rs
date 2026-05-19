@@ -1731,7 +1731,7 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -1990,7 +1990,8 @@ mod tests {
         .await;
 
         // Insert a new file with multiple lines
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx).clone());
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -2066,7 +2067,8 @@ mod tests {
         )
         .await;
 
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx).clone());
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -2125,7 +2127,8 @@ mod tests {
         )
         .await;
 
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx).clone());
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -2181,7 +2184,8 @@ mod tests {
         )
         .await;
 
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs =
+            cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx).clone());
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -2258,7 +2262,7 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;

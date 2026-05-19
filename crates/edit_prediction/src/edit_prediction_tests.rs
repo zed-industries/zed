@@ -125,7 +125,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
     };
 
     project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -277,7 +277,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
     };
 
     project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -306,7 +306,7 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
     cx.run_until_parked();
 
     project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -1949,7 +1949,7 @@ async fn test_jump_and_edit_throttles_are_independent(cx: &mut TestAppContext) {
 
     // First jump request triggered by diagnostic event on buffer - no prior jump, so not throttled (independent from edit).
     project.update(cx, |project, cx| {
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             lsp_store
                 .update_diagnostics(
                     LanguageServerId(0),
@@ -3039,7 +3039,7 @@ async fn make_test_ep_store(
     let _server = FakeServer::for_client(42, &client, cx).await;
 
     let ep_store = cx.new(|cx| {
-        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
+        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(cx), cx);
         ep_store.set_edit_prediction_model(EditPredictionModel::Zeta);
 
         let worktrees = project.read(cx).worktrees(cx).collect::<Vec<_>>();
@@ -3121,7 +3121,8 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
         RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
     });
 
-    let ep_store = cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(), cx));
+    let ep_store =
+        cx.new(|cx| EditPredictionStore::new(client, project.read(cx).user_store(cx), cx));
 
     let buffer = project
         .update(cx, |project, cx| {
@@ -3197,7 +3198,7 @@ async fn test_diagnostic_jump_excludes_collaborator_regions(cx: &mut TestAppCont
             })
             .collect();
         project.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store
                     .update_diagnostics(
                         LanguageServerId(0),

@@ -36,7 +36,7 @@ pub fn switch_source_header(
         return;
     };
     let project = project.clone();
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
+    let upstream_client = project.read(cx).lsp_store(cx).read(cx).upstream_client();
     cx.spawn_in(window, async move |_editor, cx| {
         let source_file = buffer.read_with(cx, |buffer, _| {
             buffer

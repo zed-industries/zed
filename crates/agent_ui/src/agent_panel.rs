@@ -1095,7 +1095,7 @@ impl AgentPanel {
         let workspace = workspace.weak_handle();
 
         let context_server_registry =
-            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(cx), cx));
 
         let thread_store = ThreadStore::global(cx);
 
@@ -2911,8 +2911,8 @@ impl AgentPanel {
             return;
         }
 
-        let agent_server_store = self.project.read(cx).agent_server_store().clone();
-        let context_server_store = self.project.read(cx).context_server_store();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx);
+        let context_server_store = self.project.read(cx).context_server_store(cx);
         let fs = self.fs.clone();
 
         self.configuration = Some(cx.new(|cx| {
@@ -3599,7 +3599,7 @@ impl AgentPanel {
             };
 
             self.project.update(cx, |project, cx| {
-                project.agent_server_store().update(cx, |store, cx| {
+                project.agent_server_store(cx).update(cx, |store, cx| {
                     let manifest_refs: Vec<_> = manifests
                         .iter()
                         .map(|(id, manifest)| (id.as_ref(), manifest.as_ref()))
@@ -4495,7 +4495,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let agent_server_store = self.project.read(cx).agent_server_store().clone();
+        let agent_server_store = self.project.read(cx).agent_server_store(cx);
 
         let focus_handle = self.focus_handle(cx);
 
@@ -5088,7 +5088,7 @@ impl AgentPanel {
     }
 
     fn render_drag_target(&self, cx: &Context<Self>) -> Div {
-        let is_local = self.project.read(cx).is_local();
+        let is_local = self.project.read(cx).is_local(cx);
         div()
             .invisible()
             .absolute()
@@ -5176,7 +5176,7 @@ impl AgentPanel {
             return;
         };
 
-        if !self.project.read(cx).is_local() {
+        if !self.project.read(cx).is_local(cx) {
             return;
         }
 
@@ -10019,7 +10019,7 @@ mod tests {
         panel.update(&mut cx, |panel, cx| {
             panel.project.update(cx, |project, cx| {
                 project
-                    .agent_server_store()
+                    .agent_server_store(cx)
                     .update(cx, |_store, cx| cx.emit(project::AgentServersUpdated));
             });
         });

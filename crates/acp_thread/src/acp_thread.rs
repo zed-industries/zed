@@ -1267,7 +1267,9 @@ impl AcpThread {
             }
         });
 
-        let git_store = project.read(cx).git_store().clone();
+        // todo!: This should filter by repository entities that the project is tracking
+        // we could probably make the project be the entity subscribed too in this case
+        let git_store = project.read(cx).git_store(cx);
         let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
             if matches!(
                 event,
@@ -2290,7 +2292,7 @@ impl AcpThread {
             cx,
         );
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
-        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         let message_id = UserMessageId::new();
 
@@ -2543,7 +2545,7 @@ impl AcpThread {
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
         let rewind = self.rewind(id.clone(), cx);
-        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         cx.spawn(async move |_, cx| {
             cancel_task.await;
@@ -2606,7 +2608,7 @@ impl AcpThread {
             return Task::ready(Ok(()));
         };
 
-        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         let Some((user_message_id, checkpoint)) =
             self.last_user_message().and_then(|(_, message)| {
@@ -2675,7 +2677,7 @@ impl AcpThread {
     }
 
     fn update_last_checkpoint(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = self.project.read(cx).git_store(cx);
 
         let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));
@@ -2930,7 +2932,7 @@ impl AcpThread {
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
-                project.environment().update(cx, |env, cx| {
+                project.environment(cx).update(cx, |env, cx| {
                     env.directory_environment(dir.as_path().into(), cx)
                 })
             }),
@@ -2958,7 +2960,7 @@ impl AcpThread {
                 let shell = project
                     .update(cx, |project, cx| {
                         project
-                            .remote_client()
+                            .remote_client(cx)
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());

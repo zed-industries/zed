@@ -298,7 +298,7 @@ impl ProfilerWindow {
         workspace
             .read_with(cx, |workspace, cx| {
                 let project = workspace.project().read(cx);
-                let remote_client = project.remote_client()?;
+                let remote_client = project.remote_client(cx)?;
                 Some(remote_client.read(cx).proto_client())
             })
             .log_err()

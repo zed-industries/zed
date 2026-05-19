@@ -86,11 +86,11 @@ pub fn cancel_flycheck(
     buffer_path: Option<ProjectPath>,
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
+    let upstream_client = project.read(cx).lsp_store(cx).read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store(cx);
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })
@@ -135,11 +135,11 @@ pub fn run_flycheck(
     buffer_path: Option<ProjectPath>,
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
+    let upstream_client = project.read(cx).lsp_store(cx).read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store(cx);
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })
@@ -192,11 +192,11 @@ pub fn clear_flycheck(
     buffer_path: Option<ProjectPath>,
     cx: &mut App,
 ) -> Task<anyhow::Result<()>> {
-    let upstream_client = project.read(cx).lsp_store().read(cx).upstream_client();
-    let lsp_store = project.read(cx).lsp_store();
+    let upstream_client = project.read(cx).lsp_store(cx).read(cx).upstream_client();
+    let lsp_store = project.read(cx).lsp_store(cx);
     let buffer = buffer_path.map(|buffer_path| {
         project.update(cx, |project, cx| {
-            project.buffer_store().update(cx, |buffer_store, cx| {
+            project.buffer_store(cx).update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(buffer_path, cx)
             })
         })
@@ -250,7 +250,7 @@ fn find_rust_analyzer_server(
             // and use project's rust-analyzer if it's the only one.
             .or_else(|| {
                 let rust_analyzer_servers = project
-                    .lsp_store()
+                    .lsp_store(cx)
                     .read(cx)
                     .language_server_statuses
                     .iter()

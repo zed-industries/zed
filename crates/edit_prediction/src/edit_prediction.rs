@@ -386,7 +386,10 @@ impl ProjectState {
     ) -> Option<(Entity<Buffer>, Option<Anchor>)> {
         let project = project.read(cx);
         let active_path = project.path_for_entry(project.active_entry()?, cx)?;
-        let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
+        let active_buffer = project
+            .buffer_store(cx)
+            .read(cx)
+            .get_by_path(&active_path)?;
         let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
         Some((active_buffer, registered_buffer.last_position))
     }
@@ -1053,10 +1056,10 @@ impl EditPredictionStore {
         let _project = project.clone();
         let project = project.read(cx);
 
-        let node = project.node_runtime().cloned();
+        let node = project.node_runtime(cx);
         if let Some(node) = node {
             let next_id = project.languages().next_language_server_id();
-            let fs = project.fs().clone();
+            let fs = project.fs(cx);
 
             let copilot = cx.new(|cx| Copilot::new(Some(_project), next_id, fs, node, cx));
             state.copilot = Some(copilot.clone());

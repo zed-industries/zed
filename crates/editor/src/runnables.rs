@@ -406,7 +406,7 @@ impl Editor {
         };
 
         let task = project.update(cx, |project, cx| {
-            project.task_store().update(cx, |task_store, cx| {
+            project.task_store(cx).update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_variables, location, cx)
             })
         });
@@ -633,7 +633,7 @@ impl Editor {
                 .map(|file| file.worktree_id(cx));
 
             (
-                project.task_store().read(cx).task_inventory().cloned(),
+                project.task_store(cx).read(cx).task_inventory().cloned(),
                 worktree_id,
                 buffer,
             )

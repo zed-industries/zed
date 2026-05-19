@@ -211,7 +211,7 @@ impl ThreadEntryWorkspace {
     fn is_remote(&self, cx: &App) -> bool {
         match self {
             ThreadEntryWorkspace::Open(workspace) => {
-                !workspace.read(cx).project().read(cx).is_local()
+                !workspace.read(cx).project().read(cx).is_local(cx)
             }
             ThreadEntryWorkspace::Closed {
                 project_group_key, ..
@@ -411,13 +411,16 @@ fn root_repository_snapshots(
 ) -> impl Iterator<Item = project::git_store::RepositorySnapshot> {
     let path_list = workspace_path_list(workspace, cx);
     let project = workspace.read(cx).project().read(cx);
-    project.repositories(cx).values().filter_map(move |repo| {
-        let snapshot = repo.read(cx).snapshot();
-        let is_root = path_list
+    let snapshots: Vec<project::git_store::RepositorySnapshot> = project
+        .repositories(cx)
+        .into_values()
+        .map(|repo| repo.read(cx).snapshot())
+        .collect();
+    snapshots.into_iter().filter(move |snapshot| {
+        path_list
             .paths()
             .iter()
-            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref());
-        is_root.then_some(snapshot)
+            .any(|p| p.as_path() == snapshot.work_directory_abs_path.as_ref())
     })
 }
 
@@ -806,7 +809,7 @@ impl Sidebar {
         )
         .detach();
 
-        let git_store = workspace.read(cx).project().read(cx).git_store().clone();
+        let git_store = workspace.read(cx).project().read(cx).git_store(cx);
         cx.subscribe_in(
             &git_store,
             window,
@@ -1169,7 +1172,7 @@ impl Sidebar {
 
         let agent_server_store = workspaces
             .first()
-            .map(|ws| ws.read(cx).project().read(cx).agent_server_store().clone());
+            .map(|ws| ws.read(cx).project().read(cx).agent_server_store(cx));
 
         let query = self.filter_editor.read(cx).text(cx);
 
@@ -5995,8 +5998,7 @@ impl Sidebar {
             .read(cx)
             .project()
             .read(cx)
-            .agent_server_store()
-            .clone();
+            .agent_server_store(cx);
 
         let workspace_handle = active_workspace.downgrade();
         let multi_workspace = self.multi_workspace.clone();
@@ -6022,7 +6024,7 @@ impl Sidebar {
                 ws.read(cx)
                     .project()
                     .read(cx)
-                    .agent_server_store()
+                    .agent_server_store(cx)
                     .read(cx)
                     .has_external_agents()
             })
@@ -6134,7 +6136,7 @@ impl Sidebar {
             .read(cx)
             .project()
             .read(cx)
-            .agent_server_store()
+            .agent_server_store(cx)
             .downgrade();
 
         let agent_connection_store = agent_panel.read(cx).connection_store().downgrade();

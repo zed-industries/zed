@@ -69,7 +69,7 @@ pub(super) fn try_handle_client_command(
     let project = workspace.read(cx).project().clone();
     let client_command = project
         .read(cx)
-        .lsp_store()
+        .lsp_store(cx)
         .read(cx)
         .language_server_adapter_for_id(action.server_id)
         .and_then(|adapter| adapter.adapter.client_command(&command.command, arguments))
@@ -206,7 +206,7 @@ impl Editor {
 
             let Some(tasks_per_buffer) = project
                 .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
+                    project.lsp_store(cx).update(cx, |lsp_store, cx| {
                         buffers_to_query
                             .into_iter()
                             .map(|buffer| {
@@ -388,7 +388,7 @@ impl Editor {
         let Some(project) = self.project.as_ref() else {
             return false;
         };
-        let lsp_store = project.read(cx).lsp_store().read(cx);
+        let lsp_store = project.read(cx).lsp_store(cx).read(cx);
         lsp_store
             .lsp_server_capabilities
             .values()
@@ -431,7 +431,7 @@ impl Editor {
             return;
         };
 
-        let lsp_store = project.read(cx).lsp_store();
+        let lsp_store = project.read(cx).lsp_store(cx);
 
         let mut pending_resolves = Vec::new();
         for (buffer_snapshot, visible_range, _) in self.visible_buffer_ranges(cx) {

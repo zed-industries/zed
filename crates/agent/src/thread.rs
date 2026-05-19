@@ -1094,7 +1094,7 @@ impl Thread {
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
-            user_store: project.read(cx).user_store(),
+            user_store: project.read(cx).user_store(cx),
             running_turn: None,
             has_queued_message: false,
             pending_message: None,
@@ -1281,7 +1281,7 @@ impl Thread {
             let tool_event_stream = ToolCallEventStream::new(
                 tool_use.id.clone(),
                 stream.clone(),
-                Some(self.project.read(cx).fs().clone()),
+                Some(self.project.read(cx).fs(cx)),
                 cancellation_rx,
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
@@ -1352,7 +1352,7 @@ impl Thread {
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
-            user_store: project.read(cx).user_store(),
+            user_store: project.read(cx).user_store(cx),
             running_turn: None,
             has_queued_message: false,
             pending_message: None,
@@ -2476,7 +2476,7 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
-        let fs = self.project.read(cx).fs().clone();
+        let fs = self.project.read(cx).fs(cx);
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             event_stream.clone(),
@@ -4414,7 +4414,7 @@ mod tests {
 
         cx.update(|cx| {
             let project_context = cx.new(|_cx| prompt_store::ProjectContext::default());
-            let context_server_store = project.read(cx).context_server_store();
+            let context_server_store = project.read(cx).context_server_store(cx);
             let context_server_registry =
                 cx.new(|cx| ContextServerRegistry::new(context_server_store, cx));
 

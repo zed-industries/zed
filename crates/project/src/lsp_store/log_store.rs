@@ -9,10 +9,10 @@ use lsp::{
     IoKind, LanguageServer, LanguageServerId, LanguageServerName, LanguageServerSelector,
     MessageType, TraceValue,
 };
-use rpc::proto;
+use rpc::{AnyProtoClient, proto};
 use settings::WorktreeId;
 
-use crate::{LanguageServerLogType, LspStore, Project, ProjectItem as _};
+use crate::{LanguageServerLogType, Project, ProjectItem as _};
 
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
@@ -154,12 +154,34 @@ impl std::fmt::Debug for LanguageServerState {
     }
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(Clone)]
 pub enum LanguageServerKind {
-    Local { project: WeakEntity<Project> },
-    Remote { project: WeakEntity<Project> },
-    LocalSsh { lsp_store: WeakEntity<LspStore> },
+    Local {
+        project: WeakEntity<Project>,
+    },
+    Remote {
+        project: WeakEntity<Project>,
+    },
+    /// A language server running inside a remote (headless) server. The
+    /// `(session, project_id)` is the downstream peer the headless side
+    /// forwards LSP logs to.
+    LocalSsh {
+        session: AnyProtoClient,
+        project_id: u64,
+    },
     Global,
+}
+
+impl PartialEq for LanguageServerKind {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Local { project: a }, Self::Local { project: b }) => a == b,
+            (Self::Remote { project: a }, Self::Remote { project: b }) => a == b,
+            (Self::LocalSsh { project_id: a, .. }, Self::LocalSsh { project_id: b, .. }) => a == b,
+            (Self::Global, Self::Global) => true,
+            _ => false,
+        }
+    }
 }
 
 impl std::fmt::Debug for LanguageServerKind {
@@ -253,7 +275,7 @@ impl LogStore {
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
-                        let server_kind = if project.read(cx).is_local() {
+                        let server_kind = if project.read(cx).is_local(cx) {
                             LanguageServerKind::Local {
                                 project: project.downgrade(),
                             }
@@ -271,7 +293,7 @@ impl LogStore {
                                     *worktree_id,
                                     project
                                         .read(cx)
-                                        .lsp_store()
+                                        .lsp_store(cx)
                                         .read(cx)
                                         .language_server_for_id(*id),
                                     cx,
@@ -292,7 +314,7 @@ impl LogStore {
                                 let name = name.clone().or_else(|| {
                                     project
                                         .read(cx)
-                                        .lsp_store()
+                                        .lsp_store(cx)
                                         .read(cx)
                                         .language_server_statuses
                                         .get(server_id)
@@ -666,27 +688,34 @@ impl LogStore {
     fn emit_event(&mut self, e: Event, cx: &mut Context<Self>) {
         match &e {
             Event::NewServerLogEntry { id, kind, text } => {
-                if let Some(state) = self.get_language_server_state(*id) {
-                    let downstream_client = match &state.kind {
+                if let Some(state) = self.get_language_server_state(*id)
+                    && Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind
+                {
+                    match &state.kind {
                         LanguageServerKind::Remote { project }
-                        | LanguageServerKind::Local { project } => project
-                            .upgrade()
-                            .map(|project| project.read(cx).lsp_store()),
-                        LanguageServerKind::LocalSsh { lsp_store } => lsp_store.upgrade(),
-                        LanguageServerKind::Global => None,
-                    }
-                    .and_then(|lsp_store| lsp_store.read(cx).downstream_client());
-                    if let Some((client, project_id)) = downstream_client {
-                        if Some(LogKind::from_server_log_type(kind)) == state.toggled_log_kind {
-                            client
+                        | LanguageServerKind::Local { project } => {
+                            if let Some(project) = project.upgrade() {
+                                project.read(cx).forward_language_server_log_to_peer(
+                                    *id,
+                                    kind.clone(),
+                                    text.clone(),
+                                );
+                            }
+                        }
+                        LanguageServerKind::LocalSsh {
+                            session,
+                            project_id,
+                        } => {
+                            session
                                 .send(proto::LanguageServerLog {
-                                    project_id,
+                                    project_id: *project_id,
                                     language_server_id: id.to_proto(),
                                     message: text.clone(),
                                     log_type: Some(kind.to_proto()),
                                 })
                                 .ok();
                         }
+                        LanguageServerKind::Global => {}
                     }
                 }
             }

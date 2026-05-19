@@ -233,11 +233,11 @@ impl GitBlame {
             }
         });
 
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx);
         let git_store_subscription =
             cx.subscribe(&git_store, move |this, _, event, cx| match event {
                 GitStoreEvent::RepositoryUpdated(_, _, _)
-                | GitStoreEvent::RepositoryAdded
+                | GitStoreEvent::RepositoryAdded(_, _)
                 | GitStoreEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
@@ -267,7 +267,7 @@ impl GitBlame {
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
         self.project
             .read(cx)
-            .git_store()
+            .git_store(cx)
             .read(cx)
             .repository_and_path_for_buffer_id(id, cx)
             .map(|(repo, _)| repo)
@@ -524,7 +524,7 @@ impl GitBlame {
                             let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
                             let remote_url = project
                                 .read(cx)
-                                .git_store()
+                                .git_store(cx)
                                 .read(cx)
                                 .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
                                 .and_then(|(repo, _)| repo.read(cx).default_remote_url());

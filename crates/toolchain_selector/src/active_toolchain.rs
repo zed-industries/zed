@@ -23,7 +23,7 @@ pub struct ActiveToolchain {
 
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        if let Some(store) = workspace.project().read(cx).toolchain_store() {
+        if let Some(store) = workspace.project().read(cx).toolchain_store(cx) {
             cx.subscribe_in(
                 &store,
                 window,

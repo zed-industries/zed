@@ -385,13 +385,13 @@ async fn test_ssh_collaboration_git_branches(
 
     project_a.update(cx_a, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });
     project_b.update(cx_b, |project, cx| {
         pretty_assertions::assert_eq!(
-            project.git_store().read(cx).repo_snapshots(cx),
+            project.git_store(cx).read(cx).repo_snapshots(cx),
             HashMap::default()
         );
     });
@@ -936,7 +936,7 @@ async fn test_remote_server_debugger(
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
-            project.dap_store().update(cx, |dap_store, cx| {
+            project.dap_store(cx).update(cx, |dap_store, cx| {
                 dap_store.shutdown_session(session.read(cx).session_id(), cx)
             })
         })
@@ -1099,7 +1099,7 @@ async fn test_slow_adapter_startup_retries(
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
-            project.dap_store().update(cx, |dap_store, cx| {
+            project.dap_store(cx).update(cx, |dap_store, cx| {
                 dap_store.shutdown_session(session.read(cx).session_id(), cx)
             })
         })
@@ -1251,7 +1251,7 @@ async fn test_ssh_remote_worktree_trust(cx_a: &mut TestAppContext, server_cx: &m
 
     let trusted_worktrees =
         cx_a.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
-    let worktree_store = project_a.read_with(cx_a, |project, _| project.worktree_store());
+    let worktree_store = project_a.read_with(cx_a, |project, cx| project.worktree_store(cx));
 
     let can_trust_a = trusted_worktrees.update(cx_a, |store, cx| {
         store.can_trust(&worktree_store, worktree_ids[0], cx)

@@ -334,7 +334,7 @@ impl HighlightsTreeView {
                 }
             }
 
-            project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+            project.read(cx).lsp_store(cx).update(cx, |lsp_store, cx| {
                 for (buffer_id, (tokens, interner)) in display_map.all_semantic_token_highlights() {
                     let language_name = multi_buffer
                         .read(cx)

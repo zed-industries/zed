@@ -37,7 +37,7 @@ impl SshRunningKernel {
         cx: &mut App,
     ) -> Task<Result<Box<dyn RunningKernel>>> {
         let client = project.read(cx).client();
-        let remote_client = project.read(cx).remote_client();
+        let remote_client = project.read(cx).remote_client(cx);
         let project_id = project
             .read(cx)
             .remote_id()

@@ -195,7 +195,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
+        let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store(cx)) else {
             return;
         };
         let lsp_task = lsp_store.update(cx, |lsp_store, cx| {

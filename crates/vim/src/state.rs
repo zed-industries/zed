@@ -311,7 +311,7 @@ pub enum Mark {
 impl MarksState {
     pub fn new(workspace: &Workspace, cx: &mut App) -> Entity<MarksState> {
         cx.new(|cx| {
-            let buffer_store = workspace.project().read(cx).buffer_store().clone();
+            let buffer_store = workspace.project().read(cx).buffer_store(cx);
             let subscription = cx.subscribe(&buffer_store, move |this: &mut Self, _, event, cx| {
                 if let project::buffer_store::BufferStoreEvent::BufferAdded(buffer) = event {
                     this.on_buffer_loaded(buffer, cx);

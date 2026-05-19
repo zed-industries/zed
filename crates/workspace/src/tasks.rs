@@ -65,14 +65,11 @@ impl Workspace {
                 debugger_provider.task_scheduled(cx);
             }
 
-            self.project().update(cx, |project, cx| {
-                if let Some(task_inventory) =
-                    project.task_store().read(cx).task_inventory().cloned()
-                {
-                    task_inventory.update(cx, |inventory, _| {
-                        inventory.task_scheduled(task_source_kind, resolved_task);
-                    })
-                }
+            // Phase 2 multi-tenant: per-project LRU lives on `Project`,
+            // not on the host-shared `Inventory`, so workspace A's
+            // task scheduling doesn't appear in workspace B's picker.
+            self.project().update(cx, |project, _| {
+                project.task_scheduled(task_source_kind, resolved_task);
             });
         }
 
@@ -179,12 +176,12 @@ impl Workspace {
 
         let worktree_tasks: Vec<(WorktreeId, TaskContext, Vec<TaskTemplate>)> = {
             let project = project.read(cx);
-            let task_store = project.task_store();
+            let task_store = project.task_store(cx);
             let Some(inventory) = task_store.read(cx).task_inventory().cloned() else {
                 return;
             };
 
-            let git_store = project.git_store().read(cx);
+            let git_store = project.git_store(cx).read(cx);
 
             let mut worktree_tasks = Vec::new();
             for worktree in project.worktrees(cx) {

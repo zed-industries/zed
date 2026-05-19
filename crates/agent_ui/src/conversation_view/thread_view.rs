@@ -44,7 +44,7 @@ impl ThreadFeedbackState {
 
         let project = thread.read(cx).project().read(cx);
         let client = project.client();
-        let user_store = project.user_store();
+        let user_store = project.user_store(cx);
         let organization = user_store.read(cx).current_organization();
 
         if self.feedback == Some(feedback) {
@@ -106,7 +106,7 @@ impl ThreadFeedbackState {
 
         let project = thread.read(cx).project().read(cx);
         let client = project.client();
-        let user_store = project.user_store();
+        let user_store = project.user_store(cx);
         let organization = user_store.read(cx).current_organization();
 
         let session_id = thread.read(cx).session_id().clone();
@@ -447,7 +447,7 @@ impl ThreadView {
         });
 
         let show_codex_windows_warning = cfg!(windows)
-            && project.upgrade().is_some_and(|p| p.read(cx).is_local())
+            && project.upgrade().is_some_and(|p| p.read(cx).is_local(cx))
             && agent_id.as_ref() == "Codex";
 
         let title_editor = {
@@ -3844,7 +3844,7 @@ impl ThreadView {
                         let favorite_key = thread.model().map(|model| {
                             (model.provider_id().0.to_string(), model.id().0.to_string())
                         });
-                        let fs = thread.project().read(cx).fs().clone();
+                        let fs = thread.project().read(cx).fs(cx);
                         update_settings_file(fs, cx, move |settings, _| {
                             if let Some(agent) = settings.agent.as_mut() {
                                 if let Some(default_model) = agent.default_model.as_mut() {
@@ -3993,7 +3993,7 @@ impl ThreadView {
                                                         model.id().0.to_string(),
                                                     )
                                                 });
-                                                let fs = thread.project().read(cx).fs().clone();
+                                                let fs = thread.project().read(cx).fs(cx);
                                                 update_settings_file(fs, cx, move |settings, _| {
                                                     if let Some(agent) = settings.agent.as_mut() {
                                                         if let Some(default_model) =
@@ -5080,7 +5080,7 @@ impl ThreadView {
 
         let enable_thread_feedback = util::maybe!({
             let project = thread.read(cx).project().read(cx);
-            let user_store = project.user_store();
+            let user_store = project.user_store(cx);
             if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
                 if !configuration.is_agent_thread_feedback_enabled {
                     return false;
@@ -9011,7 +9011,7 @@ impl ThreadView {
             let favorite_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
+            let fs = thread.project().read(cx).fs(cx);
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {
@@ -9065,7 +9065,7 @@ impl ThreadView {
             let favorite_key = thread
                 .model()
                 .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
-            let fs = thread.project().read(cx).fs().clone();
+            let fs = thread.project().read(cx).fs(cx);
             update_settings_file(fs, cx, move |settings, _| {
                 if let Some(agent) = settings.agent.as_mut() {
                     if let Some(default_model) = agent.default_model.as_mut() {

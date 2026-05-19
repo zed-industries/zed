@@ -211,7 +211,7 @@ pub fn deploy_context_menu(
                 .is_some_and(|(buffer_anchor, _)| {
                     project
                         .read(cx)
-                        .git_store()
+                        .git_store(cx)
                         .read(cx)
                         .repository_and_path_for_buffer_id(buffer_anchor.buffer_id, cx)
                         .is_some()

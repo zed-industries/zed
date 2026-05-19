@@ -99,8 +99,6 @@ impl BookmarkStore {
         bookmark_rows: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.bookmarks.clear();
-
         for (path, rows) in bookmark_rows {
             if rows.is_empty() {
                 continue;
@@ -114,6 +112,22 @@ impl BookmarkStore {
 
         cx.notify();
         Task::ready(Ok(()))
+    }
+
+    pub fn clear_bookmarks_for_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a Arc<Path>>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for path in paths {
+            if self.bookmarks.remove(path).is_some() {
+                changed = true;
+            }
+        }
+        if changed {
+            cx.notify();
+        }
     }
 
     fn resolve_anchors_if_needed(

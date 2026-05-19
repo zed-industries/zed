@@ -437,7 +437,7 @@ impl ConfigureContextServerModal {
                         .update(cx, |workspace, cx| {
                             resolve_context_server_extension(
                                 server_id,
-                                workspace.project().read(cx).worktree_store(),
+                                workspace.project().read(cx).worktree_store(cx),
                                 cx,
                             )
                         })
@@ -466,7 +466,7 @@ impl ConfigureContextServerModal {
             let jsonc_language = language_registry.language_for_name("jsonc").await.ok();
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = cx.weak_entity();
-                let context_server_store = workspace.project().read(cx).context_server_store();
+                let context_server_store = workspace.project().read(cx).context_server_store(cx);
                 workspace.toggle_modal(window, cx, |window, cx| Self {
                     context_server_store,
                     workspace: workspace_handle,

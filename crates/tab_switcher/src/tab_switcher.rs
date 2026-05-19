@@ -289,7 +289,7 @@ impl TabMatch {
         let most_severe_diagnostic_level = if show_diagnostics == ShowDiagnostics::Off {
             None
         } else {
-            let buffer_store = project.read(cx).buffer_store().read(cx);
+            let buffer_store = project.read(cx).buffer_store(cx).read(cx);
             let buffer = self
                 .item
                 .project_path(cx)

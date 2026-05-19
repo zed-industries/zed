@@ -860,7 +860,7 @@ pub fn init(cx: &mut App) {
             div.when_some(
                 resolve_file_history_target(workspace, window, cx),
                 |div, (repo_id, log_source)| {
-                    let git_store = workspace.project().read(cx).git_store().clone();
+                    let git_store = workspace.project().read(cx).git_store(cx);
                     let workspace = workspace.weak_handle();
 
                     div.on_action(move |_: &git::FileHistory, window, cx| {
@@ -898,8 +898,7 @@ pub fn init(cx: &mut App) {
                                     };
                                     let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store().clone();
+                                    let git_store = workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -925,8 +924,7 @@ pub fn init(cx: &mut App) {
                                     };
                                     let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store().clone();
+                                    let git_store = workspace.project().read(cx).git_store(cx);
                                     open_or_reuse_graph(
                                         workspace,
                                         selected_repo_id,
@@ -956,7 +954,7 @@ fn resolve_file_history_target(
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
         && let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
     {
-        let git_store = workspace.project().read(cx).git_store();
+        let git_store = workspace.project().read(cx).git_store(cx);
         let (repo, repo_path) = git_store
             .read(cx)
             .repository_and_path_for_project_path(&project_path, cx)?;
@@ -985,7 +983,7 @@ fn resolve_file_history_target(
         path: file.path().clone(),
     };
 
-    let git_store = workspace.project().read(cx).git_store();
+    let git_store = workspace.project().read(cx).git_store(cx);
     let (repo, repo_path) = git_store
         .read(cx)
         .repository_and_path_for_project_path(&project_path, cx)?;
@@ -2080,7 +2078,7 @@ impl GitGraph {
         let project = workspace.read(cx).project().clone();
 
         let task_inventory = project.read_with(cx, |project, cx| {
-            project.task_store().read(cx).task_inventory().cloned()
+            project.task_store(cx).read(cx).task_inventory().cloned()
         });
 
         let Some(task_inventory) = task_inventory else {
@@ -3732,7 +3730,7 @@ impl workspace::SerializableItem for GitGraph {
 
         let window_handle = window.window_handle();
         let project = project.read(cx);
-        let git_store = project.git_store().clone();
+        let git_store = project.git_store(cx);
         let wait = project.wait_for_initial_scan(cx);
 
         cx.spawn(async move |cx| {
@@ -4806,7 +4804,7 @@ mod tests {
         let observed_repository_events = Arc::new(Mutex::new(Vec::new()));
         project.update(cx, |project, cx| {
             let observed_repository_events = observed_repository_events.clone();
-            cx.subscribe(project.git_store(), move |_, _, event, _| {
+            cx.subscribe(&project.git_store(cx), move |_, _, event, _| {
                 if let GitStoreEvent::RepositoryUpdated(_, repository_event, true) = event {
                     observed_repository_events
                         .lock()
@@ -4965,7 +4963,9 @@ mod tests {
                 second_repository.expect("should have repository for /project_b"),
             )
         });
-        first_repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+        project.update(cx, |project, cx| {
+            project.set_active_repository(&first_repository, cx);
+        });
         cx.run_until_parked();
 
         let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
@@ -4977,7 +4977,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 first_repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5367,7 +5367,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak.clone(),
                 None,
                 window,
@@ -5545,7 +5545,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5653,7 +5653,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5740,7 +5740,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -5828,7 +5828,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -5896,7 +5896,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -5977,7 +5977,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx),
                 workspace_weak,
                 None,
                 window,
@@ -6147,14 +6147,14 @@ mod tests {
         });
         let task_inventory = project.read_with(cx, |project, cx| {
             project
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()
                 .expect("project should have a task inventory")
         });
 
-        task_inventory.update(cx, |inventory, _| {
+        task_inventory.update(cx, |inventory, cx| {
             inventory
                 .update_file_based_tasks(
                     TaskSettingsLocation::Global(Path::new("/tasks.json")),
@@ -6188,6 +6188,7 @@ mod tests {
                         ]))
                         .expect("tasks JSON should serialize"),
                     ),
+                    cx,
                 )
                 .expect("tasks should parse");
         });
@@ -6203,7 +6204,7 @@ mod tests {
         let git_graph = cx.new_window_entity(|window, cx| {
             GitGraph::new(
                 repository.read(cx).id,
-                project.read(cx).git_store().clone(),
+                project.read(cx).git_store(cx).clone(),
                 workspace_weak,
                 None,
                 window,
@@ -6237,8 +6238,8 @@ mod tests {
         });
         cx.run_until_parked();
 
-        let (task_source_kind, resolved_task) = task_inventory.read_with(&*cx, |inventory, _| {
-            inventory
+        let (task_source_kind, resolved_task) = project.read_with(&*cx, |project, _| {
+            project
                 .last_scheduled_task(None)
                 .expect("custom Git task should be scheduled")
         });

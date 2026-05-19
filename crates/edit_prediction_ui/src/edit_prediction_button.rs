@@ -1621,7 +1621,7 @@ fn emit_edit_prediction_menu_opened(
         .map(|s| s.to_string());
     let is_via_ssh = project
         .upgrade()
-        .map(|p| p.read(cx).is_via_remote_server())
+        .map(|p| p.read(cx).is_via_remote_server(cx))
         .unwrap_or(false);
     telemetry::event!(
         "Toolbar Menu Opened",

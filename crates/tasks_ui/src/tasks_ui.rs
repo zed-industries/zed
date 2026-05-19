@@ -17,21 +17,17 @@ pub fn init(cx: &mut App) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, window, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
-                        .project()
-                        .read(cx)
-                        .task_store()
-                        .read(cx)
-                        .task_inventory()
-                        .and_then(|inventory| {
-                            inventory.read(cx).last_scheduled_task(
-                                action
-                                    .task_id
-                                    .as_ref()
-                                    .map(|id| TaskId(id.clone()))
-                                    .as_ref(),
-                            )
-                        })
+                    // Phase 2 multi-tenant: "rerun last task" reads this
+                    // workspace's Project LRU, not the host-shared
+                    // Inventory.
+                    if let Some((task_source_kind, mut last_scheduled_task)) =
+                        workspace.project().read(cx).last_scheduled_task(
+                            action
+                                .task_id
+                                .as_ref()
+                                .map(|id| TaskId(id.clone()))
+                                .as_ref(),
+                        )
                     {
                         if action.reevaluate_context {
                             let mut original_task = last_scheduled_task.original_task().clone();
@@ -146,7 +142,8 @@ pub fn toggle_modal(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
-    let task_store = workspace.project().read(cx).task_store().clone();
+    let task_store = workspace.project().read(cx).task_store(cx);
+    let project = workspace.project().clone();
     let workspace_handle = workspace.weak_handle();
     let can_open_modal = workspace
         .project()
@@ -166,6 +163,7 @@ pub fn toggle_modal(
                             }),
                             true,
                             workspace_handle,
+                            project,
                             window,
                             cx,
                         )
@@ -197,7 +195,7 @@ where
                 let Some(task_inventory) = workspace
                     .project()
                     .read(cx)
-                    .task_store()
+                    .task_store(cx)
                     .read(cx)
                     .task_inventory()
                     .cloned()
@@ -434,8 +432,8 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let (worktree_store, git_store) = project.read_with(cx, |project, _| {
-            (project.worktree_store(), project.git_store().clone())
+        let (worktree_store, git_store) = project.read_with(cx, |project, cx| {
+            (project.worktree_store(cx), project.git_store(cx))
         });
         let rust_language = Arc::new(
             Language::new(

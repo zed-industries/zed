@@ -753,7 +753,7 @@ impl GitPanel {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
         let fs = app_state.fs.clone();
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx);
         let active_repository = project.read(cx).active_repository(cx);
 
         cx.new(|cx| {
@@ -831,7 +831,7 @@ impl GitPanel {
                         RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
                         true,
                     )
-                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryAdded(_, _)
                     | GitStoreEvent::RepositoryRemoved(_)
                     | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
@@ -846,6 +846,13 @@ impl GitPanel {
                     }
                     GitStoreEvent::RepositoryUpdated(_, _, _) => {}
                     GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
+                    // Downstream-broadcast variants are routed by `Project` /
+                    // `HeadlessProject`; the panel does not consume them.
+                    GitStoreEvent::RepositorySnapshotForDownstream(_)
+                    | GitStoreEvent::RepositorySnapshotRemovedForDownstream(_)
+                    | GitStoreEvent::ForwardRepositoryUpdate(_)
+                    | GitStoreEvent::ForwardRepositoryRemove(_)
+                    | GitStoreEvent::DiffBasesUpdatedForDownstream(_) => {}
                 },
             )
             .detach();
@@ -3393,7 +3400,7 @@ impl GitPanel {
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
-        if !project.is_local()
+        if !project.is_local(cx)
             && !project.is_read_only(cx)
             && let Some(local_committer) = self.local_committer(room, cx)
         {
@@ -3541,7 +3548,7 @@ impl GitPanel {
             let project = self.project.read(cx);
             active_repo.open_commit_buffer(
                 Some(project.languages().clone()),
-                project.buffer_store().clone(),
+                project.buffer_store(cx),
                 cx,
             )
         });
@@ -6932,7 +6939,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
+            .map(|project| project.read(cx).repositories(cx).len() == 1)
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;

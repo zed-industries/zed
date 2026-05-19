@@ -391,7 +391,7 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx);
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -529,7 +529,7 @@ impl TitleBar {
         cx: &App,
     ) -> Option<Entity<project::git_store::Repository>> {
         let project = self.project.read(cx);
-        let git_store = project.git_store().read(cx);
+        let git_store = project.git_store(cx).read(cx);
         let worktree_path = worktree.read(cx).abs_path();
 
         git_store
@@ -595,7 +595,7 @@ impl TitleBar {
             PopoverMenu::new("remote-project-menu")
                 .menu(move |window, cx| {
                     let workspace_entity = workspace.upgrade()?;
-                    let fs = workspace_entity.read(cx).project().read(cx).fs().clone();
+                    let fs = workspace_entity.read(cx).project().read(cx).fs(cx);
                     Some(recent_projects::RemoteServerProjects::popover(
                         fs,
                         workspace.clone(),
@@ -641,8 +641,10 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees =
-            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
+        let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+            &self.project.read(cx).worktree_store(cx),
+            cx,
+        );
         if !has_restricted_worktrees {
             return None;
         }
@@ -683,7 +685,7 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if self.project.read(cx).is_via_remote_server() {
+        if self.project.read(cx).is_via_remote_server(cx) {
             return self.render_remote_project_connection(cx);
         }
 

@@ -113,7 +113,7 @@ impl AgentTool for MovePathTool {
                 return Err(reason);
             }
 
-            let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+            let fs = project.read_with(cx, |project, cx| project.fs(cx));
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let symlink_escapes: Vec<(&str, std::path::PathBuf)> =

@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use client::ProjectId;
 use collections::HashMap;
 use collections::HashSet;
-use language::File;
+use language::{BufferId, File};
 use lsp::LanguageServerId;
 
 use extension::ExtensionHostProxy;
@@ -10,23 +10,29 @@ use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, PromptLevel, TaskExt};
 use http_client::HttpClient;
-use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
+use language::{
+    Buffer, BufferEvent, LanguageRegistry,
+    proto::{serialize_operation, split_operations},
+};
 use node_runtime::NodeRuntime;
 use project::{
     AgentRegistryStore, LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment,
-    ProjectPath, ToolchainStore, WorktreeId,
+    ProjectPath, ProjectTransaction, ToolchainStore, WorktreeId,
     agent_server_store::AgentServerStore,
-    buffer_store::{BufferStore, BufferStoreEvent},
+    buffer_store::{BufferStore, BufferStoreEvent, PeerBufferAccess, SharedBuffer},
     context_server_store::ContextServerStore,
-    debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
-    git_store::GitStore,
+    debugger::{
+        breakpoint_store::{BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason},
+        dap_store::{DapStore, DapStoreEvent},
+    },
+    git_store::{GitStore, GitStoreEvent, RepositoryId, RepositorySnapshot},
     image_store::ImageId,
     lsp_store::log_store::{self, GlobalLogStore, LanguageServerKind, LogKind},
-    project_settings::SettingsObserver,
+    project_settings::{self, SettingsObserver, SettingsObserverEvent},
     search::SearchQuery,
     task_store::TaskStore,
     trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
-    worktree_store::{WorktreeIdCounter, WorktreeStore},
+    worktree_store::{WorktreeIdCounter, WorktreeStore, WorktreeStoreEvent},
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -45,7 +51,7 @@ use std::{
     time::Instant,
 };
 use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
-use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt, debug_panic, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -70,6 +76,22 @@ pub struct HeadlessProject {
     // Local variant is used within LSP store, but that's a separate entity.
     pub _toolchain_store: Entity<ToolchainStore>,
     pub kernels: HashMap<String, Child>,
+    /// Strong handles for every worktree the headless server tracks. The
+    /// host-side `WorktreeStore` only holds weak references; this list is
+    /// what keeps them alive while the connected client cares about them.
+    /// Headless always retains all worktrees (no visibility distinction).
+    worktrees: Vec<Entity<Worktree>>,
+    /// Last `RepositorySnapshot` we forwarded to the connected zed client
+    /// for each repository, used to compute incremental
+    /// `proto::UpdateRepository` payloads. Mirrors `Project::
+    /// git_repository_snapshots_for_peer`.
+    git_repository_snapshots_for_peer: HashMap<RepositoryId, RepositorySnapshot>,
+    /// Per-peer per-buffer state for the connected zed client. Mirrors
+    /// `Project::shared_buffers` for the headless side; created here in
+    /// BufferStore Phase 1 because the headless server can't reuse the
+    /// host-side `BufferStore::shared_buffers` (which moved up to
+    /// `Project`).
+    shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
 }
 
 pub struct HeadlessAppState {
@@ -105,10 +127,12 @@ impl HeadlessProject {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
-            let mut store = WorktreeStore::local(true, fs.clone(), WorktreeIdCounter::get(cx));
-            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
+            let mut store = WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx));
+            store.set_id_allocator(session.clone());
             store
         });
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+            .detach();
 
         if init_worktree_trust {
             project::trusted_worktrees::track_worktree_trust(
@@ -133,22 +157,15 @@ impl HeadlessProject {
             )
         });
 
-        let buffer_store = cx.new(|cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
-            buffer_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            buffer_store
-        });
+        let buffer_store = cx.new(|cx| BufferStore::local(worktree_store.clone(), cx));
 
-        let breakpoint_store = cx.new(|_| {
-            let mut breakpoint_store =
-                BreakpointStore::local(worktree_store.clone(), buffer_store.clone());
-            breakpoint_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
-
-            breakpoint_store
-        });
+        let breakpoint_store =
+            cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
+        cx.subscribe(&breakpoint_store, Self::on_breakpoint_store_event)
+            .detach();
 
         let dap_store = cx.new(|cx| {
-            let mut dap_store = DapStore::new_local(
+            DapStore::new_local(
                 http_client.clone(),
                 node_runtime.clone(),
                 fs.clone(),
@@ -158,22 +175,20 @@ impl HeadlessProject {
                 breakpoint_store.clone(),
                 true,
                 cx,
-            );
-            dap_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            dap_store
+            )
         });
+        cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
         let git_store = cx.new(|cx| {
-            let mut store = GitStore::local(
+            GitStore::local(
                 &worktree_store,
                 buffer_store.clone(),
                 environment.clone(),
                 fs.clone(),
                 cx,
-            );
-            store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            store
+            )
         });
+        cx.subscribe(&git_store, Self::on_git_store_event).detach();
 
         let prettier_store = cx.new(|cx| {
             PrettierStore::new(
@@ -186,31 +201,29 @@ impl HeadlessProject {
         });
 
         let task_store = cx.new(|cx| {
-            let mut task_store = TaskStore::local(
+            TaskStore::local(
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
                 environment.clone(),
                 git_store.clone(),
                 cx,
-            );
-            task_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            task_store
+            )
         });
         let settings_observer = cx.new(|cx| {
-            let mut observer = SettingsObserver::new_local(
+            SettingsObserver::new_local(
                 fs.clone(),
                 worktree_store.clone(),
                 task_store.clone(),
                 true,
                 cx,
-            );
-            observer.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            observer
+            )
         });
+        cx.subscribe(&settings_observer, Self::on_settings_observer_event)
+            .detach();
 
         let lsp_store = cx.new(|cx| {
-            let mut lsp_store = LspStore::new_local(
+            LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
@@ -225,9 +238,7 @@ impl HeadlessProject {
                 http_client.clone(),
                 fs.clone(),
                 cx,
-            );
-            lsp_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
-            lsp_store
+            )
         });
 
         AgentRegistryStore::init_global(cx, fs.clone(), http_client.clone());
@@ -246,7 +257,7 @@ impl HeadlessProject {
 
         let context_server_store = cx.new(|cx| {
             let mut context_server_store =
-                ContextServerStore::local(worktree_store.clone(), None, true, cx);
+                ContextServerStore::local(worktree_store.clone(), true, cx);
             context_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
             context_server_store
         });
@@ -258,12 +269,8 @@ impl HeadlessProject {
             languages.clone(),
         );
 
-        cx.subscribe(&buffer_store, |_this, _buffer_store, event, cx| {
-            if let BufferStoreEvent::BufferAdded(buffer) = event {
-                cx.subscribe(buffer, Self::on_buffer_event).detach();
-            }
-        })
-        .detach();
+        cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+            .detach();
 
         let extensions = HeadlessExtensionStore::new(
             fs.clone(),
@@ -296,6 +303,31 @@ impl HeadlessProject {
         session.add_request_handler(cx.weak_entity(), Self::handle_get_remote_profiling_data);
 
         session.add_entity_request_handler(Self::handle_add_worktree);
+        session.add_entity_request_handler(Self::handle_lsp_query);
+        session.add_entity_request_handler(Self::handle_fetch);
+        session.add_entity_request_handler(Self::handle_push);
+        session.add_entity_request_handler(Self::handle_pull);
+        session.add_entity_request_handler(Self::handle_commit);
+        session.add_entity_request_handler(Self::handle_apply_code_action);
+        session.add_entity_request_handler(Self::handle_apply_code_action_kind);
+        session.add_entity_request_handler(Self::handle_format_buffers);
+        session.add_entity_request_handler(Self::handle_open_buffer_for_symbol);
+        session.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
+        session.add_entity_request_handler(Self::handle_open_commit_message_buffer);
+        session.add_entity_request_handler(Self::handle_rename_project_entry);
+        session.add_entity_request_handler(
+            Self::handle_lsp_command_with_project::<project::lsp_command::PerformRename>,
+        );
+        session.add_entity_request_handler(
+            Self::handle_lsp_command_with_project::<
+                project::lsp_store::lsp_ext_command::GoToParentModule,
+            >,
+        );
+        session.add_entity_request_handler(
+            Self::handle_lsp_command_with_project::<
+                project::lsp_store::lsp_ext_command::GetLspRunnables,
+            >,
+        );
         session.add_request_handler(cx.weak_entity(), Self::handle_remove_worktree);
 
         session.add_entity_request_handler(Self::handle_open_buffer_by_path);
@@ -311,7 +343,10 @@ impl HeadlessProject {
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
         session.add_entity_request_handler(BufferStore::handle_update_buffer);
-        session.add_entity_message_handler(BufferStore::handle_close_buffer);
+        // handle_close_buffer / handle_reload_buffers moved to Project /
+        // HeadlessProject in BufferStore Phase 1.
+        session.add_entity_message_handler(Self::handle_close_buffer);
+        session.add_entity_request_handler(Self::handle_reload_buffers);
 
         session.add_request_handler(
             extensions.downgrade(),
@@ -358,6 +393,9 @@ impl HeadlessProject {
             profiling_collector: gpui::ProfilingCollector::new(startup_time),
             _toolchain_store: toolchain_store,
             kernels: Default::default(),
+            worktrees: Vec::new(),
+            git_repository_snapshots_for_peer: HashMap::default(),
+            shared_buffers: HashMap::default(),
         }
     }
 
@@ -367,17 +405,256 @@ impl HeadlessProject {
         event: &BufferEvent,
         cx: &mut Context<Self>,
     ) {
-        if let BufferEvent::Operation {
-            operation,
-            is_local: true,
+        match event {
+            BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx
+                .background_spawn(self.session.request(proto::UpdateBuffer {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    buffer_id: buffer.read(cx).remote_id().to_proto(),
+                    operations: vec![serialize_operation(operation)],
+                }))
+                .detach(),
+            BufferEvent::ReloadNeeded => {
+                // The server's worktree scanner observed a content
+                // change for this buffer; reload from disk. Mirrors
+                // `Project::on_buffer_event`'s ReloadNeeded branch.
+                // Without this the buffer's contents stay frozen at
+                // the load-time text even though `file_updated` ran
+                // and emitted `ReloadNeeded` — manifesting as
+                // `test_remote_reload` seeing the old buffer text.
+                self.buffer_store.update(cx, |buffer_store, cx| {
+                    let mut buffers = HashSet::default();
+                    buffers.insert(buffer);
+                    buffer_store
+                        .reload_buffers(buffers, true, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        worktree_store: Entity<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => {
+                // Pin the worktree on our side; the host registry only holds
+                // a weak reference. Headless always retains.
+                self.worktrees.push(worktree.clone());
+                // Set up an observer that streams worktree updates to the
+                // connected zed client.
+                let session = self.session.clone();
+                worktree.update(cx, move |worktree, cx| {
+                    worktree.observe_updates(REMOTE_SERVER_PROJECT_ID, cx, move |update| {
+                        let session = session.clone();
+                        async move { session.send(update).log_err().is_some() }
+                    });
+                });
+            }
+            WorktreeStoreEvent::WorktreeRemoved(entity_id, _) => {
+                self.worktrees.retain(|w| w.entity_id() != *entity_id);
+            }
+            WorktreeStoreEvent::WorktreeMetadataChanged => {
+                let metadata = worktree_store.read(cx).worktree_metadata_protos(cx);
+                self.session
+                    .send(rpc::proto::UpdateProject {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        worktrees: metadata,
+                    })
+                    .log_err();
+            }
+            WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
+                if let Some(summaries) = self.lsp_store.read(cx).diagnostic_summaries_for_worktree(
+                    worktree.read(cx).id(),
+                    REMOTE_SERVER_PROJECT_ID,
+                ) {
+                    self.session.send(summaries).log_err();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_settings_observer_event(
+        &mut self,
+        _: Entity<SettingsObserver>,
+        event: &SettingsObserverEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        if let SettingsObserverEvent::LocalSettingsApplied {
+            worktree_id,
+            path,
+            kind,
+            content,
         } = event
         {
-            cx.background_spawn(self.session.request(proto::UpdateBuffer {
-                project_id: REMOTE_SERVER_PROJECT_ID,
-                buffer_id: buffer.read(cx).remote_id().to_proto(),
-                operations: vec![serialize_operation(operation)],
-            }))
-            .detach()
+            self.session
+                .send(proto::UpdateWorktreeSettings {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    worktree_id: worktree_id.to_proto(),
+                    path: path.to_proto(),
+                    content: content.clone(),
+                    kind: Some(project_settings::local_settings_kind_to_proto(*kind).into()),
+                    outside_worktree: Some(path.is_outside_worktree()),
+                })
+                .log_err();
+        }
+    }
+
+    fn on_buffer_store_event(
+        &mut self,
+        _: Entity<BufferStore>,
+        event: &BufferStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            BufferStoreEvent::BufferAdded(buffer) => {
+                cx.subscribe(buffer, Self::on_buffer_event).detach();
+            }
+            BufferStoreEvent::LocalBufferReloaded(buffer) => {
+                let buffer = buffer.read(cx);
+                self.session
+                    .send(rpc::proto::BufferReloaded {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer.remote_id().to_proto(),
+                        version: language::proto::serialize_version(&buffer.version()),
+                        mtime: buffer.saved_mtime().map(|t| t.into()),
+                        line_ending: language::proto::serialize_line_ending(buffer.line_ending())
+                            as i32,
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::UpdateBufferFileForwarded { buffer_id, file } => {
+                self.session
+                    .send(rpc::proto::UpdateBufferFile {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        file: file.clone(),
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::BufferSavedForwarded {
+                buffer_id,
+                version,
+                mtime,
+            } => {
+                self.session
+                    .send(rpc::proto::BufferSaved {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        version: version.clone(),
+                        mtime: mtime.clone(),
+                    })
+                    .log_err();
+            }
+            BufferStoreEvent::BufferReloadedForwarded {
+                buffer_id,
+                version,
+                mtime,
+                line_ending,
+            } => {
+                self.session
+                    .send(rpc::proto::BufferReloaded {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        buffer_id: buffer_id.to_proto(),
+                        version: version.clone(),
+                        mtime: mtime.clone(),
+                        line_ending: *line_ending,
+                    })
+                    .log_err();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_dap_store_event(
+        &mut self,
+        _: Entity<DapStore>,
+        event: &DapStoreEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        if let DapStoreEvent::LogToDebugConsole {
+            session_id,
+            message,
+        } = event
+        {
+            self.session
+                .send(proto::LogToDebugConsole {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    session_id: *session_id,
+                    message: message.clone(),
+                })
+                .log_err();
+        }
+    }
+
+    fn on_git_store_event(
+        &mut self,
+        _: Entity<GitStore>,
+        event: &GitStoreEvent,
+        _cx: &mut Context<Self>,
+    ) {
+        match event {
+            GitStoreEvent::RepositorySnapshotForDownstream(snapshot) => {
+                let update =
+                    if let Some(old) = self.git_repository_snapshots_for_peer.get(&snapshot.id) {
+                        snapshot.build_update(old, REMOTE_SERVER_PROJECT_ID)
+                    } else {
+                        snapshot.initial_update(REMOTE_SERVER_PROJECT_ID)
+                    };
+                for chunk in proto::split_repository_update(update) {
+                    self.session.send(chunk).log_err();
+                }
+                self.git_repository_snapshots_for_peer
+                    .insert(snapshot.id, snapshot.clone());
+            }
+            GitStoreEvent::RepositorySnapshotRemovedForDownstream(id) => {
+                self.session
+                    .send(proto::RemoveRepository {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        id: id.to_proto(),
+                    })
+                    .log_err();
+                self.git_repository_snapshots_for_peer.remove(id);
+            }
+            GitStoreEvent::ForwardRepositoryUpdate(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            GitStoreEvent::ForwardRepositoryRemove(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            GitStoreEvent::DiffBasesUpdatedForDownstream(update) => {
+                let mut update = update.clone();
+                update.project_id = REMOTE_SERVER_PROJECT_ID;
+                self.session.send(update).log_err();
+            }
+            _ => {}
+        }
+    }
+
+    fn on_breakpoint_store_event(
+        &mut self,
+        breakpoint_store: Entity<BreakpointStore>,
+        event: &BreakpointStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if let BreakpointStoreEvent::BreakpointsUpdated(path, BreakpointUpdatedReason::Toggled) =
+            event
+        {
+            let proto = breakpoint_store
+                .read(cx)
+                .breakpoints_for_file_proto(path, REMOTE_SERVER_PROJECT_ID);
+            let _ = self.session.send(proto);
         }
     }
 
@@ -396,7 +673,8 @@ impl HeadlessProject {
                     log_store.update(cx, |log_store, cx| {
                         log_store.add_language_server(
                             LanguageServerKind::LocalSsh {
-                                lsp_store: self.lsp_store.downgrade(),
+                                session: self.session.clone(),
+                                project_id: REMOTE_SERVER_PROJECT_ID,
                             },
                             *id,
                             Some(name.clone()),
@@ -405,6 +683,21 @@ impl HeadlessProject {
                             cx,
                         );
                     });
+                }
+                let lsp_store = lsp_store.read(cx);
+                if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(id) {
+                    self.session
+                        .send(proto::StartLanguageServer {
+                            project_id: REMOTE_SERVER_PROJECT_ID,
+                            server: Some(proto::LanguageServer {
+                                id: id.to_proto(),
+                                name: name.to_string(),
+                                worktree_id: worktree_id.map(|id| id.to_proto()),
+                            }),
+                            capabilities: serde_json::to_string(capabilities)
+                                .expect("serializing server LSP capabilities"),
+                        })
+                        .log_err();
                 }
             }
             LspStoreEvent::LanguageServerRemoved(id) => {
@@ -440,6 +733,59 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            LspStoreEvent::RefreshInlayHints {
+                server_id,
+                request_id,
+            } => {
+                self.session
+                    .send(proto::RefreshInlayHints {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                        request_id: request_id.map(|id| id as u64),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::RefreshSemanticTokens {
+                server_id,
+                request_id,
+            } => {
+                self.session
+                    .send(proto::RefreshSemanticTokens {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                        request_id: request_id.map(|id| id as u64),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::RefreshCodeLens => {
+                self.session
+                    .send(proto::RefreshCodeLens {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id } => {
+                self.session
+                    .send(proto::PullWorkspaceDiagnostics {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::DiagnosticsSummariesUpdated {
+                worktree_id,
+                summary,
+                more_summaries,
+            } => {
+                self.session
+                    .send(proto::UpdateDiagnosticSummary {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        worktree_id: worktree_id.to_proto(),
+                        summary: Some(summary.clone()),
+                        more_summaries: more_summaries.clone(),
+                    })
+                    .log_err();
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
                     project_id: REMOTE_SERVER_PROJECT_ID,
@@ -462,8 +808,446 @@ impl HeadlessProject {
                 })
                 .detach();
             }
+            LspStoreEvent::ApplyWorkspaceEditRequested {
+                server_id,
+                params,
+                response,
+            } => {
+                // HeadlessProject has no UI, hence no active entry; pass
+                // `None` so all snippet edits are baked in as plain text.
+                let lsp_store = lsp_store.downgrade();
+                let server_id = *server_id;
+                let params = params.clone();
+                let response = response.clone();
+                cx.spawn(async move |_, cx| {
+                    let result = project::lsp_store::LocalLspStore::on_lsp_workspace_edit(
+                        lsp_store, params, server_id, None, cx,
+                    )
+                    .await;
+                    response.send(result).await.ok();
+                })
+                .detach();
+            }
             _ => {}
         }
+    }
+
+    /// Streams a buffer's initial state and pending operations to the
+    /// connected zed client. Mirrors `Project::create_buffer_for_peer` for
+    /// the headless side; the field used to live on `BufferStore` before
+    /// Phase 1.
+    pub fn create_buffer_for_peer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        peer_id: proto::PeerId,
+        cx: &mut App,
+    ) -> gpui::Task<Result<()>> {
+        let buffer_id = buffer.read(cx).remote_id();
+        let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
+        if shared_buffers.contains_key(&buffer_id) {
+            return gpui::Task::ready(Ok(()));
+        }
+        shared_buffers.insert(
+            buffer_id,
+            SharedBuffer {
+                buffer: buffer.clone(),
+                lsp_handle: None,
+            },
+        );
+
+        let project_id = REMOTE_SERVER_PROJECT_ID;
+        let client = self.session.clone();
+        let buffer = buffer.clone();
+
+        cx.spawn(async move |cx| {
+            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx));
+            let operations = operations.await;
+            let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx));
+
+            let initial_state = proto::CreateBufferForPeer {
+                project_id,
+                peer_id: Some(peer_id),
+                variant: Some(proto::create_buffer_for_peer::Variant::State(state)),
+            };
+
+            if client.send(initial_state).log_err().is_some() {
+                let client = client.clone();
+                cx.background_spawn(async move {
+                    let mut chunks = split_operations(operations).peekable();
+                    while let Some(chunk) = chunks.next() {
+                        let is_last = chunks.peek().is_none();
+                        client.send(proto::CreateBufferForPeer {
+                            project_id,
+                            peer_id: Some(peer_id),
+                            variant: Some(proto::create_buffer_for_peer::Variant::Chunk(
+                                proto::BufferChunk {
+                                    buffer_id: buffer_id.into(),
+                                    operations: chunk,
+                                    is_last,
+                                },
+                            )),
+                        })?;
+                    }
+                    anyhow::Ok(())
+                })
+                .await
+                .log_err();
+            }
+            Ok(())
+        })
+    }
+
+    pub fn serialize_project_transaction_for_peer(
+        &mut self,
+        project_transaction: ProjectTransaction,
+        peer_id: proto::PeerId,
+        cx: &mut App,
+    ) -> proto::ProjectTransaction {
+        let mut serialized_transaction = proto::ProjectTransaction {
+            buffer_ids: Default::default(),
+            transactions: Default::default(),
+        };
+        for (buffer, transaction) in project_transaction.0 {
+            self.create_buffer_for_peer(&buffer, peer_id, cx)
+                .detach_and_log_err(cx);
+            serialized_transaction
+                .buffer_ids
+                .push(buffer.read(cx).remote_id().into());
+            serialized_transaction
+                .transactions
+                .push(language::proto::serialize_transaction(&transaction));
+        }
+        serialized_transaction
+    }
+
+    pub fn forget_shared_buffers_for(&mut self, peer_id: &proto::PeerId) {
+        self.shared_buffers.remove(peer_id);
+    }
+
+    pub fn has_shared_buffers(&self) -> bool {
+        !self.shared_buffers.is_empty()
+    }
+
+    pub fn register_shared_lsp_handle(
+        &mut self,
+        peer_id: proto::PeerId,
+        buffer_id: BufferId,
+        handle: project::lsp_store::OpenLspBufferHandle,
+    ) {
+        if let Some(shared_buffers) = self.shared_buffers.get_mut(&peer_id)
+            && let Some(buffer) = shared_buffers.get_mut(&buffer_id)
+        {
+            buffer.lsp_handle = Some(handle);
+            return;
+        }
+        debug_panic!("tried to register shared lsp handle, but buffer was not shared")
+    }
+
+    /// Mirrors `Project::handle_reload_buffers` for the headless side.
+    /// The handler was moved off `BufferStore` in BufferStore Phase 1,
+    /// but the headless half of that move was missed — the remote
+    /// server had no `ReloadBuffers` handler registered, so explicit
+    /// `project.reload_buffers(...)` calls from the client failed with
+    /// "no handler registered for ReloadBuffers" (and any consumer that
+    /// went through this RPC path silently broke after the move).
+    async fn handle_reload_buffers(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ReloadBuffers>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ReloadBuffersResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let reload = this.update(&mut cx, |this, cx| {
+            let mut buffers = HashSet::default();
+            for buffer_id in &envelope.payload.buffer_ids {
+                let buffer_id = BufferId::new(*buffer_id)?;
+                buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
+            }
+            anyhow::Ok(this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.reload_buffers(buffers, false, cx)
+            }))
+        })?;
+
+        let project_transaction = reload.await?;
+        let project_transaction = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::ReloadBuffersResponse {
+            transaction: Some(project_transaction),
+        })
+    }
+
+    async fn handle_close_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CloseBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let peer_id = envelope.sender_id;
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        this.update(&mut cx, |this, _| {
+            if let Some(shared) = this.shared_buffers.get_mut(&peer_id)
+                && shared.remove(&buffer_id).is_some()
+            {
+                if shared.is_empty() {
+                    this.shared_buffers.remove(&peer_id);
+                }
+                return;
+            }
+            debug_panic!(
+                "peer_id {} closed buffer_id {} which was either not open or already closed",
+                peer_id,
+                buffer_id
+            )
+        });
+        Ok(())
+    }
+
+    /// Forwards `proto::LspQuery` rpc to the LSP store with the headless
+    /// session as the downstream peer. Mirrors `Project::handle_lsp_query`
+    /// for the headless side.
+    async fn handle_lsp_query(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LspQuery>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let (lsp_store, session) = this.read_with(&cx, |this, _| {
+            (this.lsp_store.clone(), this.session.clone())
+        });
+        project::LspStore::process_lsp_query::<Self>(
+            lsp_store,
+            this.downgrade(),
+            session,
+            REMOTE_SERVER_PROJECT_ID,
+            envelope,
+            cx,
+        )
+        .await
+    }
+
+    /// Forwards `proto::Fetch` rpc to the git store with the headless
+    /// session as the downstream peer for askpass.
+    async fn handle_fetch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Fetch>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_fetch(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Push` rpc. See [`Self::handle_fetch`].
+    async fn handle_push(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Push>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_push(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Pull` rpc. See [`Self::handle_fetch`].
+    async fn handle_pull(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Pull>,
+        cx: AsyncApp,
+    ) -> Result<proto::RemoteMessageResponse> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_pull(git_store, session, envelope, cx).await
+    }
+
+    /// Forwards `proto::Commit` rpc. See [`Self::handle_fetch`].
+    async fn handle_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Commit>,
+        cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let (git_store, session) = this.read_with(&cx, |this, _| {
+            (this.git_store.clone(), this.session.clone())
+        });
+        GitStore::process_commit(git_store, session, envelope, cx).await
+    }
+
+    async fn handle_apply_code_action(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ApplyCodeAction>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ApplyCodeActionResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        // HeadlessProject has no UI, hence no active entry; pass `None`.
+        let project_transaction =
+            LspStore::process_apply_code_action(lsp_store, envelope, None, cx.clone()).await?;
+        let serialized = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::ApplyCodeActionResponse {
+            transaction: Some(serialized),
+        })
+    }
+
+    async fn handle_apply_code_action_kind(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ApplyCodeActionKind>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ApplyCodeActionKindResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        // HeadlessProject has no UI, hence no active entry; pass `None`.
+        let project_transaction =
+            LspStore::process_apply_code_action_kind(lsp_store, envelope, None, cx.clone()).await?;
+        let serialized = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::ApplyCodeActionKindResponse {
+            transaction: Some(serialized),
+        })
+    }
+
+    async fn handle_format_buffers(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FormatBuffers>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::FormatBuffersResponse> {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        let project_transaction =
+            LspStore::process_format_buffers(lsp_store, envelope, cx.clone()).await?;
+        let serialized = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(project_transaction, sender_id, cx)
+        });
+        Ok(proto::FormatBuffersResponse {
+            transaction: Some(serialized),
+        })
+    }
+
+    async fn handle_open_buffer_for_symbol(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenBufferForSymbol>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferForSymbolResponse> {
+        let peer_id = envelope.original_sender_id().unwrap_or_default();
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        let buffer =
+            LspStore::process_open_buffer_for_symbol(lsp_store, envelope, cx.clone()).await?;
+        this.update(&mut cx, |this, cx| {
+            let is_private = buffer
+                .read(cx)
+                .file()
+                .map(|f| f.is_private())
+                .unwrap_or_default();
+            if is_private {
+                Err(anyhow!(rpc::ErrorCode::UnsharedItem))
+            } else {
+                this.create_buffer_for_peer(&buffer, peer_id, cx)
+                    .detach_and_log_err(cx);
+                let buffer_id = buffer.read(cx).remote_id().to_proto();
+                Ok(proto::OpenBufferForSymbolResponse { buffer_id })
+            }
+        })
+    }
+
+    /// Forwards `proto::RenameProjectEntry`. Mirrors
+    /// `Project::handle_rename_project_entry`. HeadlessProject has no UI
+    /// and therefore no active entry; pass `None`.
+    async fn handle_rename_project_entry(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        LspStore::process_rename_project_entry(lsp_store, envelope, None, cx).await
+    }
+
+    async fn handle_register_buffer_with_language_servers(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::RegisterBufferWithLanguageServers>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        let registered =
+            LspStore::process_register_buffer_with_language_servers(lsp_store, envelope, &mut cx)?;
+        if let Some((buffer_id, handle)) = registered {
+            this.update(&mut cx, |this, _| {
+                this.register_shared_lsp_handle(peer_id, buffer_id, handle);
+            });
+        }
+        Ok(proto::Ack {})
+    }
+
+    /// Generic wrapper for LSP commands that need `HeadlessProject` access
+    /// for `T::response_to_proto_project` (per-peer buffer sharing).
+    /// Mirrors `Project::handle_lsp_command_with_project` for the headless
+    /// side.
+    async fn handle_lsp_command_with_project<T: project::lsp_command::LspCommand>(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<T::ProtoRequest>,
+        mut cx: AsyncApp,
+    ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
+    where
+        <T::LspRequest as lsp::request::Request>::Params: Send,
+        <T::LspRequest as lsp::request::Request>::Result: Send,
+    {
+        let sender_id = envelope.original_sender_id().unwrap_or_default();
+        let buffer_id = T::buffer_id_from_proto(&envelope.payload)?;
+        let lsp_store = this.read_with(&cx, |this, _| this.lsp_store.clone());
+        let buffer_handle = lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.buffer_store().read(cx).get_existing(buffer_id)
+        })?;
+        let mut request = T::from_proto(
+            envelope.payload,
+            lsp_store.clone(),
+            buffer_handle.clone(),
+            cx.clone(),
+        )
+        .await?;
+        // HeadlessProject has no UI, hence no active entry; pass `None`
+        // (no-op for commands other than `PerformRename`).
+        request.set_active_entry(None);
+        let response = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.request_lsp(
+                    buffer_handle.clone(),
+                    project::LanguageServerToQuery::FirstCapable,
+                    request,
+                    cx,
+                )
+            })
+            .await?;
+        this.update(&mut cx, |this, cx| {
+            Ok(T::response_to_proto_project(
+                response,
+                lsp_store.clone(),
+                this,
+                sender_id,
+                &buffer_handle.read(cx).version(),
+                cx,
+            ))
+        })
+    }
+
+    async fn handle_open_commit_message_buffer(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::OpenCommitMessageBuffer>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::OpenBufferResponse> {
+        let peer_id = envelope.original_sender_id.unwrap_or(envelope.sender_id);
+        let git_store = this.read_with(&cx, |this, _| this.git_store.clone());
+        let buffer =
+            GitStore::process_open_commit_message_buffer(git_store, envelope, cx.clone()).await?;
+        let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id());
+        this.update(&mut cx, |this, cx| {
+            this.create_buffer_for_peer(&buffer, peer_id, cx)
+                .detach_and_log_err(cx);
+        });
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
     }
 
     pub async fn handle_add_worktree(
@@ -574,19 +1358,16 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let path = RelPath::from_proto(&message.payload.path)?;
-        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
-            let buffer_store = this.buffer_store.clone();
-            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
-            });
-            (buffer_store, buffer)
+            })
         });
 
         let buffer = buffer.await?;
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id());
-        buffer_store.update(&mut cx, |buffer_store, cx| {
-            buffer_store
-                .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+        this.update(&mut cx, |this, cx| {
+            this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -803,19 +1584,16 @@ impl HeadlessProject {
         _message: TypedEnvelope<proto::OpenNewBuffer>,
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
-        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
-            let buffer_store = this.buffer_store.clone();
-            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.create_buffer(None, true, cx)
-            });
-            (buffer_store, buffer)
+            })
         });
 
         let buffer = buffer.await?;
         let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id());
-        buffer_store.update(&mut cx, |buffer_store, cx| {
-            buffer_store
-                .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+        this.update(&mut cx, |this, cx| {
+            this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
                 .detach_and_log_err(cx);
         });
 
@@ -866,8 +1644,8 @@ impl HeadlessProject {
             })
             .await?;
 
-        let (buffer, buffer_store) = this.update(&mut cx, |this, cx| {
-            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+        let buffer = this.update(&mut cx, |this, cx| {
+            this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -875,14 +1653,12 @@ impl HeadlessProject {
                     },
                     cx,
                 )
-            });
-
-            (buffer, this.buffer_store.clone())
+            })
         });
 
         let buffer = buffer.await?;
 
-        let buffer_id = cx.update(|cx| {
+        let buffer_id = this.update(&mut cx, |this, cx| {
             if buffer.read(cx).is_empty() {
                 buffer.update(cx, |buffer, cx| {
                     buffer.edit([(0..0, initial_server_settings_content())], None, cx)
@@ -890,13 +1666,8 @@ impl HeadlessProject {
             }
 
             let buffer_id = buffer.read(cx).remote_id();
-
-            buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store
-                    .create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                    .detach_and_log_err(cx);
-            });
-
+            this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                .detach_and_log_err(cx);
             buffer_id
         });
 
@@ -1054,9 +1825,8 @@ impl HeadlessProject {
         )?;
 
         let project_id = message.project_id;
-        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone());
         let handle = message.handle;
-        let _buffer_store = buffer_store.clone();
+        let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone());
         let client = this.read_with(&cx, |this, _| this.session.clone());
         let task = cx.spawn(async move |cx| {
             let results = this.update(cx, |this, cx| {
@@ -1097,12 +1867,12 @@ impl HeadlessProject {
             });
 
             while let Some(buffer) = new_matches.next().await {
-                let _ = buffer_store
-                    .update(cx, |this, cx| {
-                        this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
-                    })
-                    .await;
-                let buffer_id = buffer.read_with(cx, |this, _| this.remote_id().to_proto());
+                let buffer_id = this.update(cx, |this, cx| {
+                    let buffer_id = buffer.read(cx).remote_id().to_proto();
+                    this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
+                        .detach_and_log_err(cx);
+                    buffer_id
+                });
                 batcher.push(buffer_id).await;
             }
             batcher.flush().await;
@@ -1121,7 +1891,7 @@ impl HeadlessProject {
                 .await?;
             anyhow::Ok(())
         });
-        _buffer_store.update(&mut cx, |this, _| {
+        buffer_store.update(&mut cx, |this, _| {
             this.register_ongoing_project_search((peer_id, handle), task);
         });
 
@@ -1316,6 +2086,31 @@ impl HeadlessProject {
             .into_iter()
             .collect();
         Ok(proto::DirectoryEnvironment { environment })
+    }
+}
+
+impl PeerBufferAccess for HeadlessProject {
+    fn create_buffer_for_peer(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        peer_id: proto::PeerId,
+        cx: &mut App,
+    ) -> gpui::Task<Result<()>> {
+        HeadlessProject::create_buffer_for_peer(self, buffer, peer_id, cx)
+    }
+
+    fn serialize_project_transaction_for_peer(
+        &mut self,
+        project_transaction: ProjectTransaction,
+        peer_id: proto::PeerId,
+        cx: &mut App,
+    ) -> proto::ProjectTransaction {
+        HeadlessProject::serialize_project_transaction_for_peer(
+            self,
+            project_transaction,
+            peer_id,
+            cx,
+        )
     }
 }
 

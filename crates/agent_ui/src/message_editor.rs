@@ -1356,7 +1356,7 @@ impl MessageEditor {
             return false;
         };
         let project = workspace.read(cx).project().clone();
-        let project_is_local = project.read(cx).is_local();
+        let project_is_local = project.read(cx).is_local(cx);
         let supports_images = self.session_capabilities.read().supports_images();
         if !project_is_local && !supports_images {
             return false;

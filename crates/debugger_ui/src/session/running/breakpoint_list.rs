@@ -84,9 +84,9 @@ impl BreakpointList {
         cx: &mut App,
     ) -> Entity<Self> {
         let project = project.read(cx);
-        let breakpoint_store = project.breakpoint_store();
-        let worktree_store = project.worktree_store();
-        let dap_store = project.dap_store();
+        let breakpoint_store = project.breakpoint_store(cx);
+        let worktree_store = project.worktree_store(cx);
+        let dap_store = project.dap_store(cx);
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
 
@@ -666,7 +666,22 @@ impl BreakpointList {
 
 impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
+        // Phase 2 multi-tenant: pull breakpoints filtered to this
+        // workspace's Project so a sibling Project's breakpoints on
+        // the shared host `BreakpointStore` don't show up in our panel.
+        // Falls back to the unfiltered store view if the workspace is
+        // gone (shouldn't happen while the panel is rendering).
+        let breakpoints = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .serialized_breakpoints(cx)
+            })
+            .unwrap_or_else(|| self.breakpoint_store.read(cx).all_source_breakpoints(cx));
         self.breakpoints.clear();
         let path_style = self.worktree_store.read(cx).path_style();
         let weak = cx.weak_entity();

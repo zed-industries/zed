@@ -3356,7 +3356,7 @@ impl SettingsWindow {
             let is_restricted = all_projects(self.original_window.as_ref(), cx)
                 .find(|project| project.read(cx).worktree_for_id(worktree_id, cx).is_some())
                 .map(|project| {
-                    let worktree_store = project.read(cx).worktree_store();
+                    let worktree_store = project.read(cx).worktree_store(cx);
                     project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
                         &worktree_store,
                         cx,
@@ -4081,7 +4081,7 @@ impl ProjectSettingsUpdateQueue {
                 .await?;
         }
 
-        let buffer_store = project.read_with(cx, |project, _cx| project.buffer_store().clone())?;
+        let buffer_store = project.read_with(cx, |project, cx| project.buffer_store(cx))?;
 
         let cached_buffer = settings_window
             .read_with(cx, |settings_window, _| {
@@ -5372,7 +5372,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx));
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5406,7 +5406,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx));
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5450,7 +5450,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx));
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5529,7 +5529,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx));
         let buffer = buffer_store
             .update(cx, |store, cx| store.open_buffer(setup.project_path, cx))
             .await
@@ -5579,7 +5579,7 @@ mod project_settings_update_tests {
 
         let buffer_store = setup
             .project
-            .read_with(cx, |project, _| project.buffer_store().clone());
+            .read_with(cx, |project, cx| project.buffer_store(cx));
         let buffer = buffer_store
             .update(cx, |store, cx| {
                 store.open_buffer(setup.project_path.clone(), cx)

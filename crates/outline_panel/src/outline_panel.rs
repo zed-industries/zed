@@ -2720,7 +2720,7 @@ impl OutlinePanel {
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
         let new_entries = self.new_entries_for_fs_update.clone();
         let repo_snapshots = self.project.update(cx, |project, cx| {
-            project.git_store().read(cx).repo_snapshots(cx)
+            project.git_store(cx).read(cx).repo_snapshots(cx)
         });
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
@@ -2732,7 +2732,7 @@ impl OutlinePanel {
             let mut root_entries = HashSet::default();
             let mut new_buffers = HashMap::<BufferId, BufferOutlines>::default();
             let Ok(buffer_excerpts) = outline_panel.update(cx, |outline_panel, cx| {
-                let git_store = outline_panel.project.read(cx).git_store().clone();
+                let git_store = outline_panel.project.read(cx).git_store(cx);
                 new_collapsed_entries = outline_panel.collapsed_entries.clone();
                 new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
                 let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
@@ -4984,7 +4984,7 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 impl Render for OutlinePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (is_local, is_via_ssh) = self.project.read_with(cx, |project, _| {
-            (project.is_local(), project.is_via_remote_server())
+            (project.is_local(cx), project.is_via_remote_server(cx))
         });
         let query = self.query(cx);
         let pinned = self.pinned;

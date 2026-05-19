@@ -87,7 +87,7 @@ impl NewProcessModal {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
             return;
         };
-        let task_store = workspace.project().read(cx).task_store().clone();
+        let task_store = workspace.project().read(cx).task_store(cx);
         let languages = workspace.app_state().languages.clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
@@ -98,6 +98,7 @@ impl NewProcessModal {
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
                 let project = workspace.project().clone();
+                let project_for_tasks = project.clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let attach_mode =
                         AttachMode::new(None, workspace_handle.clone(), project, window, cx);
@@ -122,6 +123,7 @@ impl NewProcessModal {
                                 task_overrides,
                                 false,
                                 workspace_handle.clone(),
+                                project_for_tasks,
                                 window,
                                 cx,
                             )
@@ -200,13 +202,26 @@ impl NewProcessModal {
                                 return Ok(());
                             };
 
+                            // Phase 2 multi-tenant: pull the per-Project
+                            // LRU and pass it to the host-shared
+                            // Inventory's compute method.
+                            let last_scheduled_tasks = workspace.update(cx, |workspace, cx| {
+                                workspace.project().read(cx).last_scheduled_tasks()
+                            })?;
                             let (used_tasks, current_resolved_tasks) = task_inventory
                                 .update(cx, |task_inventory, cx| {
-                                    task_inventory
-                                        .used_and_current_resolved_tasks(task_contexts.clone(), cx)
+                                    task_inventory.used_and_current_resolved_tasks(
+                                        last_scheduled_tasks,
+                                        task_contexts.clone(),
+                                        cx,
+                                    )
                                 })
                                 .await;
 
+                            let last_scheduled_scenarios =
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.project().read(cx).last_scheduled_scenarios()
+                                })?;
                             if let Ok(task) = debug_picker.update(cx, |picker, cx| {
                                 picker.delegate.tasks_loaded(
                                     task_contexts.clone(),
@@ -214,6 +229,7 @@ impl NewProcessModal {
                                     lsp_tasks.clone(),
                                     current_resolved_tasks.clone(),
                                     add_current_language_tasks,
+                                    last_scheduled_scenarios,
                                     cx,
                                 )
                             }) {
@@ -1128,6 +1144,11 @@ impl DebugDelegate {
         lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
+        // Phase 2 multi-tenant: the recent-scenarios LRU lives on
+        // `Project`, not on the host-shared `Inventory`. The caller
+        // pulls this from `Project::last_scheduled_scenarios()` so
+        // sibling Projects' scenarios don't leak into our picker.
+        last_scheduled_scenarios: std::collections::VecDeque<(DebugScenario, DebugScenarioContext)>,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         self.task_contexts = Some(task_contexts.clone());
@@ -1135,6 +1156,7 @@ impl DebugDelegate {
             task_store.task_inventory().map(|inventory| {
                 inventory.update(cx, |inventory, cx| {
                     inventory.list_debug_scenarios(
+                        last_scheduled_scenarios,
                         &task_contexts,
                         lsp_tasks,
                         current_resolved_tasks,

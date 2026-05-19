@@ -1563,7 +1563,7 @@ impl Editor {
                 ));
                 if let Some(task_inventory) = project
                     .read(cx)
-                    .task_store()
+                    .task_store(cx)
                     .read(cx)
                     .task_inventory()
                     .cloned()
@@ -1578,7 +1578,7 @@ impl Editor {
                 };
 
                 project_subscriptions.push(cx.subscribe_in(
-                    &project.read(cx).breakpoint_store(),
+                    &project.read(cx).breakpoint_store(cx),
                     window,
                     |editor, _, event, window, cx| match event {
                         BreakpointStoreEvent::ClearDebugLines => {
@@ -1619,7 +1619,7 @@ impl Editor {
         };
 
         let breakpoint_store = match (mode, project.as_ref()) {
-            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store()),
+            (EditorMode::Full { .. }, Some(project)) => Some(project.read(cx).breakpoint_store(cx)),
             _ => None,
         };
 
@@ -1867,7 +1867,7 @@ impl Editor {
         if let Some(dap_store) = this
             .project
             .as_ref()
-            .map(|project| project.read(cx).dap_store())
+            .map(|project| project.read(cx).dap_store(cx))
         {
             let weak_editor = cx.weak_entity();
 
@@ -5200,7 +5200,7 @@ impl Editor {
                             if cx.has_flag::<DebuggerFeatureFlag>() {
                                 maybe!({
                                     let project = editor.project.as_ref()?;
-                                    let dap_store = project.read(cx).dap_store();
+                                    let dap_store = project.read(cx).dap_store(cx);
                                     let mut scenarios = vec![];
                                     let resolved_tasks = resolved_tasks.as_ref()?;
                                     let debug_adapter: SharedString = buffer
@@ -7102,7 +7102,7 @@ impl Editor {
             );
         }
         project.update(cx, |project, cx| {
-            project.task_store().update(cx, |task_store, cx| {
+            project.task_store(cx).update(cx, |task_store, cx| {
                 task_store.task_context_for_location(captured_task_variables, location, cx)
             })
         })
@@ -13288,7 +13288,7 @@ impl Editor {
                 .unzip();
 
             (
-                project.task_store().read(cx).task_inventory().cloned(),
+                project.task_store(cx).read(cx).task_inventory().cloned(),
                 worktree_id,
                 file,
             )
@@ -17791,7 +17791,7 @@ impl Editor {
                                     buffer.update(cx, |buffer, cx| {
                                         let language = buffer.language()?;
                                         let should_discard = project.update(cx, |project, cx| {
-                                            project.is_local()
+                                            project.is_local(cx)
                                                 && !project.has_language_servers_for(buffer, cx)
                                         });
                                         should_discard.not().then_some(language.clone())
@@ -19263,13 +19263,13 @@ impl CollaborationHub for Entity<Project> {
     }
 
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex> {
-        self.read(cx).user_store().read(cx).participant_indices()
+        self.read(cx).user_store(cx).read(cx).participant_indices()
     }
 
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read_with(cx, |user_store, cx| {
+        this.user_store(cx).read_with(cx, |user_store, cx| {
             user_store.participant_names(user_ids, cx)
         })
     }
@@ -19456,7 +19456,7 @@ fn snippet_completions(
     cx: &mut App,
 ) -> Task<Result<Vec<Completion>>> {
     let languages = buffer.read(cx).languages_at(buffer_position);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     let scopes: Vec<_> = languages
         .iter()
@@ -19650,7 +19650,7 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
             })
         })
@@ -19665,7 +19665,7 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.apply_additional_edits_for_completion(
                     buffer,
                     completions,

@@ -2104,7 +2104,7 @@ mod tests {
         cx.update(|cx| {
             let fs: Arc<dyn Fs> = fs::FakeFs::new(cx.background_executor().clone());
             let worktree_store =
-                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+                cx.new(|cx| WorktreeStore::local(fs.clone(), WorktreeIdCounter::get(cx)));
             let project_environment = cx.new(|cx| {
                 crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
             });

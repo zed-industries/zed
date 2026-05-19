@@ -616,7 +616,7 @@ impl LspLogView {
         if let Some(server) = self
             .project
             .read(cx)
-            .lsp_store()
+            .lsp_store(cx)
             .read(cx)
             .language_server_for_id(server_id)
         {
@@ -641,7 +641,7 @@ impl LspLogView {
         let Some(server_info) = self
             .project
             .read(cx)
-            .lsp_store()
+            .lsp_store(cx)
             .update(cx, |lsp_store, _| {
                 lsp_store
                     .language_server_for_id(server_id)
@@ -700,7 +700,8 @@ fn send_toggle_log_message(
     if let LanguageServerKind::Remote { project } = &server_state.kind {
         project
             .update(cx, |project, cx| {
-                if let Some((client, project_id)) = project.lsp_store().read(cx).upstream_client() {
+                if let Some((client, project_id)) = project.lsp_store(cx).read(cx).upstream_client()
+                {
                     client
                         .send(proto::ToggleLspLogs {
                             project_id,

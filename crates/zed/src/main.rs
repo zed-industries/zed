@@ -573,7 +573,7 @@ fn main() {
                             .workspaces()
                             .filter_map(|weak| weak.upgrade())
                             .map(|workspace: gpui::Entity<workspace::Workspace>| {
-                                workspace.read(cx).project().read(cx).lsp_store()
+                                workspace.read(cx).project().read(cx).lsp_store(cx)
                             })
                             .collect())
                     })
@@ -1157,9 +1157,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                         let res = async move {
                             let json = app_state.languages.language_for_name("JSONC").await.ok();
                             let lsp_store = workspace.update(cx, |workspace, cx| {
-                                workspace
-                                    .project()
-                                    .update(cx, |project, _| project.lsp_store())
+                                workspace.project().read(cx).lsp_store(cx)
                             })?;
                             let uri = format!("zed://schemas/{}", schema_path);
                             let json_schema_content =

@@ -208,7 +208,7 @@ pub async fn create_terminal_entity(
     let mut env = if let Some(dir) = &cwd {
         project
             .update(cx, |project, cx| {
-                project.environment().update(cx, |env, cx| {
+                project.environment(cx).update(cx, |env, cx| {
                     env.directory_environment(dir.clone().into(), cx)
                 })
             })
@@ -228,7 +228,7 @@ pub async fn create_terminal_entity(
     let shell = project
         .update(cx, |project, cx| {
             project
-                .remote_client()
+                .remote_client(cx)
                 .and_then(|r| r.read(cx).default_system_shell())
                 .map(Shell::Program)
         })

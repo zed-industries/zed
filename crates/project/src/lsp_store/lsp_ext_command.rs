@@ -1,9 +1,10 @@
 use crate::{
     LocationLink,
+    buffer_store::PeerBufferAccess,
     lsp_command::{
         LspCommand, file_path_to_lsp_url, location_link_from_lsp, location_link_from_proto,
-        location_link_to_proto, location_links_from_lsp, location_links_from_proto,
-        location_links_to_proto,
+        location_link_to_proto, location_link_to_proto_project, location_links_from_lsp,
+        location_links_from_proto, location_links_to_proto, location_links_to_proto_project,
     },
     lsp_store::LspStore,
     make_lsp_text_document_position, make_text_document_identifier,
@@ -485,6 +486,19 @@ impl LspCommand for GoToParentModule {
         }
     }
 
+    fn response_to_proto_project(
+        links: Vec<LocationLink>,
+        _: gpui::Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::LspExtGoToParentModuleResponse {
+        proto::LspExtGoToParentModuleResponse {
+            links: location_links_to_proto_project(links, peer_buffer_access, peer_id, cx),
+        }
+    }
+
     async fn response_from_proto(
         self,
         message: proto::LspExtGoToParentModuleResponse,
@@ -754,6 +768,28 @@ impl LspCommand for GetLspRunnables {
                 .map(|(location, task_template)| proto::LspRunnable {
                     location: location
                         .map(|location| location_link_to_proto(location, lsp_store, peer_id, cx)),
+                    task_template: serde_json::to_vec(&task_template).unwrap(),
+                })
+                .collect(),
+        }
+    }
+
+    fn response_to_proto_project(
+        response: LspRunnables,
+        _: gpui::Entity<LspStore>,
+        peer_buffer_access: &mut dyn PeerBufferAccess,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::LspExtRunnablesResponse {
+        proto::LspExtRunnablesResponse {
+            runnables: response
+                .runnables
+                .into_iter()
+                .map(|(location, task_template)| proto::LspRunnable {
+                    location: location.map(|location| {
+                        location_link_to_proto_project(location, peer_buffer_access, peer_id, cx)
+                    }),
                     task_template: serde_json::to_vec(&task_template).unwrap(),
                 })
                 .collect(),

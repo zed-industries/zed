@@ -66,7 +66,7 @@ impl Project {
         spawn_task: SpawnInTerminal,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        let is_via_remote = self.remote_client.is_some();
+        let is_via_remote = self.host.read(cx).remote_client.is_some();
 
         let path: Option<Arc<Path>> = if let Some(cwd) = &spawn_task.cwd {
             if is_via_remote {
@@ -100,7 +100,7 @@ impl Project {
             status: TaskStatus::Running,
             completion_rx,
         });
-        let remote_client = self.remote_client.clone();
+        let remote_client = self.host.read(cx).remote_client.clone();
         let shell = match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
@@ -298,7 +298,7 @@ impl Project {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        let working_directory = if self.remote_client.is_some() {
+        let working_directory = if self.host.read(cx).remote_client.is_some() {
             // Remote project: don't use remote paths, let shell use Zed's cwd
             None
         } else {
@@ -318,7 +318,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path = cwd.map(|p| Arc::from(&*p));
-        let is_via_remote = !force_local && self.remote_client.is_some();
+        let is_via_remote = !force_local && self.host.read(cx).remote_client.is_some();
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref()
@@ -352,7 +352,7 @@ impl Project {
         let remote_client = if force_local {
             None
         } else {
-            self.remote_client.clone()
+            self.host.read(cx).remote_client.clone()
         };
         let shell = match &remote_client {
             Some(remote_client) => remote_client
@@ -463,7 +463,7 @@ impl Project {
         if terminal.read(cx).task().is_some() {
             return self.create_terminal_shell(cwd, cx);
         }
-        let local_path = if self.is_via_remote_server() {
+        let local_path = if self.is_via_remote_server(cx) {
             None
         } else {
             cwd
@@ -522,7 +522,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<smol::process::Command>> {
         let path = self.first_project_directory(cx);
-        let remote_client = self.remote_client.clone();
+        let remote_client = self.host.read(cx).remote_client.clone();
         let settings = self.terminal_settings(&path, cx).clone();
         let shell = remote_client
             .as_ref()
@@ -590,16 +590,16 @@ impl Project {
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(path) = &path {
             let shell = Shell::Program(shell.to_string());
-            self.environment
-                .update(cx, |project_env, cx| match &remote_client {
-                    Some(remote_client) => project_env.remote_directory_environment(
-                        &shell,
-                        path.clone(),
-                        remote_client.clone(),
-                        cx,
-                    ),
-                    None => project_env.local_directory_environment(&shell, path.clone(), cx),
-                })
+            let environment = self.host.read(cx).environment.clone();
+            environment.update(cx, |project_env, cx| match &remote_client {
+                Some(remote_client) => project_env.remote_directory_environment(
+                    &shell,
+                    path.clone(),
+                    remote_client.clone(),
+                    cx,
+                ),
+                None => project_env.local_directory_environment(&shell, path.clone(), cx),
+            })
         } else {
             Task::ready(None).shared()
         }

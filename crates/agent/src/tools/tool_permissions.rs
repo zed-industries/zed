@@ -519,7 +519,7 @@ pub fn authorize_file_edit(
         // Resolve the path and check for symlink escapes.
         let (project_entity, fs) = thread.read_with(cx, |thread, cx| {
             let project = thread.project().clone();
-            let fs = project.read(cx).fs().clone();
+            let fs = project.read(cx).fs(cx);
             (project, fs)
         })?;
 

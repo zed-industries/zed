@@ -427,7 +427,7 @@ impl ProjectPicker {
                     let Ok(Some(paths)) = rx.await else {
                         workspace
                             .update_in(cx, |workspace, window, cx| {
-                                let fs = workspace.project().read(cx).fs().clone();
+                                let fs = workspace.project().read(cx).fs(cx);
                                 let weak = cx.entity().downgrade();
                                 workspace.toggle_modal(window, cx, |window, cx| {
                                     RemoteServerProjects::new(
@@ -448,7 +448,7 @@ impl ProjectPicker {
                         .ok()?;
 
                     let remote_connection = project.read_with(cx, |project, cx| {
-                        project.remote_client()?.read(cx).connection()
+                        project.remote_client(cx)?.read(cx).connection()
                     })?;
 
                     let (paths, paths_with_positions) =
@@ -937,7 +937,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
-        let fs = project.read(cx).fs().clone();
+        let fs = project.read(cx).fs(cx);
         let mut this = Self::new(create_new_window, fs, window, workspace.clone(), cx);
         this.mode = Mode::ProjectPicker(ProjectPicker::new(
             create_new_window,
@@ -1080,9 +1080,7 @@ impl RemoteServerProjects {
                     this.retained_connections.push(client);
                     let Some(fs) = this
                         .workspace
-                        .read_with(cx, |workspace, cx| {
-                            workspace.project().read(cx).fs().clone()
-                        })
+                        .read_with(cx, |workspace, cx| workspace.project().read(cx).fs(cx))
                         .log_err()
                     else {
                         return;
@@ -1198,7 +1196,7 @@ impl RemoteServerProjects {
                     let Some(Some(session)) = session else {
                         return workspace.update_in(cx, |workspace, window, cx| {
                             let weak = cx.entity().downgrade();
-                            let fs = workspace.project().read(cx).fs().clone();
+                            let fs = workspace.project().read(cx).fs(cx);
                             workspace.toggle_modal(window, cx, |window, cx| {
                                 RemoteServerProjects::new(create_new_window, fs, window, weak, cx)
                             });
@@ -2718,7 +2716,7 @@ impl RemoteServerProjects {
         let is_local = self
             .workspace
             .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .map(|workspace| workspace.read(cx).project().read(cx).is_local(cx))
             .unwrap_or(true);
 
         let modal_section = v_flex()

@@ -165,7 +165,7 @@ impl ReplStore {
             return Task::ready(Ok(()));
         }
 
-        let is_remote = project.read(cx).is_remote();
+        let is_remote = project.read(cx).is_remote(cx);
         // WSL does require access to global kernel specs, so we only exclude remote worktrees that aren't WSL.
         // TODO: a better way to handle WSL vs SSH/remote projects,
         let is_wsl_remote = project

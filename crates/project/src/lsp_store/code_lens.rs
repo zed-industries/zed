@@ -426,7 +426,7 @@ impl Project {
             snapshot.anchor_after(range.end)
         };
         let range = range_start..range_end;
-        let lsp_store = self.lsp_store();
+        let lsp_store = self.lsp_store(cx);
         let fetch_task =
             lsp_store.update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
         let buffer = buffer.clone();

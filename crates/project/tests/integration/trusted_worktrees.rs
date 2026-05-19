@@ -42,7 +42,7 @@ async fn test_single_worktree_trust(cx: &mut TestAppContext) {
         .await;
 
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_id = worktree_store.read_with(cx, |store, cx| {
         store.worktrees().next().unwrap().read(cx).id()
     });
@@ -156,7 +156,7 @@ async fn test_single_file_worktree_trust(cx: &mut TestAppContext) {
         .await;
 
     let project = Project::test(fs, [path!("/root/foo.rs").as_ref()], cx).await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_id = worktree_store.read_with(cx, |store, cx| {
         let worktree = store.worktrees().next().unwrap();
         let worktree = worktree.read(cx);
@@ -260,7 +260,7 @@ async fn test_multiple_single_file_worktrees_trust_one(cx: &mut TestAppContext) 
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_ids: Vec<_> = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
@@ -331,7 +331,7 @@ async fn test_two_directory_worktrees_separate_trust(cx: &mut TestAppContext) {
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_ids: Vec<_> = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
@@ -410,7 +410,7 @@ async fn test_directory_worktree_trust_enables_single_file(cx: &mut TestAppConte
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let (dir_worktree_id, file_worktree_id) = worktree_store.read_with(cx, |store, cx| {
         let worktrees: Vec<_> = store.worktrees().collect();
         assert_eq!(worktrees.len(), 2);
@@ -483,7 +483,7 @@ async fn test_parent_path_trust_enables_single_file(cx: &mut TestAppContext) {
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let (dir_worktree_id, file_worktree_id) = worktree_store.read_with(cx, |store, cx| {
         let worktrees: Vec<_> = store.worktrees().collect();
         assert_eq!(worktrees.len(), 2);
@@ -562,7 +562,7 @@ async fn test_abs_path_trust_covers_multiple_worktrees(cx: &mut TestAppContext) 
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_ids: Vec<_> = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
@@ -624,7 +624,7 @@ async fn test_auto_trust_all(cx: &mut TestAppContext) {
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_ids: Vec<_> = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
@@ -709,7 +709,7 @@ async fn test_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
         .await;
 
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_id = worktree_store.read_with(cx, |store, cx| {
         store.worktrees().next().unwrap().read(cx).id()
     });
@@ -828,7 +828,7 @@ async fn test_multi_host_trust_isolation(cx: &mut TestAppContext) {
         cx,
     )
     .await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let worktree_ids: Vec<_> = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()
@@ -879,7 +879,7 @@ async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppCont
     .await;
 
     let project = Project::test(fs, [path!("/visible").as_ref()], cx).await;
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
     let visible_worktree_id = worktree_store.read_with(cx, |store, cx| {
         store
             .worktrees()

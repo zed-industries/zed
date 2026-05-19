@@ -34,7 +34,7 @@ pub fn capture_example(
         .or_else(|| repository_snapshot.remote_upstream_url.clone())?;
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
-    let git_store = project.read(cx).git_store().clone();
+    let git_store = project.read(cx).git_store(cx);
 
     Some(cx.spawn(async move |mut cx| {
         let snapshots_by_path =

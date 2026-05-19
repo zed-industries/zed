@@ -154,7 +154,6 @@ pub struct BreakpointStore {
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
-    downstream_client: Option<(AnyProtoClient, u64)>,
     active_stack_frame: Option<ActiveStackFrame>,
     active_debug_line_pane_id: Option<EntityId>,
     // E.g ssh
@@ -172,7 +171,6 @@ impl BreakpointStore {
             mode: BreakpointStoreMode::Local,
             buffer_store,
             worktree_store,
-            downstream_client: None,
             active_stack_frame: Default::default(),
             active_debug_line_pane_id: None,
         }
@@ -192,20 +190,9 @@ impl BreakpointStore {
             }),
             buffer_store,
             worktree_store,
-            downstream_client: None,
             active_stack_frame: Default::default(),
             active_debug_line_pane_id: None,
         }
-    }
-
-    pub fn shared(&mut self, project_id: u64, downstream_client: AnyProtoClient) {
-        self.downstream_client = Some((downstream_client, project_id));
-    }
-
-    pub(crate) fn unshared(&mut self, cx: &mut Context<Self>) {
-        self.downstream_client.take();
-
-        cx.notify();
     }
 
     async fn handle_breakpoints_for_file(
@@ -316,25 +303,50 @@ impl BreakpointStore {
         Ok(proto::Ack {})
     }
 
-    pub(crate) fn broadcast(&self) {
-        if let Some((client, project_id)) = &self.downstream_client {
-            for (path, breakpoint_set) in &self.breakpoints {
-                let _ = client.send(proto::BreakpointsForFile {
-                    project_id: *project_id,
-                    path: path.to_string_lossy().into_owned(),
-                    breakpoints: breakpoint_set
-                        .breakpoints
-                        .iter()
-                        .filter_map(|breakpoint| {
-                            breakpoint.bp.bp.to_proto(
-                                path,
-                                breakpoint.position(),
-                                &breakpoint.session_state,
-                            )
-                        })
-                        .collect(),
-                });
-            }
+    pub(crate) fn broadcast(&self, client: &AnyProtoClient, project_id: u64) {
+        for (path, breakpoint_set) in &self.breakpoints {
+            let _ = client.send(proto::BreakpointsForFile {
+                project_id,
+                path: path.to_string_lossy().into_owned(),
+                breakpoints: breakpoint_set
+                    .breakpoints
+                    .iter()
+                    .filter_map(|breakpoint| {
+                        breakpoint.bp.bp.to_proto(
+                            path,
+                            breakpoint.position(),
+                            &breakpoint.session_state,
+                        )
+                    })
+                    .collect(),
+            });
+        }
+    }
+
+    pub fn breakpoints_for_file_proto(
+        &self,
+        abs_path: &Arc<Path>,
+        project_id: u64,
+    ) -> proto::BreakpointsForFile {
+        let breakpoints = self
+            .breakpoints
+            .get(abs_path)
+            .map(|breakpoint_set| {
+                breakpoint_set
+                    .breakpoints
+                    .iter()
+                    .filter_map(|bp| {
+                        bp.bp
+                            .bp
+                            .to_proto(abs_path, bp.position(), &bp.session_state)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        proto::BreakpointsForFile {
+            project_id,
+            path: abs_path.to_string_lossy().into_owned(),
+            breakpoints,
         }
     }
 
@@ -584,28 +596,6 @@ impl BreakpointStore {
                 }))
                 .detach();
             }
-        } else if let Some((client, project_id)) = &self.downstream_client {
-            let breakpoints = self
-                .breakpoints
-                .get(&abs_path)
-                .map(|breakpoint_set| {
-                    breakpoint_set
-                        .breakpoints
-                        .iter()
-                        .filter_map(|bp| {
-                            bp.bp
-                                .bp
-                                .to_proto(&abs_path, bp.position(), &bp.session_state)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let _ = client.send(proto::BreakpointsForFile {
-                project_id: *project_id,
-                path: abs_path.to_string_lossy().into_owned(),
-                breakpoints,
-            });
         }
 
         cx.emit(BreakpointStoreEvent::BreakpointsUpdated(
@@ -890,7 +880,9 @@ impl BreakpointStore {
                         log::debug!("Deserialized {count} {breakpoint_str} at path: {path}");
                     }
 
-                    this.breakpoints = new_breakpoints;
+                    for (path, entry) in new_breakpoints {
+                        this.breakpoints.insert(path, entry);
+                    }
 
                     cx.notify();
                 })?;
@@ -899,6 +891,22 @@ impl BreakpointStore {
             })
         } else {
             Task::ready(Ok(()))
+        }
+    }
+
+    pub fn clear_breakpoints_for_paths<'a>(
+        &mut self,
+        paths: impl IntoIterator<Item = &'a Arc<Path>>,
+        cx: &mut Context<Self>,
+    ) {
+        let cleared: Vec<Arc<Path>> = paths
+            .into_iter()
+            .filter(|path| self.breakpoints.remove(*path).is_some())
+            .cloned()
+            .collect();
+        if !cleared.is_empty() {
+            cx.emit(BreakpointStoreEvent::BreakpointsCleared(cleared));
+            cx.notify();
         }
     }
 

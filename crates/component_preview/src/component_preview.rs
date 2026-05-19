@@ -799,7 +799,7 @@ impl SerializableItem for ComponentPreview {
                 Err(_) => ActivePageId::default(),
             };
 
-        let user_store = project.read(cx).user_store();
+        let user_store = project.read(cx).user_store(cx);
         let language_registry = project.read(cx).languages().clone();
         let preview_page = if deserialized_active_page.0 == ActivePageId::default().0 {
             Some(PreviewPage::default())

@@ -743,7 +743,7 @@ impl Item for Editor {
                     let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
                     let (repo, repo_path) = project
-                        .git_store()
+                        .git_store(cx)
                         .read(cx)
                         .repository_and_path_for_buffer_id(buffer_id, cx)?;
                     let status = repo.read(cx).status_for_path(&repo_path)?.status;

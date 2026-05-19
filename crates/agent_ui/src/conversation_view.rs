@@ -706,7 +706,7 @@ impl ConversationView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let agent_server_store = project.read(cx).agent_server_store().clone();
+        let agent_server_store = project.read(cx).agent_server_store(cx);
         let subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<SettingsStore>(window, Self::invalidate_mermaid_caches),
@@ -1093,7 +1093,7 @@ impl ConversationView {
         if let Some(config_options) = config_options_provider {
             // Use config options - don't create mode_selector or model_selector
             let agent_server = self.agent.clone();
-            let fs = self.project.read(cx).fs().clone();
+            let fs = self.project.read(cx).fs(cx);
             config_options_view =
                 Some(cx.new(|cx| {
                     ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
@@ -1105,7 +1105,7 @@ impl ConversationView {
             config_options_view = None;
             model_selector = connection.model_selector(&session_id).map(|selector| {
                 let agent_server = self.agent.clone();
-                let fs = self.project.read(cx).fs().clone();
+                let fs = self.project.read(cx).fs(cx);
                 cx.new(|cx| {
                     ModelSelectorPopover::new(
                         selector,
@@ -1122,7 +1122,7 @@ impl ConversationView {
             mode_selector = connection
                 .session_modes(&session_id, cx)
                 .map(|session_modes| {
-                    let fs = self.project.read(cx).fs().clone();
+                    let fs = self.project.read(cx).fs(cx);
                     cx.new(|_cx| ModeSelector::new(session_modes, self.agent.clone(), fs))
                 });
         }
@@ -1961,7 +1961,7 @@ impl ConversationView {
                 // Have "node" command use Zed's managed Node runtime by default
                 if cmd == "node" {
                     let resolved_node_runtime = project.update(cx, |project, cx| {
-                        let agent_server_store = project.agent_server_store().clone();
+                        let agent_server_store = project.agent_server_store(cx);
                         agent_server_store.update(cx, |store, cx| {
                             store.node_runtime().map(|node_runtime| {
                                 cx.background_spawn(async move { node_runtime.binary_path().await })
@@ -2043,7 +2043,7 @@ impl ConversationView {
                     }
                     _ = exit_status => {
                         if !previous_attempt
-                            && project.read_with(cx, |project, _| project.is_via_remote_server())
+                            && project.read_with(cx, |project, cx| project.is_via_remote_server(cx))
                             && method.0.as_ref() == GEMINI_TERMINAL_AUTH_METHOD_ID
                         {
                             return cx
@@ -3803,7 +3803,7 @@ pub(crate) mod tests {
         fail.store(false, Ordering::SeqCst);
         project.update(cx, |project, cx| {
             project
-                .agent_server_store()
+                .agent_server_store(cx)
                 .update(cx, |_store, cx| cx.emit(project::AgentServersUpdated));
         });
         cx.run_until_parked();

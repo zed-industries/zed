@@ -360,7 +360,7 @@ impl PickerDelegate for AttachModalDelegate {
 fn get_processes_for_project(project: &Entity<Project>, cx: &mut App) -> Task<Arc<[Candidate]>> {
     let project = project.read(cx);
 
-    if let Some(remote_client) = project.remote_client() {
+    if let Some(remote_client) = project.remote_client(cx) {
         let proto_client = remote_client.read(cx).proto_client();
         cx.background_spawn(async move {
             let response = proto_client

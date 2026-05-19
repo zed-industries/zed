@@ -86,7 +86,7 @@ fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut C
     let Some(project) = editor.project() else {
         return;
     };
-    let git_store = project.read(cx).git_store().clone();
+    let git_store = project.read(cx).git_store(cx);
 
     let buffer_conflicts = editor
         .addon_mut::<ConflictAddon>()
@@ -412,7 +412,7 @@ fn render_conflict_buttons(
 }
 
 fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
-    let git_store = project.git_store().read(cx);
+    let git_store = project.git_store(cx).read(cx);
     let mut paths = Vec::new();
 
     for repo in git_store.repositories().values() {
@@ -523,7 +523,7 @@ pub struct MergeConflictIndicator {
 impl MergeConflictIndicator {
     pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store().clone();
+        let git_store = project.read(cx).git_store(cx);
 
         let subscription = cx.subscribe(&git_store, Self::on_git_store_event);
 

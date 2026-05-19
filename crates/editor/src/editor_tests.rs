@@ -13812,7 +13812,7 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec!["multi word".to_string()],
                     body: "this is many words".to_string(),
@@ -20361,7 +20361,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
 
     let mut cx = EditorTestContext::new(cx).await;
     let lsp_store =
-        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store());
+        cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).lsp_store(cx));
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -28520,12 +28520,8 @@ impl BookmarkTestContext {
     }
 
     fn all_bookmarks(&self) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
-        self.project.read_with(&self.cx, |project, cx| {
-            project
-                .bookmark_store()
-                .read(cx)
-                .all_serialized_bookmarks(cx)
-        })
+        self.project
+            .read_with(&self.cx, |project, cx| project.serialized_bookmarks(cx))
     }
 
     fn assert_bookmark_rows(&self, expected_rows: Vec<u32>) {
@@ -30248,7 +30244,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
         |expected: usize, context: &str, cx: &mut VisualTestContext| {
             project.update(cx, |project, cx| {
                 let current = project
-                    .lsp_store()
+                    .lsp_store(cx)
                     .read(cx)
                     .as_local()
                     .unwrap()
@@ -31350,7 +31346,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
 
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 snippets.add_snippet_for_test(
                     None,
                     PathBuf::from("test_snippets.json"),
@@ -31839,7 +31835,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .read(cx)
                 .remote_id();
             let buffer_result_id = project
-                .lsp_store()
+                .lsp_store(cx)
                 .read(cx)
                 .result_id_for_buffer_pull(server_id, buffer_id, &None, cx);
             assert_eq!(expected_result_id, buffer_result_id);
@@ -32070,7 +32066,7 @@ async fn test_insert_snippet(cx: &mut TestAppContext) {
 
     cx.update_editor(|editor, _, cx| {
         editor.project().unwrap().update(cx, |project, cx| {
-            project.snippets().update(cx, |snippets, _cx| {
+            project.snippets(cx).update(cx, |snippets, _cx| {
                 let snippet = project::snippet_provider::Snippet {
                     prefix: vec![], // no prefix needed!
                     body: "an Unspecified".to_string(),
@@ -35112,7 +35108,7 @@ async fn test_local_worktree_trust(cx: &mut TestAppContext) {
             .map(|wt| wt.read(cx).id())
             .expect("should have a worktree")
     });
-    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_store = project.read_with(cx, |project, cx| project.worktree_store(cx));
 
     let trusted_worktrees =
         cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("trust global should exist"));
@@ -37270,7 +37266,7 @@ async fn test_restore_hunk_with_stale_base_text(cx: &mut TestAppContext) {
     // live base_text is already short but the MultiBuffer snapshot is
     // still stale (old hunks + old base_text).
     let short_base_text = "short\n";
-    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs().as_fake());
+    let fs = cx.update_editor(|editor, _, cx| editor.project().unwrap().read(cx).fs(cx).as_fake());
     let path = cx.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());
     fs.set_head_for_repo(
         &Path::new(path!("/root")).join(".git"),

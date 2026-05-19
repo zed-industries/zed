@@ -15,9 +15,8 @@ use collections::HashSet;
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::{SinkExt, StreamExt, select_biased, stream::FuturesOrdered};
-use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task};
+use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task, WeakEntity};
 use language::{Buffer, BufferSnapshot};
-use parking_lot::Mutex;
 use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
 
@@ -25,7 +24,7 @@ use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
 use worktree::{Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings};
 
 use crate::{
-    Project, ProjectItem, ProjectPath, RemotelyCreatedModels,
+    Project, ProjectItem, ProjectPath,
     buffer_store::BufferStore,
     search::{SearchQuery, SearchResult},
     worktree_store::WorktreeStore,
@@ -49,7 +48,11 @@ enum SearchKind {
     Remote {
         client: AnyProtoClient,
         remote_id: u64,
-        models: Arc<Mutex<RemotelyCreatedModels>>,
+        /// Used to obtain a `RemotelyCreatedModelGuard` keyed to *this*
+        /// Project's owned buffers/worktrees while the remote search
+        /// is in flight, so that a sibling Project's models on a
+        /// shared host store aren't kept alive by our retention.
+        project: WeakEntity<Project>,
     },
     /// Run search against a known set of candidates. Even when working with a remote host, this won't round-trip to host.
     OpenBuffersOnly,
@@ -125,13 +128,13 @@ impl Search {
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         limit: usize,
-        client_state: (AnyProtoClient, u64, Arc<Mutex<RemotelyCreatedModels>>),
+        client_state: (AnyProtoClient, u64, WeakEntity<Project>),
     ) -> Self {
         Self {
             kind: SearchKind::Remote {
                 client: client_state.0,
                 remote_id: client_state.1,
-                models: client_state.2,
+                project: client_state.2,
             },
             buffer_store,
             worktree_store,
@@ -251,7 +254,7 @@ impl Search {
                     SearchKind::Remote {
                         client,
                         remote_id,
-                        models,
+                        project,
                     } => {
                         let (handle, rx) = self
                             .buffer_store
@@ -275,12 +278,11 @@ impl Search {
 
                         let buffer_store = self.buffer_store;
                         let guard = cx.update(|cx| {
-                            Project::retain_remotely_created_models_impl(
-                                &models,
-                                &buffer_store,
-                                &self.worktree_store,
-                                cx,
-                            )
+                            project
+                                .update(cx, |project, cx| {
+                                    project.retain_remotely_created_models(cx)
+                                })
+                                .ok()
                         });
 
                         let issue_remote_buffers_request = cx

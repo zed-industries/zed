@@ -44,7 +44,7 @@ mod integration {
     ) {
         let buffer = buffer.clone();
         project.update(cx, |project, cx| {
-            let bookmark_store = project.bookmark_store();
+            let bookmark_store = project.bookmark_store(cx);
             let snapshot = buffer.read(cx).snapshot();
             for &row in rows {
                 let anchor = snapshot.anchor_after(text::Point::new(row, 0));
@@ -61,7 +61,7 @@ mod integration {
     ) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
         project.read_with(cx, |project, cx| {
             project
-                .bookmark_store()
+                .bookmark_store(cx)
                 .read(cx)
                 .all_serialized_bookmarks(cx)
         })
@@ -88,7 +88,7 @@ mod integration {
     ) {
         project
             .update(cx, |project, cx| {
-                project.bookmark_store().update(cx, |store, cx| {
+                project.bookmark_store(cx).update(cx, |store, cx| {
                     store.load_serialized_bookmarks(serialized, cx)
                 })
             })
@@ -98,7 +98,7 @@ mod integration {
 
     fn clear_bookmarks(project: &Entity<Project>, cx: &mut TestAppContext) {
         project.update(cx, |project, cx| {
-            project.bookmark_store().update(cx, |store, cx| {
+            project.bookmark_store(cx).update(cx, |store, cx| {
                 store.clear_bookmarks(cx);
             });
         });
@@ -356,7 +356,7 @@ mod integration {
         let buffer = open_buffer(&project, path!("/project/file1.rs"), cx).await;
         project.update(cx, |project, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
-            project.bookmark_store().update(cx, |store, cx| {
+            project.bookmark_store(cx).update(cx, |store, cx| {
                 store.bookmarks_for_buffer(
                     buffer.clone(),
                     buffer_snapshot.anchor_before(0)
@@ -421,7 +421,7 @@ mod integration {
         let buffer = open_buffer(&project, path!("/project/tiny.rs"), cx).await;
         project.update(cx, |project, cx| {
             let buffer_snapshot = buffer.read(cx).snapshot();
-            project.bookmark_store().update(cx, |store, cx| {
+            project.bookmark_store(cx).update(cx, |store, cx| {
                 store.bookmarks_for_buffer(
                     buffer.clone(),
                     buffer_snapshot.anchor_before(0)

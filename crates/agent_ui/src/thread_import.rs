@@ -455,9 +455,9 @@ fn resolve_agent_connection_stores(
 
         // We only want to include scores from one local workspace, since we
         // know that they live on the same machine
-        let include_store = if project.is_remote() {
+        let include_store = if project.is_remote(cx) {
             true
-        } else if project.is_local() && !included_local_store {
+        } else if project.is_local(cx) && !included_local_store {
             included_local_store = true;
             true
         } else {

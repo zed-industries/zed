@@ -834,8 +834,8 @@ fn setup_fake_lsp(
     project: &Entity<Project>,
     cx: &mut TestAppContext,
 ) -> UnboundedReceiver<FakeLanguageServer> {
-    let (language_registry, fs) = project.read_with(cx, |project, _| {
-        (project.languages().clone(), project.fs().clone())
+    let (language_registry, fs) = project.read_with(cx, |project, cx| {
+        (project.languages().clone(), project.fs(cx))
     });
     let language = rust_lang();
     language_registry.add(language.clone());

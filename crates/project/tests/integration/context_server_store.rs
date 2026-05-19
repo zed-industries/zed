@@ -27,12 +27,7 @@ async fn test_context_server_status(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -101,12 +96,7 @@ async fn test_context_server_status_events(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -156,12 +146,7 @@ async fn test_context_server_concurrent_starts(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let server_id = ContextServerId(SERVER_1_ID.into());
@@ -217,7 +202,7 @@ async fn test_context_server_maintain_servers_loop(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, cx| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -456,7 +441,7 @@ async fn test_context_server_enabled_disabled(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -579,7 +564,7 @@ async fn test_context_server_respects_disable_ai(cx: &mut TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -675,7 +660,7 @@ async fn test_context_server_refreshed_when_worktree_added(cx: &mut TestAppConte
         .await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -762,7 +747,7 @@ async fn test_server_ids_includes_disabled_servers(cx: &mut TestAppContext) {
     let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
 
     let executor = cx.executor();
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
     store.update(cx, |store, _| {
         store.set_context_server_factory(Box::new(move |id, _| {
             Arc::new(ContextServer::new(
@@ -887,7 +872,7 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
 
     let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
 
-    let store = project.read_with(cx, |project, _| project.context_server_store());
+    let store = project.read_with(cx, |project, cx| project.context_server_store(cx));
 
     set_context_server_configuration(
         vec![(
@@ -947,12 +932,7 @@ async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();
@@ -964,6 +944,7 @@ async fn test_context_server_global_timeout(cx: &mut TestAppContext) {
             headers: Default::default(),
             timeout: None,
         }),
+        None,
         &mut async_cx,
     )
     .await;
@@ -1005,12 +986,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();
@@ -1022,6 +998,7 @@ async fn test_context_server_per_server_timeout_override(cx: &mut TestAppContext
             headers: Default::default(),
             timeout: Some(120),
         }),
+        None,
         &mut async_cx,
     )
     .await;
@@ -1038,12 +1015,7 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
 
     let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
     let store = cx.new(|cx| {
-        ContextServerStore::test(
-            registry.clone(),
-            project.read(cx).worktree_store(),
-            Some(project.downgrade()),
-            cx,
-        )
+        ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(cx), cx)
     });
 
     let mut async_cx = cx.to_async();
@@ -1059,6 +1031,7 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
             },
             remote: false,
         }),
+        None,
         &mut async_cx,
     )
     .await;

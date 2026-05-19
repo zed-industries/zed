@@ -33,7 +33,7 @@ pub fn classify_worktrees(
     project: &Project,
     cx: &gpui::App,
 ) -> (Vec<Entity<Repository>>, Vec<PathBuf>) {
-    let repositories = project.repositories(cx).clone();
+    let repositories = project.repositories(cx);
     let mut git_repos: Vec<Entity<Repository>> = Vec::new();
     let mut non_git_paths: Vec<PathBuf> = Vec::new();
     let mut seen_repo_ids = HashSet::default();
@@ -255,7 +255,8 @@ fn maybe_propagate_worktree_trust(
         let source_is_trusted = source_workspace
             .upgrade()
             .map(|workspace| {
-                let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                let source_worktree_store =
+                    workspace.read(cx).project().read(cx).worktree_store(cx);
                 !TrustedWorktrees::has_restricted_worktrees(&source_worktree_store, cx)
             })
             .unwrap_or(false);
@@ -264,7 +265,7 @@ fn maybe_propagate_worktree_trust(
             return;
         }
 
-        let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store();
+        let worktree_store = new_workspace.read(cx).project().read(cx).worktree_store(cx);
         let paths_to_trust: HashSet<_> = paths
             .iter()
             .filter_map(|path| {
@@ -330,7 +331,7 @@ pub fn handle_create_worktree(
     if remote_connection_options.is_some() {
         let is_disconnected = project
             .read(cx)
-            .remote_client()
+            .remote_client(cx)
             .is_some_and(|client| client.read(cx).is_disconnected());
         if is_disconnected {
             show_error_toast(
@@ -879,14 +880,14 @@ mod tests {
 
             let Some(task_inventory) = project
                 .read(cx)
-                .task_store()
+                .task_store(cx)
                 .read(cx)
                 .task_inventory()
                 .cloned()
             else {
                 return;
             };
-            task_inventory.update(cx, |inventory, _| {
+            task_inventory.update(cx, |inventory, cx| {
                 inventory
                     .update_file_based_tasks(
                         TaskSettingsLocation::Worktree(SettingsLocation {
@@ -894,6 +895,7 @@ mod tests {
                             path: rel_path(".zed"),
                         }),
                         Some(hook_tasks_json),
+                        cx,
                     )
                     .expect("should inject create_worktree hook tasks for linked worktree");
             });

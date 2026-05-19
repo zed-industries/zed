@@ -740,7 +740,7 @@ fn is_tombi_lsp_in_toml(
         if !buffer.language().is_some_and(|lang| lang.name() == "TOML") {
             return false;
         }
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store(cx).update(cx, |lsp_store, cx| {
             for (_, lsp) in lsp_store.running_language_servers_for_local_buffer(buffer, cx) {
                 if "tombi".eq_ignore_ascii_case(lsp.name().as_ref()) {
                     return true;

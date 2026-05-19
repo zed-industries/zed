@@ -297,7 +297,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 continue;
                             };
                             let project_root_name = root_name_for_project(&project, cx);
-                            let is_local = project.read_with(cx, |project, _| project.is_local());
+                            let is_local =
+                                project.read_with(cx, |project, cx| project.is_local(cx));
                             let worktree = project.read_with(cx, |project, cx| {
                                 project
                                     .worktrees(cx)
@@ -333,7 +334,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                         continue;
                     };
                     let project_root_name = root_name_for_project(&project, cx);
-                    let is_local = project.read_with(cx, |project, _| project.is_local());
+                    let is_local = project.read_with(cx, |project, cx| project.is_local(cx));
 
                     match rng.random_range(0..100_u32) {
                         // Manipulate an existing buffer
@@ -1202,9 +1203,9 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     })
                                     .collect::<BTreeMap<_, _>>();
                                 let host_repository_snapshots = host_project.read_with(host_cx, |host_project, cx| {
-                                    host_project.git_store().read(cx).repo_snapshots(cx)
+                                    host_project.git_store(cx).read(cx).repo_snapshots(cx)
                                 });
-                                let guest_repository_snapshots = guest_project.git_store().read(cx).repo_snapshots(cx);
+                                let guest_repository_snapshots = guest_project.git_store(cx).read(cx).repo_snapshots(cx);
 
                                 assert_eq!(
                                     guest_worktree_snapshots.values().map(|w| w.abs_path()).collect::<Vec<_>>(),
@@ -1285,7 +1286,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
                 let project_id = if guest_project.read_with(client_cx, |project, cx| {
-                    project.is_local() || project.is_disconnected(cx)
+                    project.is_local(cx) || project.is_disconnected(cx)
                 }) {
                     continue;
                 } else {
@@ -1370,7 +1371,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let host_diff_base = host_project.read_with(host_cx, |project, cx| {
                         project
-                            .git_store()
+                            .git_store(cx)
                             .read(cx)
                             .get_unstaged_diff(host_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1379,7 +1380,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     });
                     let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
                         project
-                            .git_store()
+                            .git_store(cx)
                             .read(cx)
                             .get_unstaged_diff(guest_buffer.read(cx).remote_id(), cx)
                             .unwrap()
@@ -1599,7 +1600,9 @@ async fn ensure_project_shared(
     let first_root_name = root_name_for_project(project, cx);
     let active_call = cx.read(ActiveCall::global);
     if active_call.read_with(cx, |call, _| call.room().is_some())
-        && project.read_with(cx, |project, _| project.is_local() && !project.is_shared())
+        && project.read_with(cx, |project, cx| {
+            project.is_local(cx) && !project.is_shared()
+        })
     {
         match active_call
             .update(cx, |call, cx| call.share_project(project.clone(), cx))

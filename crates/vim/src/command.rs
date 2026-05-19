@@ -2757,7 +2757,7 @@ mod test {
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         let path = Path::new(path!("/root/dir/file.rs"));
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
@@ -2783,7 +2783,7 @@ mod test {
     async fn test_command_read(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         let path = Path::new(path!("/root/dir/other.rs"));
         fs.as_fake().insert_file(path, "1\n2\n3".into()).await;
 
@@ -2952,7 +2952,7 @@ mod test {
         });
 
         // Insert a new file
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake()
             .insert_file(
                 path!("/root/dir/file2.rs"),
@@ -3300,7 +3300,7 @@ mod test {
 
         // Create a new file to ensure that, when the filename is used with
         // `:tabnew`, it opens the existing file in a new tab.
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake()
             .insert_file(path!("/root/dir/file_2.rs"), "file_2".as_bytes().to_vec())
             .await;
@@ -3353,7 +3353,7 @@ mod test {
 
         // Create a new file to ensure that, when the filename is used with
         // `:tabedit`, it opens the existing file in a new tab.
-        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs(cx));
         fs.as_fake()
             .insert_file(path!("/root/dir/file_2.rs"), "file_2".as_bytes().to_vec())
             .await;

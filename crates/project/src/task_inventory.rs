@@ -11,7 +11,7 @@ use std::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
@@ -39,10 +39,17 @@ pub struct DebugScenarioContext {
     pub active_buffer: Option<WeakEntity<Buffer>>,
 }
 
-/// Inventory tracks available tasks for a given project.
+/// Inventory tracks available tasks for a project.
+///
+/// Phase 2 multi-tenant: this entity is shared across every `Project`
+/// that targets the same machine via `Host`. Per-project state (the
+/// recently-scheduled-task LRU and the scheduled-scenario LRU) lives
+/// on `Project`; this struct only holds machine-wide template/scenario
+/// data parsed from settings files. When settings reload, Inventory
+/// emits [`InventoryEvent::TaskTemplatesReloaded`] /
+/// [`InventoryEvent::DebugScenariosReloaded`] and each Project prunes
+/// its own LRU.
 pub struct Inventory {
-    last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
@@ -50,13 +57,46 @@ pub struct Inventory {
 impl std::fmt::Debug for Inventory {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inventory")
-            .field("last_scheduled_tasks", &self.last_scheduled_tasks)
-            .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
             .field("templates_from_settings", &self.templates_from_settings)
             .field("scenarios_from_settings", &self.scenarios_from_settings)
             .finish()
     }
 }
+
+/// Settings-reload events emitted by [`Inventory`] when the
+/// templates/scenarios parsed from disk change. Each `Project`
+/// subscribes to these and prunes its own LRU of recently-scheduled
+/// tasks and scenarios accordingly. See `Project::on_inventory_event`.
+#[derive(Debug, Clone)]
+pub enum InventoryEvent {
+    /// A `tasks.json` settings file was reloaded. Subscribers should
+    /// drop any entries in their recent-tasks LRU whose
+    /// [`TaskSourceKind`] matches the reload location, because those
+    /// templates may have been renamed, removed, or otherwise changed.
+    TaskTemplatesReloaded { reload: TaskTemplateReload },
+    /// A `debug.json` settings file was reloaded. Subscribers should
+    /// either patch matching entries in their recent-scenarios LRU to
+    /// the new definition or drop them if the label no longer exists.
+    DebugScenariosReloaded {
+        new_definitions: Arc<HashMap<SharedString, DebugScenario>>,
+        previously_existing: Arc<HashSet<SharedString>>,
+    },
+}
+
+/// Describes which subset of the recent-tasks LRU is invalidated by a
+/// settings reload.
+#[derive(Debug, Clone)]
+pub enum TaskTemplateReload {
+    Global {
+        abs_path: PathBuf,
+    },
+    Worktree {
+        worktree_id: WorktreeId,
+        directory: Arc<RelPath>,
+    },
+}
+
+impl EventEmitter<InventoryEvent> for Inventory {}
 
 // Helper trait for better error messages in [InventoryFor]
 trait InventoryContents: Clone {
@@ -254,41 +294,17 @@ impl TaskSourceKind {
 impl Inventory {
     pub fn new(cx: &mut App) -> Entity<Self> {
         cx.new(|_| Self {
-            last_scheduled_tasks: VecDeque::default(),
-            last_scheduled_scenarios: VecDeque::default(),
             templates_from_settings: InventoryFor::default(),
             scenarios_from_settings: InventoryFor::default(),
         })
     }
 
-    pub fn scenario_scheduled(
-        &mut self,
-        scenario: DebugScenario,
-        task_context: SharedTaskContext,
-        worktree_id: Option<WorktreeId>,
-        active_buffer: Option<WeakEntity<Buffer>>,
-    ) {
-        self.last_scheduled_scenarios
-            .retain(|(s, _)| s.label != scenario.label);
-        self.last_scheduled_scenarios.push_front((
-            scenario,
-            DebugScenarioContext {
-                task_context,
-                worktree_id,
-                active_buffer,
-            },
-        ));
-        if self.last_scheduled_scenarios.len() > 5_000 {
-            self.last_scheduled_scenarios.pop_front();
-        }
-    }
-
-    pub fn last_scheduled_scenario(&self) -> Option<&(DebugScenario, DebugScenarioContext)> {
-        self.last_scheduled_scenarios.back()
-    }
-
+    /// Lists debug scenarios. `last_scheduled_scenarios` is the
+    /// per-Project recently-used LRU; pass
+    /// `Project::last_scheduled_scenarios(cx)`.
     pub fn list_debug_scenarios(
         &self,
+        last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
         task_contexts: &TaskContexts,
         lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
@@ -311,7 +327,7 @@ impl Inventory {
         }
         scenarios.extend(self.global_debug_scenarios_from_settings());
 
-        let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
+        let last_scheduled_scenarios: Vec<_> = last_scheduled_scenarios.into_iter().collect();
 
         let adapter = task_contexts.location().and_then(|location| {
             let buffer = location.buffer.read(cx);
@@ -434,8 +450,12 @@ impl Inventory {
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
+    ///
+    /// `last_scheduled_tasks` is the per-Project recently-used LRU;
+    /// pass `Project::last_scheduled_tasks(cx)`.
     pub fn used_and_current_resolved_tasks(
         &self,
+        last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
         task_contexts: Arc<TaskContexts>,
         cx: &mut Context<Self>,
     ) -> Task<(
@@ -463,8 +483,7 @@ impl Inventory {
 
         let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
-        let previously_spawned_tasks = self
-            .last_scheduled_tasks
+        let previously_spawned_tasks = last_scheduled_tasks
             .iter()
             .rev()
             .filter(|(task_kind, _)| {
@@ -611,41 +630,6 @@ impl Inventory {
         })
     }
 
-    /// Returns the last scheduled task by task_id if provided.
-    /// Otherwise, returns the last scheduled task.
-    pub fn last_scheduled_task(
-        &self,
-        task_id: Option<&TaskId>,
-    ) -> Option<(TaskSourceKind, ResolvedTask)> {
-        if let Some(task_id) = task_id {
-            self.last_scheduled_tasks
-                .iter()
-                .find(|(_, task)| &task.id == task_id)
-                .cloned()
-        } else {
-            self.last_scheduled_tasks.back().cloned()
-        }
-    }
-
-    /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.
-    pub fn task_scheduled(
-        &mut self,
-        task_source_kind: TaskSourceKind,
-        resolved_task: ResolvedTask,
-    ) {
-        self.last_scheduled_tasks
-            .push_back((task_source_kind, resolved_task));
-        if self.last_scheduled_tasks.len() > 5_000 {
-            self.last_scheduled_tasks.pop_front();
-        }
-    }
-
-    /// Deletes a resolved task from history, using its id.
-    /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
-    pub fn delete_previously_used(&mut self, id: &TaskId) {
-        self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
-    }
-
     /// Returns global task templates with the provided tag.
     pub fn global_templates_with_tag(&self, tag: &str) -> Vec<(TaskSourceKind, TaskTemplate)> {
         self.global_templates_from_settings()
@@ -717,6 +701,7 @@ impl Inventory {
         &mut self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
+        cx: &mut Context<Self>,
     ) -> Result<(), InvalidSettingsError> {
         let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
             raw_tasks_json.unwrap_or("[]"),
@@ -762,19 +747,15 @@ impl Inventory {
         });
 
         let parsed_templates = &mut self.templates_from_settings;
-        match location {
+        let reload = match location {
             TaskSettingsLocation::Global(path) => {
                 parsed_templates
                     .global
                     .entry(path.to_owned())
                     .insert_entry(new_templates.collect());
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
-                        abs_path != path
-                    } else {
-                        true
-                    }
-                });
+                TaskTemplateReload::Global {
+                    abs_path: path.to_owned(),
+                }
             }
             TaskSettingsLocation::Worktree(location) => {
                 let new_templates = new_templates.collect::<Vec<_>>();
@@ -791,21 +772,13 @@ impl Inventory {
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
-                self.last_scheduled_tasks.retain(|(kind, _)| {
-                    if let TaskSourceKind::Worktree {
-                        directory_in_worktree,
-                        id,
-                        ..
-                    } = kind
-                    {
-                        *id != location.worktree_id
-                            || directory_in_worktree.as_ref() != location.path
-                    } else {
-                        true
-                    }
-                });
+                TaskTemplateReload::Worktree {
+                    worktree_id: location.worktree_id,
+                    directory: Arc::from(location.path),
+                }
             }
-        }
+        };
+        cx.emit(InventoryEvent::TaskTemplatesReloaded { reload });
 
         if !validation_errors.is_empty() {
             return Err(InvalidSettingsError::Tasks {
@@ -830,6 +803,7 @@ impl Inventory {
         &mut self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
+        cx: &mut Context<Self>,
     ) -> Result<(), InvalidSettingsError> {
         let raw_tasks = match parse_json_with_comments::<Vec<serde_json::Value>>(
             raw_tasks_json.unwrap_or("[]"),
@@ -857,7 +831,7 @@ impl Inventory {
             .collect::<Vec<_>>();
 
         let parsed_scenarios = &mut self.scenarios_from_settings;
-        let mut new_definitions: HashMap<_, _> = new_templates
+        let new_definitions: HashMap<SharedString, DebugScenario> = new_templates
             .iter()
             .map(|template| (template.label.clone(), template.clone()))
             .collect();
@@ -868,7 +842,7 @@ impl Inventory {
                 previously_existing_scenarios = parsed_scenarios
                     .global_scenarios()
                     .map(|(_, scenario)| scenario.label)
-                    .collect::<HashSet<_>>();
+                    .collect::<HashSet<SharedString>>();
                 parsed_scenarios
                     .global
                     .entry(path.to_owned())
@@ -878,7 +852,7 @@ impl Inventory {
                 previously_existing_scenarios = parsed_scenarios
                     .worktree_scenarios(location.worktree_id)
                     .map(|(_, scenario)| scenario.label)
-                    .collect::<HashSet<_>>();
+                    .collect::<HashSet<SharedString>>();
 
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
@@ -895,16 +869,9 @@ impl Inventory {
                 }
             }
         }
-        self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
-            if !previously_existing_scenarios.contains(&scenario.label) {
-                return true;
-            }
-            if let Some(new_definition) = new_definitions.remove(&scenario.label) {
-                *scenario = new_definition;
-                true
-            } else {
-                false
-            }
+        cx.emit(InventoryEvent::DebugScenariosReloaded {
+            new_definitions: Arc::new(new_definitions),
+            previously_existing: Arc::new(previously_existing_scenarios),
         });
 
         Ok(())

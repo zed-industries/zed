@@ -410,7 +410,7 @@ impl Editor {
 
         // Get the current user's avatar URI from the project's user_store
         let user_avatar_uri = self.project.as_ref().and_then(|project| {
-            let user_store = project.read(cx).user_store();
+            let user_store = project.read(cx).user_store(cx);
             user_store
                 .read(cx)
                 .current_user()

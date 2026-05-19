@@ -628,11 +628,10 @@ impl MentionSet {
         };
 
         let server = Rc::new(agent::NativeAgentServer::new(
-            project.read(cx).fs().clone(),
+            project.read(cx).fs(cx),
             thread_store,
         ));
-        let delegate =
-            AgentServerDelegate::new(project.read(cx).agent_server_store().clone(), None);
+        let delegate = AgentServerDelegate::new(project.read(cx).agent_server_store(cx), None);
         let connection = server.connect(delegate, project.clone(), cx);
         cx.spawn(async move |_, cx| {
             let agent = connection.await?;
@@ -1226,7 +1225,7 @@ fn full_mention_for_directory(
                         .map_or_else(|| worktree_path.clone(), |rel_path| rel_path.into());
 
                     let open_task = project.update(cx, |project, cx| {
-                        project.buffer_store().update(cx, |buffer_store, cx| {
+                        project.buffer_store(cx).update(cx, |buffer_store, cx| {
                             let project_path = ProjectPath {
                                 worktree_id,
                                 path: worktree_path,

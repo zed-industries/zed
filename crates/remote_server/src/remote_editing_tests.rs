@@ -267,8 +267,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     // test that the headless server is tracking which buffers we have open correctly.
     cx.run_until_parked();
-    headless.update(server_cx, |headless, cx| {
-        assert!(headless.buffer_store.read(cx).has_shared_buffers())
+    headless.update(server_cx, |headless, _| {
+        assert!(headless.has_shared_buffers())
     });
     do_search_and_assert(
         &project,
@@ -285,8 +285,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     });
     cx.run_until_parked();
     server_cx.run_until_parked();
-    headless.update(server_cx, |headless, cx| {
-        assert!(!headless.buffer_store.read(cx).has_shared_buffers())
+    headless.update(server_cx, |headless, _| {
+        assert!(!headless.has_shared_buffers())
     });
 
     do_search_and_assert(
@@ -1337,7 +1337,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
-    let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
+    let client = cx.read(|cx| project.read(cx).remote_client(cx).unwrap());
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();
@@ -1471,7 +1471,7 @@ async fn test_copy_file_into_remote_project(
     cx.run_until_parked();
 
     let local_fs = project
-        .read_with(cx, |project, _| project.fs().clone())
+        .read_with(cx, |project, cx| project.fs(cx))
         .as_fake();
     local_fs
         .insert_tree(
@@ -1693,7 +1693,7 @@ async fn test_remote_search_commits_streams_proto_chunks(
             .expect("remote project should have an active repository");
         let repository_id = repository.read(cx).snapshot().id;
         let remote_client = project
-            .remote_client()
+            .remote_client(cx)
             .expect("project should have a remote client");
         (remote_client, repository_id)
     });
@@ -2415,7 +2415,7 @@ async fn test_remote_external_agent_server(
         .unwrap();
     let names = project.update(cx, |project, cx| {
         project
-            .agent_server_store()
+            .agent_server_store(cx)
             .read(cx)
             .external_agents()
             .map(|name| name.to_string())
@@ -2446,7 +2446,7 @@ async fn test_remote_external_agent_server(
     cx.run_until_parked();
     let names = project.update(cx, |project, cx| {
         project
-            .agent_server_store()
+            .agent_server_store(cx)
             .read(cx)
             .external_agents()
             .map(|name| name.to_string())
@@ -2455,7 +2455,7 @@ async fn test_remote_external_agent_server(
     pretty_assertions::assert_eq!(names, ["foo"]);
     let command = project
         .update(cx, |project, cx| {
-            project.agent_server_store().update(cx, |store, cx| {
+            project.agent_server_store(cx).update(cx, |store, cx| {
                 store
                     .get_external_agent(&"foo".into())
                     .unwrap()

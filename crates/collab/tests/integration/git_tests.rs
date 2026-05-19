@@ -171,7 +171,7 @@ fn build_git_graph(
         let repository = project
             .active_repository(cx)
             .expect("project should have an active repository");
-        (repository.read(cx).id, project.git_store().clone())
+        (repository.read(cx).id, project.git_store(cx).clone())
     });
     let workspace = workspace.downgrade();
 

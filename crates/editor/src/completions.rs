@@ -927,7 +927,10 @@ impl Editor {
 
         let provider = self.completion_provider.as_ref()?;
 
-        let lsp_store = self.project().map(|project| project.read(cx).lsp_store());
+        let project = self.project().cloned();
+        let lsp_store = project
+            .as_ref()
+            .map(|project| project.read(cx).lsp_store(cx));
         let command = lsp_store.as_ref().and_then(|lsp_store| {
             let CompletionSource::Lsp {
                 lsp_completion,
@@ -938,6 +941,8 @@ impl Editor {
                 return None;
             };
             let lsp_command = lsp_completion.command.as_ref()?;
+            // todo! should we narrow this to only active worktrees or buffers
+            // doesn't seem to be necessary, but i want to double check
             let available_commands = lsp_store
                 .read(cx)
                 .lsp_server_capabilities
@@ -985,11 +990,11 @@ impl Editor {
         Some(cx.spawn_in(window, async move |editor, cx| {
             let additional_edits_tx = apply_edits.await?;
 
-            if let Some((lsp_store, command)) = lsp_store.zip(command) {
+            if let Some((project, command)) = project.zip(command) {
                 let title = command.lsp_action.title().to_owned();
-                let project_transaction = lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        lsp_store.apply_code_action(buffer_handle, command, false, cx)
+                let project_transaction = project
+                    .update(cx, |project, cx| {
+                        project.apply_code_action(buffer_handle, command, false, cx)
                     })
                     .await
                     .context("applying post-completion command")?;
@@ -1115,7 +1120,7 @@ fn has_strong_snippet_prefix_match(
     let query = query.to_lowercase();
     let is_word_char = |character| classifier.is_word(character);
     let languages = buffer.read(cx).languages_at(buffer_anchor);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     languages.iter().any(|language| {
         snippet_store
@@ -1135,7 +1140,7 @@ fn snippet_completions(
     cx: &mut App,
 ) -> Task<Result<CompletionResponse>> {
     let languages = buffer.read(cx).languages_at(buffer_anchor);
-    let snippet_store = project.snippets().read(cx);
+    let snippet_store = project.snippets(cx).read(cx);
 
     let scopes: Vec<_> = languages
         .iter()
@@ -1385,7 +1390,9 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            // TODO!(project-host): Route through Project::resolve_completions once it exists so
+            // this call checks that the buffer belongs to this Project before touching LspStore.
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.resolve_completions(buffer, completion_indices, completions, cx)
             })
         })
@@ -1401,7 +1408,7 @@ impl CompletionProvider for Entity<Project> {
         cx: &mut Context<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
+            project.lsp_store(cx).update(cx, |lsp_store, cx| {
                 lsp_store.apply_additional_edits_for_completion(
                     buffer,
                     completions,

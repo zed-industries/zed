@@ -290,7 +290,7 @@ impl Editor {
                             return;
                         };
                         editor.display_map.update(cx, |display_map, cx| {
-                            project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                            project.read(cx).lsp_store(cx).update(cx, |lsp_store, cx| {
                                 let mut token_highlights = Vec::new();
                                 let mut interner = HighlightStyleInterner::default();
                                 for (server_id, server_tokens) in tokens {

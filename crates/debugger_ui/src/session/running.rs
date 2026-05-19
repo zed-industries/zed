@@ -1006,15 +1006,15 @@ impl RunningState {
             return Task::ready(Err(anyhow!("no workspace")));
         };
         let project = workspace.read(cx).project().clone();
-        let dap_store = project.read(cx).dap_store().downgrade();
+        let dap_store = project.read(cx).dap_store(cx).downgrade();
         let dap_registry = cx.global::<DapRegistry>().clone();
-        let task_store = project.read(cx).task_store().downgrade();
+        let task_store = project.read(cx).task_store(cx).downgrade();
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
         let is_windows = project.read(cx).path_style(cx).is_windows();
         let remote_shell = project
             .read(cx)
-            .remote_client()
+            .remote_client(cx)
             .as_ref()
             .and_then(|remote| remote.read(cx).shell());
 
@@ -1803,7 +1803,7 @@ impl RunningState {
                 workspace
                     .project()
                     .read(cx)
-                    .breakpoint_store()
+                    .breakpoint_store(cx)
                     .update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id), cx)
                     })
@@ -1837,7 +1837,7 @@ impl RunningState {
                 workspace
                     .project()
                     .read(cx)
-                    .breakpoint_store()
+                    .breakpoint_store(cx)
                     .update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id), cx)
                     })

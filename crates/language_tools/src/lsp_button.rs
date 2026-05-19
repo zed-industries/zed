@@ -225,7 +225,7 @@ impl LanguageServerState {
             .workspace
             .upgrade()
             .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store(cx);
                 TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
             })
             .unwrap_or(false);
@@ -480,7 +480,7 @@ impl LanguageServerState {
 
                             let project = workspace.read(cx).project().clone();
                             let path_style = project.read(cx).path_style(cx);
-                            let buffer_store = project.read(cx).buffer_store().clone();
+                            let buffer_store = project.read(cx).buffer_store(cx);
 
                             let buffers = state_for_restart
                                 .update(cx, |state, cx| {
@@ -838,7 +838,7 @@ impl LspButton {
                 }
             });
 
-        let lsp_store = workspace.project().read(cx).lsp_store();
+        let lsp_store = workspace.project().read(cx).lsp_store(cx);
         let mut language_servers = LanguageServers::default();
         for (_, status) in lsp_store.read(cx).language_server_statuses() {
             language_servers.binary_statuses.insert(
@@ -872,7 +872,7 @@ impl LspButton {
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         };
         let is_restricted = TrustedWorktrees::has_restricted_worktrees(
-            &workspace.project().read(cx).worktree_store(),
+            &workspace.project().read(cx).worktree_store(cx),
             cx,
         );
 
@@ -1309,7 +1309,7 @@ impl Render for LspButton {
             .workspace
             .upgrade()
             .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
+                let worktree_store = workspace.read(cx).project().read(cx).worktree_store(cx);
                 TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
             })
             .unwrap_or(false);
@@ -1324,7 +1324,13 @@ impl Render for LspButton {
         let is_via_ssh = state
             .workspace
             .upgrade()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_via_remote_server())
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .is_via_remote_server(cx)
+            })
             .unwrap_or(false);
 
         let mut has_errors = false;

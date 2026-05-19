@@ -656,7 +656,7 @@ impl NativeAgent {
     ) {
         let project_id = project.entity_id();
 
-        let context_server_store = project.read(cx).context_server_store();
+        let context_server_store = project.read(cx).context_server_store(cx);
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
 
@@ -845,7 +845,7 @@ impl NativeAgent {
         // refresh when a worktree's trust state changes, so newly trusted
         // worktrees pick up their skills without restarting.
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
-        let worktree_store = project.read(cx).worktree_store();
+        let worktree_store = project.read(cx).worktree_store(cx);
         let project_skills_task = if skills_enabled {
             let project_skills_futures: Vec<
                 futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
@@ -4115,7 +4115,7 @@ mod internal_tests {
                 .expect("trusted worktrees global initialized by test_with_worktree_trust");
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 trusted_worktrees.trust(
-                    &project.read(cx).worktree_store(),
+                    &project.read(cx).worktree_store(cx),
                     HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
                     cx,
                 );

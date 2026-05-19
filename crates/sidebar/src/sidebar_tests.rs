@@ -11797,7 +11797,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
 
     // Verify the project is remote.
     project.read_with(cx, |project, cx| {
-        assert!(!project.is_local(), "project should be remote");
+        assert!(!project.is_local(cx), "project should be remote");
         assert!(
             project.remote_connection_options(cx).is_some(),
             "project should have remote connection options"
@@ -11905,7 +11905,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             let remote_client = workspace
                 .project()
                 .read(cx)
-                .remote_client()
+                .remote_client(cx)
                 .expect("main remote project should have a remote client");
             remote_client.update(cx, |remote_client: &mut remote::RemoteClient, cx| {
                 remote_client.force_server_not_running(cx);
@@ -12675,7 +12675,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
     )
     .await;
     let remote_client = project
-        .read_with(cx, |project, _cx| project.remote_client())
+        .read_with(cx, |project, cx| project.remote_client(cx))
         .expect("remote project should expose its client");
 
     cx.update(|cx| <dyn fs::Fs>::set_global(app_state.fs.clone(), cx));

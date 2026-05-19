@@ -2450,7 +2450,7 @@ impl Pane {
                 let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
-                        let lister = if workspace.project().read(cx).is_local() {
+                        let lister = if workspace.project().read(cx).is_local(cx) {
                             DirectoryLister::Local(
                                 workspace.project().clone(),
                                 workspace.app_state().fs.clone(),
@@ -3283,13 +3283,13 @@ impl Pane {
                                 && worktree.is_some_and(|worktree| worktree.read(cx).is_visible());
                             let is_local = pane.read(cx).project.upgrade().is_some_and(|project| {
                                 let project = project.read(cx);
-                                project.is_local() || project.is_via_wsl_with_host_interop(cx)
+                                project.is_local(cx) || project.is_via_wsl_with_host_interop(cx)
                             });
                             let is_remote = pane
                                 .read(cx)
                                 .project
                                 .upgrade()
-                                .is_some_and(|project| project.read(cx).is_remote());
+                                .is_some_and(|project| project.read(cx).is_remote(cx));
 
                             let entry_id = entry.to_proto();
 
@@ -4072,7 +4072,7 @@ impl Pane {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let fs = Arc::clone(workspace.project().read(cx).fs());
+                let fs = workspace.project().read(cx).fs(cx);
                 cx.spawn_in(window, async move |workspace, cx| {
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
@@ -4306,7 +4306,7 @@ impl Render for Pane {
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
-        let is_local = project.read(cx).is_local();
+        let is_local = project.read(cx).is_local(cx);
 
         v_flex()
             .key_context(key_context)

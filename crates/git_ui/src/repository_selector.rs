@@ -36,15 +36,14 @@ impl RepositorySelector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_store = project_handle.read(cx).git_store().clone();
-        let repository_entries = git_store.update(cx, |git_store, _cx| {
-            let mut repos: Vec<_> = git_store.repositories().values().cloned().collect();
+        let repository_entries = project_handle.read_with(cx, |project, cx| {
+            let mut repos: Vec<_> = project.repositories(cx).values().cloned().collect();
 
             repos.sort_by(|a, b| {
-                a.read(_cx)
+                a.read(cx)
                     .display_name()
                     .to_lowercase()
-                    .cmp(&b.read(_cx).display_name().to_lowercase())
+                    .cmp(&b.read(cx).display_name().to_lowercase())
             });
 
             repos
@@ -58,13 +57,14 @@ impl RepositorySelector {
                 .cmp(&b.read(cx).display_name().len())
         });
 
-        let active_repository = git_store.read(cx).active_repository();
+        let active_repository = project_handle.read(cx).active_repository(cx);
         let selected_index = active_repository
             .as_ref()
             .and_then(|active| filtered_repositories.iter().position(|repo| repo == active))
             .unwrap_or(0);
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.entity().downgrade(),
+            project: project_handle,
             repository_entries,
             filtered_repositories,
             active_repository,
@@ -134,6 +134,7 @@ impl ModalView for RepositorySelector {}
 
 pub struct RepositorySelectorDelegate {
     repository_selector: WeakEntity<RepositorySelector>,
+    project: Entity<Project>,
     repository_entries: Vec<Entity<Repository>>,
     filtered_repositories: Vec<Entity<Repository>>,
     active_repository: Option<Entity<Repository>>,
@@ -240,8 +241,8 @@ impl PickerDelegate for RepositorySelectorDelegate {
         let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
             return;
         };
-        selected_repo.update(cx, |selected_repo, cx| {
-            selected_repo.set_as_active_repository(cx)
+        self.project.update(cx, |project, cx| {
+            project.set_active_repository(selected_repo, cx);
         });
         self.dismissed(window, cx);
     }
