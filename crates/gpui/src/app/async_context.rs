@@ -378,7 +378,21 @@ impl AppContext for AsyncWindowContext {
     where
         T: 'static,
     {
-        self.app.new(build_entity)
+        let mut build_entity = Some(build_entity);
+        match self.app.update_window(self.window, |_, _, cx| {
+            cx.new(
+                build_entity
+                    .take()
+                    .expect("build_entity is taken exactly once"),
+            )
+        }) {
+            Ok(entity) => entity,
+            Err(_) => self.app.new(
+                build_entity
+                    .take()
+                    .expect("update_window returned Err without invoking the closure"),
+            ),
+        }
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
@@ -390,7 +404,19 @@ impl AppContext for AsyncWindowContext {
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Entity<T> {
-        self.app.insert_entity(reservation, build_entity)
+        let mut args = Some((reservation, build_entity));
+        match self.app.update_window(self.window, |_, _, cx| {
+            let (reservation, build_entity) = args.take().expect("args are taken exactly once");
+            cx.insert_entity(reservation, build_entity)
+        }) {
+            Ok(entity) => entity,
+            Err(_) => {
+                let (reservation, build_entity) = args
+                    .take()
+                    .expect("update_window returned Err without invoking the closure");
+                self.app.insert_entity(reservation, build_entity)
+            }
+        }
     }
 
     fn update_entity<T: 'static, R>(
