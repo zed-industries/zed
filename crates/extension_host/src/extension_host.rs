@@ -1602,11 +1602,6 @@ impl ExtensionStore {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
 
-        // TODO: Perform an uninstall if this happens
-        if SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref()) {
-            return Ok(());
-        }
-
         // TODO: distinguish dev extensions more explicitly, by the absence
         // of a checksum file that we'll create when downloading normal extensions.
         let is_dev = fs
