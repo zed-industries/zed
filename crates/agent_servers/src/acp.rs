@@ -3844,6 +3844,7 @@ fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpS
                     url,
                     headers,
                     timeout: _,
+                    oauth: _,
                 } => Some(acp::McpServer::Http(
                     acp::McpServerHttp::new(id.0.to_string(), url.to_string()).headers(
                         headers
