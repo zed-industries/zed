@@ -87,6 +87,16 @@ pub struct CreateLlmTokenResponse {
     pub token: LlmToken,
 }
 
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+pub struct UpdateSystemSettingsBody {
+    pub selected_organization_id: Option<OrganizationId>,
+}
+
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize)]
+pub struct SystemSettings {
+    pub selected_organization_id: Option<OrganizationId>,
+}
+
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitAgentThreadFeedbackBody {
     pub organization_id: Option<OrganizationId>,

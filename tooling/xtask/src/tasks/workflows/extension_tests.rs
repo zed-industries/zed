@@ -3,7 +3,9 @@ use indoc::indoc;
 
 use crate::tasks::workflows::{
     extension_bump::compare_versions,
-    run_tests::{fetch_ts_query_ls, orchestrate_for_extension, run_ts_query_ls, tests_pass},
+    run_tests::{
+        RunContext, fetch_ts_query_ls, orchestrate_for_extension, run_ts_query_ls, tests_pass,
+    },
     runners,
     steps::{
         self, BASH_SHELL, CommonJobConditions, FluentBuilder, NamedJob,
@@ -12,7 +14,7 @@ use crate::tasks::workflows::{
     vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
 };
 
-pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "1fa7f1a3ec28ea1eae6db2e937d7a538fb10c0c7";
+pub(crate) const ZED_EXTENSION_CLI_SHA: &str = "2a00db06ce6d01089bfafd207b6348078e980df9";
 
 // This should follow the set target in crates/extension/src/extension_builder.rs
 const EXTENSION_RUST_TARGET: &str = "wasm32-wasip2";
@@ -146,7 +148,7 @@ pub(crate) fn check_extension() -> NamedJob {
         .add_step(cache_rust_dependencies_namespace()) // Extensions can compile Rust, so provide the cache if needed.
         .add_step(check())
         .add_step(fetch_ts_query_ls())
-        .add_step(run_ts_query_ls())
+        .add_step(run_ts_query_ls(RunContext::Extension))
         .add_step(check_version_job)
         .add_step(verify_version_did_not_change(version_changed));
 

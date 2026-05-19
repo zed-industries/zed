@@ -259,8 +259,9 @@ pub fn into_open_ai_response(
 
     ResponseRequest {
         model: model_id.into(),
+        instructions: None,
         input: input_items,
-        store: false,
+        store: Some(false),
         include,
         stream,
         temperature,
@@ -551,10 +552,13 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
-        if let Some(usage) = event.usage {
+        if let Some(usage) = event.usage
+            && let Some(prompt_tokens) = usage.prompt_tokens
+            && let Some(completion_tokens) = usage.completion_tokens
+        {
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
+                input_tokens: prompt_tokens,
+                output_tokens: completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
             })));
@@ -1336,7 +1340,6 @@ mod tests {
         };
         let user_image = LanguageModelImage {
             source: SharedString::from("aGVsbG8="),
-            size: None,
         };
         let expected_image_url = user_image.to_base64_url();
 

@@ -93,35 +93,6 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
-/// Key used in ACP `AvailableCommand` meta to indicate where a skill
-/// originated from (e.g. `"global"` or a worktree root name). Set by
-/// the native agent so the completion popup can surface skill origin to
-/// disambiguate same-named global vs. project-local skills.
-pub const SKILL_SOURCE_META_KEY: &str = "zed.skill_source";
-
-/// Borrowing accessor for the skill source label stored in ACP meta.
-/// Prefer this over [`skill_source_from_meta`] in hot paths (e.g. per-
-/// command iteration during validation), since it avoids allocating
-/// a `SharedString` for callers that only need to compare against a
-/// `&str`.
-pub fn skill_source_str_from_meta(meta: &Option<acp::Meta>) -> Option<&str> {
-    meta.as_ref()
-        .and_then(|m| m.get(SKILL_SOURCE_META_KEY))
-        .and_then(|v| v.as_str())
-}
-
-/// Helper to extract skill source label from ACP meta as an owned
-/// `SharedString`. Use this when the value needs to outlive the meta
-/// reference; otherwise prefer [`skill_source_str_from_meta`].
-pub fn skill_source_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
-    skill_source_str_from_meta(meta).map(|s| SharedString::from(s.to_owned()))
-}
-
-/// Helper to create meta tagging an `AvailableCommand` with a skill source.
-pub fn meta_with_skill_source(source: &str) -> acp::Meta {
-    acp::Meta::from_iter([(SKILL_SOURCE_META_KEY.into(), source.into())])
-}
-
 #[derive(Debug)]
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
@@ -677,9 +648,16 @@ impl Display for ToolCallStatus {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
     Empty,
-    Markdown { markdown: Entity<Markdown> },
-    ResourceLink { resource_link: acp::ResourceLink },
-    Image { image: Arc<gpui::Image> },
+    Markdown {
+        markdown: Entity<Markdown>,
+    },
+    ResourceLink {
+        resource_link: acp::ResourceLink,
+    },
+    Image {
+        image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
+    },
 }
 
 impl ContentBlock {
@@ -721,8 +699,8 @@ impl ContentBlock {
                 };
             }
             (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some(image) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image };
+                if let Some((image, dimensions)) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image, dimensions };
                 } else {
                     let new_content = Self::image_md(image_content);
                     *self = Self::create_markdown_block(new_content, language_registry, cx);
@@ -750,14 +728,36 @@ impl ContentBlock {
         }
     }
 
-    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+    fn decode_image(
+        image_content: &acp::ImageContent,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(image_content.data.as_bytes())
             .ok()?;
         let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
-        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+        let dimensions = Self::image_dimensions(&bytes, format);
+        Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
+    }
+
+    fn image_dimensions(bytes: &[u8], format: gpui::ImageFormat) -> Option<gpui::Size<u32>> {
+        let format = match format {
+            gpui::ImageFormat::Png => image::ImageFormat::Png,
+            gpui::ImageFormat::Jpeg => image::ImageFormat::Jpeg,
+            gpui::ImageFormat::Webp => image::ImageFormat::WebP,
+            gpui::ImageFormat::Gif => image::ImageFormat::Gif,
+            gpui::ImageFormat::Svg => return None,
+            gpui::ImageFormat::Bmp => image::ImageFormat::Bmp,
+            gpui::ImageFormat::Tiff => image::ImageFormat::Tiff,
+            gpui::ImageFormat::Ico => image::ImageFormat::Ico,
+            gpui::ImageFormat::Pnm => image::ImageFormat::Pnm,
+        };
+
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+            .into_dimensions()
+            .ok()
+            .map(|(width, height)| gpui::Size { width, height })
     }
 
     fn create_markdown_block(
@@ -837,9 +837,9 @@ impl ContentBlock {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
-            ContentBlock::Image { image } => Some(image),
+            ContentBlock::Image { image, dimensions } => Some((image, *dimensions)),
             _ => None,
         }
     }
@@ -924,7 +924,7 @@ impl ToolCallContent {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
             Self::ContentBlock(content) => content.image(),
             _ => None,
