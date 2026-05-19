@@ -193,11 +193,8 @@ impl AgentTool for GrepTool {
                 let (buffer, ranges) = match search_result {
                     Some(SearchResult::Buffer { buffer, ranges }) => (buffer, ranges),
                     Some(SearchResult::DeferredFile(summary)) => {
-                        // The file was over the size threshold and was searched in
-                        // streaming mode without being loaded as a buffer. Render
-                        // its snippets directly into the agent output: the LLM can
-                        // reason about the matches without us paying the full-file
-                        // memory cost. (issue 20970)
+                        // Render snippets directly; the file is too large
+                        // to open as a buffer just to render its matches.
                         for m in &summary.matches {
                             if skips_remaining > 0 {
                                 skips_remaining -= 1;

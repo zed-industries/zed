@@ -233,27 +233,12 @@ fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
-/// Placeholder shown inline when a deferred file's matches couldn't be
-/// enumerated (multiline regex over the streaming-mode threshold). The user
-/// clicks this row to open the file directly.
 const DEFERRED_PLACEHOLDER_TEXT: &str = "matches inside — open file to view";
 
-/// Trailing decorative line appended when the per-file match cap was hit. Not
-/// an excerpt; just buffer text so the truncated state is visible in the
-/// rendered output.
 const DEFERRED_TRUNCATED_TAIL: &str = "… more matches in this file (open to view)";
 
-/// `language::File` impl attached to deferred-file preview buffers so the
-/// multibuffer's standard excerpt-header renders the real file path instead
-/// of "untitled". The preview buffer is synthetic (its text contains only the
-/// captured snippets), but the file it represents exists on disk; this struct
-/// surfaces the on-disk path and worktree without ever loading the file.
-///
-/// `display_rows[i]` is the 0-based file line number to show in the gutter
-/// for buffer row `i`; `None` means the row has no corresponding file line
-/// (e.g. the truncated-tail decorative row or the multiline-regex
-/// placeholder). The gutter machinery picks this up via
-/// `language::File::display_row`. Issue 20970.
+/// Synthetic `language::File` so a deferred preview buffer reports the real
+/// on-disk path in the multibuffer header without ever loading the file.
 struct PreviewFile {
     path: Arc<RelPath>,
     worktree_id: WorktreeId,
@@ -263,10 +248,6 @@ struct PreviewFile {
 
 #[cfg(test)]
 impl PreviewFile {
-    /// Downcast a buffer's `Option<&Arc<dyn language::File>>` to a `PreviewFile`
-    /// if present. Used by tests to distinguish a preview buffer from a real
-    /// loaded file (both have a non-`None` `file()` now). Mirrors
-    /// `project::File::from_dyn` (`crates/worktree/src/worktree.rs:3551`).
     fn from_dyn(file: Option<&Arc<dyn language::File>>) -> Option<&Self> {
         file.and_then(|f| {
             let f: &dyn language::File = f.as_ref();
@@ -278,16 +259,14 @@ impl PreviewFile {
 
 impl language::File for PreviewFile {
     fn as_local(&self) -> Option<&dyn language::LocalFile> {
-        // Intentionally not exposed as local: the LocalFile trait provides
-        // `load`/`load_bytes` which would defeat the streaming bound by
-        // pulling the whole file into memory.
+        // Hiding LocalFile keeps `load`/`load_bytes` callers from defeating
+        // the streaming bound by reading the whole file.
         None
     }
 
     fn disk_state(&self) -> DiskState {
-        // mtime isn't captured at scan time; the header doesn't surface it.
-        // Use a zero mtime + the size we have so downstream `exists()` checks
-        // still see the file as Present.
+        // Zero mtime: not captured at scan time. The header doesn't surface
+        // it but downstream `exists()` checks need `Present` to be honored.
         DiskState::Present {
             mtime: fs::MTime::from_seconds_and_nanos(0, 0),
             size: self.file_size,
@@ -315,9 +294,6 @@ impl language::File for PreviewFile {
     }
 
     fn to_proto(&self, _: &App) -> language::proto::File {
-        // Preview files are local-only display state; they aren't synced
-        // across the wire. If this is ever called, something has wired the
-        // preview into a serialization path it shouldn't be in.
         unimplemented!("preview files are not synced across the wire")
     }
 
@@ -326,11 +302,8 @@ impl language::File for PreviewFile {
     }
 
     fn can_open(&self) -> bool {
-        // Allow the default `open_buffers_in_workspace` filter at
-        // `crates/editor/src/editor.rs:12668` to keep this entry. Hydration
-        // intercepts the click before the workspace open path runs, so this
-        // flag only matters for degenerate cases where the deferred slot has
-        // been cleared mid-click.
+        // Returning true keeps the entry through `open_buffers_in_workspace`'s
+        // filter; hydration intercepts before that codepath actually runs.
         true
     }
 
@@ -346,30 +319,9 @@ impl language::File for PreviewFile {
     }
 }
 
-/// Build a compact synthetic read-only `Buffer` with exactly one row per
-/// captured match (plus an optional decorative tail), and a per-row
-/// `display_rows` mapping that the gutter uses to render the real on-disk
-/// line numbers. The buffer text is just the concatenated snippets; the
+/// One row per captured match (plus an optional decorative tail row); the
 /// `MatchLocation` byte ranges remain the source of truth for hydration's
-/// anchor calculation.
-///
-/// Layout for a file with N matches:
-///
-/// ```text
-///   row 0: <snippet 0>\n        <- excerpt 0 (gutter: matches[0].line_number)
-///   row 1: <snippet 1>\n        <- excerpt 1 (gutter: matches[1].line_number)
-///   ...
-///   row N-1: <snippet N-1>\n    <- excerpt N-1
-///   row N: …more matches…\n     <- (only if `truncated`, not an excerpt)
-/// ```
-///
-/// For the multiline-regex-over-threshold case (`matches.is_empty() &&
-/// truncated`), the preview contains a single placeholder line at row 0 and
-/// one excerpt covering it.
-///
-/// `display_rows[i]` is the 0-based file line number for buffer row `i`, or
-/// `None` for the decorative tail / placeholder rows. The gutter routes
-/// through `language::File::display_row` via the `PreviewFile` impl.
+/// anchors. Empty `matches` + `truncated` yields a single placeholder row.
 fn build_preview_buffer_and_ranges(
     summary: &FileMatchSummary,
     cx: &mut Context<ProjectSearch>,
@@ -413,8 +365,7 @@ fn build_preview_buffer_and_ranges(
             let match_end = snippet_start_byte
                 + (m.snippet_match_range.end as usize).min(m.snippet.len());
             match_byte_ranges.push(match_start..match_end);
-            // `line_number` is 1-based on the wire; convert to 0-based for
-            // the gutter (which adds 1 back at render time).
+            // 1-based on the wire, 0-based for the gutter.
             display_rows.push(Some(m.line_number.saturating_sub(1)));
         }
         if summary.truncated {
@@ -448,8 +399,7 @@ fn build_preview_buffer_and_ranges(
     (preview, ranges, match_anchors)
 }
 
-/// Snapshot the multibuffer anchors for every match span across every active
-/// deferred-file preview. Returned as an owned `Vec` so callers can pass it to
+/// Snapshots match-highlight anchors so callers can pass them to
 /// `highlight_matches` outside of a `self.entity.update(...)` borrow.
 fn collect_preview_highlights(
     project_search: &Entity<ProjectSearch>,
@@ -463,32 +413,18 @@ fn collect_preview_highlights(
     out
 }
 
-/// State held by `ProjectSearch` for each file emitted as
-/// `SearchResult::DeferredFile`. The file's matches are rendered in the
-/// multibuffer through a synthetic read-only preview buffer; when the user
-/// clicks any of the preview excerpts, the real file is opened and the preview is
-/// swapped out atomically. Issue 20970.
 pub(crate) struct DeferredFileState {
-    /// Streaming-scan summary carrying byte ranges, line numbers, and
-    /// snippets. Used at hydration time to compute real-buffer anchors.
     pub(crate) summary: FileMatchSummary,
-    /// `PathKey::with_sort_prefix(worktree_id.to_proto(), rel_path)`. Stored
-    /// once so swap events can route back to this entry without recomputing.
     pub(crate) path_key: PathKey,
-    /// Captured `search_id` at insertion. A hydration task short-circuits if
-    /// `ProjectSearch::search_id` has advanced past this value by the time
-    /// the swap is ready (i.e. a new search has started).
+    /// Captured at insertion; if `ProjectSearch::search_id` advances past
+    /// this before the hydration swap is ready, the task short-circuits.
     pub(crate) search_id: usize,
-    /// `Some` while a hydration task is running. Tasks are dropped (and
-    /// thereby cancelled) when `deferred_files` is cleared on new search.
+    /// `Some` while hydration is in flight; dropped (and thereby cancelled)
+    /// when `deferred_files` is cleared on a new search.
     pub(crate) hydration: Option<Task<()>>,
-    /// Set if the most recent hydration failed (worktree gone, IO error).
-    /// Surfaced inline so the user knows why their click didn't work.
     pub(crate) last_error: Option<SharedString>,
-    /// Multibuffer anchors for the match span *within* each preview snippet,
-    /// used to paint `search.match_background` on the highlighted substring
-    /// (mirroring how loaded buffers get their matches highlighted). Kept
-    /// separate from `match_ranges` so find-next continues to skip previews.
+    /// Kept separate from `match_ranges` so find-next continues to skip
+    /// previews while highlights still paint the matched substrings.
     pub(crate) match_highlights: Vec<Range<Anchor>>,
 }
 
@@ -497,9 +433,6 @@ pub struct ProjectSearch {
     excerpts: Entity<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
-    /// Files emitted by the streaming-search path because they exceeded
-    /// `max_loaded_file_size_bytes`. Rendered as preview-buffer excerpts in the
-    /// multibuffer and hydrated to real buffers on click. Issue 20970.
     deferred_files: HashMap<PathKey, DeferredFileState>,
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
@@ -617,8 +550,8 @@ impl ProjectSearch {
                 excerpts,
                 pending_search: Default::default(),
                 match_ranges: self.match_ranges.clone(),
-                // Rebuild the deferred-file index without the hydration tasks:
-                // in-flight tasks belong to the source view, not the clone.
+                // Hydration tasks belong to the source view; the clone gets
+                // entries without them.
                 deferred_files: self
                     .deferred_files
                     .iter()
@@ -660,11 +593,9 @@ impl ProjectSearch {
                 this.remove_deleted_buffers(cx);
             }
             multi_buffer::Event::BuffersRemoved { .. } => {
-                // Issue 20970: hydration of a deferred file swaps the synthetic
-                // preview buffer for the real file under the same PathKey, dropping
-                // the preview's BufferId. Defensively retain match_ranges so any
-                // anchor that no longer resolves (whether from this swap or
-                // another excerpt removal) is dropped before the next find-next.
+                // Hydration swaps the preview's buffer for the real file
+                // under the same PathKey; drop any anchors that no longer
+                // resolve so find-next never lands on them.
                 let snapshot = excerpts.read(cx).snapshot(cx);
                 let before = this.match_ranges.len();
                 this.match_ranges
@@ -777,10 +708,8 @@ impl ProjectSearch {
                                     buffers_with_ranges.push((buffer, ranges));
                                 }
                                 project::search::SearchResult::DeferredFile(summary) => {
-                                    // Captured here, but the preview-buffer construction
-                                    // and excerpt insertion happen on the foreground
-                                    // (next block) because `Buffer::local` requires a
-                                    // foreground `Context`. Issue 20970.
+                                    // Foreground constructs the preview below;
+                                    // `Buffer::local` needs a foreground `Context`.
                                     deferred_summaries_in_chunk.push(summary);
                                 }
                                 project::search::SearchResult::LimitReached => {
@@ -807,11 +736,9 @@ impl ProjectSearch {
                                     summary.path.path.clone(),
                                 );
                                 if project_search.deferred_files.contains_key(&path_key) {
-                                    // Defensive: a second emission for the same file
-                                    // should not overwrite our state (would lose any
-                                    // in-flight hydration task). Streaming pipeline
-                                    // doesn't currently re-emit, but guarding here
-                                    // costs nothing.
+                                    // Re-emission would clobber an in-flight
+                                    // hydration task. Streaming doesn't currently
+                                    // do this, but guarding is free.
                                     continue;
                                 }
                                 let (preview_buffer, ranges, match_anchors) =
@@ -1382,9 +1309,8 @@ impl ProjectSearchView {
             let mut editor = Editor::for_multibuffer(excerpts, Some(project.clone()), window, cx);
             editor.set_searchable(false);
             editor.set_in_project_search(true);
-            // Issue 20970: route excerpt-open clicks through our handler so we
-            // can intercept clicks on deferred-file previews and hydrate them
-            // before delegating real-file opens to the workspace.
+            // Intercept excerpt-open clicks so we can hydrate previews
+            // before delegating non-preview opens to the workspace.
             editor.set_delegate_open_excerpts(true);
             editor
         });
@@ -2109,8 +2035,8 @@ impl ProjectSearchView {
                 &combined,
                 move |index, theme| {
                     if *index >= active_count {
-                        // Preview highlights are decorative; never paint the
-                        // "active" color since find-next never lands on them.
+                        // Preview highlights never take the "active" color
+                        // because find-next never lands on them.
                         theme.colors().search_match_background
                     } else if active_index == Some(*index) {
                         theme.colors().search_active_match_background
@@ -2231,11 +2157,8 @@ impl ProjectSearchView {
         }
     }
 
-    /// Receive the editor's `OpenExcerptsRequested` event (we set the
-    /// `delegate_open_excerpts` flag on the results editor). For each buffer
-    /// in the event, route clicks on deferred-file previews through hydration
-    /// and clicks on real loaded buffers through the normal workspace open.
-    /// Issue 20970.
+    /// Routes preview clicks to hydration and real-buffer clicks to the
+    /// workspace open path.
     fn handle_open_excerpts(
         &mut self,
         selections_by_buffer: &HashMap<BufferId, (Vec<Range<BufferOffset>>, Option<u32>)>,
@@ -2269,11 +2192,9 @@ impl ProjectSearchView {
                 None => continue,
             };
 
-            // Each snippet occupies exactly one row in the preview buffer
-            // (see `build_preview_buffer_and_ranges`), so the clicked row
-            // maps directly to a `MatchLocation` index. The gutter shows the
-            // real file line via `display_row`, but the buffer row itself is
-            // still the match index.
+            // One snippet per preview row, so the clicked row IS the
+            // `MatchLocation` index (the gutter's display_row override
+            // shows a different number but doesn't affect addressing).
             let preview_snapshot = buffer_entity.read(cx).snapshot();
             let clicked_offset = ranges.first().map(|r| r.start.0).unwrap_or(0);
             let clicked_match_index = preview_snapshot.offset_to_point(clicked_offset).row as usize;
@@ -2292,19 +2213,11 @@ impl ProjectSearchView {
         }
     }
 
-    /// Open the real file backing a deferred preview, swap the preview's excerpts
-    /// for real-buffer excerpts under the same `PathKey`, and drive the
-    /// results editor's selection to the clicked match.
-    ///
-    /// Reserves the `deferred_files` slot via a placeholder task so that a
-    /// second click while hydration is in flight is a no-op. The hydration
-    /// task captures the current `search_id`; if a new search starts before
-    /// the swap, the task short-circuits before mutating state.
-    ///
-    /// For non-UTF-8 or BOM-prefixed files, the disk-byte ranges captured by
-    /// the streaming scan don't correspond 1:1 to the decoded `BufferSnapshot`
-    /// offsets. In that case we fall back to opening the file in the
-    /// workspace without computing anchors. Issue 20970.
+    /// Reserves the `deferred_files` slot with a placeholder task so
+    /// concurrent clicks coalesce. The task captures `search_id` and
+    /// short-circuits if a new search starts before the swap. Non-UTF-8
+    /// or BOM-prefixed files fall back to a workspace open without anchor
+    /// computation (disk-byte offsets don't survive decoding).
     fn hydrate_deferred_file(
         &mut self,
         path_key: PathKey,
@@ -2318,8 +2231,8 @@ impl ProjectSearchView {
                 return None;
             }
             state.last_error = None;
-            // Reserve the slot so concurrent clicks coalesce. Replaced with
-            // the real Task handle after `cx.spawn_in` returns below.
+            // Placeholder so a second click sees `hydration.is_some()`;
+            // the real handle replaces it below.
             state.hydration = Some(Task::ready(()));
             Some((
                 project_search.project.clone(),
@@ -2377,10 +2290,8 @@ impl ProjectSearchView {
 
             let utf8_no_bom = encoding_name == "UTF-8" && !has_bom;
             if !utf8_no_bom || !has_matches {
-                // Fallback: open the file in the workspace without a swap.
-                // The disk-byte offsets captured at scan time aren't valid
-                // post-decode, so we don't compute anchors. Drive line-jump
-                // here in a follow-up by chaining on the returned task.
+                // Disk-byte offsets don't survive non-UTF-8 / BOM decoding,
+                // so fall back to a plain workspace open with no anchors.
                 workspace_weak
                     .update_in(cx, |workspace, window, cx| {
                         workspace
@@ -2441,9 +2352,8 @@ impl ProjectSearchView {
             entity_weak
                 .update(cx, |project_search, cx| {
                     project_search.match_ranges.extend(new_anchors);
-                    // Re-sort to preserve the binary-search invariant in
-                    // `editor::items::active_match_index` after mid-stream
-                    // insertion of a hydrated file's matches.
+                    // `active_match_index` does a binary search; restore
+                    // sort order after the mid-stream insertion.
                     let mb_snapshot = project_search.excerpts.read(cx).snapshot(cx);
                     project_search
                         .match_ranges
@@ -2475,9 +2385,7 @@ impl ProjectSearchView {
                 .log_err();
         });
 
-        // Replace the placeholder reservation with the real task handle so
-        // the task is cancelled when the deferred slot is cleared (e.g. on
-        // new search).
+        // Store the real handle so clearing `deferred_files` cancels it.
         self.entity.update(cx, |project_search, _| {
             if let Some(state) = project_search.deferred_files.get_mut(&path_key) {
                 state.hydration = Some(task);
@@ -6249,9 +6157,6 @@ pub mod tests {
         cx.background_executor.run_until_parked();
     }
 
-    /// Phase 2 helper: override the streaming-mode threshold and per-file cap
-    /// for a test. Mirrors `override_search_streaming_settings` in
-    /// `crates/project/tests/integration/project_tests.rs`. Issue 20970.
     fn override_search_streaming_settings(
         cx: &mut TestAppContext,
         max_loaded_file_size_bytes: u64,
@@ -6269,9 +6174,6 @@ pub mod tests {
         });
     }
 
-    /// Phase 2: after streaming search emits a `DeferredFile`, the UI should
-    /// surface it as a synthetic preview buffer with one excerpt per match.
-    /// Issue 20970.
     #[gpui::test]
     async fn test_deferred_file_renders_as_preview_excerpts(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6324,9 +6226,6 @@ pub mod tests {
                 );
                 assert!(!state.summary.truncated);
 
-                // The multibuffer holds the loaded file and the preview. Verify
-                // there's exactly one preview (no `file()`) and it carries 3
-                // excerpts mapping 1:1 to the captured matches.
                 let mb = search_view.results_editor.read(cx).buffer().read(cx);
                 let preview_count = mb
                     .all_buffers()
@@ -6345,9 +6244,6 @@ pub mod tests {
             .unwrap();
     }
 
-    /// Phase 2: find-next and find-prev must skip over deferred-file previews
-    /// — `match_ranges` should only contain anchors from loaded buffers.
-    /// Issue 20970.
     #[gpui::test]
     async fn test_find_next_skips_deferred_excerpts(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6383,9 +6279,6 @@ pub mod tests {
         search_view
             .update(cx, |search_view, _window, cx| {
                 let project_search = search_view.entity.read(cx);
-                // 2 loaded files × 1 match each = 2 navigable matches.
-                // The deferred large file contributes 3 captured matches that
-                // must NOT show up in `match_ranges` (skipped by find-next).
                 assert_eq!(
                     project_search.match_ranges.len(),
                     2,
@@ -6396,19 +6289,15 @@ pub mod tests {
             .unwrap();
     }
 
-    /// Phase 2: a project where *every* matching file is over the
-    /// `max_loaded_file_size_bytes` threshold (so no loaded buffer
-    /// contributes to `match_ranges`) must still render the deferred-file
-    /// previews instead of collapsing to the "No Results" placeholder.
-    /// Issue 20970 — regressed once because `has_matches()` and the search
-    /// state classification ignored `deferred_files`.
+    /// Regression: with only deferred matches, `has_matches()` and the
+    /// search state classification used to ignore `deferred_files` and the
+    /// view collapsed to "No Results".
     #[gpui::test]
     async fn test_all_deferred_project_renders_previews(cx: &mut TestAppContext) {
         init_test(cx);
         override_search_streaming_settings(cx, 256, 1000);
 
         let filler = "X".repeat(80);
-        // Two over-threshold files, no small files: every match must be deferred.
         let large_content =
             format!("header\n{filler}\n<tag/>\n{filler}\n<tag/>\n{filler}\n<tag/>\n");
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -6464,11 +6353,9 @@ pub mod tests {
             .unwrap();
     }
 
-    /// Phase 2: `build_preview_buffer_and_ranges` must produce a single
-    /// placeholder excerpt for the empty-matches + truncated case
-    /// (multiline-regex-over-threshold). Tests the function directly because
-    /// the upstream streaming-search classification of multiline regex is
-    /// environment-dependent. Issue 20970.
+    /// Function-level test because streaming's multiline classification is
+    /// regex-engine-dependent and can't be relied on from the integration
+    /// surface.
     #[gpui::test]
     async fn test_build_preview_buffer_handles_truncated_empty(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6518,10 +6405,6 @@ pub mod tests {
         );
     }
 
-    /// Phase 2: simulating a click on a deferred-file excerpt should hydrate
-    /// the preview via `project.open_buffer`, swap it for the real buffer under
-    /// the same `PathKey`, and populate `match_ranges` with the file's
-    /// matches. Issue 20970.
     #[gpui::test]
     async fn test_click_hydrates_deferred_file(cx: &mut TestAppContext) {
         init_test(cx);
@@ -6612,9 +6495,6 @@ pub mod tests {
             .unwrap();
     }
 
-    /// Phase 2: after hydration, the anchor ranges in `match_ranges` should
-    /// resolve to the substring that was matched in the streaming scan.
-    /// Issue 20970.
     #[gpui::test]
     async fn test_hydrated_anchors_resolve_to_matched_substring(
         cx: &mut TestAppContext,

@@ -8152,9 +8152,6 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     );
 }
 
-/// Override the project search streaming-mode threshold and per-file match cap
-/// for a test. Layered as a user setting so it merges with the defaults loaded
-/// via `SettingsStore::test`. (issue 20970)
 fn override_search_streaming_settings(
     cx: &mut gpui::TestAppContext,
     max_loaded_file_size_bytes: u64,
@@ -8171,7 +8168,6 @@ fn override_search_streaming_settings(
     });
 }
 
-/// Drain a project search and split results into (loaded buffer matches, deferred summaries).
 async fn collect_search_results(
     project: &Entity<Project>,
     query: SearchQuery,
@@ -8198,11 +8194,9 @@ async fn collect_search_results(
 #[gpui::test]
 async fn test_search_streaming_emits_deferred_for_large_files(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    // Threshold = 256 bytes; cap matches per deferred file at 100.
     override_search_streaming_settings(cx, 256, 100);
 
     let small_file_contents = b"small file with target match here\n".to_vec();
-    // A file well over 256 bytes containing a single distinguishing target.
     let mut large_file_contents = vec![b'X'; 1024];
     large_file_contents.extend_from_slice(b"\nline two with target match\n");
     large_file_contents.extend(std::iter::repeat_n(b'Y', 1024));
@@ -8268,11 +8262,8 @@ async fn test_search_streaming_emits_deferred_for_large_files(cx: &mut gpui::Tes
 #[gpui::test]
 async fn test_search_streaming_caps_matches_per_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    // Cap matches at 5 per deferred file even when there are many.
     override_search_streaming_settings(cx, 256, 5);
 
-    // 1 KB of `<` characters = ~1024 matches; far above the 5-match cap and
-    // far above the 256-byte file-size threshold.
     let mut content = Vec::with_capacity(1024);
     for _ in 0..1024 {
         content.extend_from_slice(b"<\n");
@@ -8314,7 +8305,7 @@ async fn test_search_streaming_skips_invalid_utf8(cx: &mut gpui::TestAppContext)
     init_test(cx);
     override_search_streaming_settings(cx, 256, 100);
 
-    // 1 KB of bytes with an invalid UTF-8 sequence at the start.
+    // Invalid UTF-8 prefix; streaming search should reject this file.
     let mut content = vec![0xFF, 0xFE, 0xFA, 0xFB];
     content.extend(std::iter::repeat_n(b'A', 1024));
 
@@ -8353,7 +8344,6 @@ async fn test_search_streaming_multiline_regex_emits_deferred_empty(
     init_test(cx);
     override_search_streaming_settings(cx, 256, 100);
 
-    // > 256 byte file containing the literal newline-separated `foo\nbar` pattern.
     let mut content = b"prefix line\nfoo\nbar\nmore content\n".to_vec();
     content.extend(std::iter::repeat_n(b'X', 1024));
     content.push(b'\n');
@@ -8363,8 +8353,7 @@ async fn test_search_streaming_multiline_regex_emits_deferred_empty(
     fs.insert_file(path!("/dir/multiline.txt"), content).await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
-    // A regex pattern containing a literal `\n` is detected as multiline by
-    // SearchQuery::build_regex; see crates/project/src/search.rs.
+    // A literal `\n` makes `SearchQuery::build_regex` flag this as multiline.
     let query = SearchQuery::regex(
         "foo\\nbar",
         false,
@@ -8401,7 +8390,6 @@ async fn test_search_streaming_below_threshold_uses_buffer_path(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
-    // Default threshold is 10 MiB; a small file must take the buffer path.
     override_search_streaming_settings(cx, 10 * 1024 * 1024, 1000);
 
     let fs = FakeFs::new(cx.executor());

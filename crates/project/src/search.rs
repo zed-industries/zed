@@ -27,47 +27,36 @@ pub enum SearchResult {
         buffer: Entity<Buffer>,
         ranges: Vec<Range<Anchor>>,
     },
-    /// Emitted for files larger than `max_loaded_file_size_bytes` that were searched
-    /// in a streaming mode without ever loading the file into a `Buffer`. Capturing matches
-    /// with `MatchLocation` (offsets + snippets) keeps peak memory bounded by the per-file
-    /// match cap rather than the file size. The buffer is hydrated lazily when the user
-    /// navigates to a deferred match (issue 20970).
+    /// Emitted for files searched without loading into a `Buffer`. The
+    /// captured `MatchLocation` entries are bounded by the per-file cap, so
+    /// peak memory does not grow with file size.
     DeferredFile(FileMatchSummary),
     LimitReached,
     WaitingForScan,
     Searching,
 }
 
-/// A single match within a file that was searched in streaming mode.
-/// `byte_range` is in disk-file UTF-8 byte coordinates so it can be resolved
-/// to a `language::Anchor` later when the buffer is hydrated.
+/// `byte_range` is in disk-file UTF-8 byte coordinates so the buffer can
+/// resolve it to a `language::Anchor` at hydration time.
 #[derive(Debug, Clone)]
 pub struct MatchLocation {
     pub byte_range: Range<u64>,
-    /// 1-indexed line number of the match start.
+    /// 1-indexed.
     pub line_number: u32,
-    /// 0-indexed byte offset of the match start within its line (post-decode UTF-8).
     pub line_byte_offset: u32,
-    /// A short bounded-size snippet around the match for inline display.
     pub snippet: Arc<str>,
-    /// Byte range within `snippet` corresponding to the match itself, so the
-    /// UI can highlight the matched substring without re-running the regex.
     pub snippet_match_range: Range<u32>,
 }
 
-/// Summary of matches in a file that was searched without being opened as a `Buffer`.
-/// Memory cost is bounded: at most `max_matches_per_deferred_file` entries × snippet budget.
 #[derive(Debug, Clone)]
 pub struct FileMatchSummary {
     pub path: ProjectPath,
     pub abs_path: Arc<Path>,
     pub file_size: u64,
-    /// Matches captured during the streaming scan, capped at the per-file limit.
-    /// For multiline regex over-threshold files this is empty (we cannot safely
-    /// enumerate matches without reading the whole file).
     pub matches: Vec<MatchLocation>,
-    /// True if more matches existed beyond the per-file cap, OR if the file
-    /// was multiline-regex-over-threshold and we punted on enumeration.
+    /// True if more matches existed beyond the per-file cap, or if the
+    /// query is multiline (in which case `matches` is empty because the
+    /// streaming scan can't enumerate multiline matches).
     pub truncated: bool,
 }
 
@@ -422,24 +411,13 @@ impl SearchQuery {
         }
     }
 
-    /// Stream-search a file from disk and capture up to `max_matches` matches with
-    /// bounded-size snippets, without ever loading the whole file into memory.
+    /// Returns `(matches, truncated)`. `truncated` is set when the cap is
+    /// hit or when the query is multiline (in which case `matches` is empty
+    /// because multiline can't be enumerated without buffering the file).
     ///
-    /// Returns `(matches, truncated)`. `truncated` is true if either:
-    ///  - the per-file match cap was reached, or
-    ///  - the query is multiline (in which case we cannot safely enumerate without
-    ///    reading the whole file, so we return `(vec![], true)` to signal "matched
-    ///    but unenumerated").
-    ///
-    /// Used by project search for files larger than `max_loaded_file_size_bytes`
-    /// (issue 20970) so peak memory is bounded by `max_matches × snippet_budget`,
-    /// not by file size.
-    ///
-    /// Caveat: `BufRead::read_line` allocates the entire line into a `String`
-    /// before yielding. Files without newlines (e.g. a 700 MB minified JSON
-    /// blob) therefore still allocate proportional to line length. Tracked as
-    /// a separate follow-up; the dominant cost on the issue 20970 repro
-    /// (newline-rich XML) is unaffected.
+    /// Peak memory is bounded by `max_matches × snippet_budget`, except for
+    /// the `BufRead::read_line` line allocation — a file with no newlines
+    /// still allocates proportional to line length (see follow-up).
     pub(crate) async fn search_streaming(
         &self,
         mut reader: BufReader<Box<dyn Read + Send + Sync>>,
@@ -458,8 +436,7 @@ impl SearchQuery {
             Self::Regex { multiline, .. } => *multiline,
         };
         if is_multiline_pattern {
-            // Cannot safely enumerate multiline matches without holding the file in memory.
-            // Surface the file's existence; UI shows "too large to enumerate".
+            // Surface existence only — multiline needs the whole file.
             return Ok((Vec::new(), true));
         }
 
@@ -897,20 +874,14 @@ impl SearchQuery {
     }
 }
 
-/// Build a bounded-size snippet around `match_range` within `line` (which may
-/// include a trailing newline). Snaps to UTF-8 character boundaries and returns
-/// both the snippet and the new byte range of the match within it.
-///
-/// `budget` bounds the *combined* prefix + suffix size around the match; the
-/// match itself is never truncated, so for pathologically long single matches
-/// the returned snippet may exceed `budget` (this is intentional — clipping
-/// inside a match would mislead the reader about what was found).
+/// `budget` bounds the prefix + suffix around the match; the match itself
+/// is never clipped (so a pathologically long match exceeds `budget`).
 fn extract_snippet(
     line: &str,
     match_range: Range<usize>,
     budget: usize,
 ) -> (Arc<str>, Range<u32>) {
-    // Strip the trailing newline (and a preceding CR on Windows-style line endings).
+    // Strip "\n" and any preceding "\r" (Windows line endings).
     let line = line.strip_suffix('\n').unwrap_or(line);
     let line = line.strip_suffix('\r').unwrap_or(line);
 
@@ -928,7 +899,7 @@ fn extract_snippet(
     let raw_start = match_start.saturating_sub(half);
     let raw_end = match_end.saturating_add(half).min(line.len());
 
-    // Snap to UTF-8 character boundaries (walk outward, never inside a match).
+    // Snap outward to UTF-8 boundaries; never clip into the match.
     let snippet_start = (0..=raw_start)
         .rev()
         .find(|&i| line.is_char_boundary(i))
