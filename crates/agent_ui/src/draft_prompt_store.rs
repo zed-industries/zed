@@ -59,24 +59,27 @@ pub fn draft_has_user_content<'a>(
     workspaces: impl IntoIterator<Item = &'a Entity<Workspace>>,
     cx: &App,
 ) -> bool {
-    live_or_persisted_blocks_for_draft(thread_id, workspaces, cx)
-        .is_some_and(|blocks| blocks_have_user_content(&blocks))
-}
-
-fn live_or_persisted_blocks_for_draft<'a>(
-    thread_id: ThreadId,
-    workspaces: impl IntoIterator<Item = &'a Entity<Workspace>>,
-    cx: &App,
-) -> Option<Vec<acp::ContentBlock>> {
-    workspaces
+    let mut found_live_copy = false;
+    for blocks in workspaces
         .into_iter()
         .filter_map(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
-        .find_map(|panel| {
+        .filter_map(|panel| {
             panel
                 .read(cx)
                 .draft_prompt_blocks_if_in_memory(thread_id, cx)
         })
-        .or_else(|| read(thread_id, cx))
+    {
+        found_live_copy = true;
+        if blocks_have_user_content(&blocks) {
+            return true;
+        }
+    }
+
+    if found_live_copy {
+        false
+    } else {
+        read(thread_id, cx).is_some_and(|blocks| blocks_have_user_content(&blocks))
+    }
 }
 
 fn blocks_have_user_content(blocks: &[acp::ContentBlock]) -> bool {
