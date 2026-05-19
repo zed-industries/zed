@@ -491,6 +491,14 @@ impl MentionSet {
         skill_file_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
+        // Built-in skills have synthetic paths that don't exist on disk;
+        // serve their content directly from the compiled-in data.
+        if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
+            return Task::ready(Ok(Mention::Text {
+                content: content.to_string(),
+                tracked_buffers: Vec::new(),
+            }));
+        }
         cx.background_spawn(async move {
             let content = std::fs::read_to_string(&skill_file_path).map_err(|e| {
                 anyhow!(

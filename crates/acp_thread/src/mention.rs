@@ -359,6 +359,7 @@ impl MentionUri {
         match self {
             MentionUri::Skill { name, source, .. } => {
                 if source.is_empty() {
+                    // Must match `SkillSource::display_label()` in agent_skills.
                     format!("{} (global)", name)
                 } else {
                     format!("{} ({})", name, source)
