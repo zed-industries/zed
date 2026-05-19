@@ -5964,6 +5964,8 @@ dependencies = [
  "settings",
  "shellexpand",
  "terminal_view",
+ "theme",
+ "theme_settings",
  "util",
  "watch",
 ]
@@ -9649,6 +9651,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui_shared_string",
  "http_client",
+ "log",
  "partial-json-fixer",
  "schemars 1.0.4",
  "serde",

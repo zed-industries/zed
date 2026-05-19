@@ -220,6 +220,32 @@ impl ThreadEntryWorkspace {
     }
 }
 
+fn draft_display_label_for_thread_metadata(
+    metadata: &ThreadMetadata,
+    workspace: &ThreadEntryWorkspace,
+    cx: &App,
+) -> Option<SharedString> {
+    let workspace = match workspace {
+        ThreadEntryWorkspace::Open(workspace) => Some(workspace),
+        ThreadEntryWorkspace::Closed { .. } => None,
+    };
+    agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
+}
+
+fn thread_metadata_would_render_sidebar_row(
+    metadata: &ThreadMetadata,
+    workspace: &ThreadEntryWorkspace,
+    hidden_draft_thread_ids: &HashSet<ThreadId>,
+    cx: &App,
+) -> bool {
+    if !metadata.is_draft() {
+        return true;
+    }
+
+    !hidden_draft_thread_ids.contains(&metadata.thread_id)
+        && draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
+}
+
 #[derive(Clone)]
 struct ThreadEntry {
     metadata: ThreadMetadata,
@@ -1385,18 +1411,17 @@ impl Sidebar {
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
+            let hidden_draft_thread_ids: HashSet<ThreadId> = group_workspaces
+                .iter()
+                .filter_map(|ws| {
+                    ws.read(cx)
+                        .panel::<AgentPanel>(cx)
+                        .and_then(|panel| panel.read(cx).ephemeral_draft_thread_id(cx))
+                })
+                .collect();
 
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
-
-                let ephemeral_drafts: HashSet<ThreadId> = group_workspaces
-                    .iter()
-                    .filter_map(|ws| {
-                        ws.read(cx)
-                            .panel::<AgentPanel>(cx)
-                            .and_then(|panel| panel.read(cx).ephemeral_draft_thread_id(cx))
-                    })
-                    .collect();
 
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
@@ -1503,20 +1528,18 @@ impl Sidebar {
                     }
                 }
 
-                if !ephemeral_drafts.is_empty() {
-                    threads.retain(|thread| !ephemeral_drafts.contains(&thread.metadata.thread_id));
+                if !hidden_draft_thread_ids.is_empty() {
+                    threads.retain(|thread| {
+                        !hidden_draft_thread_ids.contains(&thread.metadata.thread_id)
+                    });
                 }
                 for thread in &mut threads {
                     if !thread.is_draft {
                         continue;
                     }
-                    let workspace = match &thread.workspace {
-                        ThreadEntryWorkspace::Open(workspace) => Some(workspace),
-                        ThreadEntryWorkspace::Closed { .. } => None,
-                    };
-                    thread.metadata.title = agent_ui::draft_prompt_store::display_label_for_draft(
-                        workspace,
-                        thread.metadata.thread_id,
+                    thread.metadata.title = draft_display_label_for_thread_metadata(
+                        &thread.metadata,
+                        &thread.workspace,
                         cx,
                     );
                 }
@@ -1582,19 +1605,33 @@ impl Sidebar {
                 }
             }
 
-            let has_threads = if !threads.is_empty() || !terminals.is_empty() {
-                true
-            } else {
+            let has_visible_rows = !threads.is_empty() || !terminals.is_empty();
+            let has_stored_thread_rows = !should_load_threads && !has_visible_rows && {
                 let store = ThreadMetadataStore::global(cx).read(cx);
                 store
                     .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
-                    .next()
-                    .is_some()
+                    .any(|metadata| {
+                        let workspace = resolve_workspace(metadata.folder_paths());
+                        thread_metadata_would_render_sidebar_row(
+                            metadata,
+                            &workspace,
+                            &hidden_draft_thread_ids,
+                            cx,
+                        )
+                    })
                     || store
                         .entries_for_path(group_key.path_list(), group_host.as_ref())
-                        .next()
-                        .is_some()
+                        .any(|metadata| {
+                            let workspace = resolve_workspace(metadata.folder_paths());
+                            thread_metadata_would_render_sidebar_row(
+                                metadata,
+                                &workspace,
+                                &hidden_draft_thread_ids,
+                                cx,
+                            )
+                        })
             };
+            let has_threads = has_visible_rows || has_stored_thread_rows;
 
             if !query.is_empty() {
                 let workspace_highlight_positions =
@@ -2239,9 +2276,9 @@ impl Sidebar {
                                             .child(Label::new("-click").color(Color::Muted));
 
                                         let label = if has_threads {
-                                            "Focus Last Workspace"
+                                            "Focus Last Project"
                                         } else {
-                                            "Focus Workspace"
+                                            "Focus Project"
                                         };
 
                                         h_flex()
@@ -2353,7 +2390,7 @@ impl Sidebar {
                                                     )
                                                     .icon_size(IconSize::Small)
                                                     .visible_on_hover(&row_group_name)
-                                                    .tooltip(Tooltip::text("Close Workspace"))
+                                                    .tooltip(Tooltip::text("Close Worktree"))
                                                     .on_click(move |_, window, cx| {
                                                         cx.stop_propagation();
                                                         window.prevent_default();

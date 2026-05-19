@@ -94,6 +94,7 @@ use workspace::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
+const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
 
 /// Maximum number of idle threads kept in the agent panel's retained list.
@@ -145,6 +146,11 @@ struct LastUsedAgent {
     agent: Agent,
 }
 
+#[derive(Serialize, Deserialize)]
+struct LastCreatedEntryKind {
+    entry_kind: AgentPanelEntryKind,
+}
+
 /// Reads the most recently used agent across all workspaces. Used as a fallback
 /// when opening a workspace that has no per-workspace agent preference yet.
 fn read_global_last_used_agent(kvp: &KeyValueStore) -> Option<Agent> {
@@ -158,6 +164,22 @@ fn read_global_last_used_agent(kvp: &KeyValueStore) -> Option<Agent> {
 async fn write_global_last_used_agent(kvp: KeyValueStore, agent: Agent) {
     if let Some(json) = serde_json::to_string(&LastUsedAgent { agent }).log_err() {
         kvp.write_kvp(LAST_USED_AGENT_KEY.to_string(), json)
+            .await
+            .log_err();
+    }
+}
+
+fn read_global_last_created_entry_kind(kvp: &KeyValueStore) -> Option<AgentPanelEntryKind> {
+    kvp.read_kvp(LAST_CREATED_ENTRY_KIND_KEY)
+        .log_err()
+        .flatten()
+        .and_then(|json| serde_json::from_str::<LastCreatedEntryKind>(&json).log_err())
+        .map(|entry| entry.entry_kind)
+}
+
+async fn write_global_last_created_entry_kind(kvp: KeyValueStore, entry_kind: AgentPanelEntryKind) {
+    if let Some(json) = serde_json::to_string(&LastCreatedEntryKind { entry_kind }).log_err() {
+        kvp.write_kvp(LAST_CREATED_ENTRY_KIND_KEY.to_string(), json)
             .await
             .log_err();
     }
@@ -210,6 +232,8 @@ struct SerializedAgentPanel {
     last_created_entry_kind: AgentPanelEntryKind,
     #[serde(default)]
     last_active_thread: Option<SerializedActiveThread>,
+    #[serde(default)]
+    last_active_terminal_id: Option<String>,
     #[serde(default)]
     new_draft_thread_id: Option<ThreadId>,
 }
@@ -844,6 +868,7 @@ pub struct AgentPanel {
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     terminals: HashMap<TerminalId, AgentTerminal>,
+    pending_terminal_spawn: Option<TerminalId>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
@@ -872,52 +897,58 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
         let last_created_entry_kind = self.last_created_entry_kind;
+        let last_active_terminal_id = self
+            .active_terminal_id()
+            .map(|terminal_id| terminal_id.to_key_string());
 
-        let is_draft_active = self.active_thread_is_draft(cx);
-        let active_thread_id = self.active_thread_id(cx);
-        let active_thread_agent = self
-            .active_conversation_view()
-            .map(|cv| cv.read(cx).agent_key().clone())
-            .unwrap_or_else(|| self.selected_agent.clone());
-        let last_active_thread = self
-            .active_agent_thread(cx)
-            .map(|thread| {
-                let thread = thread.read(cx);
+        let last_active_thread = if last_active_terminal_id.is_some() {
+            None
+        } else {
+            let is_draft_active = self.active_thread_is_draft(cx);
+            let active_thread_id = self.active_thread_id(cx);
+            let active_thread_agent = self
+                .active_conversation_view()
+                .map(|cv| cv.read(cx).agent_key().clone())
+                .unwrap_or_else(|| self.selected_agent.clone());
+            self.active_agent_thread(cx)
+                .map(|thread| {
+                    let thread = thread.read(cx);
 
-                let title = thread.title();
-                let work_dirs = thread.work_dirs().cloned();
-                SerializedActiveThread {
-                    session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
-                    thread_id: active_thread_id,
-                    agent_type: active_thread_agent.clone(),
-                    title: title.map(|t| t.to_string()),
-                    work_dirs: work_dirs.map(|dirs| dirs.serialize()),
-                }
-            })
-            .or_else(|| {
-                // The active view may be in `Loading` or `LoadError` — for
-                // example, while a restored thread is waiting for a custom
-                // agent to finish registering. Without this fallback, a
-                // stray `serialize()` triggered during that window would
-                // write `session_id=None` and wipe the restored session
-                if is_draft_active {
-                    return None;
-                }
-                let conversation_view = self.active_conversation_view()?;
-                let session_id = conversation_view.read(cx).root_session_id.clone()?;
-                let metadata = ThreadMetadataStore::try_global(cx)
-                    .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
-                Some(SerializedActiveThread {
-                    session_id: Some(session_id.0.to_string()),
-                    thread_id: active_thread_id,
-                    agent_type: active_thread_agent.clone(),
-                    title: metadata
-                        .as_ref()
-                        .and_then(|m| m.title.as_ref())
-                        .map(|t| t.to_string()),
-                    work_dirs: metadata.map(|m| m.folder_paths().serialize()),
+                    let title = thread.title();
+                    let work_dirs = thread.work_dirs().cloned();
+                    SerializedActiveThread {
+                        session_id: (!is_draft_active).then(|| thread.session_id().0.to_string()),
+                        thread_id: active_thread_id,
+                        agent_type: active_thread_agent.clone(),
+                        title: title.map(|t| t.to_string()),
+                        work_dirs: work_dirs.map(|dirs| dirs.serialize()),
+                    }
                 })
-            });
+                .or_else(|| {
+                    // The active view may be in `Loading` or `LoadError` — for
+                    // example, while a restored thread is waiting for a custom
+                    // agent to finish registering. Without this fallback, a
+                    // stray `serialize()` triggered during that window would
+                    // write `session_id=None` and wipe the restored session
+                    if is_draft_active {
+                        return None;
+                    }
+                    let conversation_view = self.active_conversation_view()?;
+                    let session_id = conversation_view.read(cx).root_session_id.clone()?;
+                    let metadata = ThreadMetadataStore::try_global(cx)
+                        .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
+                    Some(SerializedActiveThread {
+                        session_id: Some(session_id.0.to_string()),
+                        thread_id: active_thread_id,
+                        agent_type: active_thread_agent.clone(),
+                        title: metadata
+                            .as_ref()
+                            .and_then(|m| m.title.as_ref())
+                            .map(|t| t.to_string()),
+                        work_dirs: metadata.map(|m| m.folder_paths().serialize()),
+                    })
+                })
+        };
 
         let new_draft_thread_id = self
             .draft_thread
@@ -932,6 +963,7 @@ impl AgentPanel {
                     selected_agent: Some(selected_agent),
                     last_created_entry_kind,
                     last_active_thread,
+                    last_active_terminal_id,
                     new_draft_thread_id,
                 },
                 kvp,
@@ -957,7 +989,7 @@ impl AgentPanel {
                 .ok()
                 .flatten();
 
-            let (serialized_panel, global_last_used_agent) = cx
+            let (serialized_panel, global_last_used_agent, global_last_created_entry_kind) = cx
                 .background_spawn(async move {
                     match kvp {
                         Some(kvp) => {
@@ -965,9 +997,10 @@ impl AgentPanel {
                                 .and_then(|id| read_serialized_panel(id, &kvp))
                                 .or_else(|| read_legacy_serialized_panel(&kvp));
                             let global_agent = read_global_last_used_agent(&kvp);
-                            (panel, global_agent)
+                            let global_entry_kind = read_global_last_created_entry_kind(&kvp);
+                            (panel, global_agent, global_entry_kind)
                         }
-                        None => (None, None),
+                        None => (None, None, None),
                     }
                 })
                 .await;
@@ -975,37 +1008,101 @@ impl AgentPanel {
             let has_open_project = workspace
                 .read_with(cx, |workspace, cx| !workspace.root_paths(cx).is_empty())
                 .unwrap_or(false);
-            let thread_to_restore = if has_open_project {
+            let terminal_id_to_restore = if has_open_project {
                 serialized_panel
                     .as_ref()
-                    .and_then(|panel| panel.last_active_thread.as_ref())
-                    .and_then(|info| {
-                        let lookup = cx.update(|_window, cx| {
-                            let store = ThreadMetadataStore::global(cx);
-                            let store = store.read(cx);
-                            let primary = info.thread_id.and_then(|tid| store.entry(tid));
-                            let fallback = info.session_id.as_ref().and_then(|sid| {
-                                store.entry_by_session(&acp::SessionId::new(sid.clone()))
-                            });
-                            primary
-                                .or(fallback)
-                                .filter(|entry| !entry.archived)
-                                .map(|entry| entry.thread_id)
-                        });
-                        match lookup {
-                            Ok(Some(thread_id)) => Some((info, thread_id)),
-                            Ok(None) => {
-                                log::info!(
-                                    "last active thread is archived or missing, skipping restoration"
-                                );
-                                None
-                            }
-                            Err(err) => {
-                                log::warn!("failed to look up last active thread metadata: {err}");
+                    .and_then(|panel| panel.last_active_terminal_id.as_deref())
+                    .and_then(|terminal_id| {
+                        match TerminalId::from_key_string(terminal_id) {
+                            Ok(terminal_id) => Some(terminal_id),
+                            Err(error) => {
+                                log::warn!("failed to parse last active terminal id: {error}");
                                 None
                             }
                         }
                     })
+            } else {
+                None
+            };
+            let terminal_to_restore = if let Some(terminal_id) = terminal_id_to_restore {
+                match cx.update(|_window, cx| {
+                    TerminalThreadMetadataStore::try_global(cx).map(|store| {
+                        let reload_task = store.read(cx).reload_task();
+                        (store, reload_task)
+                    })
+                }) {
+                    Ok(Some((store, reload_task))) => {
+                        reload_task.await;
+                        match store
+                            .read_with(cx, |store, _cx| store.entry(terminal_id).cloned())
+                        {
+                            Some(metadata) => Some(metadata),
+                            None => {
+                                log::info!(
+                                    "last active terminal is missing, skipping restoration"
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        log::warn!("failed to restore active terminal: metadata store missing");
+                        None
+                    }
+                    Err(err) => {
+                        log::warn!("failed to access terminal metadata store: {err}");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let thread_to_restore = if has_open_project && terminal_to_restore.is_none() {
+                if let Some(info) = serialized_panel
+                    .as_ref()
+                    .and_then(|panel| panel.last_active_thread.as_ref())
+                {
+                    match cx.update(|_window, cx| {
+                        ThreadMetadataStore::try_global(cx).map(|store| {
+                            let reload_task = store.read(cx).reload_task();
+                            (store, reload_task)
+                        })
+                    }) {
+                        Ok(Some((store, reload_task))) => {
+                            reload_task.await;
+                            let thread_id = store.read_with(cx, |store, _cx| {
+                                let primary = info.thread_id.and_then(|tid| store.entry(tid));
+                                let fallback = info.session_id.as_ref().and_then(|sid| {
+                                    store.entry_by_session(&acp::SessionId::new(sid.clone()))
+                                });
+                                primary
+                                    .or(fallback)
+                                    .filter(|entry| !entry.archived)
+                                    .map(|entry| entry.thread_id)
+                            });
+                            match thread_id {
+                                Some(thread_id) => Some((info, thread_id)),
+                                None => {
+                                    log::info!(
+                                        "last active thread is archived or missing, skipping restoration"
+                                    );
+                                    None
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            log::warn!("failed to restore active thread: metadata store missing");
+                            None
+                        }
+                        Err(err) => {
+                            log::warn!("failed to access thread metadata store: {err}");
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
             } else {
                 None
             };
@@ -1030,6 +1127,8 @@ impl AgentPanel {
 
                     if let Some(serialized_panel) = &serialized_panel {
                         panel.last_created_entry_kind = serialized_panel.last_created_entry_kind;
+                    } else if let Some(entry_kind) = global_last_created_entry_kind {
+                        panel.last_created_entry_kind = entry_kind;
                     }
 
                     // The thread being restored may have been bound to an
@@ -1051,7 +1150,16 @@ impl AgentPanel {
                         panel.selected_agent = agent;
                     }
 
-                    if let Some((info, thread_id)) = thread_to_restore {
+                    if let Some(metadata) = terminal_to_restore {
+                        panel.restore_terminal_for_panel_load(
+                            metadata,
+                            false,
+                            AgentThreadSource::AgentPanel,
+                            Some(workspace),
+                            window,
+                            cx,
+                        );
+                    } else if let Some((info, thread_id)) = thread_to_restore {
                         let agent = panel.selected_agent.clone();
                         panel.load_agent_thread(
                             agent,
@@ -1178,6 +1286,7 @@ impl AgentPanel {
             draft_thread: None,
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
+            pending_terminal_spawn: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
@@ -1392,7 +1501,7 @@ impl AgentPanel {
             return;
         }
 
-        self.set_last_created_entry_kind(AgentPanelEntryKind::Thread, cx);
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
 
         // If the user is viewing a *parked* draft and the ephemeral
         // new-draft slot is occupied, pressing `+` should just focus the
@@ -1545,6 +1654,7 @@ impl AgentPanel {
         if !self.supports_terminal(cx) {
             return;
         }
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         let working_directory = self.terminal_working_directory(workspace, cx);
         self.spawn_terminal(
             TerminalId::new(),
@@ -1579,7 +1689,7 @@ impl AgentPanel {
             && self.project.read(cx).supports_terminal(cx)
     }
 
-    fn set_last_created_entry_kind(
+    fn set_last_created_entry_kind_from_user_action(
         &mut self,
         entry_kind: AgentPanelEntryKind,
         cx: &mut Context<Self>,
@@ -1588,6 +1698,14 @@ impl AgentPanel {
             self.last_created_entry_kind = entry_kind;
             self.serialize(cx);
         }
+
+        cx.background_spawn({
+            let kvp = KeyValueStore::global(cx);
+            async move {
+                write_global_last_created_entry_kind(kvp, entry_kind).await;
+            }
+        })
+        .detach();
     }
 
     fn spawn_terminal(
@@ -1619,6 +1737,13 @@ impl AgentPanel {
                     workspace
                         .update(cx, |workspace, cx| workspace.show_error(&error, cx))
                         .log_err();
+                    this.update(cx, |this, cx| {
+                        if this.pending_terminal_spawn == Some(terminal_id) {
+                            this.pending_terminal_spawn = None;
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
                     return anyhow::Ok(());
                 }
             };
@@ -1711,7 +1836,9 @@ impl AgentPanel {
             notification_subscriptions: Vec::new(),
             _subscriptions: vec![view_subscription, terminal_subscription],
         };
-        self.set_last_created_entry_kind(AgentPanelEntryKind::Terminal, cx);
+        if self.pending_terminal_spawn == Some(terminal_id) {
+            self.pending_terminal_spawn = None;
+        }
         terminal.refresh_metadata(cx);
         self.terminals.insert(terminal_id, terminal);
         self.persist_terminal_metadata(terminal_id, cx);
@@ -1773,6 +1900,9 @@ impl AgentPanel {
     ) {
         let was_active = self.active_terminal_id() == Some(terminal_id);
 
+        if self.pending_terminal_spawn == Some(terminal_id) {
+            self.pending_terminal_spawn = None;
+        }
         self.dismiss_terminal_notifications(terminal_id, cx);
         if self.terminals.remove(&terminal_id).is_none() {
             return;
@@ -1882,6 +2012,7 @@ impl AgentPanel {
             return;
         }
 
+        self.pending_terminal_spawn = Some(metadata.terminal_id);
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         let initial_title = Self::terminal_restore_initial_title(&metadata);
         self.spawn_terminal(
@@ -1896,6 +2027,23 @@ impl AgentPanel {
             window,
             cx,
         );
+    }
+
+    fn restore_terminal_for_panel_load(
+        &mut self,
+        metadata: TerminalThreadMetadata,
+        focus: bool,
+        source: AgentThreadSource,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        #[cfg(test)]
+        self.restore_test_terminal(metadata, focus, source, workspace, window, cx)
+            .log_err();
+
+        #[cfg(not(test))]
+        self.restore_terminal(metadata, focus, source, workspace, window, cx);
     }
 
     fn terminal_restore_working_directory(
@@ -2153,10 +2301,35 @@ impl AgentPanel {
         let event_subscription = cx.subscribe_in(&pop_up, window, {
             move |this, _, event: &AgentNotificationEvent, window, cx| match event {
                 AgentNotificationEvent::Accepted => {
+                    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+                        log::error!("root view should be a MultiWorkspace");
+                        return;
+                    };
                     cx.activate(true);
-                    window.activate_window();
-                    this.activate_terminal(terminal_id, true, window, cx);
-                    this.dismiss_terminal_notifications(terminal_id, cx);
+
+                    let workspace = this.workspace.clone();
+                    cx.defer(move |cx| {
+                        handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                window.activate_window();
+
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
+                                multi_workspace.activate(workspace.clone(), None, window, cx);
+
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.reveal_panel::<AgentPanel>(window, cx);
+                                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                        panel.update(cx, |panel, cx| {
+                                            panel.activate_terminal(terminal_id, true, window, cx);
+                                        });
+                                    }
+                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                });
+                            })
+                            .log_err();
+                    });
                 }
                 AgentNotificationEvent::Dismissed => {
                     this.dismiss_terminal_notifications(terminal_id, cx);
@@ -4025,7 +4198,99 @@ impl Panel for AgentPanel {
 impl AgentPanel {
     fn ensure_thread_initialized(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(self.base_view, BaseView::Uninitialized) {
-            self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+            if self.pending_terminal_spawn.is_some() {
+                return;
+            }
+            if self.should_create_terminal_for_new_entry(cx) {
+                let terminal_id = TerminalId::new();
+                self.pending_terminal_spawn = Some(terminal_id);
+                cx.defer_in(window, move |this, window, cx| {
+                    if matches!(this.base_view, BaseView::Uninitialized)
+                        && this.pending_terminal_spawn == Some(terminal_id)
+                        && this.should_create_terminal_for_new_entry(cx)
+                    {
+                        this.create_initial_terminal(
+                            terminal_id,
+                            AgentThreadSource::AgentPanel,
+                            window,
+                            cx,
+                        );
+                    } else if this.pending_terminal_spawn == Some(terminal_id) {
+                        this.pending_terminal_spawn = None;
+                    }
+                });
+            } else {
+                self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+            }
+        }
+    }
+
+    fn create_initial_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.supports_terminal(cx) {
+            if self.pending_terminal_spawn == Some(terminal_id) {
+                self.pending_terminal_spawn = None;
+            }
+            return;
+        }
+        let working_directory = self.terminal_working_directory(None, cx);
+        self.spawn_initial_terminal(terminal_id, working_directory, source, window, cx);
+    }
+
+    #[cfg(not(test))]
+    fn spawn_initial_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        working_directory: Option<PathBuf>,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.spawn_terminal(
+            terminal_id,
+            working_directory,
+            None,
+            None,
+            None,
+            true,
+            false,
+            source,
+            window,
+            cx,
+        );
+    }
+
+    #[cfg(test)]
+    fn spawn_initial_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        working_directory: Option<PathBuf>,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Err(error) = self.insert_display_only_terminal(
+            terminal_id,
+            working_directory,
+            None,
+            None,
+            None,
+            true,
+            false,
+            source,
+            window,
+            cx,
+        ) {
+            log::error!("failed to spawn test agent panel terminal: {error:#}");
+            if self.pending_terminal_spawn == Some(terminal_id) {
+                self.pending_terminal_spawn = None;
+                cx.notify();
+            }
         }
     }
 
@@ -5503,6 +5768,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Result<TerminalId> {
         let terminal_id = TerminalId::new();
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         self.insert_display_only_terminal(
             terminal_id,
             None,
@@ -5884,6 +6150,27 @@ mod tests {
         panel_b.update(cx, |panel, cx| panel.serialize(cx));
         cx.run_until_parked();
 
+        let workspace_a_id = workspace_a
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace A should have a database id");
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        let serialized_a: SerializedAgentPanel = cx
+            .background_spawn(async move { read_serialized_panel(workspace_a_id, &kvp) })
+            .await
+            .expect("workspace A should serialize panel state");
+        assert!(
+            serialized_a.last_active_thread.is_some(),
+            "active thread should be the thread restore target"
+        );
+        assert!(
+            serialized_a.last_active_terminal_id.is_none(),
+            "active thread serialization should not also include a terminal restore target"
+        );
+
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::init_global(cx);
+        });
+
         // Load fresh panels for each workspace and verify independent state.
         let async_cx = cx.update(|window, cx| window.to_async(cx));
         let loaded_a = AgentPanel::load(workspace_a.downgrade(), async_cx)
@@ -5922,6 +6209,278 @@ mod tests {
                 panel.active_conversation_view().is_none(),
                 "workspace B should have no active thread when it had no prior conversation"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_active_terminal_serialize_and_load_round_trip(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            TerminalThreadMetadataStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_new_thread(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+        let terminal_id = panel
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        panel.update(cx, |panel, cx| panel.serialize(cx));
+        cx.run_until_parked();
+
+        let workspace_id = workspace
+            .read_with(cx, |workspace, _cx| workspace.database_id())
+            .expect("workspace should have a database id");
+        let kvp = cx.update(|_window, cx| KeyValueStore::global(cx));
+        let serialized: SerializedAgentPanel = cx
+            .background_spawn(async move { read_serialized_panel(workspace_id, &kvp) })
+            .await
+            .expect("workspace should serialize panel state");
+        assert_eq!(
+            serialized.last_active_terminal_id,
+            Some(terminal_id.to_key_string())
+        );
+        assert!(
+            serialized.last_active_thread.is_none(),
+            "active terminal serialization should not also include a thread restore target"
+        );
+
+        cx.update(|_window, cx| {
+            TerminalThreadMetadataStore::init_global(cx);
+        });
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded = AgentPanel::load(workspace.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        for _ in 0..8 {
+            cx.run_until_parked();
+        }
+
+        loaded.read_with(cx, |panel, cx| {
+            assert_eq!(panel.active_terminal_id(), Some(terminal_id));
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "the restored terminal should remain active instead of falling back to a draft"
+            );
+            assert!(
+                panel
+                    .terminals(cx)
+                    .into_iter()
+                    .any(|terminal| terminal.id == terminal_id),
+                "active terminal metadata should be restored into the loaded panel"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_restore_prevents_initial_terminal_creation(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+            panel.pending_terminal_spawn = Some(TerminalId::new());
+            panel.set_active(true, window, cx);
+        });
+        for _ in 0..4 {
+            cx.run_until_parked();
+        }
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.terminals(cx).is_empty(),
+                "activation while a terminal restore is pending should not create a second terminal"
+            );
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "activation while a terminal restore is pending should not fall back to a draft"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_repeated_activation_only_creates_one_initial_terminal(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+            panel.set_active(true, window, cx);
+            panel.set_active(true, window, cx);
+        });
+        for _ in 0..8 {
+            cx.run_until_parked();
+        }
+
+        panel.read_with(&cx, |panel, cx| {
+            assert_eq!(
+                panel.terminals(cx).len(),
+                1,
+                "repeated activation should only enqueue one initial terminal"
+            );
+            assert!(
+                panel.active_terminal_id().is_some(),
+                "the single initial terminal should become active"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_restored_terminal_does_not_update_global_entry_kind(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            TerminalThreadMetadataStore::init_global(cx);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_new_thread(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            assert_eq!(
+                read_global_last_created_entry_kind(&KeyValueStore::global(cx)),
+                Some(AgentPanelEntryKind::Thread)
+            );
+        });
+
+        let metadata = TerminalThreadMetadata {
+            terminal_id: TerminalId::new(),
+            title: "Restored Terminal".into(),
+            custom_title: None,
+            created_at: Utc::now(),
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/project",
+            )])),
+            remote_connection: None,
+            working_directory: None,
+        };
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.restore_test_terminal(
+                    metadata,
+                    true,
+                    AgentThreadSource::AgentPanel,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .expect("test terminal should be restored");
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                read_global_last_created_entry_kind(&KeyValueStore::global(cx)),
+                Some(AgentPanelEntryKind::Thread),
+                "restoring a terminal should not change the global new-entry default"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_workspace_load_uses_global_terminal_entry_kind(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            TerminalThreadMetadataStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project-a", json!({ "file.txt": "" }))
+            .await;
+        fs.insert_tree("/project-b", json!({ "file.txt": "" }))
+            .await;
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+        let project_a = Project::test(fs.clone(), [Path::new("/project-a")], cx).await;
+        let project_b = Project::test(fs.clone(), [Path::new("/project-b")], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let multi_workspace_entity = multi_workspace.root(cx).unwrap();
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace_a.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            cx.new(|cx| AgentPanel::new(workspace, None, window, cx))
+        });
+        panel_a
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Dev Server", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.update(|_window, cx| {
+            assert_eq!(
+                read_global_last_created_entry_kind(&KeyValueStore::global(cx)),
+                Some(AgentPanelEntryKind::Terminal)
+            );
+        });
+
+        let workspace_b = multi_workspace_entity.update_in(cx, |multi_workspace, window, cx| {
+            multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+        });
+        workspace_b.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let async_cx = cx.update(|window, cx| window.to_async(cx));
+        let loaded = AgentPanel::load(workspace_b.downgrade(), async_cx)
+            .await
+            .expect("panel load should succeed");
+        workspace_b.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(loaded.clone(), window, cx);
+        });
+        loaded.update_in(cx, |panel, window, cx| {
+            panel.set_active(true, window, cx);
+        });
+        for _ in 0..8 {
+            cx.run_until_parked();
+        }
+
+        loaded.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_terminal_id().is_some(),
+                "new workspace should initialize to a terminal when terminal was the globally last used entry kind"
+            );
+            assert!(
+                panel.active_conversation_view().is_none(),
+                "new workspace should not initialize to a draft when terminal is the global entry kind"
+            );
+            assert!(panel.should_create_terminal_for_new_entry(cx));
         });
     }
 
@@ -7749,6 +8308,102 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(!first_terminal.has_notification);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_notification_view_activates_terminal_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        fs.insert_tree("/project_b", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs, [Path::new("/project_b")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let first_terminal_id = panel_a
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel_a
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert_eq!(multi_workspace.workspace(), &workspace_b);
+            })
+            .unwrap();
+        panel_a.read_with(cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+
+        panel_a.update(cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        let notification = cx
+            .windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("terminal bell should show a notification");
+        notification
+            .update(cx, |notification, _window, cx| notification.accept(cx))
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert_eq!(multi_workspace.workspace(), &workspace_a);
+            })
+            .unwrap();
+        panel_a.read_with(cx, |panel, cx| {
+            assert_eq!(panel.active_terminal_id(), Some(first_terminal_id));
             let first_terminal = panel
                 .terminals(cx)
                 .into_iter()
