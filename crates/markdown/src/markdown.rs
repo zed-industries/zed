@@ -19,6 +19,7 @@ use settings::Settings as _;
 use theme_settings::ThemeSettings;
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::iter;
 use std::mem;
@@ -34,21 +35,90 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
-    TextStyleRefinement, actions, img, point, quad,
+    StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement, actions, img, point, quad,
 };
-use language::{CharClassifier, Language, LanguageRegistry, Rope};
+use language::{CharClassifier, HighlightId, Language, LanguageId, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown_with_options,
 };
 use pulldown_cmark::{Alignment, BlockQuoteKind};
+use settings::SettingsStore;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
+
+const HIGHLIGHT_CACHE_MAX_ENTRIES: usize = 16;
+
+type CachedHighlightRuns = Arc<[(Range<usize>, HighlightId)]>;
+
+#[derive(Hash, Eq, PartialEq, Clone, Copy)]
+struct HighlightCacheKey {
+    source_start: usize,
+    source_end: usize,
+    language_id: LanguageId,
+}
+
+struct HighlightCacheEntry {
+    runs: CachedHighlightRuns,
+    last_used_seq: u64,
+}
+
+#[derive(Default)]
+struct HighlightCache {
+    entries: HashMap<HighlightCacheKey, HighlightCacheEntry>,
+    next_seq: u64,
+}
+
+impl HighlightCache {
+    fn get_or_insert<F>(&mut self, key: HighlightCacheKey, compute: F) -> CachedHighlightRuns
+    where
+        F: FnOnce() -> Vec<(Range<usize>, HighlightId)>,
+    {
+        if let Some(entry) = self.entries.get_mut(&key) {
+            self.next_seq += 1;
+            entry.last_used_seq = self.next_seq;
+            return entry.runs.clone();
+        }
+
+        let runs: CachedHighlightRuns = Arc::from(compute());
+        self.next_seq += 1;
+        self.entries.insert(
+            key,
+            HighlightCacheEntry {
+                runs: runs.clone(),
+                last_used_seq: self.next_seq,
+            },
+        );
+        self.evict_if_needed();
+        runs
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.entries.len() > HIGHLIGHT_CACHE_MAX_ENTRIES {
+            let oldest_key = self
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| e.last_used_seq)
+                .map(|(k, _)| *k);
+            match oldest_key {
+                Some(key) => {
+                    self.entries.remove(&key);
+                }
+                None => break,
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.next_seq = 0;
+    }
+}
 
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
@@ -339,6 +409,8 @@ pub struct Markdown {
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
+    highlight_cache: Rc<RefCell<HighlightCache>>,
+    _settings_subscription: Subscription,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -487,6 +559,9 @@ impl Markdown {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+        let settings_subscription = cx.observe_global::<SettingsStore>(|this: &mut Self, _cx| {
+            this.highlight_cache.borrow_mut().clear();
+        });
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -510,6 +585,8 @@ impl Markdown {
             context_menu_selected_text: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
+            highlight_cache: Rc::new(RefCell::new(HighlightCache::default())),
+            _settings_subscription: settings_subscription,
         };
         this.parse(cx);
         this
@@ -763,6 +840,7 @@ impl Markdown {
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
+        self.highlight_cache.borrow_mut().clear();
         if self.source.is_empty() {
             self.should_reparse = false;
             self.pending_parse.take();
@@ -899,6 +977,7 @@ impl Markdown {
             let (parsed, images_by_source_offset) = parsed.await;
 
             this.update(cx, |this, cx| {
+                this.highlight_cache.borrow_mut().clear();
                 this.parsed_markdown = parsed;
                 this.images_by_source_offset = images_by_source_offset;
                 if this.active_root_block.is_some_and(|block_index| {
@@ -1670,10 +1749,12 @@ impl Element for MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let highlight_cache = self.markdown.read(cx).highlight_cache.clone();
         let mut builder = MarkdownElementBuilder::new(
             &self.style.container_style,
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
+            highlight_cache,
         );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
@@ -2581,6 +2662,7 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+    highlight_cache: Rc<RefCell<HighlightCache>>,
 }
 
 #[derive(Default)]
@@ -2599,6 +2681,7 @@ impl MarkdownElementBuilder {
         container_style: &StyleRefinement,
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
+        highlight_cache: Rc<RefCell<HighlightCache>>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -2619,6 +2702,7 @@ impl MarkdownElementBuilder {
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
+            highlight_cache,
         }
     }
 
@@ -2788,8 +2872,20 @@ impl MarkdownElementBuilder {
         self.current_source_index = source_range.end;
 
         if let Some(Some(language)) = self.code_block_stack.last() {
+            let language = language.clone();
+            let key = HighlightCacheKey {
+                source_start: source_range.start,
+                source_end: source_range.end,
+                language_id: language.id(),
+            };
+            let highlight_runs = self.highlight_cache.borrow_mut().get_or_insert(key, || {
+                language.highlight_text(&Rope::from(text), 0..text.len())
+            });
+
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
+            for (range, highlight_id) in highlight_runs.iter() {
+                let range = range.clone();
+                let highlight_id = *highlight_id;
                 if range.start > offset {
                     self.pending_line
                         .runs
