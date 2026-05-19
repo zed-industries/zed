@@ -378,12 +378,7 @@ impl AppContext for AsyncWindowContext {
     where
         T: 'static,
     {
-        // Associate the new entity with our captured window so that
-        // `with_window` can resolve a dispatch target before the entity has
-        // been rendered.
-        self.app
-            .update_window(self.window, |_, _, cx| cx.new(build_entity))
-            .expect("window was unexpectedly closed")
+        self.app.new(build_entity)
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Reservation<T> {
@@ -395,11 +390,7 @@ impl AppContext for AsyncWindowContext {
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Entity<T> {
-        self.app
-            .update_window(self.window, |_, _, cx| {
-                cx.insert_entity(reservation, build_entity)
-            })
-            .expect("window was unexpectedly closed")
+        self.app.insert_entity(reservation, build_entity)
     }
 
     fn update_entity<T: 'static, R>(
