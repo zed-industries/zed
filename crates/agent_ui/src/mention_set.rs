@@ -429,13 +429,7 @@ impl MentionSet {
                 .background_executor()
                 .spawn({
                     let abs_path = abs_path.clone();
-                    async move {
-                        use std::io::Read as _;
-                        let mut file = std::fs::File::open(&abs_path)?;
-                        let mut buf = [0u8; 8192];
-                        let n = file.read(&mut buf)?;
-                        anyhow::Ok(buf[..n].contains(&0))
-                    }
+                    async move { anyhow::Ok(is_binary_file(&abs_path)) }
                 })
                 .await
                 .unwrap_or(false);
@@ -846,6 +840,25 @@ mod tests {
     }
 
     #[test]
+    fn test_is_binary_file() {
+        let dir = std::env::temp_dir();
+
+        let text_path = dir.join("zed_test_text.txt");
+        std::fs::write(&text_path, b"Hello, world!\nno null bytes here\n").unwrap();
+        assert!(!is_binary_file(&text_path));
+
+        let binary_path = dir.join("zed_test_binary.bin");
+        std::fs::write(&binary_path, b"some\x00binary\x00data").unwrap();
+        assert!(is_binary_file(&binary_path));
+
+        let empty_path = dir.join("zed_test_empty.bin");
+        std::fs::write(&empty_path, b"").unwrap();
+        assert!(!is_binary_file(&empty_path));
+
+        assert!(!is_binary_file(Path::new("/nonexistent/zed_test_missing")));
+    }
+
+    #[test]
     fn test_is_raster_image_path_is_case_insensitive() {
         // Regression test for #54308: drag-and-dropping a file whose extension
         // is uppercase (e.g. `.PNG`) used to be treated as a non-image file.
@@ -986,6 +999,16 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
             None
         }
     }
+}
+
+fn is_binary_file(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; 8192];
+    let n = file.read(&mut buf).unwrap_or(0);
+    buf[..n].contains(&0)
 }
 
 // Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
