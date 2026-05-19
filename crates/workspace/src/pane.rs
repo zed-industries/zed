@@ -28,6 +28,7 @@ use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
 use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
+use remote::RemoteConnectionOptions;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -4063,14 +4064,23 @@ impl Pane {
                     );
                     return (true, false);
                 }
-                if project.is_via_remote_server() && !project.is_via_wsl_with_host_interop(cx) {
-                    workspace.show_error(
-                        &anyhow::anyhow!("Cannot drop local files on a remote SSH/Docker project"),
-                        cx,
+                if project.is_via_remote_server() {
+                    let is_wsl = matches!(
+                        project.remote_connection_options(cx),
+                        Some(RemoteConnectionOptions::Wsl(_))
                     );
-                    return (true, false);
+                    if !is_wsl {
+                        workspace.show_error(
+                            &anyhow::anyhow!(
+                                "Cannot drop local files on a remote SSH/Docker project"
+                            ),
+                            cx,
+                        );
+                        return (true, false);
+                    }
+                    return (false, true);
                 }
-                (false, project.is_via_wsl_with_host_interop(cx))
+                (false, false)
             })
             .unwrap_or((true, false));
         if should_block {
