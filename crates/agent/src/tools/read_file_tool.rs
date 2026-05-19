@@ -18,6 +18,23 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
+/// Resolves the optional `start_line` / `end_line` inputs from the tool schema
+/// to a concrete 1-indexed, inclusive `(start, end)` line range:
+///
+/// - `start` defaults to 1 and is clamped to `>= 1` (the model occasionally passes
+///   `0` despite instructions to be 1-indexed).
+/// - `end` defaults to `u32::MAX` and is clamped to `>= start`, so callers always
+///   read at least one line even when the model passes `end < start`.
+///
+/// Callers translate this 1-indexed inclusive range to whichever coordinate
+/// system their slicing API wants (e.g. 0-indexed exclusive row ranges for
+/// `Buffer::text_for_range`).
+fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u32) {
+    let start = start_line.unwrap_or(1).max(1);
+    let end = end_line.unwrap_or(u32::MAX).max(start);
+    (start, end)
+}
+
 /// Prefixes each line of `text` with its line number in `cat -n` format:
 /// the line number is right-aligned in a 6-character field, followed by a
 /// single tab, followed by the line's original content (including its
@@ -35,8 +52,17 @@ fn format_with_line_numbers(text: &str, start_line: u32) -> String {
 
     let mut output = String::with_capacity(text.len() + text.len() / 4);
     for (offset, line) in text.split_inclusive('\n').enumerate() {
+        // If ever a file has more than u32 lines, log a warning
+        if offset == u32::MAX as usize {
+            log::warn!(
+                "format_with_line_numbers: file has more than {} lines; \
+                 line numbers past this point will wrap and be incorrect",
+                u32::MAX
+            );
+        }
         let line_number = start_line.saturating_add(offset as u32);
-        let _ = write!(output, "{:>6}\t{}", line_number, line);
+        // Writes to a `String` are infallible, so the `Result` can be ignored.
+        let _ = write!(output, "{line_number:>6}\t{line}");
     }
     output
 }
@@ -64,17 +90,10 @@ async fn read_global_skill_file(
     ]));
 
     let (raw_text, first_line_number) = if start_line.is_some() || end_line.is_some() {
-        // Mirror the line-range semantics of the buffer-backed path: 1-indexed,
-        // start clamped to >= 1, end exclusive of the next line, and always
-        // returning at least one line. `split_inclusive` keeps each line's
-        // terminator attached, so CRLF stays CRLF and the trailing newline of
-        // the last returned line is preserved — matching `Buffer::text_for_range`.
-        let start = start_line.unwrap_or(1).max(1);
-        let mut end = end_line.unwrap_or(u32::MAX);
-        if end < start {
-            end = start;
-        }
-
+        // `split_inclusive` keeps each line's terminator attached, so CRLF stays
+        // CRLF and the trailing newline of the last returned line is preserved —
+        // matching `Buffer::text_for_range` in the buffer-backed path.
+        let (start, end) = resolve_line_range(start_line, end_line);
         let lines: Vec<&str> = content.split_inclusive('\n').collect();
         let start_idx = (start as usize).saturating_sub(1).min(lines.len());
         let end_idx = (end as usize).min(lines.len()).max(start_idx);
@@ -367,20 +386,20 @@ impl AgentTool for ReadFileTool {
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
                 let (raw_text, first_line_number) = buffer.read_with(cx, |buffer, _cx| {
-                    // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
-                    let start = input.start_line.unwrap_or(1).max(1);
+                    let (start, end) = resolve_line_range(input.start_line, input.end_line);
                     let start_row = start - 1;
                     if start_row <= buffer.max_point().row {
                         let column = buffer.line_indent_for_row(start_row).raw_len();
                         anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
                     }
 
-                    let mut end_row = input.end_line.unwrap_or(u32::MAX);
-                    if end_row <= start_row {
-                        end_row = start_row + 1; // read at least one lines
-                    }
+                    // `end` is 1-indexed inclusive; `Point` rows are 0-indexed.
+                    // Using `end` directly as the (exclusive) end row is the
+                    // standard inclusive→exclusive translation, and since
+                    // `resolve_line_range` guarantees `end >= start`, we always
+                    // read at least one line.
                     let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
-                    let end_anchor = buffer.anchor_before(Point::new(end_row, 0));
+                    let end_anchor = buffer.anchor_before(Point::new(end, 0));
                     (
                         buffer.text_for_range(start_anchor..end_anchor).collect::<String>(),
                         start,
@@ -405,7 +424,7 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                if buffer_content.is_outline {
+                if buffer_content.is_synthetic {
                     Ok(formatdoc! {"
                         SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
 
@@ -450,6 +469,27 @@ impl AgentTool for ReadFileTool {
 
             result
         })
+    }
+
+    fn replay(
+        &self,
+        input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        if let LanguageModelToolResultContent::Text(text) = output {
+            let markdown = MarkdownCodeBlock {
+                tag: &input.path,
+                text: &text,
+            }
+            .to_string();
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(markdown)),
+            ]));
+        }
+
+        Ok(())
     }
 }
 
