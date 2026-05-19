@@ -1,15 +1,13 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_NAME_LEN,
-    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, validate_description,
-    validate_name,
+    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata,
+    global_skills_dir, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
-    Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size,
+    App, Bounds, Entity, FocusHandle, Focusable, Subscription, Task, TextStyle, Tiling,
+    TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
@@ -39,6 +37,10 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 2;
 const SCOPE_FIELD_TAB_INDEX: isize = 3;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
 const BODY_FIELD_TAB_INDEX: isize = 5;
+
+const SKILL_CREATOR_WINDOW_WIDTH: f32 = 720.0;
+const SKILL_CREATOR_WINDOW_HEIGHT: f32 = 720.0;
+const SKILL_CREATOR_MIN_HEIGHT: f32 = 560.0;
 
 pub fn init(_cx: &mut App) {}
 
@@ -137,7 +139,11 @@ pub fn open_skill_creator(
 
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
-            let bounds = Bounds::centered(None, size(px(720.0), px(720.0)), cx);
+            let window_size = size(
+                px(SKILL_CREATOR_WINDOW_WIDTH),
+                px(SKILL_CREATOR_WINDOW_HEIGHT),
+            );
+            let bounds = Bounds::centered(None, window_size, cx);
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
@@ -157,7 +163,10 @@ pub fn open_skill_creator(
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
+                    window_min_size: Some(size(
+                        px(SKILL_CREATOR_WINDOW_WIDTH),
+                        px(SKILL_CREATOR_MIN_HEIGHT),
+                    )),
                     kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
@@ -617,12 +626,6 @@ impl SkillCreator {
     fn render_body_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let theme = cx.theme().clone();
-
-        let hint: SharedString = if let Some(err) = self.body_error {
-            err.into()
-        } else {
-            "The full instructions the agent will follow when this skill is used. Markdown is supported.".into()
-        };
 
         let has_error = self.body_error.is_some();
 
