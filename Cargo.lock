@@ -366,6 +366,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
