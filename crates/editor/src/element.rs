@@ -7391,65 +7391,102 @@ impl EditorElement {
                     ..cmp::min(range.end.row().next_row(), end_row)
             };
 
-            let highlighted_range = HighlightedRange {
-                color,
-                line_height: layout.position_map.line_height,
-                corner_radius,
-                start_y: layout.content_origin.y
+            let mut highlighted_ranges = Vec::new();
+            let mut contiguous_lines = Vec::new();
+            let mut contiguous_start_y = Pixels::ZERO;
+
+            for row in row_range.iter_rows() {
+                let line_layout = &layout.position_map.line_layouts[row.minus(start_row) as usize];
+                let row_y = layout.content_origin.y
                     + Pixels::from(
-                        (row_range.start.as_f64() - layout.position_map.scroll_position.y)
+                        (row.as_f64() - layout.position_map.scroll_position.y)
                             * ScrollOffset::from(layout.position_map.line_height),
-                    ),
-                lines: row_range
-                    .iter_rows()
-                    .map(|row| {
-                        let line_layout =
-                            &layout.position_map.line_layouts[row.minus(start_row) as usize];
-                        let alignment_offset =
-                            line_layout.alignment_offset(layout.text_align, layout.content_width);
-                        let range_start = if row == range.start.row() {
-                            range.start.column() as usize
-                        } else {
-                            0
-                        };
-                        let range_end = if row == range.end.row() {
-                            range.end.column() as usize
-                        } else {
-                            line_layout.len
-                        };
-                        let x_ranges = line_layout.x_ranges_for_range(range_start..range_end);
-                        let mut start_x = x_ranges.first().map_or_else(
-                            || line_layout.x_for_index(range_start),
-                            |range| range.start,
-                        );
-                        let mut end_x = if row == range.end.row() {
-                            x_ranges.last().map_or_else(
-                                || line_layout.x_for_index(range_end),
-                                |range| range.end,
-                            )
-                        } else {
-                            line_layout.width + line_end_overshoot
-                        };
+                    );
+                let alignment_offset =
+                    line_layout.alignment_offset(layout.text_align, layout.content_width);
+                let range_start = if row == range.start.row() {
+                    range.start.column() as usize
+                } else {
+                    0
+                };
+                let range_end = if row == range.end.row() {
+                    range.end.column() as usize
+                } else {
+                    line_layout.len
+                };
+                let mut x_ranges = line_layout.x_ranges_for_range(range_start..range_end);
+                if x_ranges.is_empty() {
+                    x_ranges.push(
+                        line_layout.x_for_index(range_start)..line_layout.x_for_index(range_end),
+                    );
+                }
+                if row != range.end.row()
+                    && let Some(last_range) = x_ranges.last_mut()
+                {
+                    last_range.end = line_layout.width + line_end_overshoot;
+                }
+
+                let to_screen_x = |x| {
+                    layout.content_origin.x
+                        + Pixels::from(
+                            ScrollPixelOffset::from(x + alignment_offset)
+                                - layout.position_map.scroll_pixel_position.x,
+                        )
+                };
+                let lines = x_ranges
+                    .into_iter()
+                    .map(|x_range| {
+                        let mut start_x = x_range.start;
+                        let mut end_x = x_range.end;
                         if start_x > end_x {
                             mem::swap(&mut start_x, &mut end_x);
                         }
-                        let to_screen_x = |x| {
-                            layout.content_origin.x
-                                + Pixels::from(
-                                    ScrollPixelOffset::from(x + alignment_offset)
-                                        - layout.position_map.scroll_pixel_position.x,
-                                )
-                        };
-
                         HighlightedRangeLine {
                             start_x: to_screen_x(start_x),
                             end_x: to_screen_x(end_x),
                         }
                     })
-                    .collect(),
-            };
+                    .collect::<Vec<_>>();
 
-            highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
+                if lines.len() == 1 {
+                    if contiguous_lines.is_empty() {
+                        contiguous_start_y = row_y;
+                    }
+                    contiguous_lines.extend(lines);
+                } else {
+                    if !contiguous_lines.is_empty() {
+                        highlighted_ranges.push(HighlightedRange {
+                            color,
+                            line_height: layout.position_map.line_height,
+                            corner_radius,
+                            start_y: contiguous_start_y,
+                            lines: mem::take(&mut contiguous_lines),
+                        });
+                    }
+
+                    highlighted_ranges.extend(lines.into_iter().map(|line| HighlightedRange {
+                        color,
+                        line_height: layout.position_map.line_height,
+                        corner_radius,
+                        start_y: row_y,
+                        lines: vec![line],
+                    }));
+                }
+            }
+
+            if !contiguous_lines.is_empty() {
+                highlighted_ranges.push(HighlightedRange {
+                    color,
+                    line_height: layout.position_map.line_height,
+                    corner_radius,
+                    start_y: contiguous_start_y,
+                    lines: contiguous_lines,
+                });
+            }
+
+            for highlighted_range in highlighted_ranges {
+                highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
+            }
         }
     }
 
