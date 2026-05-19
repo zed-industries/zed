@@ -4108,6 +4108,9 @@ impl BackgroundScanner {
             fs_events_rx = Box::pin(events.map(|events| events.into_iter().collect()));
 
             let state = self.state.lock().await;
+            for path in state.watched_dir_abs_paths_by_entry_id.values() {
+                self.watcher.add(path).log_err();
+            }
             for target in state.symlink_paths_by_target.keys() {
                 if !target.starts_with(root_abs_path.as_path()) {
                     self.watcher.add(target).log_err();
