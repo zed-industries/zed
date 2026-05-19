@@ -1131,16 +1131,12 @@ impl ExtensionStore {
     ) -> Task<()> {
         let old_index = &self.extension_index;
 
-        let mut suppressed_extensions_to_remove = Vec::new();
-
-        new_index.extensions.retain(|extension_id, _| {
-            if SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref()) {
-                suppressed_extensions_to_remove.push(extension_id.clone());
-                false
-            } else {
-                true
-            }
-        });
+        let suppressed_extensions_to_remove = new_index
+            .extensions
+            .extract_if(.., |extension_id, _| {
+                SUPPRESSED_EXTENSIONS.contains(extension_id.as_ref())
+            })
+            .collect::<Vec<_>>();
 
         // Determine which extensions need to be loaded and unloaded, based
         // on the changes to the manifest and the extensions that we know have been
@@ -1183,9 +1179,8 @@ impl ExtensionStore {
 
         let trigger_suppressed_extension_removal =
             move |this: &mut ExtensionStore, cx: &mut Context<ExtensionStore>| {
-                for id in suppressed_extensions_to_remove.iter() {
-                    this.uninstall_extension(id.clone(), cx)
-                        .detach_and_log_err(cx);
+                for (id, _) in suppressed_extensions_to_remove {
+                    this.uninstall_extension(id, cx).detach_and_log_err(cx);
                 }
             };
 
