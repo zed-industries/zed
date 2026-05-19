@@ -2276,9 +2276,9 @@ impl Sidebar {
                                             .child(Label::new("-click").color(Color::Muted));
 
                                         let label = if has_threads {
-                                            "Focus Last Workspace"
+                                            "Focus Last Project"
                                         } else {
-                                            "Focus Workspace"
+                                            "Focus Project"
                                         };
 
                                         h_flex()
@@ -2390,7 +2390,7 @@ impl Sidebar {
                                                     )
                                                     .icon_size(IconSize::Small)
                                                     .visible_on_hover(&row_group_name)
-                                                    .tooltip(Tooltip::text("Close Workspace"))
+                                                    .tooltip(Tooltip::text("Close Worktree"))
                                                     .on_click(move |_, window, cx| {
                                                         cx.stop_propagation();
                                                         window.prevent_default();
