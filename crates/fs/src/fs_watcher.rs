@@ -164,7 +164,7 @@ fn push_notify_event(
             kind: Some(PathEventKind::Rescan),
         });
     }
-
+    log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
 }
 
