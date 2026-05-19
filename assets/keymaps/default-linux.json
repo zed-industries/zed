@@ -8,10 +8,8 @@
       "end": "menu::SelectLast",
       "shift-pagedown": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
-      "ctrl-n": "menu::SelectNext",
       "tab": "menu::SelectNext",
       "down": "menu::SelectNext",
-      "ctrl-p": "menu::SelectPrevious",
       "shift-tab": "menu::SelectPrevious",
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
@@ -52,6 +50,13 @@
     "bindings": {
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext",
+    },
+  },
+  {
+    "context": "Picker",
+    "bindings": {
+      "ctrl-p": "menu::SelectPrevious",
+      "ctrl-n": "menu::SelectNext",
     },
   },
   {
