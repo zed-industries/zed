@@ -19,9 +19,11 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 - [`web-design-guidelines`](https://skills.sh/vercel-labs/agent-skills/web-design-guidelines): audit UI code for design, accessibility, and UX compliance
 - [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
 
-## Installing Skills {#installing-skills}
+## Adding Skills {#adding-skills}
 
-Skills are folders on disk. To install a skill, copy or clone its folder into your global or project-local skills folder.
+### From the registry {#from-the-registry}
+
+Skills are folders on disk. To install a skill from the registry, copy or clone its folder into your global or project-local skills folder.
 
 For example, to install the `frontend-design` skill from GitHub globally:
 
@@ -33,6 +35,12 @@ git sparse-checkout set frontend-design
 ```
 
 For a project-local install, do the same inside your project's `.agents/skills/` folder.
+
+### Create your own {#create-your-own}
+
+Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or the agent will pick it up automatically when you ask it to help create a skill.
+
+See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
 
 ## Using Skills {#using-skills}
 
@@ -63,9 +71,7 @@ disable-model-invocation: true
 ---
 ```
 
-## Creating a Skill {#creating-a-skill}
-
-Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or the agent will pick it up automatically when you ask it to help create a skill.
+## Skill Format {#skill-format}
 
 ### Folder structure {#folder-structure}
 
