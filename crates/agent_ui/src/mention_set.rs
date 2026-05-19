@@ -12,8 +12,8 @@ use editor::{
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
 use gpui::{
-    AppContext, ClipboardEntry, Context, Empty, Entity, EntityId, Image, ImageFormat, Img,
-    SharedString, Task, WeakEntity,
+    AppContext, BackgroundExecutor, ClipboardEntry, Context, Empty, Entity, EntityId, Image,
+    ImageFormat, Img, SharedString, Task, WeakEntity,
 };
 use http_client::{AsyncBody, HttpClientWithUrl};
 use itertools::Either;
@@ -425,14 +425,7 @@ impl MentionSet {
 
         let buffer = project.update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
-            let is_binary = cx
-                .background_executor()
-                .spawn({
-                    let abs_path = abs_path.clone();
-                    async move { anyhow::Ok(is_binary_file(&abs_path)) }
-                })
-                .await
-                .unwrap_or(false);
+            let is_binary = is_binary_file(&abs_path, &cx.background_executor()).await;
             if is_binary {
                 return Ok(Mention::Text {
                     content: abs_path.to_string_lossy().into_owned(),
@@ -839,23 +832,24 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_is_binary_file() {
+    #[gpui::test]
+    async fn test_is_binary_file(cx: &mut TestAppContext) {
+        let executor = cx.executor();
         let dir = std::env::temp_dir();
 
         let text_path = dir.join("zed_test_text.txt");
         std::fs::write(&text_path, b"Hello, world!\nno null bytes here\n").unwrap();
-        assert!(!is_binary_file(&text_path));
+        assert!(!is_binary_file(&text_path, &executor).await);
 
         let binary_path = dir.join("zed_test_binary.bin");
         std::fs::write(&binary_path, b"some\x00binary\x00data").unwrap();
-        assert!(is_binary_file(&binary_path));
+        assert!(is_binary_file(&binary_path, &executor).await);
 
         let empty_path = dir.join("zed_test_empty.bin");
         std::fs::write(&empty_path, b"").unwrap();
-        assert!(!is_binary_file(&empty_path));
+        assert!(!is_binary_file(&empty_path, &executor).await);
 
-        assert!(!is_binary_file(Path::new("/nonexistent/zed_test_missing")));
+        assert!(!is_binary_file(Path::new("/nonexistent/zed_test_missing"), &executor).await);
     }
 
     #[test]
@@ -1001,14 +995,17 @@ fn image_format_from_external_content(format: image::ImageFormat) -> Option<Imag
     }
 }
 
-fn is_binary_file(path: &Path) -> bool {
-    use std::io::Read as _;
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut buf = [0u8; 8192];
-    let n = file.read(&mut buf).unwrap_or(0);
-    buf[..n].contains(&0)
+fn is_binary_file(path: &Path, executor: &BackgroundExecutor) -> Task<bool> {
+    let path = path.to_path_buf();
+    executor.spawn(async move {
+        use std::io::Read as _;
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return false;
+        };
+        let mut buf = [0u8; 8192];
+        let n = file.read(&mut buf).unwrap_or(0);
+        buf[..n].contains(&0)
+    })
 }
 
 // Case-insensitive so that e.g. `foo.PNG` is recognized the same as `foo.png`.
