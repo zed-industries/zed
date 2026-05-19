@@ -725,7 +725,7 @@ impl UserStore {
             return Task::ready(Ok(()));
         };
         let Some(system_id) = client.telemetry().system_id().map(|id| id.to_string()) else {
-            // Without a system id we have no addressable target row on the
+            // Without a system ID we have no addressable target row on the
             // server, so the selection stays purely session-local.
             return Task::ready(Ok(()));
         };
