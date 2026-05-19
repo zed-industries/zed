@@ -85,22 +85,6 @@ pub fn draft_has_user_content<'a>(
 fn blocks_have_user_content(blocks: &[acp::ContentBlock]) -> bool {
     blocks.iter().any(|block| match block {
         acp::ContentBlock::Text(text) => !text.text.trim().is_empty(),
-        acp::ContentBlock::Image(image) => {
-            !image.data.is_empty() || image.uri.as_ref().is_some_and(|uri| !uri.trim().is_empty())
-        }
-        acp::ContentBlock::Audio(audio) => !audio.data.is_empty(),
-        acp::ContentBlock::ResourceLink(link) => {
-            !link.uri.trim().is_empty() || !link.name.trim().is_empty()
-        }
-        acp::ContentBlock::Resource(resource) => match &resource.resource {
-            acp::EmbeddedResourceResource::TextResourceContents(text) => {
-                !text.text.trim().is_empty() || !text.uri.trim().is_empty()
-            }
-            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
-                !blob.blob.is_empty() || !blob.uri.trim().is_empty()
-            }
-            _ => true,
-        },
         _ => true,
     })
 }
