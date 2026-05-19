@@ -3153,7 +3153,7 @@ impl AcpThread {
                 terminal_id,
                 status,
             } => {
-                if let Some(entity) = self.terminals.get(&terminal_id) {
+                if let Some(entity) = self.terminals.remove(&terminal_id) {
                     entity.update(cx, |_term, cx| {
                         cx.notify();
                     });
@@ -5791,6 +5791,85 @@ mod tests {
         });
     }
 
+    /// Regression test:
+    /// https://github.com/zed-industries/zed/issues/57099
+    /// Make sure terminal scrollback memory is freed when the terminal exits.
+    #[gpui::test]
+    async fn test_acp_terminals_removed_on_exit(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+
+        let lower = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap();
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "echo hello".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower.clone(),
+                },
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: b"hello\n".to_vec(),
+                },
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            assert!(
+                thread.terminal(terminal_id.clone()).is_ok(),
+                "terminal should exist before exit"
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            assert!(
+                thread.terminal(terminal_id.clone()).is_err(),
+                "terminal should be removed from the thread after exit to free scrollback memory"
+            );
+        });
+    }
     /// Regression test: if the inner send_task is cancelled before it can
     /// fire `tx.send(...)` (e.g. because the underlying future was dropped),
     /// the outer task observes `rx.await` returning `Err(Cancelled)` and
