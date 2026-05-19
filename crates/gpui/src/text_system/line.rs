@@ -1027,4 +1027,72 @@ mod tests {
         assert_eq!(right.decoration_runs[1].len, 1);
         assert_eq!(right.decoration_runs[1].color, blue);
     }
+
+    #[test]
+    fn test_split_at_pure_hebrew_after_first_character() {
+        let line = make_shaped_line("אבג", &[(4, 0.0), (2, 10.0), (0, 20.0)], 30.0, &[]);
+        let (left, right) = line.split_at("א".len());
+
+        assert_eq!(left.text.as_ref(), "א");
+        assert_eq!(right.text.as_ref(), "בג");
+        assert_eq!(left.width(), px(30.0));
+        assert_eq!(right.width(), px(0.0));
+        assert_eq!(left.x_for_index(0), px(30.0));
+        assert_eq!(right.x_for_index(0), px(0.0));
+    }
+
+    #[test]
+    fn test_split_at_persian_with_zwnj() {
+        let text = "می\u{200c}روم";
+        let split_index = "می\u{200c}".len();
+        let line = make_shaped_line(
+            text,
+            &[
+                (12, 0.0),
+                (10, 10.0),
+                (8, 20.0),
+                (5, 30.0),
+                (3, 40.0),
+                (0, 50.0),
+            ],
+            60.0,
+            &[],
+        );
+        let (left, right) = line.split_at(split_index);
+
+        assert_eq!(left.text.as_ref(), "می\u{200c}");
+        assert_eq!(right.text.as_ref(), "روم");
+        assert_eq!(left.len() + right.len(), text.len());
+    }
+
+    #[test]
+    fn test_split_at_mixed_text_inside_rtl_run() {
+        let text = "abc אבג def";
+        let Some(bet_index) = text.find('ב') else {
+            panic!("expected bet in test text");
+        };
+        let line = make_shaped_line(
+            text,
+            &[
+                (0, 0.0),
+                (1, 10.0),
+                (2, 20.0),
+                (3, 30.0),
+                (8, 40.0),
+                (6, 50.0),
+                (4, 60.0),
+                (10, 70.0),
+                (11, 80.0),
+                (12, 90.0),
+                (13, 100.0),
+            ],
+            110.0,
+            &[],
+        );
+
+        let (left, right) = line.split_at(bet_index);
+        assert_eq!(left.text.as_ref(), "abc א");
+        assert_eq!(right.text.as_ref(), "בג def");
+        assert_eq!(left.len() + right.len(), text.len());
+    }
 }
