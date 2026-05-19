@@ -16,6 +16,18 @@ pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
+/// Fallback input context window assumed when the `/v1/models` listing omits
+/// `max_input_tokens` (e.g. third-party Anthropic-compatible proxies). Chosen
+/// to match the context size of long-standing Claude models so existing models
+/// keep working; users with non-default limits should configure
+/// `available_models` in their settings.
+const FALLBACK_MAX_INPUT_TOKENS: u64 = 200_000;
+
+/// Fallback output token cap assumed when the `/v1/models` listing omits
+/// `max_tokens`. Matches the default already applied to user-configured
+/// `available_models` entries in `language_models::provider::anthropic`.
+const FALLBACK_MAX_OUTPUT_TOKENS: u64 = 4_096;
+
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum AnthropicModelMode {
@@ -152,10 +164,8 @@ impl Model {
         Self {
             display_name: entry.display_name,
             id: entry.id,
-            // Fall back to conservative defaults when the listing endpoint
-            // omits these fields or returns `null` (see `ListModelEntry`).
-            max_input_tokens: entry.max_input_tokens.unwrap_or(200_000),
-            max_output_tokens: entry.max_tokens.unwrap_or(4_096),
+            max_input_tokens: entry.max_input_tokens.unwrap_or(FALLBACK_MAX_INPUT_TOKENS),
+            max_output_tokens: entry.max_tokens.unwrap_or(FALLBACK_MAX_OUTPUT_TOKENS),
             default_temperature: 1.0,
             mode,
             supports_thinking,
@@ -1112,8 +1122,8 @@ mod tests {
             assert!(entry.max_input_tokens.is_none());
             assert!(entry.max_tokens.is_none());
             let model = Model::from_listed(entry);
-            assert_eq!(model.max_input_tokens, 200_000);
-            assert_eq!(model.max_output_tokens, 4_096);
+            assert_eq!(model.max_input_tokens, FALLBACK_MAX_INPUT_TOKENS);
+            assert_eq!(model.max_output_tokens, FALLBACK_MAX_OUTPUT_TOKENS);
         }
     }
 }
