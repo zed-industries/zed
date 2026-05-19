@@ -215,6 +215,248 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
+struct CatNumberedCodeBlock {
+    lines: Vec<CatNumberedCodeLine>,
+}
+
+struct CatNumberedCodeLine {
+    number: u32,
+    text: String,
+}
+
+fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<CatNumberedCodeBlock> {
+    let (_tag, code) = parse_single_fenced_code_block(markdown)?;
+    let lines = parse_cat_numbered_lines(code)?;
+    Some(CatNumberedCodeBlock { lines })
+}
+
+fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
+    let first_non_backtick = markdown.find(|character| character != '`')?;
+    if first_non_backtick < 3 {
+        return None;
+    }
+
+    let fence = &markdown[..first_non_backtick];
+    let after_opening_fence = &markdown[first_non_backtick..];
+    let tag_end = after_opening_fence.find('\n')?;
+    let tag = &after_opening_fence[..tag_end];
+    let after_tag = &after_opening_fence[tag_end + 1..];
+    let closing_fence = format!("\n{fence}\n");
+    let code = after_tag.strip_suffix(&closing_fence)?;
+    Some((tag, code))
+}
+
+fn parse_cat_numbered_lines(code: &str) -> Option<Vec<CatNumberedCodeLine>> {
+    if code.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    let mut expected_number = None;
+    for line in code.split_inclusive('\n') {
+        let line = line
+            .strip_suffix('\n')
+            .unwrap_or(line)
+            .strip_suffix('\r')
+            .unwrap_or_else(|| line.strip_suffix('\n').unwrap_or(line));
+        let (number, text) = parse_cat_numbered_line(line)?;
+        if let Some(expected_number) = expected_number
+            && number != expected_number
+        {
+            return None;
+        }
+        expected_number = number.checked_add(1);
+        lines.push(CatNumberedCodeLine {
+            number,
+            text: text.to_string(),
+        });
+    }
+
+    Some(lines)
+}
+
+fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
+    let (prefix, text) = line.split_once('\t')?;
+    let number = prefix.trim();
+    if number.is_empty()
+        || !prefix
+            .chars()
+            .all(|character| character == ' ' || character.is_ascii_digit())
+    {
+        return None;
+    }
+
+    Some((number.parse().ok()?, text))
+}
+
+fn render_cat_numbered_code_block(
+    code_block: CatNumberedCodeBlock,
+    language: Option<Arc<Language>>,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+    cx: &App,
+) -> AnyElement {
+    let mut code = String::new();
+    let mut gutter = String::new();
+    let gutter_width = code_block
+        .lines
+        .last()
+        .map_or(1, |line| line.number.to_string().len());
+
+    for (line_ix, line) in code_block.lines.iter().enumerate() {
+        if line_ix > 0 {
+            code.push('\n');
+            gutter.push('\n');
+        }
+        code.push_str(&line.text);
+        gutter.push_str(&format!("{:>width$}", line.number, width = gutter_width));
+    }
+
+    let mut code_text_style = markdown_style.base_text_style.clone();
+    code_text_style.refine(&markdown_style.code_block.text);
+
+    let mut gutter_text_style = code_text_style.clone();
+    gutter_text_style.color = cx.theme().colors().text_muted;
+
+    let gutter = StyledText::new(gutter).with_runs(vec![
+        gutter_text_style.to_run(
+            code_block
+                .lines
+                .iter()
+                .map(|line| line.number.to_string().len().max(gutter_width))
+                .sum::<usize>()
+                + code_block.lines.len().saturating_sub(1),
+        ),
+    ]);
+    let code_text = StyledText::new(code.clone()).with_runs(highlight_code_runs(
+        &code,
+        language.as_ref(),
+        code_text_style,
+        &markdown_style,
+    ));
+
+    let code_block_id = format!("read-file-code-block-{copy_button_id}");
+    let code_scroll_id = format!("read-file-code-scroll-{copy_button_id}");
+    let mut container = div()
+        .id(code_block_id)
+        .group("read-file-code-block")
+        .relative()
+        .w_full()
+        .whitespace_nowrap();
+    container.style().refine(&markdown_style.code_block);
+
+    // `overflow_x_scroll` only actually scrolls when the container is laid out
+    // as a flex container: in GPUI the default `Display` is `Block`, and a
+    // block-level child fills its parent's content width instead of overflowing
+    // it, so there is nothing for the scroll viewport to scroll. Using `flex()`
+    // on the scroll wrapper plus `flex_none()` on the inner item lets the inner
+    // item take its natural width (the unwrapped code), which is what overflows.
+    // `restrict_scroll_to_axis` then keeps vertical wheel events flowing through
+    // to the outer thread scroller. This mirrors the standard markdown
+    // code-block path in `crates/markdown/src/markdown.rs`.
+    let mut code_scroll = div()
+        .id(code_scroll_id)
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .overflow_x_scroll()
+        .child(div().flex_none().child(code_text));
+    code_scroll.style().restrict_scroll_to_axis = Some(true);
+
+    container
+        .child(
+            h_flex()
+                .items_start()
+                .min_w_0()
+                .w_full()
+                .child(div().flex_none().pr_3().child(gutter))
+                .child(code_scroll),
+        )
+        .child(
+            h_flex()
+                .w_4()
+                .absolute()
+                .top_0()
+                .right_0()
+                .justify_end()
+                .visible_on_hover("read-file-code-block")
+                .child(CopyButton::new(copy_button_id, code).tooltip_label("Copy Code")),
+        )
+        .into_any_element()
+}
+
+fn highlight_code_runs(
+    code: &str,
+    language: Option<&Arc<Language>>,
+    code_text_style: TextStyle,
+    markdown_style: &MarkdownStyle,
+) -> Vec<TextRun> {
+    if code.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(language) = language else {
+        return vec![code_text_style.to_run(code.len())];
+    };
+
+    let mut runs = Vec::new();
+    let mut offset = 0;
+    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
+        if range.start > offset {
+            runs.push(code_text_style.to_run(range.start - offset));
+        }
+
+        let mut run_style = code_text_style.clone();
+        if let Some(highlight) = markdown_style.syntax.get(highlight_id).cloned() {
+            run_style = run_style.highlight(highlight);
+        }
+        runs.push(run_style.to_run(range.len()));
+        offset = range.end;
+    }
+
+    if offset < code.len() {
+        runs.push(code_text_style.to_run(code.len() - offset));
+    }
+
+    runs
+}
+
+#[cfg(test)]
+mod numbered_code_block_tests {
+    use super::*;
+
+    #[test]
+    fn parses_cat_numbered_markdown_code_block() {
+        let block = parse_cat_numbered_markdown_code_block(
+            "```rs zed/crates/example.rs\n     2\tfn main() {\n     3\t    println!(\"hi\");\n     4\t}\n```\n",
+        )
+        .expect("cat-numbered block should parse");
+
+        assert_eq!(block.lines.len(), 3);
+        assert_eq!(block.lines[0].number, 2);
+        assert_eq!(block.lines[0].text, "fn main() {");
+        assert_eq!(block.lines[1].number, 3);
+        assert_eq!(block.lines[1].text, "    println!(\"hi\");");
+        assert_eq!(block.lines[2].number, 4);
+        assert_eq!(block.lines[2].text, "}");
+    }
+
+    #[test]
+    fn rejects_non_cat_numbered_code_block() {
+        assert!(parse_cat_numbered_markdown_code_block("```rs\nfn main() {}\n```\n").is_none());
+    }
+
+    #[test]
+    fn rejects_non_contiguous_cat_numbers() {
+        assert!(
+            parse_cat_numbered_markdown_code_block(
+                "```rs\n     2\tlet a = 1;\n     4\tlet b = 2;\n```\n"
+            )
+            .is_none()
+        );
+    }
+}
+
 /// Tracks the user's permission dropdown selection state for a specific tool call.
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
@@ -7606,7 +7848,9 @@ impl ThreadView {
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
                         markdown.clone(),
+                        entry_ix,
                         context_ix,
+                        tool_call,
                         card_layout,
                         window,
                         cx,
@@ -7749,11 +7993,28 @@ impl ThreadView {
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
+        entry_ix: usize,
         context_ix: usize,
+        tool_call: &ToolCall,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let markdown_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+        let output = self
+            .render_numbered_read_file_output(
+                markdown.clone(),
+                entry_ix,
+                context_ix,
+                tool_call,
+                markdown_style.clone(),
+                cx,
+            )
+            .unwrap_or_else(|| {
+                self.render_markdown(markdown, markdown_style, cx)
+                    .into_any()
+            });
+
         v_flex()
             .gap_2()
             .map(|this| {
@@ -7771,12 +8032,37 @@ impl ThreadView {
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(
-                markdown,
-                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                cx,
-            ))
+            .child(output)
             .into_any_element()
+    }
+
+    fn render_numbered_read_file_output(
+        &self,
+        markdown: Entity<Markdown>,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call: &ToolCall,
+        markdown_style: MarkdownStyle,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let is_read_file = tool_call
+            .tool_name
+            .as_ref()
+            .is_some_and(|tool_name| tool_name.as_ref() == "read_file");
+        if !is_read_file {
+            return None;
+        }
+
+        let markdown = markdown.read(cx);
+        let code_block = parse_cat_numbered_markdown_code_block(markdown.source())?;
+        let language = markdown.first_code_block_language();
+        Some(render_cat_numbered_code_block(
+            code_block,
+            language,
+            markdown_style,
+            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            cx,
+        ))
     }
 
     fn render_image_output(
