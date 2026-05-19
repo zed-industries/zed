@@ -2153,10 +2153,35 @@ impl AgentPanel {
         let event_subscription = cx.subscribe_in(&pop_up, window, {
             move |this, _, event: &AgentNotificationEvent, window, cx| match event {
                 AgentNotificationEvent::Accepted => {
+                    let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
+                        log::error!("root view should be a MultiWorkspace");
+                        return;
+                    };
                     cx.activate(true);
-                    window.activate_window();
-                    this.activate_terminal(terminal_id, true, window, cx);
-                    this.dismiss_terminal_notifications(terminal_id, cx);
+
+                    let workspace = this.workspace.clone();
+                    cx.defer(move |cx| {
+                        handle
+                            .update(cx, |multi_workspace, window, cx| {
+                                window.activate_window();
+
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
+                                multi_workspace.activate(workspace.clone(), None, window, cx);
+
+                                workspace.update(cx, |workspace, cx| {
+                                    workspace.reveal_panel::<AgentPanel>(window, cx);
+                                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                        panel.update(cx, |panel, cx| {
+                                            panel.activate_terminal(terminal_id, true, window, cx);
+                                        });
+                                    }
+                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                });
+                            })
+                            .log_err();
+                    });
                 }
                 AgentNotificationEvent::Dismissed => {
                     this.dismiss_terminal_notifications(terminal_id, cx);
@@ -7749,6 +7774,102 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(!first_terminal.has_notification);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_terminal_notification_view_activates_terminal_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project_a", json!({ "file.txt": "" }))
+            .await;
+        fs.insert_tree("/project_b", json!({ "file.txt": "" }))
+            .await;
+        let project_a = Project::test(fs.clone(), [Path::new("/project_a")], cx).await;
+        let project_b = Project::test(fs, [Path::new("/project_b")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let workspace_a = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let workspace_b = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        let panel_a = workspace_a.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        let first_terminal_id = panel_a
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel_a
+            .update_in(cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert_eq!(multi_workspace.workspace(), &workspace_b);
+            })
+            .unwrap();
+        panel_a.read_with(cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+
+        panel_a.update(cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        let notification = cx
+            .windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("terminal bell should show a notification");
+        notification
+            .update(cx, |notification, _window, cx| notification.accept(cx))
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                assert_eq!(multi_workspace.workspace(), &workspace_a);
+            })
+            .unwrap();
+        panel_a.read_with(cx, |panel, cx| {
+            assert_eq!(panel.active_terminal_id(), Some(first_terminal_id));
             let first_terminal = panel
                 .terminals(cx)
                 .into_iter()
