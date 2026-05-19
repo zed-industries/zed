@@ -225,6 +225,10 @@ impl Command {
     pub fn get_program(&self) -> &OsStr {
         self.program.as_os_str()
     }
+
+    pub fn get_current_dir(&self) -> Option<&Path> {
+        self.current_dir.as_deref()
+    }
 }
 
 #[derive(Debug)]

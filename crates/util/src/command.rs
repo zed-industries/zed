@@ -72,6 +72,10 @@ impl Command {
         self.0.get_args()
     }
 
+    pub fn get_current_dir(&self) -> Option<&Path> {
+        self.0.get_current_dir()
+    }
+
     pub fn env(&mut self, key: impl AsRef<OsStr>, val: impl AsRef<OsStr>) -> &mut Self {
         self.0.env(key, val);
         self

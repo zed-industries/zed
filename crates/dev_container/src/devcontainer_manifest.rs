@@ -1841,6 +1841,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${PATH:-\3}/g' /etc/profile || true
 
         let docker_cli = self.docker_client.docker_cli();
         let mut command = Command::new(&docker_cli);
+        command.current_dir(&self.local_project_directory);
 
         command.arg("run");
 
@@ -3100,6 +3101,12 @@ mod test {
         let docker_run_command = docker_run_command.expect("ok");
 
         assert_eq!(docker_run_command.get_program(), "docker");
+        assert_eq!(
+            docker_run_command.get_current_dir(),
+            Some(Path::new(TEST_PROJECT_PATH)),
+            "docker run must execute with cwd set to the project directory so \
+             relative paths in `runArgs` (e.g. `--env-file .devcontainer/.env`) resolve correctly"
+        );
         let expected_config_file_label = PathBuf::from(TEST_PROJECT_PATH)
             .join(".devcontainer")
             .join("devcontainer.json");
