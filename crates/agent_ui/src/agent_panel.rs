@@ -2153,16 +2153,13 @@ impl AgentPanel {
         let event_subscription = cx.subscribe_in(&pop_up, window, {
             move |this, _, event: &AgentNotificationEvent, window, cx| match event {
                 AgentNotificationEvent::Accepted => {
-                    cx.activate(true);
-
                     let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() else {
-                        window.activate_window();
-                        this.activate_terminal(terminal_id, true, window, cx);
+                        log::error!("root view should be a MultiWorkspace");
                         return;
                     };
+                    cx.activate(true);
 
                     let workspace = this.workspace.clone();
-                    let panel = cx.entity();
                     cx.defer(move |cx| {
                         handle
                             .update(cx, |multi_workspace, window, cx| {
@@ -2175,9 +2172,11 @@ impl AgentPanel {
 
                                 workspace.update(cx, |workspace, cx| {
                                     workspace.reveal_panel::<AgentPanel>(window, cx);
-                                    panel.update(cx, |panel, cx| {
-                                        panel.activate_terminal(terminal_id, true, window, cx);
-                                    });
+                                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                                        panel.update(cx, |panel, cx| {
+                                            panel.activate_terminal(terminal_id, true, window, cx);
+                                        });
+                                    }
                                     workspace.focus_panel::<AgentPanel>(window, cx);
                                 });
                             })
