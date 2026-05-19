@@ -168,7 +168,7 @@ For more, see the [Claude Code documentation](https://code.claude.com/docs/en/te
 
 ### Amp Notifications {#amp-notifications}
 
-Amp can also notify you when it needs your attention. To enable notifications in Zed terminal threads, add `AMP_FORCE_BEL=1` to your terminal environment settings:
+Amp updates terminal titles automatically and can also notify you when it needs your attention. To enable notifications in Zed terminal threads, add `AMP_FORCE_BEL=1` to your terminal environment settings:
 
 ```json [settings]
 {
@@ -178,6 +178,26 @@ Amp can also notify you when it needs your attention. To enable notifications in
     }
   }
 }
+```
+
+### OpenCode Notifications {#opencode-notifications}
+
+OpenCode can update terminal titles automatically. For Zed notifications, add an
+OpenCode plugin that emits a terminal bell when OpenCode needs your attention.
+
+Create `.opencode/plugins/zed-bell.js` in your project, or
+`~/.config/opencode/plugins/zed-bell.js` to use it globally:
+
+```js
+export const ZedBell = async () => {
+  return {
+    event: async ({ event }) => {
+      if (event.type === "session.idle" || event.type === "permission.asked") {
+        process.stdout.write("\x07");
+      }
+    },
+  };
+};
 ```
 
 ### Codex Terminal Titles {#codex-terminal-titles}
