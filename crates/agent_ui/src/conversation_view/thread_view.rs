@@ -6585,6 +6585,32 @@ impl ThreadView {
                                 )
                             }),
                     )
+                    .when(!use_card_layout, |this| {
+                        let button_id =
+                            SharedString::from(format!("tool_output-collapse-{:?}", tool_call.id));
+                        let tool_call_id = tool_call.id.clone();
+
+                        this.child(
+                            div()
+                                .ml(rems(0.4))
+                                .px_3p5()
+                                .pt_2()
+                                .border_l_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .child(
+                                    IconButton::new(button_id, IconName::ChevronUp)
+                                        .full_width()
+                                        .style(ButtonStyle::Outlined)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener({
+                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                                this.expanded_tool_calls.remove(&tool_call_id);
+                                                cx.notify();
+                                            }
+                                        })),
+                                ),
+                        )
+                    })
                     .into_any(),
                 ToolCallStatus::Rejected => Empty.into_any(),
             }
@@ -7580,7 +7606,6 @@ impl ThreadView {
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
                         markdown.clone(),
-                        tool_call.id.clone(),
                         context_ix,
                         card_layout,
                         window,
@@ -7724,14 +7749,11 @@ impl ThreadView {
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
-        tool_call_id: acp::ToolCallId,
         context_ix: usize,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id));
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -7754,20 +7776,6 @@ impl ThreadView {
                 MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                 cx,
             ))
-            .when(!card_layout, |this| {
-                this.child(
-                    IconButton::new(button_id, IconName::ChevronUp)
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .icon_color(Color::Muted)
-                        .on_click(cx.listener({
-                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.expanded_tool_calls.remove(&tool_call_id);
-                                cx.notify();
-                            }
-                        })),
-                )
-            })
             .into_any_element()
     }
 
