@@ -4,7 +4,8 @@ use cpal::{
     DeviceDescription, DeviceId, default_host,
     traits::{DeviceTrait, HostTrait},
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global};
+use gpui::{App, AppContext as _, AsyncApp, BorrowAppContext, Global};
+use std::mem;
 
 pub(super) use cpal::Sample;
 
@@ -50,54 +51,110 @@ pub fn ensure_devices_initialized(cx: &mut App) {
 
 #[derive(Default)]
 pub struct Audio {
-    output: Option<(MixerDeviceSink, Mixer)>,
+    output: OutputState,
     pub echo_canceller: EchoCanceller,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
+}
+
+#[derive(Default)]
+enum OutputState {
+    #[default]
+    NotStarted,
+    Opening {
+        pending: Vec<Buffered<Decoder<Cursor<Vec<u8>>>>>,
+    },
+    Ready {
+        _handle: MixerDeviceSink,
+        mixer: Mixer,
+    },
 }
 
 impl Global for Audio {}
 
 impl Audio {
-    fn ensure_output_exists(&mut self, output_audio_device: Option<DeviceId>) -> Result<&Mixer> {
+    pub fn play_sound(sound: Sound, cx: &mut App) {
         #[cfg(debug_assertions)]
         log::warn!(
             "Audio does not sound correct without optimizations. Use a release build to debug audio issues"
         );
 
-        if self.output.is_none() {
-            let (output_handle, output_mixer) =
-                open_output_stream(output_audio_device, self.echo_canceller.clone())?;
-            self.output = Some((output_handle, output_mixer));
-        }
-
-        Ok(self
-            .output
-            .as_ref()
-            .map(|(_, mixer)| mixer)
-            .expect("we only get here if opening the outputstream succeeded"))
-    }
-
-    pub fn play_sound(sound: Sound, cx: &mut App) {
         let output_audio_device = AudioSettings::get_global(cx).output_audio_device.clone();
         cx.update_default_global(|this: &mut Self, cx| {
-            let source = this.sound_source(sound, cx).log_err()?;
-            let output_mixer = this
-                .ensure_output_exists(output_audio_device)
-                .context("Could not get output mixer")
-                .log_err()?;
+            let Some(source) = this.sound_source(sound, cx).log_err() else {
+                return;
+            };
 
-            output_mixer.add(source);
-            Some(())
+            match &mut this.output {
+                OutputState::Ready { mixer, .. } => {
+                    mixer.add(source);
+                    return;
+                }
+                OutputState::Opening { pending } => {
+                    pending.push(source);
+                    return;
+                }
+                OutputState::NotStarted => {}
+            }
+
+            let echo_canceller = this.echo_canceller.clone();
+            this.output = OutputState::Opening {
+                pending: vec![source],
+            };
+
+            let open_task = cx.background_spawn(async move {
+                open_output_stream(output_audio_device, echo_canceller)
+            });
+
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                let result = open_task.await;
+                cx.update(|cx| Self::finish_opening_output(result, cx))
+            })
+            .detach();
+        });
+    }
+
+    fn finish_opening_output(result: Result<(MixerDeviceSink, Mixer)>, cx: &mut App) {
+        cx.update_default_global(|this: &mut Self, _cx| {
+            // Take ownership of the queue. If `end_call` (or another reset) ran
+            // while we were opening, the state is no longer `Opening`; restore
+            // whatever we found and discard the result.
+            let pending = match mem::take(&mut this.output) {
+                OutputState::Opening { pending } => pending,
+                other => {
+                    this.output = other;
+                    return;
+                }
+            };
+
+            this.output = match result {
+                Ok((handle, mixer)) => {
+                    for source in pending {
+                        mixer.add(source);
+                    }
+                    OutputState::Ready {
+                        _handle: handle,
+                        mixer,
+                    }
+                }
+                Err(e) => {
+                    log::error!("Could not open audio output stream: {e:#}");
+                    OutputState::NotStarted
+                }
+            };
         });
     }
 
     pub fn end_call(cx: &mut App) {
         cx.update_default_global(|this: &mut Self, _cx| {
-            this.output.take();
+            this.output = OutputState::NotStarted;
         });
     }
 
-    fn sound_source(&mut self, sound: Sound, cx: &App) -> Result<impl Source + use<>> {
+    fn sound_source(
+        &mut self,
+        sound: Sound,
+        cx: &App,
+    ) -> Result<Buffered<Decoder<Cursor<Vec<u8>>>>> {
         if let Some(wav) = self.source_cache.get(&sound) {
             return Ok(wav.clone());
         }
