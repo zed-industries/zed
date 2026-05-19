@@ -64,11 +64,19 @@ pub struct Skill {
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
     pub disable_model_invocation: bool,
+    /// For built-in skills whose content is compiled into the binary,
+    /// this holds the full SKILL.md body so the skill tool can serve it
+    /// without a filesystem read.
+    pub embedded_body: Option<&'static str>,
 }
 
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
+    /// Compiled into the Zed binary. These are always available and have
+    /// the lowest override priority (global and project-local skills can
+    /// shadow them).
+    BuiltIn,
     /// From ~/.agents/skills/
     Global,
     /// From {project}/.agents/skills/
@@ -79,6 +87,23 @@ pub enum SkillSource {
 }
 
 impl SkillSource {
+    /// Precedence for resolving same-named skills. Higher values shadow
+    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
+    /// returning equal precedence (e.g. two project-local skills from
+    /// different worktrees) leave the winner up to the caller, which by
+    /// convention keeps the first one in iteration order.
+    ///
+    /// Adding a new `SkillSource` variant should be a one-line change
+    /// here — every consumer routes through this method so the hierarchy
+    /// stays in sync.
+    pub fn precedence(&self) -> u8 {
+        match self {
+            Self::BuiltIn => 0,
+            Self::Global => 1,
+            Self::ProjectLocal { .. } => 2,
+        }
+    }
+
     /// Scope prefix used in the `/<prefix>:<name>` slash-command
     /// syntax that the autocomplete popup inserts. Global skills use
     /// an empty prefix (so the inserted text is `/:<name>`), and
@@ -91,9 +116,21 @@ impl SkillSource {
     /// invoked as `/:<name>`, and the worktree's skill is invoked as
     /// `/global:<name>`. The two grammars never collide on the
     /// inserted text.
+    /// Human-readable label for this source, used in the UI to
+    /// distinguish skills from different origins.
+    pub fn display_label(&self) -> &str {
+        match self {
+            Self::BuiltIn => "built-in",
+            Self::Global => "global",
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => worktree_root_name.as_ref(),
+        }
+    }
+
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::Global => "",
+            Self::BuiltIn | Self::Global => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -112,7 +149,7 @@ impl SkillSource {
     /// strictness only affects users typing by memory.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::Global => scope.is_empty(),
+            Self::BuiltIn | Self::Global => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
@@ -211,6 +248,7 @@ pub fn parse_skill_frontmatter(
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
         disable_model_invocation: metadata.disable_model_invocation,
+        embedded_body: None,
     })
 }
 
@@ -600,6 +638,53 @@ pub async fn read_skill_body(
     Ok(body.trim().to_string())
 }
 
+/// Content of the built-in `create-skill` SKILL.md, embedded at compile time.
+const CREATE_SKILL_CONTENT: &str = include_str!("builtin/create-skill/SKILL.md");
+
+/// Returns the set of skills that are compiled into the Zed binary.
+pub fn builtin_skills() -> Vec<Skill> {
+    let mut skills = Vec::new();
+    if let Ok(skill) = parse_builtin_skill("create-skill", CREATE_SKILL_CONTENT) {
+        skills.push(skill);
+    }
+    skills
+}
+
+/// Parse a built-in skill from its embedded SKILL.md content. The skill
+/// gets a synthetic `<built-in>` path since it doesn't live on disk.
+fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
+    let (metadata, body) = extract_frontmatter(content)?;
+    validate_name(&metadata.name)?;
+    validate_description(&metadata.description)?;
+
+    let synthetic_dir = PathBuf::from(format!("<built-in>/{}", name));
+    let synthetic_path = synthetic_dir.join(SKILL_FILE_NAME);
+
+    Ok(Skill {
+        name: metadata.name,
+        description: metadata.description,
+        source: SkillSource::BuiltIn,
+        directory_path: synthetic_dir,
+        skill_file_path: synthetic_path,
+        disable_model_invocation: metadata.disable_model_invocation,
+        embedded_body: Some(body.trim()),
+    })
+}
+
+/// All built-in skills as `(name, raw_content)` pairs. Used by
+/// `builtin_skill_content` to serve the full SKILL.md without disk I/O.
+const BUILTIN_SKILL_ENTRIES: &[(&str, &str)] = &[("create-skill", CREATE_SKILL_CONTENT)];
+
+/// Look up the full embedded content of a built-in skill by its
+/// synthetic file path. Returns `None` if the path doesn't match any
+/// built-in skill.
+pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
+    BUILTIN_SKILL_ENTRIES.iter().find_map(|(name, content)| {
+        let expected = PathBuf::from(format!("<built-in>/{}", name)).join(SKILL_FILE_NAME);
+        (expected == skill_file_path).then_some(*content)
+    })
+}
+
 /// Returns the global skills directory: `~/.agents/skills`.
 ///
 /// Other agents (e.g. Claude Code) already write skill files into this
@@ -662,6 +747,34 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_skill_source_precedence_is_total_and_ordered() {
+        // Pin the hierarchy: project-local > global > built-in. Every
+        // override and conflict-resolution site routes through this,
+        // so the rest of the codebase relies on it being correct.
+        let built_in = SkillSource::BuiltIn.precedence();
+        let global = SkillSource::Global.precedence();
+        let project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(1),
+            worktree_root_name: "my-project".into(),
+        }
+        .precedence();
+
+        assert!(built_in < global, "global must shadow built-in");
+        assert!(global < project, "project-local must shadow global");
+
+        // Two project-local skills from different worktrees tie. The
+        // "first wins" convention is enforced by the callers, but the
+        // precedence itself must be equal so neither silently shadows
+        // the other.
+        let other_project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(2),
+            worktree_root_name: "other-project".into(),
+        }
+        .precedence();
+        assert_eq!(project, other_project);
+    }
 
     #[test]
     fn test_parse_valid_skill() {
@@ -1532,6 +1645,7 @@ description: A skill with no body content
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         let summary = SkillSummary::from(&skill);

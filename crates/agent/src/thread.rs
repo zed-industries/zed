@@ -364,11 +364,7 @@ impl UserMessage {
                             .ok();
                         }
                         MentionUri::Skill { name, source, .. } => {
-                            let label = if source.is_empty() {
-                                format!("{} (global)", name)
-                            } else {
-                                format!("{} ({})", name, source)
-                            };
+                            let label = format!("{} ({})", name, source);
                             write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
                     }
@@ -4394,7 +4390,6 @@ impl From<UserMessageContent> for acp::ContentBlock {
 fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
     LanguageModelImage {
         source: image_content.data.into(),
-        size: None,
     }
 }
 
