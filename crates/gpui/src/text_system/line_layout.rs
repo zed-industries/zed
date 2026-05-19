@@ -71,11 +71,29 @@ impl LineLayout {
         if x >= self.width {
             None
         } else if !self.index_positions.is_empty() {
-            self.index_positions
-                .iter()
-                .filter(|position| position.x <= x)
-                .max_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|position| position.index)
+            let mut positions_by_x = self.index_positions.clone();
+            positions_by_x
+                .sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(std::cmp::Ordering::Equal));
+
+            if let Some(first_position) = positions_by_x.first()
+                && x < first_position.x
+            {
+                return Some(first_position.index);
+            }
+
+            for window in positions_by_x.windows(2) {
+                let left = window[0];
+                let right = window[1];
+                if x >= left.x && x < right.x {
+                    return if left.index <= right.index {
+                        Some(left.index)
+                    } else {
+                        Some(right.index)
+                    };
+                }
+            }
+
+            positions_by_x.last().map(|position| position.index)
         } else {
             for run in self.runs.iter().rev() {
                 for glyph in run.glyphs.iter().rev() {
@@ -1256,6 +1274,8 @@ mod tests {
         assert_eq!(layout.x_for_index(text.len()), px(0.));
         assert_eq!(layout.closest_index_for_x(px(29.)), 0);
         assert_eq!(layout.closest_index_for_x(px(1.)), text.len());
+        assert_eq!(layout.index_for_x(px(29.)), Some(0));
+        assert_eq!(layout.index_for_x(px(1.)), Some(text.len()));
     }
 
     #[test]
@@ -1291,6 +1311,8 @@ mod tests {
             assert_eq!(layout.x_for_index(text.len()), px(0.));
             assert_eq!(layout.closest_index_for_x(px(width - 1.)), 0);
             assert_eq!(layout.closest_index_for_x(px(1.)), text.len());
+            assert_eq!(layout.index_for_x(px(width - 1.)), Some(0));
+            assert_eq!(layout.index_for_x(px(1.)), Some(text.len()));
         }
     }
 
@@ -1338,5 +1360,53 @@ mod tests {
         assert_eq!(layout.x_for_index(gimel), px(50.));
         assert_eq!(layout.closest_index_for_x(px(59.)), bet);
         assert_eq!(layout.closest_index_for_x(px(51.)), gimel);
+        assert_eq!(layout.index_for_x(px(55.)), Some(bet));
+        assert_eq!(layout.index_for_x(px(45.)), Some(gimel));
+    }
+
+    #[test]
+    fn test_index_for_x_for_mixed_english_and_arabic_punctuation() {
+        let text = "x (مرحبا) y";
+        let Some(arabic_start) = text.find('م') else {
+            panic!("expected arabic text in test");
+        };
+        let Some(arabic_second) = text.find('ر') else {
+            panic!("expected arabic text in test");
+        };
+        let Some(arabic_end) = text.find('ا') else {
+            panic!("expected arabic text in test");
+        };
+        let after_arabic = arabic_end + 'ا'.len_utf8();
+
+        let mut layout = LineLayout {
+            font_size: px(16.),
+            width: px(110.),
+            ascent: px(12.),
+            descent: px(4.),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs: vec![
+                    glyph_at(0., 0),
+                    glyph_at(10., 1),
+                    glyph_at(20., 2),
+                    glyph_at(30., after_arabic),
+                    glyph_at(40., arabic_end),
+                    glyph_at(50., arabic_second),
+                    glyph_at(60., arabic_start),
+                    glyph_at(70., after_arabic + 1),
+                    glyph_at(80., after_arabic + 2),
+                    glyph_at(90., after_arabic + 3),
+                    glyph_at(100., after_arabic + 4),
+                ],
+            }],
+            len: text.len(),
+            index_positions: Vec::new(),
+        };
+
+        layout.compute_bidi_index_positions(text);
+
+        assert_eq!(layout.index_for_x(px(59.)), Some(arabic_start));
+        assert_eq!(layout.index_for_x(px(49.)), Some(arabic_second));
+        assert_eq!(layout.index_for_x(px(39.)), Some(arabic_end));
     }
 }
