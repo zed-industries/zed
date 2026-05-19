@@ -29,6 +29,8 @@ pub struct LineLayout {
     pub len: usize,
     /// Bidi-aware caret stops, sorted by logical UTF-8 byte index.
     pub index_positions: Vec<IndexPosition>,
+    /// Bidi-aware caret stops, sorted by visual x position.
+    pub visual_index_positions: Vec<IndexPosition>,
 }
 
 /// A caret stop for a logical UTF-8 byte index.
@@ -70,14 +72,16 @@ impl LineLayout {
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
         if x >= self.width {
             None
-        } else if !self.index_positions.is_empty() {
-            let positions = self.index_positions_by_visual_x();
-            if let Some(group) = Self::exact_visual_group(&positions, x) {
-                return Some(Self::preferred_index_for_visual_group(&positions, group));
+        } else if !self.visual_index_positions.is_empty() {
+            if let Some(group) = Self::exact_visual_group(&self.visual_index_positions, x) {
+                return Some(Self::preferred_index_for_visual_group(
+                    &self.visual_index_positions,
+                    group,
+                ));
             }
 
-            let mut left = *positions.first()?;
-            for right in positions.iter().copied().skip(1) {
+            let mut left = *self.visual_index_positions.first()?;
+            for right in self.visual_index_positions.iter().copied().skip(1) {
                 if right.x == left.x {
                     left = right;
                     continue;
@@ -110,18 +114,17 @@ impl LineLayout {
     /// closest_index_for_x returns the character boundary closest to the given x coordinate
     /// (e.g. to handle aligning up/down arrow keys)
     pub fn closest_index_for_x(&self, x: Pixels) -> usize {
-        if !self.index_positions.is_empty() {
-            let positions = self.index_positions_by_visual_x();
-            if let Some(group) = Self::exact_visual_group(&positions, x) {
-                return Self::preferred_index_for_visual_group(&positions, group);
+        if !self.visual_index_positions.is_empty() {
+            if let Some(group) = Self::exact_visual_group(&self.visual_index_positions, x) {
+                return Self::preferred_index_for_visual_group(&self.visual_index_positions, group);
             }
 
-            let mut left = *positions.first().unwrap();
+            let mut left = *self.visual_index_positions.first().unwrap();
             if x < left.x {
                 return left.index;
             }
 
-            for right in positions.iter().copied().skip(1) {
+            for right in self.visual_index_positions.iter().copied().skip(1) {
                 if right.x == left.x {
                     left = right;
                     continue;
@@ -199,16 +202,6 @@ impl LineLayout {
         self.width
     }
 
-    fn index_positions_by_visual_x(&self) -> Vec<IndexPosition> {
-        let mut positions = self.index_positions.clone();
-        positions.sort_by(|a, b| {
-            a.x.partial_cmp(&b.x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.index.cmp(&b.index))
-        });
-        positions
-    }
-
     fn exact_visual_group(positions: &[IndexPosition], x: Pixels) -> Option<Range<usize>> {
         let start = positions.iter().position(|position| position.x == x)?;
         let end = positions[start..]
@@ -240,6 +233,22 @@ impl LineLayout {
         }
     }
 
+    fn index_before_visual_boundary(&self, x: Pixels) -> usize {
+        if let Some(group) = Self::exact_visual_group(&self.visual_index_positions, x) {
+            self.visual_index_positions[group.start].index
+        } else {
+            self.closest_index_for_x(x)
+        }
+    }
+
+    fn index_after_visual_boundary(&self, x: Pixels) -> usize {
+        if let Some(group) = Self::exact_visual_group(&self.visual_index_positions, x) {
+            self.visual_index_positions[group.end - 1].index
+        } else {
+            self.closest_index_for_x(x)
+        }
+    }
+
     /// The visual x ranges covered by a logical UTF-8 byte range.
     pub fn x_ranges_for_range(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 2]> {
         let mut ranges = SmallVec::new();
@@ -247,7 +256,7 @@ impl LineLayout {
             return ranges;
         }
 
-        if self.index_positions.is_empty() {
+        if self.visual_index_positions.is_empty() {
             Self::push_x_range(
                 &mut ranges,
                 self.x_for_index(range.start),
@@ -256,14 +265,7 @@ impl LineLayout {
             return ranges;
         }
 
-        let mut positions = self.index_positions.clone();
-        positions.sort_by(|a, b| {
-            a.x.partial_cmp(&b.x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.index.cmp(&b.index))
-        });
-
-        for adjacent_positions in positions.windows(2) {
+        for adjacent_positions in self.visual_index_positions.windows(2) {
             let left = adjacent_positions[0];
             let right = adjacent_positions[1];
             if left.x == right.x {
@@ -303,6 +305,7 @@ impl LineLayout {
 
     pub(crate) fn compute_bidi_index_positions(&mut self, text: &str) {
         self.index_positions.clear();
+        self.visual_index_positions.clear();
         if text.is_empty() || !contains_rtl_or_bidi_control(text) {
             return;
         }
@@ -403,6 +406,12 @@ impl LineLayout {
         });
         self.index_positions
             .dedup_by(|a, b| a.index == b.index && a.x == b.x);
+        self.visual_index_positions = self.index_positions.clone();
+        self.visual_index_positions.sort_by(|a, b| {
+            a.x.partial_cmp(&b.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.index.cmp(&b.index))
+        });
     }
 
     /// The corresponding Font at the given index
@@ -634,10 +643,10 @@ impl WrappedLineLayout {
         };
         let wrapped_line_start_index = self
             .unwrapped_layout
-            .closest_index_for_x(wrapped_line_start_x);
+            .index_after_visual_boundary(wrapped_line_start_x);
         let wrapped_line_end_index = self
             .unwrapped_layout
-            .closest_index_for_x(wrapped_line_end_x);
+            .index_before_visual_boundary(wrapped_line_end_x);
 
         let mut position_in_unwrapped_line = position;
         position_in_unwrapped_line.x += wrapped_line_start_x;
@@ -1293,6 +1302,7 @@ mod tests {
             }],
             len: 0,
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         }
     }
 
@@ -1400,6 +1410,7 @@ mod tests {
             }],
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
 
         layout.compute_bidi_index_positions(text);
@@ -1442,6 +1453,7 @@ mod tests {
             }],
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
         layout.compute_bidi_index_positions(text);
 
@@ -1508,6 +1520,7 @@ mod tests {
                 }],
                 len: text.len(),
                 index_positions: Vec::new(),
+                visual_index_positions: Vec::new(),
             };
 
             layout.compute_bidi_index_positions(text);
@@ -1558,6 +1571,7 @@ mod tests {
             }],
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
 
         layout.compute_bidi_index_positions(text);
@@ -1568,6 +1582,10 @@ mod tests {
         assert_eq!(layout.index_for_x(px(70.)), Some(after_gimel));
         assert_eq!(layout.closest_index_for_x(px(40.)), alef);
         assert_eq!(layout.closest_index_for_x(px(70.)), after_gimel);
+        assert_eq!(layout.index_before_visual_boundary(px(40.)), alef);
+        assert_eq!(layout.index_after_visual_boundary(px(40.)), after_gimel);
+        assert_eq!(layout.index_before_visual_boundary(px(70.)), alef);
+        assert_eq!(layout.index_after_visual_boundary(px(70.)), after_gimel);
         assert_eq!(layout.closest_index_for_x(px(59.)), bet);
         assert_eq!(layout.closest_index_for_x(px(51.)), gimel);
         assert_eq!(layout.index_for_x(px(55.)), Some(bet));
@@ -1628,6 +1646,7 @@ mod tests {
             }],
             len: text.len(),
             index_positions: Vec::new(),
+            visual_index_positions: Vec::new(),
         };
 
         layout.compute_bidi_index_positions(text);

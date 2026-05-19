@@ -631,6 +631,7 @@ impl DirectWriteState {
                 runs,
                 len: text.len(),
                 index_positions: Vec::new(),
+                visual_index_positions: Vec::new(),
             })
         }
     }
@@ -1483,7 +1484,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             let glyph_advance = glyph_advances[glyph_idx];
             let offset = glyph_offsets[glyph_idx];
             let x = if is_rtl {
-                baselineoriginx - advance - glyph_advance + offset.advanceOffset
+                baselineoriginx - advance - glyph_advance - offset.advanceOffset
             } else {
                 baselineoriginx + advance + offset.advanceOffset
             };
