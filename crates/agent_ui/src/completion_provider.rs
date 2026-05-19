@@ -1670,11 +1670,7 @@ impl MentionCompletion {
         supported_modes: &[PromptContextType],
     ) -> Option<Self> {
         // Find the rightmost '@' that has a boundary before it and no whitespace immediately after.
-        // A boundary is the start of the line, whitespace, or an opening bracket so that
-        // bracketed mentions like `(@file)`, `[@file]`, and `{@file}` open the completion menu.
-        // We deliberately do not treat every non-word character as a boundary because `@fetch`
-        // arguments are URLs that frequently contain '@' (e.g. `https://example.com/@org/repo`),
-        // and `/` would otherwise cause the inner '@' to be picked instead of the leading `@fetch`.
+        // A boundary is the start of the line, whitespace, or an opening bracket.
         let mut last_mention_start = None;
         for (idx, _) in line.rmatch_indices('@') {
             // No whitespace immediately after '@'.
