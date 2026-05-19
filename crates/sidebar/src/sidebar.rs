@@ -3700,12 +3700,12 @@ impl Sidebar {
             .count()
     }
 
-    fn delete_non_blocking_drafts_for_archive_roots(
+    fn delete_empty_drafts_for_archive_roots(
         &self,
         roots: &[thread_worktree_archive::RootPlan],
         cx: &mut Context<Self>,
     ) {
-        self.delete_non_blocking_drafts_for_archive_targets(
+        self.delete_empty_drafts_for_archive_targets(
             roots
                 .iter()
                 .map(|root| (root.root_path.as_path(), root.remote_connection.as_ref())),
@@ -3713,13 +3713,13 @@ impl Sidebar {
         );
     }
 
-    fn delete_non_blocking_drafts_for_archive_paths(
+    fn delete_empty_drafts_for_archive_paths(
         &self,
         paths: &PathList,
         remote_connection: Option<&RemoteConnectionOptions>,
         cx: &mut Context<Self>,
     ) {
-        self.delete_non_blocking_drafts_for_archive_targets(
+        self.delete_empty_drafts_for_archive_targets(
             paths
                 .ordered_paths()
                 .map(|path| (path.as_path(), remote_connection)),
@@ -3727,7 +3727,7 @@ impl Sidebar {
         );
     }
 
-    fn delete_non_blocking_drafts_for_archive_targets<'a>(
+    fn delete_empty_drafts_for_archive_targets<'a>(
         &self,
         targets: impl IntoIterator<Item = (&'a Path, Option<&'a RemoteConnectionOptions>)>,
         cx: &mut Context<Self>,
@@ -4073,7 +4073,7 @@ impl Sidebar {
 
                 this.update_in(cx, |this, window, cx| {
                     if terminal_workspace_removed {
-                        this.delete_non_blocking_drafts_for_archive_paths(
+                        this.delete_empty_drafts_for_archive_paths(
                             metadata.folder_paths(),
                             metadata.remote_connection.as_ref(),
                             cx,
@@ -4486,7 +4486,7 @@ impl Sidebar {
 
                 this.update_in(cx, |this, window, cx| {
                     if let Some(thread_folder_paths) = thread_folder_paths.as_ref() {
-                        this.delete_non_blocking_drafts_for_archive_paths(
+                        this.delete_empty_drafts_for_archive_paths(
                             thread_folder_paths,
                             thread_remote_connection.as_ref(),
                             cx,
@@ -4650,7 +4650,7 @@ impl Sidebar {
             return None;
         }
 
-        self.delete_non_blocking_drafts_for_archive_roots(&roots, cx);
+        self.delete_empty_drafts_for_archive_roots(&roots, cx);
 
         let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
         let task = cx.spawn(async move |_this, cx| {
@@ -4686,7 +4686,7 @@ impl Sidebar {
             return;
         }
 
-        self.delete_non_blocking_drafts_for_archive_roots(&roots, cx);
+        self.delete_empty_drafts_for_archive_roots(&roots, cx);
 
         let (cancel_tx, cancel_rx) = async_channel::bounded::<()>(1);
         cx.spawn(async move |_this, cx| {
