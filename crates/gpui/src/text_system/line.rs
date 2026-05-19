@@ -136,40 +136,92 @@ impl ShapedLine {
 
     /// Split this shaped line at a byte index, returning `(prefix, suffix)`.
     ///
-    /// - `prefix` contains glyphs for bytes `[0, byte_index)` with original positions.
-    ///   Its width equals the x-advance up to the split point.
+    /// - `prefix` contains glyphs for bytes `[0, byte_index)`, normalized to
+    ///   the left edge of the prefix's visual bounds.
     /// - `suffix` contains glyphs for bytes `[byte_index, len)` with positions
-    ///   shifted left so the first glyph starts at x=0, and byte indices rebased to 0.
+    ///   normalized to the left edge of the suffix's visual bounds, and byte
+    ///   indices rebased to 0.
     /// - Decoration runs are partitioned at the boundary; a run that straddles it is
     ///   split into two with adjusted lengths.
     /// - `font_size`, `ascent`, and `descent` are copied to both halves.
     pub fn split_at(&self, byte_index: usize) -> (ShapedLine, ShapedLine) {
-        let x_offset = self.layout.x_for_index(byte_index);
+        let mut glyph_edges = self
+            .layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .collect::<Vec<_>>();
+        glyph_edges.sort_by(|a, b| {
+            a.position
+                .x
+                .partial_cmp(&b.position.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
-        // Partition glyph runs. A single run may contribute glyphs to both halves.
+        let mut left_origin = None;
+        let mut left_right = Pixels::ZERO;
+        let mut right_origin = None;
+        let mut right_right = Pixels::ZERO;
+
+        for (ix, glyph) in glyph_edges.iter().enumerate() {
+            let glyph_left = glyph.position.x;
+            let glyph_right = glyph_edges[ix + 1..]
+                .iter()
+                .find(|next_glyph| next_glyph.position.x > glyph_left)
+                .map_or(self.layout.width, |next_glyph| next_glyph.position.x);
+
+            if glyph.index < byte_index {
+                left_origin =
+                    Some(left_origin.map_or(glyph_left, |origin: Pixels| origin.min(glyph_left)));
+                left_right = left_right.max(glyph_right);
+            } else {
+                right_origin =
+                    Some(right_origin.map_or(glyph_left, |origin: Pixels| origin.min(glyph_left)));
+                right_right = right_right.max(glyph_right);
+            }
+        }
+
+        let left_origin = left_origin.unwrap_or(Pixels::ZERO);
+        let right_origin = right_origin.unwrap_or(Pixels::ZERO);
+        let left_width = left_right - left_origin;
+        let right_width = right_right - right_origin;
+
+        // Partition glyph runs by logical byte index. Glyphs are not guaranteed
+        // to be stored in logical order after RTL shaping, so this must not use
+        // partition_point.
         let mut left_runs = Vec::new();
         let mut right_runs = Vec::new();
 
         for run in &self.layout.runs {
-            let split_pos = run.glyphs.partition_point(|g| g.index < byte_index);
+            let mut left_glyphs = Vec::new();
+            let mut right_glyphs = Vec::new();
 
-            if split_pos > 0 {
+            for glyph in &run.glyphs {
+                if glyph.index < byte_index {
+                    left_glyphs.push(ShapedGlyph {
+                        id: glyph.id,
+                        position: point(glyph.position.x - left_origin, glyph.position.y),
+                        index: glyph.index,
+                        is_emoji: glyph.is_emoji,
+                    });
+                } else {
+                    right_glyphs.push(ShapedGlyph {
+                        id: glyph.id,
+                        position: point(glyph.position.x - right_origin, glyph.position.y),
+                        index: glyph.index - byte_index,
+                        is_emoji: glyph.is_emoji,
+                    });
+                }
+            }
+
+            if !left_glyphs.is_empty() {
                 left_runs.push(ShapedRun {
                     font_id: run.font_id,
-                    glyphs: run.glyphs[..split_pos].to_vec(),
+                    glyphs: left_glyphs,
                 });
             }
 
-            if split_pos < run.glyphs.len() {
-                let right_glyphs = run.glyphs[split_pos..]
-                    .iter()
-                    .map(|g| ShapedGlyph {
-                        id: g.id,
-                        position: point(g.position.x - x_offset, g.position.y),
-                        index: g.index - byte_index,
-                        is_emoji: g.is_emoji,
-                    })
-                    .collect();
+            if !right_glyphs.is_empty() {
                 right_runs.push(ShapedRun {
                     font_id: run.font_id,
                     glyphs: right_glyphs,
@@ -223,9 +275,6 @@ impl ShapedLine {
         } else {
             SharedString::new(&self.text[byte_index..])
         };
-
-        let left_width = x_offset;
-        let right_width = self.layout.width - left_width;
 
         let mut left_layout = LineLayout {
             font_size: self.layout.font_size,
@@ -785,21 +834,43 @@ mod tests {
             })
             .collect();
 
+        let mut layout = LineLayout {
+            font_size: px(16.0),
+            width: px(width),
+            ascent: px(12.0),
+            descent: px(4.0),
+            runs: vec![ShapedRun {
+                font_id: FontId(0),
+                glyphs: shaped_glyphs,
+            }],
+            len: text.len(),
+            index_positions: Vec::new(),
+        };
+        layout.compute_bidi_index_positions(text);
+
         ShapedLine {
-            layout: Arc::new(LineLayout {
-                font_size: px(16.0),
-                width: px(width),
-                ascent: px(12.0),
-                descent: px(4.0),
-                runs: vec![ShapedRun {
-                    font_id: FontId(0),
-                    glyphs: shaped_glyphs,
-                }],
-                len: text.len(),
-                index_positions: Vec::new(),
-            }),
+            layout: Arc::new(layout),
             text: SharedString::new(text),
             decoration_runs: SmallVec::from(decorations.to_vec()),
+        }
+    }
+
+    fn assert_glyph_indices_within_text(line: &ShapedLine) {
+        for run in &line.runs {
+            for glyph in &run.glyphs {
+                assert!(
+                    glyph.index < line.text.len(),
+                    "glyph index {} must be within {:?}",
+                    glyph.index,
+                    line.text
+                );
+                assert!(
+                    line.text.is_char_boundary(glyph.index),
+                    "glyph index {} must be a UTF-8 boundary in {:?}",
+                    glyph.index,
+                    line.text
+                );
+            }
         }
     }
 
@@ -1035,34 +1106,34 @@ mod tests {
 
         assert_eq!(left.text.as_ref(), "א");
         assert_eq!(right.text.as_ref(), "בג");
-        assert_eq!(left.width(), px(30.0));
-        assert_eq!(right.width(), px(0.0));
-        assert_eq!(left.x_for_index(0), px(30.0));
-        assert_eq!(right.x_for_index(0), px(0.0));
+        assert_eq!(left.width(), px(10.0));
+        assert_eq!(right.width(), px(20.0));
+        assert_eq!(left.x_for_index(0), px(10.0));
+        assert_eq!(left.x_for_index(left.len()), px(0.0));
+        assert_eq!(right.x_for_index(0), px(20.0));
+        assert_eq!(right.x_for_index(right.len()), px(0.0));
+        assert_glyph_indices_within_text(&left);
+        assert_glyph_indices_within_text(&right);
     }
 
     #[test]
     fn test_split_at_persian_with_zwnj() {
         let text = "می\u{200c}روم";
         let split_index = "می\u{200c}".len();
-        let line = make_shaped_line(
-            text,
-            &[
-                (12, 0.0),
-                (10, 10.0),
-                (8, 20.0),
-                (5, 30.0),
-                (3, 40.0),
-                (0, 50.0),
-            ],
-            60.0,
-            &[],
-        );
+        let glyphs = text
+            .char_indices()
+            .rev()
+            .enumerate()
+            .map(|(position, (index, _))| (index, position as f32 * 10.0))
+            .collect::<Vec<_>>();
+        let line = make_shaped_line(text, &glyphs, glyphs.len() as f32 * 10.0, &[]);
         let (left, right) = line.split_at(split_index);
 
         assert_eq!(left.text.as_ref(), "می\u{200c}");
         assert_eq!(right.text.as_ref(), "روم");
         assert_eq!(left.len() + right.len(), text.len());
+        assert_glyph_indices_within_text(&left);
+        assert_glyph_indices_within_text(&right);
     }
 
     #[test]
@@ -1094,5 +1165,7 @@ mod tests {
         assert_eq!(left.text.as_ref(), "abc א");
         assert_eq!(right.text.as_ref(), "בג def");
         assert_eq!(left.len() + right.len(), text.len());
+        assert_glyph_indices_within_text(&left);
+        assert_glyph_indices_within_text(&right);
     }
 }
