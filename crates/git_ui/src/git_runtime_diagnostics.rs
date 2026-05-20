@@ -86,11 +86,12 @@ fn collect_process_tree() -> anyhow::Result<Value> {
         .iter()
         .filter_map(|pid| {
             let process = system.process(*pid)?;
-            let cmd: Vec<String> = process
-                .cmd()
-                .iter()
-                .map(|s| s.to_string_lossy().into_owned())
-                .collect();
+            let cmd = sanitize_cmd(
+                process
+                    .cmd()
+                    .iter()
+                    .map(|s| s.to_string_lossy().into_owned()),
+            );
             Some(serde_json::json!({
                 "pid": pid.as_u32(),
                 "ppid": process.parent().map(|p| p.as_u32()),
@@ -108,6 +109,129 @@ fn collect_process_tree() -> anyhow::Result<Value> {
         "descendant_count": entries.len(),
         "descendants": entries,
     }))
+}
+
+/// Scrub a process's reported argv to avoid leaking environment-variable
+/// values. sysinfo's `Process::cmd()` on macOS goes through `KERN_PROCARGS2`
+/// and can include envp in addition to argv for some processes, which means
+/// the raw output can contain things like `ANTHROPIC_API_KEY=…`. We replace
+/// any entry that matches a conservative env-var pattern (uppercase
+/// identifier ending in `=`) with `KEY=<redacted>`. If *every* entry got
+/// redacted then sysinfo's data for this process is too garbled to trust as
+/// argv, so we return `None` so the caller emits a JSON null rather than
+/// something misleading.
+fn sanitize_cmd(cmd: impl IntoIterator<Item = String>) -> Option<Vec<String>> {
+    let sanitized: Vec<String> = cmd.into_iter().map(redact_env_var_entry).collect();
+    if sanitized.is_empty() {
+        return None;
+    }
+    let all_redacted = sanitized.iter().all(|s| s.ends_with("=<redacted>"));
+    if all_redacted { None } else { Some(sanitized) }
+}
+
+fn redact_env_var_entry(entry: String) -> String {
+    // Match `IDENT=...` where IDENT is at least two characters starting with
+    // an uppercase letter or underscore and otherwise uppercase/digit/under.
+    // CLI flags (`--foo=bar`, `-x=y`, `/path=value`) don't match.
+    let Some(eq_index) = entry.find('=') else {
+        return entry;
+    };
+    let key = &entry[..eq_index];
+    if !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && key.starts_with(|c: char| c.is_ascii_uppercase() || c == '_')
+    {
+        format!("{key}=<redacted>")
+    } else {
+        entry
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[track_caller]
+    fn assert_redacts(input: &str, expected: &str) {
+        assert_eq!(redact_env_var_entry(input.to_string()), expected);
+    }
+
+    #[test]
+    fn redacts_secret_looking_env_vars() {
+        assert_redacts(
+            "ANTHROPIC_API_KEY=sk-ant-api03-abcdef",
+            "ANTHROPIC_API_KEY=<redacted>",
+        );
+        assert_redacts(
+            "AWS_SECRET_ACCESS_KEY=anything-at-all",
+            "AWS_SECRET_ACCESS_KEY=<redacted>",
+        );
+        assert_redacts("PATH=/usr/bin:/bin", "PATH=<redacted>");
+        assert_redacts("A=1", "A=<redacted>");
+        assert_redacts("_FOO=bar", "_FOO=<redacted>");
+        // Values may legitimately contain `=`; only the value portion is dropped.
+        assert_redacts("TOKEN=abc=def=ghi", "TOKEN=<redacted>");
+        // Empty value still redacts (and importantly, doesn't pretend to be a flag).
+        assert_redacts("PASSWORD=", "PASSWORD=<redacted>");
+    }
+
+    #[test]
+    fn leaves_real_argv_alone() {
+        // CLI flags that happen to contain `=`.
+        assert_redacts("--max-old-space-size=8092", "--max-old-space-size=8092");
+        assert_redacts("-Dfoo=bar", "-Dfoo=bar");
+        // Paths.
+        assert_redacts("/opt/homebrew/bin/node", "/opt/homebrew/bin/node");
+        // Bare strings without `=`.
+        assert_redacts("--cancellationPipeName", "--cancellationPipeName");
+        assert_redacts(
+            "npm exec mcp-remote https://example.com",
+            "npm exec mcp-remote https://example.com",
+        );
+        // Lowercase / mixed-case identifiers aren't env vars by convention; leave them.
+        assert_redacts("foo=bar", "foo=bar");
+        assert_redacts("camelCase=value", "camelCase=value");
+        // Pathological: `=value` with no key.
+        assert_redacts("=value", "=value");
+    }
+
+    #[test]
+    fn sanitize_returns_none_when_everything_redacted() {
+        let cmd = vec![
+            "FOO=1".to_string(),
+            "BAR=2".to_string(),
+            "ANTHROPIC_API_KEY=secret".to_string(),
+        ];
+        assert_eq!(sanitize_cmd(cmd), None);
+    }
+
+    #[test]
+    fn sanitize_preserves_real_argv_and_redacts_env_vars() {
+        // The exact pattern observed in a real diagnostic dump.
+        let cmd = vec![
+            "npm exec mcp-remote https://mcp.linear.app/mcp".to_string(),
+            "ALACRITTY_WINDOW_ID=38654706047".to_string(),
+            "AMP_FORCE_BEL=1".to_string(),
+            "ANTHROPIC_API_KEY=sk-ant-api03-realsecret".to_string(),
+        ];
+        assert_eq!(
+            sanitize_cmd(cmd),
+            Some(vec![
+                "npm exec mcp-remote https://mcp.linear.app/mcp".to_string(),
+                "ALACRITTY_WINDOW_ID=<redacted>".to_string(),
+                "AMP_FORCE_BEL=<redacted>".to_string(),
+                "ANTHROPIC_API_KEY=<redacted>".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn sanitize_handles_empty_cmd() {
+        let cmd: Vec<String> = Vec::new();
+        assert_eq!(sanitize_cmd(cmd), None);
+    }
 }
 
 fn descendants_of(system: &sysinfo::System, root: sysinfo::Pid) -> Vec<sysinfo::Pid> {
