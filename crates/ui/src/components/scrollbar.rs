@@ -785,21 +785,26 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.set_thumb_state(
-            if let Some(&ScrollbarLayout { axis, .. }) =
-                self.last_prepaint_state.as_ref().and_then(|state| {
-                    state
-                        .thumb_for_position(position)
-                        .filter(|thumb| thumb.cursor_hitbox.is_hovered(window))
-                })
-            {
-                ThumbState::Hover(axis)
-            } else {
-                ThumbState::Inactive
-            },
-            window,
-            cx,
-        );
+        let thumb_state = if let Some(&ScrollbarLayout { axis, .. }) =
+            self.last_prepaint_state.as_ref().and_then(|state| {
+                state
+                    .thumb_for_position(position)
+                    .filter(|thumb| thumb.cursor_hitbox.is_hovered(window))
+            }) {
+            ThumbState::Hover(axis)
+        } else if let Some(&ScrollbarLayout { axis, .. }) =
+            self.last_prepaint_state.as_ref().and_then(|state| {
+                state
+                    .thumbs
+                    .iter()
+                    .find(|thumb| thumb.cursor_hitbox.is_hovered(window))
+            })
+        {
+            ThumbState::Hover(axis)
+        } else {
+            ThumbState::Inactive
+        };
+        self.set_thumb_state(thumb_state, window, cx);
     }
 
     fn set_thumb_state(&mut self, state: ThumbState, window: &mut Window, cx: &mut Context<Self>) {
@@ -835,9 +840,13 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     fn parent_hovered(&self, window: &Window) -> bool {
-        self.last_prepaint_state
-            .as_ref()
-            .is_some_and(|state| state.parent_bounds_hitbox.is_hovered(window))
+        self.last_prepaint_state.as_ref().is_some_and(|state| {
+            state.parent_bounds_hitbox.is_hovered(window)
+                || state
+                    .thumbs
+                    .iter()
+                    .any(|thumb| thumb.cursor_hitbox.is_hovered(window))
+        })
     }
 
     fn hit_for_position(&self, position: &Point<Pixels>) -> Option<&ScrollbarLayout> {
