@@ -87,9 +87,10 @@ Reference these in the skill body. The agent can read them using the file path s
 ## Step-by-Step: Creating a Skill
 
 1. Decide on scope (global vs project-local) based on the user's needs.
-2. Choose a descriptive, hyphenated name.
-3. Create the directory structure.
-4. Write the `SKILL.md` with frontmatter and instructions.
-5. Optionally add supporting files (templates, examples, references).
+2. **Check for existing skills first.** Before creating a new skill, list the contents of the target skills directory (`~/.agents/skills/` for global, `<project>/.agents/skills/` for project-local) and look for skills with the same or similar names. If a matching skill already exists, **update it in place** rather than creating a new one with a numbered suffix. Never create skills like `my-skill-2`, `my-skill-3`, etc. — this clutters the user's skill list with duplicates.
+3. Choose a descriptive, hyphenated name.
+4. Create the directory structure.
+5. Write the `SKILL.md` with frontmatter and instructions.
+6. Optionally add supporting files (templates, examples, references).
 
 After creating the skill, it will be automatically discovered by Zed's agent on the next conversation (no restart needed for global skills if the `~/.agents/skills/` directory already exists).
