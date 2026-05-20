@@ -4394,7 +4394,7 @@ impl MergeDetails {
         &mut self,
         backend: &Arc<dyn GitRepository>,
         current_conflicted_paths: Vec<RepoPath>,
-    ) -> Result<bool> {
+    ) -> bool {
         log::debug!("load merge details");
         self.message = backend.merge_message().await.map(SharedString::from);
         let heads = backend
@@ -4435,7 +4435,7 @@ impl MergeDetails {
                 keep
             });
 
-        Ok(conflicts_changed)
+        conflicts_changed
     }
 }
 
@@ -9170,11 +9170,8 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
-    let (branches, head_commit, all_worktrees) = cx
-        .background_spawn(async move {
-            futures::future::join3(branches_future, head_commit_future, worktrees_future).await
-        })
-        .await;
+    let (branches, head_commit, all_worktrees) =
+        futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
 
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
@@ -9184,20 +9181,8 @@ async fn compute_snapshot(
         .filter(|wt| wt.path != *work_directory_abs_path)
         .collect();
 
-    let (remote_origin_url, remote_upstream_url) = cx
-        .background_spawn({
-            let backend = backend.clone();
-            async move {
-                Ok::<_, anyhow::Error>(
-                    futures::future::join(
-                        backend.remote_url("origin"),
-                        backend.remote_url("upstream"),
-                    )
-                    .await,
-                )
-            }
-        })
-        .await?;
+    let remote_origin_url = backend.remote_url("origin").await;
+    let remote_upstream_url = backend.remote_url("upstream").await;
 
     let snapshot = this.update(cx, |this, cx| {
         let head_changed =
@@ -9233,31 +9218,36 @@ async fn compute_snapshot(
         this.snapshot.clone()
     });
 
-    let (statuses, diff_stats, stash_entries) = cx
-        .background_spawn({
-            let backend = backend.clone();
-            let snapshot = snapshot.clone();
-            async move {
-                let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> =
-                    if snapshot.head_commit.is_some() {
-                        backend.diff_stat(&[])
-                    } else {
-                        future::ready(Ok(status::GitDiffStat {
-                            entries: Arc::default(),
-                        }))
-                        .boxed()
-                    };
-                futures::future::try_join3(
-                    backend.status(&[RepoPath::from_rel_path(
-                        &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
-                    )]),
-                    diff_stat_future,
-                    backend.stash_entries(),
-                )
+    let statuses_future = {
+        let backend = backend.clone();
+        async move {
+            backend
+                .status(&[RepoPath::from_rel_path(
+                    &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
+                )])
                 .await
+                .log_err()
+                .unwrap_or_default()
+        }
+    };
+    let diff_stat_future = {
+        let snapshot = snapshot.clone();
+        let backend = backend.clone();
+        async move {
+            if snapshot.head_commit.is_some() {
+                backend.diff_stat(&[]).await.unwrap_or_default()
+            } else {
+                Default::default()
             }
-        })
-        .await?;
+        }
+    };
+    let stash_entries_future = {
+        let backend = backend.clone();
+        async move { backend.stash_entries().await.log_err().unwrap_or_default() }
+    };
+
+    let (statuses, diff_stats, stash_entries) =
+        futures::future::join3(statuses_future, diff_stat_future, stash_entries_future).await;
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
@@ -9276,17 +9266,16 @@ async fn compute_snapshot(
         (),
     );
 
-    let merge_details = cx
+    let (merge_details, conflicts_changed) = cx
         .background_spawn({
             let backend = backend.clone();
             let mut merge_details = snapshot.merge.clone();
             async move {
-                let conflicts_changed = merge_details.update(&backend, conflicted_paths).await?;
-                Ok::<_, anyhow::Error>((merge_details, conflicts_changed))
+                let conflicts_changed = merge_details.update(&backend, conflicted_paths).await;
+                (merge_details, conflicts_changed)
             }
         })
-        .await?;
-    let (merge_details, conflicts_changed) = merge_details;
+        .await;
     log::debug!("new merge details: {merge_details:?}");
 
     Ok(this.update(cx, |this, cx| {

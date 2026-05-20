@@ -792,7 +792,7 @@ pub trait GitRepository: Send + Sync {
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>>;
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
+    fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
@@ -967,7 +967,7 @@ pub trait GitRepository: Send + Sync {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
@@ -1772,7 +1772,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<GitStash>> {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
@@ -2126,7 +2126,7 @@ impl GitRepository for RealGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
         let git_binary = self.git_binary_in_worktree();
 
