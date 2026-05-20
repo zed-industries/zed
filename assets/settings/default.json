@@ -2363,6 +2363,9 @@
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0",
     },
+    "atomic_chat": {
+      "api_url": "http://localhost:1337/v1",
+    },
     "deepseek": {
       "api_url": "https://api.deepseek.com/v1",
     },

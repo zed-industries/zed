@@ -1,6 +1,6 @@
 ---
 title: LLM Providers - Use Your Own API Keys in Zed
-description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, DeepSeek, Mistral, OpenRouter, Vercel AI Gateway, and more.
+description: Bring your own API keys to Zed. Set up Anthropic, OpenAI, Google AI, Ollama, Atomic Chat, DeepSeek, Mistral, OpenRouter, Vercel AI Gateway, and more.
 ---
 
 # LLM Providers
@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [Atomic Chat](#atomic-chat)
 - [ChatGPT Subscription](#chatgpt-subscription)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
@@ -225,6 +226,16 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### Atomic Chat {#atomic-chat}
+
+Atomic Chat runs a local [OpenAI-compatible HTTP API](https://atomic.chat/) (default base URL `http://localhost:1337/v1`).
+
+1. Download and install [Atomic Chat](https://atomic.chat/)
+2. Launch the app and ensure the API server is running with at least one model available
+3. Open the settings view ({#action agent::OpenSettings}) and go to the Atomic Chat section
+4. Confirm the **API URL** (change it if you use a non-default host or port), then click **Connect** to load models
+5. An **API key** is optional—use it only if your local server requires authentication
 
 ### ChatGPT Subscription {#chatgpt-subscription}
 

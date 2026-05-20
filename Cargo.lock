@@ -1217,6 +1217,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "atomic_chat"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "http_client",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "audio"
 version = "0.1.0"
 dependencies = [
@@ -9666,6 +9678,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "async-lock",
+ "atomic_chat",
  "aws-config",
  "aws-credential-types",
  "aws_http_client",
