@@ -3594,8 +3594,10 @@ impl LocalLspStore {
             }
         }
         servers_to_remove.retain(|server_id| !servers_to_preserve.contains(server_id));
-        self.language_server_ids
-            .retain(|_, state| !servers_to_remove.contains(&state.id));
+        self.language_server_ids.retain(|seed, state| {
+            seed.worktree_id != id_to_remove && !servers_to_remove.contains(&state.id)
+        });
+        self.lsp_tree.instances.remove(&id_to_remove);
         for server_id_to_remove in &servers_to_remove {
             self.language_server_watched_paths
                 .remove(server_id_to_remove);
@@ -10041,6 +10043,16 @@ impl LspStore {
         self.language_server_statuses
             .iter()
             .map(|(key, value)| (*key, value))
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn has_language_server_seed_for_worktree(&self, worktree_id: WorktreeId) -> bool {
+        self.as_local().is_some_and(|local| {
+            local
+                .language_server_ids
+                .keys()
+                .any(|seed| seed.worktree_id == worktree_id)
+        })
     }
 
     pub(super) fn did_rename_entry(
