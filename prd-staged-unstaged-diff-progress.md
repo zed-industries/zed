@@ -30,7 +30,7 @@ Initial build landed; six followups remain.
 - [x] M5 — initial hover-revealed `+`/`-` per row, sticky-by-key fix
       (`e1a59f5944 feat: add staging affordances and fix stale selections`)
 - [x] A1 — fix `+`/`-` hover regression (see below)
-- [ ] A2 — section-header `+`/`-` buttons in staging-grouped mode
+- [x] A2 — section-header `+`/`-` buttons in staging-grouped mode
 - [ ] A3 — per-section diff stats
 - [ ] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
 - [ ] A5 — click → filter switch coupling
@@ -66,17 +66,25 @@ same wrapper pattern.
 
 User stories: 17, 18 (revised). PRD: M5 "Section-header level", appendix A2.
 
-- [ ] Branch `render_list_header` on `group_by`
-      (`crates/git_ui/src/git_panel.rs:6109-6164`)
-- [ ] Staged header → render hover-revealed `−` (Unstage All in section)
-- [ ] Unstaged header → render hover-revealed `+` (Stage All in section)
-- [ ] Conflicts header → render existing checkbox + whole-row toggle (unchanged)
-- [ ] Remove whole-row `on_click` toggle for Staged / Unstaged headers in
+- [x] Branch `render_list_header` on `group_by` via
+      `staging_affordance_for_section(..., StagingAffordanceTarget::Section)`
+      (`crates/git_ui/src/git_panel.rs:6109`)
+- [x] Staged header → render hover-revealed `−` ("Unstage All Changes")
+- [x] Unstaged header → render hover-revealed `+` ("Stage All Changes")
+- [x] Conflicts header → render existing checkbox + whole-row toggle (unchanged)
+- [x] Remove whole-row `on_click` toggle for Staged / Unstaged headers in
       staging-grouped mode; keep it for Conflicts and for all status-grouped
-      headers
-- [ ] Wrapper for header buttons must not use `.occlude()` (constraint from A1)
-- [ ] Test: hover Staged/Unstaged header → assert button visible and not a
-      checkbox; click → assert section's files all switch staging state
+      headers (the `match staging_affordance` at the end of `render_list_header`
+      only attaches `on_click` in the `Checkbox` arm).
+- [x] Wrapper for header buttons must not use `.occlude()` (constraint from A1)
+- [x] Tests landed in `crates/git_ui/src/git_panel.rs`:
+      - `test_unstaged_section_header_stages_all_unstaged_entries_on_click`
+      - `test_staged_section_header_unstages_all_staged_entries_on_click`
+      - `test_staging_grouped_section_header_body_click_does_not_toggle`
+      - `test_status_grouped_section_header_whole_row_click_still_toggles_staging`
+      - extended `test_staging_group_uses_explicit_plus_minus_affordances` with
+        the new `StagingAffordanceTarget::Section` cases (Conflicts header keeps
+        the checkbox)
 
 **Dependency:** A1.
 
