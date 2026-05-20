@@ -1,7 +1,7 @@
 use crate::{
     branch_picker,
     conflict_view::ConflictAddon,
-    git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    git_panel::{GitPanel, GitPanelAddon, GitStatusEntry, Section},
     git_panel_settings::GitPanelSettings,
 };
 use agent_settings::AgentSettings;
@@ -779,11 +779,21 @@ impl ProjectDiff {
                 let Some(project_path) = self.active_path(cx) else {
                     return;
                 };
+                let preferred_section = match self.diff_base(cx) {
+                    DiffBase::Staged => Some(Section::Staged),
+                    DiffBase::Unstaged => Some(Section::Unstaged),
+                    DiffBase::Head | DiffBase::Merge { .. } => None,
+                };
                 self.workspace
                     .update(cx, |workspace, cx| {
                         if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
                             git_panel.update(cx, |git_panel, cx| {
-                                git_panel.select_entry_by_path(project_path, window, cx)
+                                git_panel.select_entry_by_path(
+                                    project_path,
+                                    preferred_section,
+                                    window,
+                                    cx,
+                                )
                             })
                         }
                     })

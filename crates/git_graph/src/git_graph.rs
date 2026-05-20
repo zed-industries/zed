@@ -5147,7 +5147,7 @@ mod tests {
             .update(cx, |multi, window, cx| {
                 let workspace = multi.workspace();
                 git_panel.update(cx, |panel, cx| {
-                    panel.select_entry_by_path(tracked1.clone(), window, cx);
+                    panel.select_entry_by_path(tracked1.clone(), None, window, cx);
                 });
                 workspace.update(cx, |workspace, cx| {
                     workspace.focus_panel::<git_ui::git_panel::GitPanel>(window, cx);

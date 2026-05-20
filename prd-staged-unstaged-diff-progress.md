@@ -32,7 +32,7 @@ Initial build landed; six followups remain.
 - [x] A1 — fix `+`/`-` hover regression (see below)
 - [x] A2 — section-header `+`/`-` buttons in staging-grouped mode
 - [x] A3 — per-section diff stats
-- [ ] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
+- [x] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
 - [ ] A5 — click → filter switch coupling
 - [ ] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
 
@@ -141,40 +141,66 @@ Three stats per file plumbed end-to-end: `git diff` → `git` crate →
       `test_diff_stat_kind_returns_side_specific_numstats` asserts the
       three kinds produce the expected pairs from the same fixture.
 
-### A4 — Selection identity for partially-staged files (M4)
+### A4 — Selection identity for partially-staged files (M4) — DONE
 
 User story: 29 (reinforced). PRD: M4 "Selection identity", appendix A4.
 
-- [ ] Add `preferred_section: Option<Section>` arg to
-      `GitPanel::select_entry_by_path`
-      (`crates/git_ui/src/git_panel.rs:1113`).
-- [ ] Compute the **target section** *before* any stickiness check:
-      `target: Option<Section> =
-      preferred_section.or_else(|| section_from_diff_base())`
-      where `DiffBase::Staged → Some(Section::Staged)`,
-      `DiffBase::Unstaged → Some(Section::Unstaged)`,
-      and `DiffBase::Head` / `DiffBase::Merge → None`.
-- [ ] **Narrow-sticky no-op:** return without changes when **both**
+- [x] Made `Section` `pub` so it can appear in the public
+      `select_entry_by_path` signature without a `private_interfaces` lint
+      error (the lint fires under `-D warnings`).
+- [x] Added `preferred_section: Option<Section>` arg to
+      `GitPanel::select_entry_by_path` (`crates/git_ui/src/git_panel.rs`).
+- [x] **Section is computed by the firing caller, not by the panel.**
+      `ProjectDiff::handle_editor_event` (`crates/git_ui/src/project_diff.rs`)
+      maps its own `self.diff_base(cx)` to a `Section` and passes it as
+      `preferred_section`. This deviates from the PRD's
+      `section_from_diff_base()` panel-side fallback for three reasons:
+      (1) it eliminates a per-`SelectionsChanged` workspace lookup on the
+      hot path, (2) it removes a latent multi-`ProjectDiff` correctness
+      bug — the panel-side `active_item_as::<ProjectDiff>` could read the
+      *wrong* base if the user switched panes between the event firing
+      and the handler running, and (3) it lets the test drive the
+      function directly with `Some(Section::Unstaged)` instead of needing
+      a `set_diff_base` back door.
+- [x] **Narrow-sticky no-op:** returns without changes when **both**
       `selected.repo_path == target_path` **and**
-      `target.map_or(true, |s| selected.section == s)`. When `target` is
-      `Some(s)`, the selected row's section must equal `s`; when `target`
-      is `None`, the section is unconstrained so the current duplicate row
-      is preserved (no first-match flip).
-- [ ] Re-resolve otherwise: when `target = Some(s)`, pick the entry whose
-      `repo_path` matches *and* whose `section == s`; when `target = None`,
-      fall back to the existing first-match heuristic.
-- [ ] Update `ProjectDiff::handle_editor_event` call site to pass `None`
-      for `preferred_section` (`crates/git_ui/src/project_diff.rs:786`).
-- [ ] Update panel-internal callers (row click, scroll-to, reveal) to pass
-      the explicit section when known.
-- [ ] Test (row-click): synthetic Unstaged-row click then synthetic
-      `EditorEvent::SelectionsChanged` → `selected_entry` still points to
-      the Unstaged row. Repeat converse.
-- [ ] Test (filter change for the same path): start with selection on the
-      Staged row of `partial.rs`; flip the filter to Unstaged (so
-      `target = Section::Unstaged`); call `select_entry_by_path` for
-      `partial.rs` with `preferred_section = None` → selection must move
-      to the Unstaged row of the same file, *not* stick on Staged.
+      `preferred_section.is_none_or(|s| selected.section == s)`. When
+      `preferred_section` is `Some(s)`, the selected row's section must
+      equal `s`; when `None`, the section is unconstrained so the current
+      duplicate row is preserved (no first-match flip). Header / directory
+      rows have no `status_entry()` so the sticky check is inapplicable and
+      the function falls through to re-resolve. Uses the existing
+      `get_selected_entry()` helper.
+- [x] Re-resolves otherwise: `preferred_section.or_else(|| existing
+      status-based derivation)` is plumbed into the `entry_by_key` lookup,
+      so an explicit `Some(s)` picks the row whose `(section, repo_path)`
+      matches, and `None` falls back to the existing first-match heuristic.
+- [x] All other callers (`git_panel.rs:10231` existing tree-view test,
+      `git_graph.rs:5150` file-history test) pass `None`. No internal
+      panel call site needs a `Some(section)` yet; that becomes
+      load-bearing only once A5's click handler routes through
+      `select_entry_by_path`.
+- [x] Test (row-click stickiness):
+      `test_select_entry_by_path_is_sticky_for_partially_staged_file`.
+      Sets `selected_entry` to the Unstaged row of `partial.rs`, calls
+      `select_entry_by_path(partial.rs, None)`, asserts selection still
+      points to the Unstaged row. Repeats converse for the Staged row.
+      Verified RED by replacing the narrow-sticky check with `if false`
+      — both assertions panic with the Staged index (1) instead of the
+      Unstaged index (3).
+- [x] Test (cross-section move when preferred_section changes):
+      `test_select_entry_by_path_moves_section_when_preferred_section_changes`.
+      Forces the selection on the Staged row of `partial.rs`, then calls
+      `select_entry_by_path(partial.rs, Some(Section::Unstaged))`, asserts
+      the selection moves to the Unstaged row. Verified RED by
+      short-circuiting the `let section = preferred_section.or_else(…)`
+      to ignore the preferred section — the assertion panics with the
+      Staged index instead.
+- [x] Shared fixture helper `build_partial_file_panel(cx) -> (panel,
+      partial_path, staged_ix, unstaged_ix, VisualTestContext)` cuts ~40
+      lines of duplicated scaffolding (fs, status, project, workspace,
+      `group_by = Staging`, panel build, refresh, key lookups) out of
+      each test.
 
 **Dependency:** independent, but the A4 fix is observably correct only once
 A5's click-handler dispatches the explicit section.

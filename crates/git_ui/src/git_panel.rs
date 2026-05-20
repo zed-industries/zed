@@ -316,7 +316,7 @@ enum GitPanelTab {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-enum Section {
+pub enum Section {
     Conflict,
     Tracked,
     New,
@@ -1131,6 +1131,7 @@ impl GitPanel {
     pub fn select_entry_by_path(
         &mut self,
         path: ProjectPath,
+        preferred_section: Option<Section>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1138,15 +1139,29 @@ impl GitPanel {
             return;
         };
 
-        let (repo_path, section) = {
-            let repo = git_repo.read(cx);
-            let Some(repo_path) = repo.project_path_to_repo_path(&path, cx) else {
-                return;
-            };
-            let group_by = GitPanelSettings::get_global(cx).group_by;
+        let Some(repo_path) = git_repo.read(cx).project_path_to_repo_path(&path, cx) else {
+            return;
+        };
 
-            let section = repo
-                .status_for_path(&repo_path)
+        // When the caller specifies the section (e.g. the firing diff's
+        // filter, or an explicit row click), a partial file's duplicate rows
+        // must be disambiguated by *that* section, not by status — both rows
+        // would otherwise resolve to `Section::Staged` since
+        // `has_staged()` is true for a partial file.
+        let currently_selected = self
+            .get_selected_entry()
+            .and_then(|entry| entry.status_entry());
+        if let Some(selected) = currently_selected
+            && selected.repo_path == repo_path
+            && preferred_section.is_none_or(|t| selected.section == t)
+        {
+            return;
+        }
+
+        let section = preferred_section.or_else(|| {
+            let repo = git_repo.read(cx);
+            let group_by = GitPanelSettings::get_global(cx).group_by;
+            repo.status_for_path(&repo_path)
                 .map(|status| status.status)
                 .map(|status| {
                     if repo.had_conflict_on_last_merge_head_change(&repo_path) {
@@ -1169,10 +1184,8 @@ impl GitPanel {
                             }
                         }
                     }
-                });
-
-            (repo_path, section)
-        };
+                })
+        });
 
         let mut needs_rebuild = false;
         if let (Some(section), Some(tree_state)) = (section, self.view_mode.tree_state_mut()) {
@@ -8025,6 +8038,84 @@ mod tests {
         cx.run_until_parked();
     }
 
+    async fn build_partial_file_panel(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<GitPanel>,
+        ProjectPath,
+        usize,
+        usize,
+        VisualTestContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({ "project": { ".git": {}, "partial.rs": "partial" } }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[(
+                "partial.rs",
+                FileStatus::Tracked(git::status::TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }),
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .expect("workspace should exist");
+        let mut visual_cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        visual_cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(&mut visual_cx, GitPanel::new);
+        refresh_git_panel_entries(&project, &panel, &mut visual_cx).await;
+
+        let (worktree_id, staged_ix, unstaged_ix) = panel.read_with(&visual_cx, |panel, cx| {
+            let worktree_id = project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id();
+            let staged_ix = panel
+                .entry_by_key(&GitPanelEntryKey {
+                    section: Section::Staged,
+                    repo_path: repo_path("partial.rs"),
+                })
+                .expect("partial.rs should have a Staged row");
+            let unstaged_ix = panel
+                .entry_by_key(&GitPanelEntryKey {
+                    section: Section::Unstaged,
+                    repo_path: repo_path("partial.rs"),
+                })
+                .expect("partial.rs should have an Unstaged row");
+            assert_ne!(staged_ix, unstaged_ix);
+            (worktree_id, staged_ix, unstaged_ix)
+        });
+
+        let partial_path = ProjectPath {
+            worktree_id,
+            path: rel_path("partial.rs").into_arc(),
+        };
+        (panel, partial_path, staged_ix, unstaged_ix, visual_cx)
+    }
+
     fn render_workspace(cx: &mut VisualTestContext) {
         cx.simulate_resize(size(px(900.), px(700.)));
         cx.run_until_parked();
@@ -9139,6 +9230,53 @@ mod tests {
         );
     }
 
+    // A partial file appears under both Staged and Unstaged with
+    // `status.staging().has_staged() == true`, so the status-based fallback
+    // inside `select_entry_by_path` always resolves to `Section::Staged`.
+    // These tests guard the narrow-sticky and explicit-section paths that
+    // prevent that fallback from clobbering an already-correct duplicate row.
+    #[gpui::test]
+    async fn test_select_entry_by_path_is_sticky_for_partially_staged_file(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, partial_path, staged_ix, unstaged_ix, mut visual_cx) =
+            build_partial_file_panel(cx).await;
+        let cx = &mut visual_cx;
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.select_entry_by_path(partial_path.clone(), None, window, cx);
+        });
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(unstaged_ix));
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.select_entry_by_path(partial_path, None, window, cx);
+        });
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(staged_ix));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_select_entry_by_path_moves_section_when_preferred_section_changes(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, partial_path, staged_ix, unstaged_ix, mut visual_cx) =
+            build_partial_file_panel(cx).await;
+        let cx = &mut visual_cx;
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.select_entry_by_path(partial_path, Some(Section::Unstaged), window, cx);
+        });
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(unstaged_ix));
+        });
+    }
+
     #[test]
     fn test_staging_group_uses_explicit_plus_minus_affordances() {
         let staged_entry = entry_for_section(
@@ -10228,7 +10366,7 @@ mod tests {
         };
 
         panel.update_in(cx, |panel, window, cx| {
-            panel.select_entry_by_path(project_path, window, cx);
+            panel.select_entry_by_path(project_path, None, window, cx);
         });
 
         panel.read_with(cx, |panel, _| {
