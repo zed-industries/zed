@@ -31,13 +31,14 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
-    builtin_skills, global_skills_dir, load_skills_from_directory, project_skills_relative_path,
+    MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, Skill, SkillIndex, SkillLoadError,
+    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
+    load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, IndexMap};
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+
 use fs::Fs;
 use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
@@ -369,6 +370,10 @@ impl NativeAgent {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
 
+            if !cx.has_global::<SkillIndex>() {
+                cx.set_global(SkillIndex::default());
+            }
+
             Self {
                 sessions: HashMap::default(),
                 pending_sessions: HashMap::default(),
@@ -387,11 +392,11 @@ impl NativeAgent {
     /// Kicks off a one-time scan of the global skills directory if one
     /// isn't already in progress and a watch isn't already active.
     ///
-    /// Idempotent and cheap: returns immediately if the user lacks the
-    /// skills feature flag, or if a scan or watch is already running.
-    /// The expected callers are user-interaction events from the agent
-    /// panel (input focus, slash autocomplete, conversation submit);
-    /// firing this from any of them is equivalent and safe to repeat.
+    /// Idempotent and cheap: returns immediately if a scan or watch is
+    /// already running. The expected callers are user-interaction events
+    /// from the agent panel (input focus, slash autocomplete, conversation
+    /// submit); firing this from any of them is equivalent and safe to
+    /// repeat.
     ///
     /// The scan itself runs detached on the foreground executor. If
     /// `~/.agents/skills/` exists it transitions state to
@@ -400,9 +405,6 @@ impl NativeAgent {
     /// next trigger retries (covering the case where the user creates
     /// the directory after the first scan).
     pub fn ensure_skills_scan_started(&mut self, cx: &mut Context<Self>) {
-        if !cx.has_flag::<SkillsFeatureFlag>() {
-            return;
-        }
         if !matches!(self.skills_state, SkillsState::Idle) {
             return;
         }
@@ -593,12 +595,10 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            if cx.has_flag::<SkillsFeatureFlag>() {
-                thread.add_tool(SkillTool::new(
-                    skills_resolver_for_project(weak.clone(), project_id),
-                    self.fs.clone(),
-                ));
-            }
+            thread.add_tool(SkillTool::new(
+                skills_resolver_for_project(weak.clone(), project_id),
+                self.fs.clone(),
+            ));
         });
 
         let subscriptions = vec![
@@ -796,6 +796,7 @@ impl NativeAgent {
                 // the available commands) can change without affecting the
                 // skill error list.
                 this.update_available_commands_for_project(project_id, cx);
+                this.publish_skill_index(cx);
             })?;
         }
 
@@ -816,12 +817,8 @@ impl NativeAgent {
             })
             .collect::<Vec<_>>();
 
-        // Skills are gated behind the "skills" feature flag. Without it we
-        // skip all on-disk lookups so users see no behavior change.
-        let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
-
         // Load global skills
-        let global_skills_task = if skills_enabled {
+        let global_skills_task = {
             let global_skills_dir = global_skills_dir();
             let global_skills_fs = fs.clone();
             cx.background_spawn(async move {
@@ -832,8 +829,6 @@ impl NativeAgent {
                 )
                 .await
             })
-        } else {
-            Task::ready(Vec::new())
         };
 
         // Load project-local skills, but only from worktrees the user has
@@ -846,7 +841,7 @@ impl NativeAgent {
         // worktrees pick up their skills without restarting.
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
-        let project_skills_task = if skills_enabled {
+        let project_skills_task = {
             let project_skills_futures: Vec<
                 futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
             > = worktrees
@@ -891,8 +886,6 @@ impl NativeAgent {
                 })
                 .collect();
             cx.background_spawn(async move { future::join_all(project_skills_futures).await })
-        } else {
-            Task::ready(Vec::new())
         };
         let default_user_rules_task = if let Some(prompt_store) = prompt_store.as_ref() {
             prompt_store.read_with(cx, |prompt_store, cx| {
@@ -1101,7 +1094,7 @@ impl NativeAgent {
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) {
         let project_id = project.entity_id();
         let Some(state) = self.projects.get_mut(&project_id) else {
@@ -1112,16 +1105,14 @@ impl NativeAgent {
                 state.project_context_needs_refresh.send(()).ok();
             }
             project::Event::WorktreeUpdatedEntries(_, items) => {
-                let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
                 if items.iter().any(|(path, _, _)| {
                     let path_ref = path.as_ref();
                     RULES_FILE_REL_PATHS
                         .iter()
                         .any(|rules_path| path_ref == rules_path.as_ref())
-                        || (skills_enabled
-                            && SKILLS_PREFIX
-                                .as_ref()
-                                .is_some_and(|prefix| path_ref.starts_with(prefix)))
+                        || SKILLS_PREFIX
+                            .as_ref()
+                            .is_some_and(|prefix| path_ref.starts_with(prefix))
                 }) {
                     state.project_context_needs_refresh.send(()).ok();
                 }
@@ -1211,6 +1202,50 @@ impl NativeAgent {
                 }
             }
         }
+    }
+
+    fn publish_skill_index(&self, cx: &mut Context<Self>) {
+        let mut global_skills = Vec::new();
+        let mut project_groups: Vec<ProjectSkillGroup> = Vec::new();
+        let mut seen_global = false;
+
+        for state in self.projects.values() {
+            for skill in state.skills.iter() {
+                match &skill.source {
+                    SkillSource::BuiltIn => {}
+                    SkillSource::Global => {
+                        if !seen_global {
+                            global_skills.push(skill.clone());
+                        }
+                    }
+                    SkillSource::ProjectLocal {
+                        worktree_id,
+                        worktree_root_name,
+                    } => {
+                        if let Some(group) = project_groups
+                            .iter_mut()
+                            .find(|g| g.worktree_id == *worktree_id)
+                        {
+                            group.skills.push(skill.clone());
+                        } else {
+                            project_groups.push(ProjectSkillGroup {
+                                worktree_id: *worktree_id,
+                                worktree_root_name: SharedString::from(worktree_root_name.clone()),
+                                skills: vec![skill.clone()],
+                            });
+                        }
+                    }
+                }
+            }
+            if !global_skills.is_empty() {
+                seen_global = true;
+            }
+        }
+
+        cx.set_global(SkillIndex {
+            global_skills,
+            project_skills: project_groups,
+        });
     }
 
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
@@ -1450,6 +1485,7 @@ impl NativeAgent {
         let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
         if !has_remaining {
             self.projects.remove(&project_id);
+            self.publish_skill_index(cx);
         }
 
         session.pending_save
@@ -3532,9 +3568,6 @@ mod internal_tests {
     #[gpui::test]
     async fn test_global_skills_load_and_reload(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
         let initial_skill_dir = skills_dir.join("my-skill");
@@ -3600,9 +3633,6 @@ mod internal_tests {
     #[gpui::test]
     async fn test_global_skills_dir_created_after_startup(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
@@ -3684,9 +3714,6 @@ mod internal_tests {
     #[gpui::test]
     async fn test_skills_added_after_session_visible_to_skill_tool(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
@@ -3828,9 +3855,6 @@ mod internal_tests {
     #[gpui::test]
     async fn test_subagent_skills_lookup_matches_parent(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
         let skill_dir = skills_dir.join("shared-skill");
@@ -3931,9 +3955,6 @@ mod internal_tests {
     #[gpui::test]
     async fn test_skills_appear_as_available_skills(cx: &mut TestAppContext) {
         init_test(cx);
-        cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
-        });
         let fs = FakeFs::new(cx.executor());
         let skills_dir = global_skills_dir();
 
@@ -4036,7 +4057,6 @@ mod internal_tests {
 
         init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
             // The trust global isn't created by `init_test`. We need it
             // for `Project::test_with_worktree_trust` to actually wire up
             // trust tracking and for our subscription in

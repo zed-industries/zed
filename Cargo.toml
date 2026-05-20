@@ -172,6 +172,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
+    "crates/skill_creator",
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
@@ -432,6 +433,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+skill_creator = { path = "crates/skill_creator" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }

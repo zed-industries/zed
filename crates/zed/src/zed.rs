@@ -5253,6 +5253,7 @@ mod tests {
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
+                "skill_creator",
                 "snippets",
                 "stash_picker",
                 "svg",

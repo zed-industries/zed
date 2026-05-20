@@ -43,7 +43,7 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
@@ -506,6 +506,7 @@ pub fn init(
 ) {
     agent::ThreadStore::init_global(cx);
     rules_library::init(cx);
+    skill_creator::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
@@ -554,32 +555,6 @@ pub fn init(
         );
     })
     .detach();
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(
-            |workspace: &mut Workspace,
-             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                // The banner is the only intended entry point and is
-                // gated on the skills flag, but dispatch from the
-                // command palette or a keybind is still possible — only
-                // open the explainer if the flag is enabled so it never
-                // surfaces outside its intended audience.
-                //
-                // Race note: `has_flag` returns false before server
-                // flags are received, so a dispatch during that brief
-                // window is a no-op even for users who genuinely have
-                // the flag. The banner itself has the same race — it
-                // stays hidden until flags arrive — so a user who can
-                // see the banner has, by definition, already passed it.
-                if cx.has_flag::<SkillsFeatureFlag>() {
-                    crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
-                }
-            },
-        );
-    })
-    .detach();
-
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
@@ -608,10 +583,16 @@ pub fn init(
     })
     .detach();
 
-    // Once the `skills` feature flag has resolved, kick off the one-time
-    // migration of non-Default Rules to global Skills. Idempotent and
-    // self-gated on the flag, so it's safe to call on every flag-ready
-    // notification (and a no-op for users without the flag).
+    // Kick off the one-time migration of non-Default Rules to global
+    // Skills, deferred until server feature flags arrive.
+    //
+    // The migration itself is idempotent and no longer gated on a flag,
+    // but the deferral via `on_flags_ready` still matters: the migration
+    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
+    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
+    // server flags are never received, so this callback never fires —
+    // which keeps that sqlite worker activity from racing with the
+    // `TestScheduler` and tripping its non-determinism panic.
     {
         let fs = fs.clone();
         cx.on_flags_ready(move |_, cx| {
@@ -653,12 +634,6 @@ fn update_command_palette_filter(cx: &mut App) {
         .edit_predictions
         .provider;
 
-    // The Skills feature flag is loaded asynchronously, so this value may
-    // be `false` before flags resolve. `update_command_palette_filter`
-    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
-    // filter is reapplied with the correct value once flags arrive.
-    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
-
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
             AcceptEditPrediction, AcceptNextLineEditPrediction, AcceptNextWordEditPrediction,
@@ -676,6 +651,7 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
+        let open_skill_creator_action = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -726,15 +702,17 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `assistant: open rules library` when Skills are enabled —
-        // Rules are surfaced through the Skills UI in that case. Applied
-        // after the disable-ai / agent-enabled branches so it overrides
-        // the `show_namespace("assistant")` call above without affecting
-        // the rest of that namespace's actions.
-        if !disable_ai && skills_enabled {
+        // Hide `assistant: open rules library` — Rules are surfaced
+        // through the Skills UI now. Applied after the disable-ai /
+        // agent-enabled branches so it overrides the
+        // `show_namespace("assistant")` call above without affecting the
+        // rest of that namespace's actions.
+        if !disable_ai {
             filter.hide_action_types(&open_rules_library_action);
+            filter.show_action_types(open_skill_creator_action.iter());
         } else {
             filter.show_action_types(open_rules_library_action.iter());
+            filter.hide_action_types(&open_skill_creator_action);
         }
     });
 }
