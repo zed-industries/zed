@@ -28,9 +28,9 @@ use self::document_symbols::DocumentSymbolsData;
 use self::inlay_hints::BufferInlayHints;
 use crate::{
     CodeAction, Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource,
-    CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LocationPathLink, LocationPathTarget,
-    LspAction, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
-    ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
+    CoreCompletion, Hover, InlayHint, InlayId, LocationLink, LspAction, LspPullDiagnostics,
+    ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
+    PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -5939,79 +5939,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitions { position };
-            if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-
-            let request_timeout = ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .get_request_timeout();
-
-            let request_task = upstream_client.request_lsp(
-                project_id,
-                None,
-                request_timeout,
-                cx.background_executor().clone(),
-                request.to_proto(project_id, buffer.read(cx)),
-            );
-            let buffer = buffer.clone();
-            cx.spawn(async move |weak_lsp_store, cx| {
-                let Some(lsp_store) = weak_lsp_store.upgrade() else {
-                    return Ok(None);
-                };
-                let Some(responses) = request_task.await? else {
-                    return Ok(None);
-                };
-                let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitions { position }.response_from_proto(
-                        response.response,
-                        lsp_store.clone(),
-                        buffer.clone(),
-                        cx.clone(),
-                    )
-                }))
-                .await;
-
-                Ok(Some(
-                    actions
-                        .into_iter()
-                        .collect::<Result<Vec<Vec<_>>>>()?
-                        .into_iter()
-                        .flatten()
-                        .dedup()
-                        .collect(),
-                ))
-            })
-        } else {
-            let definitions_task = self.request_multiple_lsp_locally(
-                buffer,
-                Some(position),
-                GetDefinitions { position },
-                cx,
-            );
-            cx.background_spawn(async move {
-                Ok(Some(
-                    definitions_task
-                        .await
-                        .into_iter()
-                        .flat_map(|(_, definitions)| definitions)
-                        .dedup()
-                        .collect(),
-                ))
-            })
-        }
+        self.definitions_with_filter(buffer, position, false, cx)
     }
 
-    pub fn definition_paths(
+    pub fn workspace_definitions(
         &mut self,
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitionPaths { position };
+            let request = GetDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6036,7 +5987,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitionPaths { position }.response_from_proto(
+                    GetDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6059,7 +6014,10 @@ impl LspStore {
             let definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetDefinitionPaths { position },
+                GetDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6150,77 +6108,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
-        if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitions { position };
-            if !self.is_capable_for_proto_request(buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-            let request_timeout = ProjectSettings::get_global(cx)
-                .global_lsp_settings
-                .get_request_timeout();
-            let request_task = upstream_client.request_lsp(
-                project_id,
-                None,
-                request_timeout,
-                cx.background_executor().clone(),
-                request.to_proto(project_id, buffer.read(cx)),
-            );
-            let buffer = buffer.clone();
-            cx.spawn(async move |weak_lsp_store, cx| {
-                let Some(lsp_store) = weak_lsp_store.upgrade() else {
-                    return Ok(None);
-                };
-                let Some(responses) = request_task.await? else {
-                    return Ok(None);
-                };
-                let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitions { position }.response_from_proto(
-                        response.response,
-                        lsp_store.clone(),
-                        buffer.clone(),
-                        cx.clone(),
-                    )
-                }))
-                .await;
-
-                Ok(Some(
-                    actions
-                        .into_iter()
-                        .collect::<Result<Vec<Vec<_>>>>()?
-                        .into_iter()
-                        .flatten()
-                        .dedup()
-                        .collect(),
-                ))
-            })
-        } else {
-            let type_definitions_task = self.request_multiple_lsp_locally(
-                buffer,
-                Some(position),
-                GetTypeDefinitions { position },
-                cx,
-            );
-            cx.background_spawn(async move {
-                Ok(Some(
-                    type_definitions_task
-                        .await
-                        .into_iter()
-                        .flat_map(|(_, type_definitions)| type_definitions)
-                        .dedup()
-                        .collect(),
-                ))
-            })
-        }
+        self.type_definitions_with_filter(buffer, position, false, cx)
     }
 
-    pub fn type_definition_paths(
+    pub fn workspace_type_definitions(
         &mut self,
         buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.type_definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn type_definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitionPaths { position };
+            let request = GetTypeDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6243,7 +6154,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitionPaths { position }.response_from_proto(
+                    GetTypeDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6266,7 +6181,10 @@ impl LspStore {
             let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetTypeDefinitionPaths { position },
+                GetTypeDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
@@ -8988,18 +8906,17 @@ impl LspStore {
         }
     }
 
-    pub(crate) fn lsp_location_target(
+    pub(crate) fn is_lsp_uri_in_existing_non_single_file_worktree(
         &mut self,
         uri: lsp::Uri,
-        range: Range<PointUtf16>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<LocationPathTarget>> {
+    ) -> Task<Result<bool>> {
         let path_style = self.worktree_store.read(cx).path_style();
         cx.spawn(async move |lsp_store, cx| {
             let current_scheme = uri.scheme().to_owned();
-            let abs_path = uri
-                .to_file_path_ext(path_style)
-                .map_err(|()| anyhow!("can't convert URI to path"))?;
+            let Ok(abs_path) = uri.to_file_path_ext(path_style) else {
+                return Ok(false);
+            };
             let path = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -9016,31 +8933,21 @@ impl LspStore {
                     None => Task::ready(None),
                 })?
                 .await;
-            let (worktree_root_target, known_relative_path) =
-                if let Some((zip_root, relative_path)) = yarn_worktree {
-                    (zip_root, Some(relative_path))
-                } else {
-                    (Arc::<Path>::from(abs_path.as_path()), None)
-                };
+            let worktree_root_target = if let Some((zip_root, _)) = yarn_worktree {
+                zip_root
+            } else {
+                Arc::<Path>::from(abs_path.as_path())
+            };
 
             lsp_store.update(cx, |lsp_store, cx| {
-                let Some((worktree, relative_path)) = lsp_store
+                Ok(lsp_store
                     .worktree_store
                     .read(cx)
                     .find_worktree(&worktree_root_target, cx)
-                else {
-                    return Ok(LocationPathTarget::OutsideProject { abs_path, range });
-                };
-                let relative_path = known_relative_path.unwrap_or(relative_path);
-                let worktree = worktree.read(cx);
-                Ok(LocationPathTarget::InProject {
-                    path: ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: relative_path,
-                    },
-                    is_single_file_worktree: worktree.is_single_file(),
-                    range,
-                })
+                    .is_some_and(|(worktree, _)| {
+                        let worktree = worktree.read(cx);
+                        worktree.is_visible() && !worktree.is_single_file()
+                    }))
             })?
         })
     }
@@ -9463,19 +9370,7 @@ impl LspStore {
                 )
                 .await?;
             }
-            Request::GetDefinitionPaths(get_definition) => {
-                let position = get_definition.position.clone().and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetDefinitionPaths>(
-                    lsp_store,
-                    server_id,
-                    sender_id,
-                    lsp_request_id,
-                    get_definition,
-                    position,
-                    &mut cx,
-                )
-                .await?;
-            }
+
             Request::GetDeclaration(get_declaration) => {
                 let position = get_declaration
                     .position
@@ -9508,22 +9403,7 @@ impl LspStore {
                 )
                 .await?;
             }
-            Request::GetTypeDefinitionPaths(get_type_definition) => {
-                let position = get_type_definition
-                    .position
-                    .clone()
-                    .and_then(deserialize_anchor);
-                Self::query_lsp_locally::<GetTypeDefinitionPaths>(
-                    lsp_store,
-                    server_id,
-                    sender_id,
-                    lsp_request_id,
-                    get_type_definition,
-                    position,
-                    &mut cx,
-                )
-                .await?;
-            }
+
             Request::GetImplementation(get_implementation) => {
                 let position = get_implementation
                     .position

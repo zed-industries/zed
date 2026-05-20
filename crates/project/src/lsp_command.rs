@@ -4,9 +4,8 @@ use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentColor,
     DocumentHighlight, DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, LocationPathLink, LocationPathTarget, LspAction, LspPullDiagnostics,
-    MarkupContent, PrepareRenameResponse, ProjectPath, ProjectTransaction, PulledDiagnostics,
-    ResolveState,
+    LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse,
+    ProjectTransaction, PulledDiagnostics, ResolveState,
     lsp_store::{LocalLspStore, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -37,13 +36,7 @@ use serde_json::Value;
 
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
 use std::{
-    cmp::Reverse,
-    collections::hash_map,
-    mem,
-    ops::Range,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
+    cmp::Reverse, collections::hash_map, mem, ops::Range, path::Path, str::FromStr, sync::Arc,
 };
 use text::{BufferId, LineEnding};
 use util::{ResultExt as _, debug_panic};
@@ -196,11 +189,7 @@ pub(crate) struct PerformRename {
 #[derive(Debug, Clone, Copy)]
 pub struct GetDefinitions {
     pub position: PointUtf16,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GetDefinitionPaths {
-    pub position: PointUtf16,
+    pub workspace_only: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -211,11 +200,7 @@ pub(crate) struct GetDeclarations {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GetTypeDefinitions {
     pub position: PointUtf16,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct GetTypeDefinitionPaths {
-    pub position: PointUtf16,
+    pub workspace_only: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -706,7 +691,15 @@ impl LspCommand for GetDefinitions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(
+            message,
+            lsp_store,
+            buffer,
+            server_id,
+            self.workspace_only,
+            cx,
+        )
+        .await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDefinition {
@@ -717,6 +710,7 @@ impl LspCommand for GetDefinitions {
                 &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
+            workspace_only: self.workspace_only,
         }
     }
 
@@ -737,6 +731,7 @@ impl LspCommand for GetDefinitions {
             .await?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            workspace_only: message.workspace_only,
         })
     }
 
@@ -762,109 +757,6 @@ impl LspCommand for GetDefinitions {
     }
 
     fn buffer_id_from_proto(message: &proto::GetDefinition) -> Result<BufferId> {
-        BufferId::new(message.buffer_id)
-    }
-}
-
-#[async_trait(?Send)]
-impl LspCommand for GetDefinitionPaths {
-    type Response = Vec<LocationPathLink>;
-    type LspRequest = lsp::request::GotoDefinition;
-    type ProtoRequest = proto::GetDefinitionPaths;
-
-    fn display_name(&self) -> &str {
-        "Get definition paths"
-    }
-
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .definition_provider
-            .is_some_and(|capability| match capability {
-                OneOf::Left(supported) => supported,
-                OneOf::Right(_options) => true,
-            })
-    }
-
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &App,
-    ) -> Result<lsp::GotoDefinitionParams> {
-        Ok(lsp::GotoDefinitionParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-        })
-    }
-
-    async fn response_from_lsp(
-        self,
-        message: Option<lsp::GotoDefinitionResponse>,
-        lsp_store: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: AsyncApp,
-    ) -> Result<Vec<LocationPathLink>> {
-        location_path_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
-    }
-
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDefinitionPaths {
-        proto::GetDefinitionPaths {
-            project_id,
-            buffer_id: buffer.remote_id().into(),
-            position: Some(language::proto::serialize_anchor(
-                &buffer.anchor_before(self.position),
-            )),
-            version: serialize_version(&buffer.version()),
-        }
-    }
-
-    async fn from_proto(
-        message: proto::GetDefinitionPaths,
-        _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
-    ) -> Result<Self> {
-        let position = message
-            .position
-            .and_then(deserialize_anchor)
-            .context("invalid position")?;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })
-            .await?;
-        Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
-        })
-    }
-
-    fn response_to_proto(
-        response: Vec<LocationPathLink>,
-        _: &mut LspStore,
-        _: PeerId,
-        _: &clock::Global,
-        _: &mut App,
-    ) -> proto::GetDefinitionPathsResponse {
-        proto::GetDefinitionPathsResponse {
-            links: location_path_links_to_proto(response),
-        }
-    }
-
-    async fn response_from_proto(
-        self,
-        message: proto::GetDefinitionPathsResponse,
-        _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
-    ) -> Result<Vec<LocationPathLink>> {
-        location_path_links_from_proto(message.links)
-    }
-
-    fn buffer_id_from_proto(message: &proto::GetDefinitionPaths) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }
@@ -912,7 +804,7 @@ impl LspCommand for GetDeclarations {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(message, lsp_store, buffer, server_id, false, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDeclaration {
@@ -1014,7 +906,7 @@ impl LspCommand for GetImplementations {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(message, lsp_store, buffer, server_id, false, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetImplementation {
@@ -1113,7 +1005,7 @@ impl LspCommand for GetTypeDefinitions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, project, buffer, server_id, cx).await
+        location_links_from_lsp(message, project, buffer, server_id, self.workspace_only, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetTypeDefinition {
@@ -1124,6 +1016,7 @@ impl LspCommand for GetTypeDefinitions {
                 &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
+            workspace_only: self.workspace_only,
         }
     }
 
@@ -1144,6 +1037,7 @@ impl LspCommand for GetTypeDefinitions {
             .await?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            workspace_only: message.workspace_only,
         })
     }
 
@@ -1173,106 +1067,6 @@ impl LspCommand for GetTypeDefinitions {
     }
 }
 
-#[async_trait(?Send)]
-impl LspCommand for GetTypeDefinitionPaths {
-    type Response = Vec<LocationPathLink>;
-    type LspRequest = lsp::request::GotoTypeDefinition;
-    type ProtoRequest = proto::GetTypeDefinitionPaths;
-
-    fn display_name(&self) -> &str {
-        "Get type definition paths"
-    }
-
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        !matches!(
-            &capabilities.server_capabilities.type_definition_provider,
-            None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
-        )
-    }
-
-    fn to_lsp(
-        &self,
-        path: &Path,
-        _: &Buffer,
-        _: &Arc<LanguageServer>,
-        _: &App,
-    ) -> Result<lsp::GotoTypeDefinitionParams> {
-        Ok(lsp::GotoTypeDefinitionParams {
-            text_document_position_params: make_lsp_text_document_position(path, self.position)?,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-        })
-    }
-
-    async fn response_from_lsp(
-        self,
-        message: Option<lsp::GotoDefinitionResponse>,
-        project: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        server_id: LanguageServerId,
-        cx: AsyncApp,
-    ) -> Result<Vec<LocationPathLink>> {
-        location_path_links_from_lsp(message, project, buffer, server_id, cx).await
-    }
-
-    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetTypeDefinitionPaths {
-        proto::GetTypeDefinitionPaths {
-            project_id,
-            buffer_id: buffer.remote_id().into(),
-            position: Some(language::proto::serialize_anchor(
-                &buffer.anchor_before(self.position),
-            )),
-            version: serialize_version(&buffer.version()),
-        }
-    }
-
-    async fn from_proto(
-        message: proto::GetTypeDefinitionPaths,
-        _: Entity<LspStore>,
-        buffer: Entity<Buffer>,
-        mut cx: AsyncApp,
-    ) -> Result<Self> {
-        let position = message
-            .position
-            .and_then(deserialize_anchor)
-            .context("invalid position")?;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })
-            .await?;
-        Ok(Self {
-            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
-        })
-    }
-
-    fn response_to_proto(
-        response: Vec<LocationPathLink>,
-        _: &mut LspStore,
-        _: PeerId,
-        _: &clock::Global,
-        _: &mut App,
-    ) -> proto::GetTypeDefinitionPathsResponse {
-        proto::GetTypeDefinitionPathsResponse {
-            links: location_path_links_to_proto(response),
-        }
-    }
-
-    async fn response_from_proto(
-        self,
-        message: proto::GetTypeDefinitionPathsResponse,
-        _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
-    ) -> Result<Vec<LocationPathLink>> {
-        location_path_links_from_proto(message.links)
-    }
-
-    fn buffer_id_from_proto(message: &proto::GetTypeDefinitionPaths) -> Result<BufferId> {
-        BufferId::new(message.buffer_id)
-    }
-}
-
 fn language_server_for_buffer(
     lsp_store: &Entity<LspStore>,
     buffer: &Entity<Buffer>,
@@ -1288,106 +1082,6 @@ fn language_server_for_buffer(
             })
         })
         .context("no language server found for buffer")
-}
-
-fn location_path_range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
-    point_from_lsp(range.start).0..point_from_lsp(range.end).0
-}
-
-fn location_path_range_to_proto(range: Range<PointUtf16>) -> proto::LocationPathRange {
-    proto::LocationPathRange {
-        start: Some(proto::PointUtf16 {
-            row: range.start.row,
-            column: range.start.column,
-        }),
-        end: Some(proto::PointUtf16 {
-            row: range.end.row,
-            column: range.end.column,
-        }),
-    }
-}
-
-fn location_path_range_from_proto(range: proto::LocationPathRange) -> Result<Range<PointUtf16>> {
-    let start = range.start.context("missing location path range start")?;
-    let end = range.end.context("missing location path range end")?;
-    Ok(PointUtf16::new(start.row, start.column)..PointUtf16::new(end.row, end.column))
-}
-
-fn location_path_links_to_proto(links: Vec<LocationPathLink>) -> Vec<proto::LocationPathLink> {
-    links.into_iter().map(location_path_link_to_proto).collect()
-}
-
-fn location_path_link_to_proto(link: LocationPathLink) -> proto::LocationPathLink {
-    proto::LocationPathLink {
-        origin: link.origin.map(location_path_range_to_proto),
-        target: Some(location_path_target_to_proto(link.target)),
-    }
-}
-
-fn location_path_target_to_proto(target: LocationPathTarget) -> proto::LocationPathTarget {
-    use proto::location_path_target::Target;
-
-    let target = match target {
-        LocationPathTarget::InProject {
-            path,
-            is_single_file_worktree,
-            range,
-        } => Target::InProject(proto::InProjectLocationPath {
-            path: Some(path.to_proto()),
-            is_single_file_worktree,
-            range: Some(location_path_range_to_proto(range)),
-        }),
-        LocationPathTarget::OutsideProject { abs_path, range } => {
-            Target::OutsideProject(proto::OutsideProjectLocationPath {
-                abs_path: abs_path.to_string_lossy().into_owned(),
-                range: Some(location_path_range_to_proto(range)),
-            })
-        }
-    };
-
-    proto::LocationPathTarget {
-        target: Some(target),
-    }
-}
-
-fn location_path_links_from_proto(
-    links: Vec<proto::LocationPathLink>,
-) -> Result<Vec<LocationPathLink>> {
-    links
-        .into_iter()
-        .map(location_path_link_from_proto)
-        .collect()
-}
-
-fn location_path_link_from_proto(link: proto::LocationPathLink) -> Result<LocationPathLink> {
-    Ok(LocationPathLink {
-        origin: link
-            .origin
-            .map(location_path_range_from_proto)
-            .transpose()?,
-        target: location_path_target_from_proto(
-            link.target.context("missing location path target")?,
-        )?,
-    })
-}
-
-fn location_path_target_from_proto(
-    target: proto::LocationPathTarget,
-) -> Result<LocationPathTarget> {
-    use proto::location_path_target::Target;
-
-    match target.target.context("missing location path target")? {
-        Target::InProject(target) => Ok(LocationPathTarget::InProject {
-            path: ProjectPath::from_proto(target.path.context("missing location path")?)
-                .context("invalid location path")?,
-            is_single_file_worktree: target.is_single_file_worktree,
-            range: location_path_range_from_proto(target.range.context("missing location range")?)?,
-        }),
-        Target::OutsideProject(target) => Ok(LocationPathTarget::OutsideProject {
-            abs_path: PathBuf::from(target.abs_path),
-            range: location_path_range_from_proto(target.range.context("missing location range")?)?,
-        }),
-    }
 }
 
 pub async fn location_links_from_proto(
@@ -1463,60 +1157,12 @@ pub fn location_link_from_proto(
     })
 }
 
-pub async fn location_path_links_from_lsp(
-    message: Option<lsp::GotoDefinitionResponse>,
-    lsp_store: Entity<LspStore>,
-    buffer: Entity<Buffer>,
-    server_id: LanguageServerId,
-    mut cx: AsyncApp,
-) -> Result<Vec<LocationPathLink>> {
-    let message = match message {
-        Some(message) => message,
-        None => return Ok(Vec::new()),
-    };
-
-    let mut unresolved_links = Vec::new();
-    match message {
-        lsp::GotoDefinitionResponse::Scalar(loc) => {
-            unresolved_links.push((None, loc.uri, loc.range));
-        }
-
-        lsp::GotoDefinitionResponse::Array(locs) => {
-            unresolved_links.extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
-        }
-
-        lsp::GotoDefinitionResponse::Link(links) => {
-            unresolved_links.extend(links.into_iter().map(|l| {
-                (
-                    l.origin_selection_range,
-                    l.target_uri,
-                    l.target_selection_range,
-                )
-            }));
-        }
-    }
-
-    let _language_server = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
-    let mut definitions = Vec::new();
-    for (origin_range, target_uri, target_range) in unresolved_links {
-        let target = lsp_store
-            .update(&mut cx, |this, cx| {
-                this.lsp_location_target(target_uri, location_path_range_from_lsp(target_range), cx)
-            })
-            .await?;
-        definitions.push(LocationPathLink {
-            origin: origin_range.map(location_path_range_from_lsp),
-            target,
-        });
-    }
-    Ok(definitions)
-}
-
 pub async fn location_links_from_lsp(
     message: Option<lsp::GotoDefinitionResponse>,
     lsp_store: Entity<LspStore>,
     buffer: Entity<Buffer>,
     server_id: LanguageServerId,
+    workspace_only: bool,
     mut cx: AsyncApp,
 ) -> Result<Vec<LocationLink>> {
     let message = match message {
@@ -1548,6 +1194,16 @@ pub async fn location_links_from_lsp(
     let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
+        if workspace_only
+            && !lsp_store
+                .update(&mut cx, |this, cx| {
+                    this.is_lsp_uri_in_existing_non_single_file_worktree(target_uri.clone(), cx)
+                })
+                .await?
+        {
+            continue;
+        }
+
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
                 this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)

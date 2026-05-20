@@ -845,25 +845,6 @@ pub struct LocationLink {
     pub target: Location,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LocationPathLink {
-    pub origin: Option<Range<PointUtf16>>,
-    pub target: LocationPathTarget,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LocationPathTarget {
-    InProject {
-        path: ProjectPath,
-        is_single_file_worktree: bool,
-        range: Range<PointUtf16>,
-    },
-    OutsideProject {
-        abs_path: PathBuf,
-        range: Range<PointUtf16>,
-    },
-}
-
 #[derive(Debug)]
 pub struct DocumentHighlight {
     pub range: Range<language::Anchor>,
@@ -4199,15 +4180,21 @@ impl Project {
         })
     }
 
-    pub fn definition_paths<T: ToPointUtf16>(
+    pub fn workspace_definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.definition_paths(buffer, position, cx)
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 
@@ -4247,15 +4234,21 @@ impl Project {
         })
     }
 
-    pub fn type_definition_paths<T: ToPointUtf16>(
+    pub fn workspace_type_definitions<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
         position: T,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.type_definition_paths(buffer, position, cx)
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_type_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
         })
     }
 

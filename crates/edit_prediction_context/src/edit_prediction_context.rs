@@ -5,10 +5,8 @@ use futures::{FutureExt, StreamExt as _, channel::mpsc, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, Task, TaskExt, WeakEntity,
 };
-use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _, Unclipped,
-};
-use project::{LocationPathLink, LocationPathTarget, Project, ProjectPath};
+use language::{Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, Point, ToOffset as _};
+use project::{LocationLink, Project, ProjectPath};
 use smallvec::SmallVec;
 use std::{
     collections::hash_map,
@@ -73,8 +71,8 @@ enum DefinitionTask {
     CacheMiss(
         Task<
             Option<(
-                Task<Result<Option<Vec<LocationPathLink>>>>,
-                Task<Result<Option<Vec<LocationPathLink>>>>,
+                Task<Result<Option<Vec<LocationLink>>>>,
+                Task<Result<Option<Vec<LocationLink>>>>,
             )>,
         >,
     ),
@@ -288,7 +286,11 @@ impl RelatedExcerptStore {
                             let buffer = buffer.upgrade()?;
                             let definitions = project
                                 .update(cx, |project, cx| {
-                                    project.definition_paths(&buffer, identifier.range.start, cx)
+                                    project.workspace_definitions(
+                                        &buffer,
+                                        identifier.range.start,
+                                        cx,
+                                    )
                                 })
                                 .ok()?;
                             let type_definitions = project
@@ -298,7 +300,7 @@ impl RelatedExcerptStore {
                                     if is_tombi_lsp_in_toml(project, &buffer, cx) {
                                         return Task::ready(Ok(None));
                                     }
-                                    project.type_definition_paths(
+                                    project.workspace_type_definitions(
                                         &buffer,
                                         identifier.range.start,
                                         cx,
@@ -310,7 +312,6 @@ impl RelatedExcerptStore {
                     };
 
                     let cx = async_cx.clone();
-                    let project = project.clone();
                     async move {
                         match task {
                             DefinitionTask::CacheHit(cache_entry) => {
@@ -329,44 +330,30 @@ impl RelatedExcerptStore {
                                     .flatten()
                                     .unwrap_or_default();
 
-                                let cx = cx;
                                 let definitions: SmallVec<[CachedDefinition; 1]> =
-                                    future::join_all(definition_locations.into_iter().map(
-                                        |location| {
-                                            let project = project.clone();
+                                    definition_locations
+                                        .into_iter()
+                                        .filter_map(|location| {
                                             let mut cx = cx.clone();
-                                            async move {
-                                                process_definition(location, &project, &mut cx)
-                                                    .await
-                                            }
-                                        },
-                                    ))
-                                    .await
-                                    .into_iter()
-                                    .flatten()
-                                    .collect();
+                                            process_definition(location, &mut cx)
+                                        })
+                                        .collect();
 
                                 let type_definitions: SmallVec<[CachedDefinition; 1]> =
-                                    future::join_all(type_definition_locations.into_iter().map(
-                                        |location| {
-                                            let project = project.clone();
+                                    type_definition_locations
+                                        .into_iter()
+                                        .filter_map(|location| {
                                             let mut cx = cx.clone();
-                                            async move {
-                                                process_definition(location, &project, &mut cx)
-                                                    .await
-                                            }
-                                        },
-                                    ))
-                                    .await
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|type_def| {
-                                        !definitions.iter().any(|def| {
-                                            def.buffer.entity_id() == type_def.buffer.entity_id()
-                                                && def.anchor_range == type_def.anchor_range
+                                            process_definition(location, &mut cx)
                                         })
-                                    })
-                                    .collect();
+                                        .filter(|type_def| {
+                                            !definitions.iter().any(|def| {
+                                                def.buffer.entity_id()
+                                                    == type_def.buffer.entity_id()
+                                                    && def.anchor_range == type_def.anchor_range
+                                            })
+                                        })
+                                        .collect();
 
                                 Some((
                                     identifier,
@@ -601,30 +588,16 @@ use language::ToPoint as _;
 
 const MAX_TARGET_LEN: usize = 128;
 
-async fn process_definition(
-    location: LocationPathLink,
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Option<CachedDefinition> {
-    let LocationPathTarget::InProject {
-        path,
-        is_single_file_worktree: false,
-        range,
-    } = location.target
-    else {
-        return None;
-    };
-
-    let buffer = project
-        .update(cx, |project, cx| project.open_buffer(path.clone(), cx))
-        .await
-        .log_err()?;
-
+fn process_definition(location: LocationLink, cx: &mut AsyncApp) -> Option<CachedDefinition> {
     cx.update(|cx| {
+        let buffer = location.target.buffer;
         let buffer_snapshot = buffer.read(cx);
-        let start = buffer_snapshot.clip_point_utf16(Unclipped(range.start), Bias::Left);
-        let end = buffer_snapshot.clip_point_utf16(Unclipped(range.end), Bias::Left);
-        let anchor_range = buffer_snapshot.anchor_after(start)..buffer_snapshot.anchor_before(end);
+        let file = buffer_snapshot.file()?;
+        let path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+        let anchor_range = location.target.range;
 
         // If the target range is large, it likely means we requested the definition of an entire module.
         // For individual definitions, the target range should be small as it only covers the symbol.

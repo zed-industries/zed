@@ -94,8 +94,6 @@ messages!(
     (GetDeclarationResponse, Background),
     (GetDefinition, Background),
     (GetDefinitionResponse, Background),
-    (GetDefinitionPaths, Background),
-    (GetDefinitionPathsResponse, Background),
     (GetDocumentHighlights, Background),
     (GetDocumentHighlightsResponse, Background),
     (GetDocumentSymbols, Background),
@@ -120,8 +118,6 @@ messages!(
     (GetSignatureHelpResponse, Background),
     (GetTypeDefinition, Background),
     (GetTypeDefinitionResponse, Background),
-    (GetTypeDefinitionPaths, Background),
-    (GetTypeDefinitionPathsResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
     (OpenUnstagedDiff, Foreground),
@@ -413,7 +409,6 @@ request_messages!(
     (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
-    (GetDefinitionPaths, GetDefinitionPathsResponse),
     (GetDeclaration, GetDeclarationResponse),
     (GetImplementation, GetImplementationResponse),
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
@@ -426,7 +421,6 @@ request_messages!(
     (OpenUnstagedDiff, OpenUnstagedDiffResponse),
     (OpenUncommittedDiff, OpenUncommittedDiffResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
-    (GetTypeDefinitionPaths, GetTypeDefinitionPathsResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
     (GetUsers, UsersResponse),
@@ -607,10 +601,8 @@ lsp_messages!(
     (GetCodeLens, GetCodeLensResponse, true),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse, true),
     (GetDefinition, GetDefinitionResponse, true),
-    (GetDefinitionPaths, GetDefinitionPathsResponse, true),
     (GetDeclaration, GetDeclarationResponse, true),
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
-    (GetTypeDefinitionPaths, GetTypeDefinitionPathsResponse, true),
     (GetImplementation, GetImplementationResponse, true),
     (InlayHints, InlayHintsResponse, false),
     (SemanticTokens, SemanticTokensResponse, true)
@@ -977,12 +969,8 @@ impl LspQuery {
                 ("GetDocumentDiagnostics", false)
             }
             Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
-            Some(lsp_query::Request::GetDefinitionPaths(_)) => ("GetDefinitionPaths", false),
             Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
             Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
-            Some(lsp_query::Request::GetTypeDefinitionPaths(_)) => {
-                ("GetTypeDefinitionPaths", false)
-            }
             Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),

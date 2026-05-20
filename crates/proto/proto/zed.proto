@@ -59,14 +59,10 @@ message Envelope {
 
     GetDefinition get_definition = 32;
     GetDefinitionResponse get_definition_response = 33;
-    GetDefinitionPaths get_definition_paths = 453;
-    GetDefinitionPathsResponse get_definition_paths_response = 454;
     GetDeclaration get_declaration = 237;
     GetDeclarationResponse get_declaration_response = 238;
     GetTypeDefinition get_type_definition = 34;
     GetTypeDefinitionResponse get_type_definition_response = 35;
-    GetTypeDefinitionPaths get_type_definition_paths = 455;
-    GetTypeDefinitionPathsResponse get_type_definition_paths_response = 456;
 
     GetReferences get_references = 36;
     GetReferencesResponse get_references_response = 37;
