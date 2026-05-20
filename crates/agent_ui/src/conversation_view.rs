@@ -2533,18 +2533,24 @@ impl ConversationView {
             return false;
         };
 
-        multi_workspace.read(cx).sidebar_open()
-            || multi_workspace.read(cx).workspace() == &workspace
-                && AgentPanel::is_visible(&workspace, cx)
-                && multi_workspace
-                    .read(cx)
-                    .workspace()
-                    .read(cx)
-                    .panel::<AgentPanel>(cx)
-                    .map_or(false, |p| {
-                        p.read(cx).active_conversation_view().map(|c| c.entity_id())
-                            == Some(cx.entity_id())
-                    })
+        let multi_workspace = multi_workspace.read(cx);
+        multi_workspace.sidebar_open() && multi_workspace.is_threads_list_view_active(cx)
+            || multi_workspace.workspace() == &workspace
+                && self.is_visible_in_agent_panel(&workspace, cx)
+    }
+
+    fn is_visible_in_agent_panel(&self, workspace: &Entity<Workspace>, cx: &Context<Self>) -> bool {
+        AgentPanel::is_visible(workspace, cx)
+            && workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| {
+                    panel
+                        .read(cx)
+                        .visible_conversation_view()
+                        .map(|conversation_view| conversation_view.entity_id())
+                        == Some(cx.entity_id())
+                })
     }
 
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
@@ -2557,7 +2563,7 @@ impl ConversationView {
         } else {
             self.workspace
                 .upgrade()
-                .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+                .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
         }
     }
 
@@ -2569,7 +2575,7 @@ impl ConversationView {
             } else {
                 self.workspace
                     .upgrade()
-                    .is_some_and(|workspace| AgentPanel::is_visible(&workspace, cx))
+                    .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
             };
         let settings = AgentSettings::get_global(cx);
         if settings.play_sound_when_agent_done.should_play(visible) {
@@ -3127,6 +3133,11 @@ fn render_agent_markdown(
         })
         .unwrap_or_default();
     MarkdownElement::new(markdown, style)
+        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+            copy_button_visibility: markdown::CopyButtonVisibility::VisibleOnHover,
+            wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
+            border: false,
+        })
         .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
@@ -3179,6 +3190,7 @@ pub(crate) mod tests {
 
     use crate::agent_panel;
     use crate::completion_provider::AgentContextSource;
+    use crate::test_support::register_test_sidebar;
     use crate::thread_metadata_store::ThreadMetadataStore;
 
     use super::*;
@@ -4164,6 +4176,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(true, cx);
 
         // Open the sidebar so that sidebar_open() returns true.
         multi_workspace_handle
@@ -4229,6 +4242,80 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_notification_when_sidebar_open_but_thread_list_hidden(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["agent-v2".to_string()]);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn Fs>::set_global(fs.clone(), cx);
+        });
+
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace_handle
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(false, cx);
+        multi_workspace_handle
+            .update(cx, |mw, _window, cx| {
+                mw.open_sidebar(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
+        let connection_store =
+            cx.update(|_window, cx| cx.new(|cx| AgentConnectionStore::new(project.clone(), cx)));
+
+        let conversation_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                ConversationView::new(
+                    Rc::new(StubAgentServer::default_response()),
+                    connection_store,
+                    Agent::Custom { id: "Test".into() },
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    workspace.downgrade(),
+                    project.clone(),
+                    Some(thread_store),
+                    None,
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some()),
+            "Expected notification when the sidebar is open but the thread list is hidden"
+        );
+    }
+
+    #[gpui::test]
     async fn test_notification_dismissed_when_sidebar_opens(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4250,6 +4337,7 @@ pub(crate) mod tests {
             .unwrap();
 
         let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        register_test_sidebar(true, cx);
 
         let thread_store = cx.update(|_window, cx| cx.new(|cx| ThreadStore::new(cx)));
         let connection_store =
