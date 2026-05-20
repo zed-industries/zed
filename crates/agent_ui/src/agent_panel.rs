@@ -96,7 +96,7 @@ const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
 const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
-    "agent", // Cursor cli
+    "agent", // Cursor cli + grok sad
     "agy",
     "aider",
     "amp",
@@ -108,6 +108,7 @@ const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "droid",
     "gemini",
     "goose",
+    "grok",
     "openhands",
     "opencode",
     "pi",
