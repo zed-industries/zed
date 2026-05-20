@@ -146,11 +146,11 @@ async fn copy_extension_resources(
         .context("failed to copy extension.wasm")?;
     }
 
-    if !manifest.grammars.is_empty() {
+    if manifest.grammar_names().next().is_some() {
         let source_grammars_dir = extension_path.join("grammars");
         let output_grammars_dir = output_dir.join("grammars");
         fs::create_dir_all(&output_grammars_dir)?;
-        for grammar_name in manifest.grammars.keys() {
+        for grammar_name in manifest.grammar_names() {
             let mut grammar_filename = PathBuf::from(grammar_name.as_ref());
             grammar_filename.set_extension("wasm");
             fs::copy(
@@ -350,7 +350,7 @@ fn test_grammars(
     let mut grammars = HashMap::default();
     let grammars_dir = extension_path.join("grammars");
 
-    for grammar_name in manifest.grammars.keys() {
+    for grammar_name in manifest.grammar_names() {
         let mut grammar_path = grammars_dir.join(grammar_name.as_ref());
         grammar_path.set_extension("wasm");
 

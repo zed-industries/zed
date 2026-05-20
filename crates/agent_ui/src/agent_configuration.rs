@@ -1344,7 +1344,7 @@ fn extension_only_provides_context_server(manifest: &ExtensionManifest) -> bool 
         && manifest.themes.is_empty()
         && manifest.icon_themes.is_empty()
         && manifest.languages.is_empty()
-        && manifest.grammars.is_empty()
+        && manifest.grammar_names().next().is_none()
         && manifest.language_servers.is_empty()
         && manifest.slash_commands.is_empty()
         && manifest.snippets.is_none()

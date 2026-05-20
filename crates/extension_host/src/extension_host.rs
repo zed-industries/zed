@@ -1223,7 +1223,7 @@ impl ExtensionStore {
             let Some(extension) = old_index.extensions.get(extension_id) else {
                 continue;
             };
-            grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
+            grammars_to_remove.extend(extension.manifest.grammar_names().cloned());
             for (language_server_name, config) in &extension.manifest.language_servers {
                 for language in config.languages() {
                     server_removal_tasks.push(self.proxy.remove_language_server(
@@ -1270,7 +1270,7 @@ impl ExtensionStore {
                 continue;
             };
 
-            grammars_to_add.extend(extension.manifest.grammars.keys().map(|grammar_name| {
+            grammars_to_add.extend(extension.manifest.grammar_names().map(|grammar_name| {
                 let mut grammar_path = self.installed_dir.clone();
                 grammar_path.extend([extension_id.as_ref(), "grammars"]);
                 grammar_path.push(grammar_name.as_ref());
@@ -1577,6 +1577,13 @@ impl ExtensionStore {
             .await?
             .with_context(|| format!("missing extension directory {extension_dir:?}"))?
             .is_symlink;
+
+        if extension_manifest.is_dev() && !is_dev {
+            bail!(
+                "non-dev extension '{}' cannot use the [dev] manifest section",
+                extension_manifest.id
+            );
+        }
 
         let language_dir = extension_dir.join("languages");
         if let Ok(mut language_paths) = fs.read_dir(&language_dir).await {
