@@ -4,8 +4,9 @@ use crate::PlatformStyle;
 use crate::utils::capitalize;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
-    Action, AnyElement, App, FocusHandle, Global, IntoElement, KeybindingKeystroke, Keystroke,
-    Modifiers, Window, relative,
+    Action, AnyElement, App, ClickCount, FocusHandle, Global, IntoElement, KeybindingKeystroke,
+    Keystroke, Modifiers, MouseButton, MouseStroke, NavigationDirection, ScrollDirection,
+    ScrollStroke, Window, relative,
 };
 use itertools::Itertools;
 
@@ -552,6 +553,141 @@ fn keystroke_text(
     }
 
     text
+}
+
+/// Render a mouse stroke with the same styling as keystrokes.
+pub fn render_mouse_stroke(
+    mouse_stroke: &MouseStroke,
+    color: Option<Color>,
+    size: impl Into<Option<AbsoluteLength>>,
+    platform_style: PlatformStyle,
+    vim_mode: bool,
+) -> Vec<AnyElement> {
+    let size = size.into();
+    let use_text = vim_mode
+        || matches!(
+            platform_style,
+            PlatformStyle::Linux | PlatformStyle::Windows
+        );
+
+    if use_text {
+        let text = mouse_stroke_text(
+            &mouse_stroke.modifiers,
+            mouse_stroke,
+            platform_style,
+            vim_mode,
+        );
+        vec![Key::new(text, color).size(size).into_any_element()]
+    } else {
+        let mut elements = Vec::new();
+        elements.extend(render_modifiers(
+            &mouse_stroke.modifiers,
+            platform_style,
+            color,
+            size,
+            true,
+        ));
+        elements.push(render_key(
+            &mouse_button_key(mouse_stroke),
+            color,
+            platform_style,
+            size,
+        ));
+        elements
+    }
+}
+
+/// Render a scroll stroke with the same styling as keystrokes.
+pub fn render_scroll_stroke(
+    scroll_stroke: &ScrollStroke,
+    color: Option<Color>,
+    size: impl Into<Option<AbsoluteLength>>,
+    platform_style: PlatformStyle,
+    vim_mode: bool,
+) -> Vec<AnyElement> {
+    let size = size.into();
+    let use_text = vim_mode
+        || matches!(
+            platform_style,
+            PlatformStyle::Linux | PlatformStyle::Windows
+        );
+
+    if use_text {
+        let text = scroll_stroke_text(
+            &scroll_stroke.modifiers,
+            scroll_stroke,
+            platform_style,
+            vim_mode,
+        );
+        vec![Key::new(text, color).size(size).into_any_element()]
+    } else {
+        let mut elements = Vec::new();
+        elements.extend(render_modifiers(
+            &scroll_stroke.modifiers,
+            platform_style,
+            color,
+            size,
+            true,
+        ));
+        elements.push(render_key(
+            &scroll_direction_key(scroll_stroke.direction),
+            color,
+            platform_style,
+            size,
+        ));
+        elements
+    }
+}
+
+/// Returns a textual representation for the mouse button part of a mouse stroke.
+fn mouse_button_key(stroke: &MouseStroke) -> String {
+    let mut key = String::new();
+
+    match stroke.click_count {
+        ClickCount::Double => key.push_str("Double-"),
+        ClickCount::Triple => key.push_str("Triple-"),
+        ClickCount::Single => {}
+    }
+
+    let button_str = match stroke.button {
+        MouseButton::Left => "Mouse1",
+        MouseButton::Right => "Mouse2",
+        MouseButton::Middle => "Mouse3",
+        MouseButton::Navigate(NavigationDirection::Back) => "Mouse4",
+        MouseButton::Navigate(NavigationDirection::Forward) => "Mouse5",
+    };
+    key.push_str(button_str);
+    key
+}
+
+/// Returns a textual representation for scroll direction.
+fn scroll_direction_key(direction: ScrollDirection) -> String {
+    match direction {
+        ScrollDirection::Up => "Scroll-Up".to_string(),
+        ScrollDirection::Down => "Scroll-Down".to_string(),
+    }
+}
+
+/// Returns a textual representation of the given mouse stroke.
+fn mouse_stroke_text(
+    modifiers: &Modifiers,
+    stroke: &MouseStroke,
+    platform_style: PlatformStyle,
+    vim_mode: bool,
+) -> String {
+    let key = mouse_button_key(stroke);
+    keystroke_text(modifiers, &key, platform_style, vim_mode)
+}
+
+/// Returns a textual representation of the given scroll stroke.
+fn scroll_stroke_text(
+    modifiers: &Modifiers,
+    stroke: &ScrollStroke,
+    platform_style: PlatformStyle,
+    vim_mode: bool,
+) -> String {
+    let key = scroll_direction_key(stroke.direction);
+    keystroke_text(modifiers, &key, platform_style, vim_mode)
 }
 
 impl Component for KeyBinding {

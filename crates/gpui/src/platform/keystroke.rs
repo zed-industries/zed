@@ -124,37 +124,7 @@ impl Keystroke {
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
-            if component.eq_ignore_ascii_case("ctrl") {
-                modifiers.control = true;
-                continue;
-            }
-            if component.eq_ignore_ascii_case("alt") {
-                modifiers.alt = true;
-                continue;
-            }
-            if component.eq_ignore_ascii_case("shift") {
-                modifiers.shift = true;
-                continue;
-            }
-            if component.eq_ignore_ascii_case("fn") {
-                modifiers.function = true;
-                continue;
-            }
-            if component.eq_ignore_ascii_case("secondary") {
-                if cfg!(target_os = "macos") {
-                    modifiers.platform = true;
-                } else {
-                    modifiers.control = true;
-                };
-                continue;
-            }
-
-            let is_platform = component.eq_ignore_ascii_case("cmd")
-                || component.eq_ignore_ascii_case("super")
-                || component.eq_ignore_ascii_case("win");
-
-            if is_platform {
-                modifiers.platform = true;
+            if modifiers.parse_modifier_component(component) {
                 continue;
             }
 
@@ -471,6 +441,44 @@ pub struct Modifiers {
 }
 
 impl Modifiers {
+    /// Parses a modifier component from a key binding string.
+    ///
+    /// Returns true if the component was a recognized modifier and updates `self`.
+    pub fn parse_modifier_component(&mut self, component: &str) -> bool {
+        if component.eq_ignore_ascii_case("ctrl") {
+            self.control = true;
+            return true;
+        }
+        if component.eq_ignore_ascii_case("alt") {
+            self.alt = true;
+            return true;
+        }
+        if component.eq_ignore_ascii_case("shift") {
+            self.shift = true;
+            return true;
+        }
+        if component.eq_ignore_ascii_case("fn") {
+            self.function = true;
+            return true;
+        }
+        if component.eq_ignore_ascii_case("secondary") {
+            if cfg!(target_os = "macos") {
+                self.platform = true;
+            } else {
+                self.control = true;
+            }
+            return true;
+        }
+        if component.eq_ignore_ascii_case("cmd")
+            || component.eq_ignore_ascii_case("super")
+            || component.eq_ignore_ascii_case("win")
+        {
+            self.platform = true;
+            return true;
+        }
+        false
+    }
+
     /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {
         self.control || self.alt || self.shift || self.platform || self.function

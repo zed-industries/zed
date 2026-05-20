@@ -12,13 +12,13 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
     Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, ScrollDirection, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1888,6 +1888,38 @@ impl Window {
                 })
                 .log_err();
         })
+    }
+
+    /// Find mouse bindings for the given focus handle.
+    pub fn mouse_bindings_for_focus_handle(
+        &self,
+        button: MouseButton,
+        modifiers: Modifiers,
+        click_count: usize,
+        focus_handle: &FocusHandle,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        self.rendered_frame.dispatch_tree.dispatch_mouse(
+            button,
+            modifiers,
+            click_count,
+            &dispatch_path,
+        )
+    }
+
+    /// Find scroll bindings for the given focus handle.
+    pub fn scroll_bindings_for_focus_handle(
+        &self,
+        direction: ScrollDirection,
+        modifiers: Modifiers,
+        focus_handle: &FocusHandle,
+    ) -> SmallVec<[KeyBinding; 1]> {
+        let node_id = self.focus_node_id_in_rendered_frame(Some(focus_handle.id));
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        self.rendered_frame
+            .dispatch_tree
+            .dispatch_scroll(direction, modifiers, &dispatch_path)
     }
 
     pub(crate) fn dispatch_keystroke_observers(

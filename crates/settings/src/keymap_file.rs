@@ -4,7 +4,9 @@ use fs::Fs;
 use gpui::{
     Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
     KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString, Unbind, generate_list_of_all_registered_actions, register_action,
+    MOUSE_STROKE_PARSE_EXPECTED_MESSAGE, NoAction, SCROLL_STROKE_PARSE_EXPECTED_MESSAGE,
+    SharedString, Unbind, generate_list_of_all_registered_actions, looks_like_mouse_stroke,
+    looks_like_scroll_stroke, register_action,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -396,21 +398,73 @@ impl KeymapFile {
     ) -> std::result::Result<KeyBinding, String> {
         let (action, action_input_string) = Self::build_keymap_action_value(action, cx)?;
 
-        let key_binding = match KeyBinding::load(
-            keystrokes,
-            action,
-            context,
-            use_key_equivalents,
-            action_input_string.map(SharedString::from),
-            cx.keyboard_mapper().as_ref(),
-        ) {
-            Ok(key_binding) => key_binding,
-            Err(InvalidKeystrokeError { keystroke }) => {
+        // Detect binding type and parse accordingly
+        let key_binding = if looks_like_mouse_stroke(keystrokes) {
+            // Mouse binding (e.g., "alt-mouse1", "cmd-double-mouse1")
+            // Validate: mouse bindings cannot be sequences
+            if keystrokes.contains(' ') {
                 return Err(format!(
-                    "invalid keystroke {}. {}",
-                    MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
-                    KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                    "mouse bindings cannot be part of a sequence. Found: {}",
+                    MarkdownInlineCode(&format!("\"{}\"", keystrokes))
                 ));
+            }
+            match KeyBinding::load_mouse(
+                keystrokes,
+                action,
+                context,
+                action_input_string.map(SharedString::from),
+            ) {
+                Ok(key_binding) => key_binding,
+                Err(_) => {
+                    return Err(format!(
+                        "invalid mouse binding {}. {}",
+                        MarkdownInlineCode(&format!("\"{}\"", keystrokes)),
+                        MOUSE_STROKE_PARSE_EXPECTED_MESSAGE
+                    ));
+                }
+            }
+        } else if looks_like_scroll_stroke(keystrokes) {
+            // Scroll binding (e.g., "ctrl-scroll-up")
+            // Validate: scroll bindings cannot be sequences
+            if keystrokes.split_whitespace().count() > 1 {
+                return Err(format!(
+                    "scroll bindings cannot be part of a sequence. Found: {}",
+                    MarkdownInlineCode(&format!("\"{}\"", keystrokes))
+                ));
+            }
+            match KeyBinding::load_scroll(
+                keystrokes,
+                action,
+                context,
+                action_input_string.map(SharedString::from),
+            ) {
+                Ok(key_binding) => key_binding,
+                Err(_) => {
+                    return Err(format!(
+                        "invalid scroll binding {}. {}",
+                        MarkdownInlineCode(&format!("\"{}\"", keystrokes)),
+                        SCROLL_STROKE_PARSE_EXPECTED_MESSAGE
+                    ));
+                }
+            }
+        } else {
+            // Keyboard binding (default)
+            match KeyBinding::load(
+                keystrokes,
+                action,
+                context,
+                use_key_equivalents,
+                action_input_string.map(SharedString::from),
+                cx.keyboard_mapper().as_ref(),
+            ) {
+                Ok(key_binding) => key_binding,
+                Err(InvalidKeystrokeError { keystroke }) => {
+                    return Err(format!(
+                        "invalid keystroke {}. {}",
+                        MarkdownInlineCode(&format!("\"{}\"", &keystroke)),
+                        KEYSTROKE_PARSE_EXPECTED_MESSAGE
+                    ));
+                }
             }
         };
 
