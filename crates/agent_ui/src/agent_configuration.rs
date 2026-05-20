@@ -664,8 +664,14 @@ impl AgentConfiguration {
             None
         };
         let auth_required = matches!(server_status, ContextServerStatus::AuthRequired);
+        let client_secret_required = matches!(
+            server_status,
+            ContextServerStatus::ClientSecretRequired { .. }
+        );
         let authenticating = matches!(server_status, ContextServerStatus::Authenticating);
         let context_server_store = self.context_server_store.clone();
+        let workspace = self.workspace.clone();
+        let language_registry = self.language_registry.clone();
 
         let tool_count = self
             .context_server_registry
@@ -685,6 +691,9 @@ impl AgentConfiguration {
             ContextServerStatus::Error(_) => AiSettingItemStatus::Error,
             ContextServerStatus::Stopped => AiSettingItemStatus::Stopped,
             ContextServerStatus::AuthRequired => AiSettingItemStatus::AuthRequired,
+            ContextServerStatus::ClientSecretRequired { .. } => {
+                AiSettingItemStatus::ClientSecretRequired
+            }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
         };
 
@@ -886,7 +895,7 @@ impl AgentConfiguration {
                             ),
                     )
                     .child(
-                        Button::new("error-logout-server", "Authenticate")
+                        Button::new("authenticate-server", "Authenticate")
                             .style(ButtonStyle::Outlined)
                             .label_size(LabelSize::Small)
                             .on_click({
@@ -895,6 +904,46 @@ impl AgentConfiguration {
                                     context_server_store.update(cx, |store, cx| {
                                         store.authenticate_server(&context_server_id, cx).log_err();
                                     });
+                                }
+                            }),
+                    )
+                    .into_any_element(),
+            )
+        } else if client_secret_required {
+            Some(
+                feedback_base_container()
+                    .child(
+                        h_flex()
+                            .pr_4()
+                            .min_w_0()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .child(
+                                Label::new("Enter a client secret to connect this server")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                    .child(
+                        Button::new("enter-client-secret", "Enter Client Secret")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let context_server_id = context_server_id.clone();
+                                move |_event, window, cx| {
+                                    ConfigureContextServerModal::show_modal_for_existing_server(
+                                        context_server_id.clone(),
+                                        language_registry.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach();
                                 }
                             }),
                     )

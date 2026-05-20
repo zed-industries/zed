@@ -438,7 +438,6 @@ mod tests {
         // Test image object
         let json = serde_json::json!({
             "source": "base64encodedimagedata",
-            "size": {"width": 100, "height": 200}
         });
         let content: LanguageModelToolResultContent = serde_json::from_value(json).unwrap();
         match content {
