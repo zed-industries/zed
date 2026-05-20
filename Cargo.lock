@@ -1299,7 +1299,6 @@ dependencies = [
  "client",
  "db",
  "editor",
- "feature_flags",
  "gpui",
  "markdown_preview",
  "notifications",

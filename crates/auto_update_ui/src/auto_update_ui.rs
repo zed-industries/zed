@@ -4,7 +4,6 @@ use agent_skills::GLOBAL_SKILLS_DIR_DISPLAY;
 use auto_update::{AutoUpdater, release_notes_url};
 use db::kvp::Dismissable;
 use editor::{Editor, MultiBuffer};
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use gpui::{
     App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TaskExt, Window, actions,
     prelude::*,
@@ -206,10 +205,7 @@ fn announcement_for_version(version: &Version, cx: &App) -> Option<AnnouncementC
         }
     };
 
-    if *version >= version_with_skills
-        && !SkillsAnnouncement::dismissed(cx)
-        && cx.has_flag::<SkillsFeatureFlag>()
-    {
+    if *version >= version_with_skills && !SkillsAnnouncement::dismissed(cx) {
         // Only mention the Rules → Skills migration if the user actually
         // had Rules that got migrated. New users (and existing users who
         // never created a Rule) would otherwise be confused by a bullet
