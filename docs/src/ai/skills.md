@@ -21,9 +21,15 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 
 ## Adding Skills {#adding-skills}
 
-### From the registry {#from-the-registry}
+### Create Your Own {#create-your-own}
 
-Skills are folders on disk. To install a skill from the registry, copy or clone its folder into your global or project-local skills folder.
+Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or let the agent pick it up automatically when you ask it to help create a skill.
+
+See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
+
+### From the skills.sh Registry {#from-the-registry}
+
+To install a skill from the [skills.sh](https://skills.sh) registry mentioned above, copy or clone its folder into your global or project-local skills folder.
 
 For example, to install the `frontend-design` skill from GitHub globally:
 
@@ -36,30 +42,25 @@ git sparse-checkout set frontend-design
 
 For a project-local install, do the same inside your project's `.agents/skills/` folder.
 
-### Create your own {#create-your-own}
-
-Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or the agent will pick it up automatically when you ask it to help create a skill.
-
-See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
-
 ## Using Skills {#using-skills}
 
-By default, the agent loads skills autonomously. It sees a catalog of every installed skill (name and description) in its system prompt, and calls the `skill` tool when a task matches a skill's description.
+By default, the agent picks up skills autonomously. It sees a catalog of every installed skill (name and description) in its system prompt, and calls the `skill` tool when a task matches a skill's description.
 
 When the agent invokes a skill, Zed prompts you to allow or deny it, using the same permission flow as other tools. You can set per-skill defaults in [Tool Permissions](./tool-permissions.md) so you're not prompted for skills you always trust.
 
-### Manual invocation {#manual-invocation}
+### Manual Invocation {#manual-invocation}
 
 You can also load a skill manually:
 
 - **Slash command**: type `/` in the message editor and select a skill by name
 - **@-mention**: type `@skill` in the message editor and select a skill from the completion menu
 
-Both inject the skill's instructions as context. The loaded skill appears as a collapsible crease in the thread. Click it to open the skill file.
+Both inject the skill's instructions as context. The loaded skill appears as a crease button in the thread, which you can click to open the skill file.
 
-### Preventing autonomous invocation {#disable-model-invocation}
+### Preventing Autonomous Invocation {#disable-model-invocation}
 
-Add `disable-model-invocation: true` to a skill's frontmatter to hide it from the agent's catalog entirely. The skill still appears as a slash command, so you stay in control of when it runs.
+Add `disable-model-invocation: true` to a skill's frontmatter to stop the agent from picking it up autonomously.
+The skill still appears as a slash command, so you stay in control of when it runs.
 
 This is useful for workflows you don't want the agent triggering automatically, like deploy or release procedures.
 
@@ -73,7 +74,7 @@ disable-model-invocation: true
 
 ## Skill Format {#skill-format}
 
-### Folder structure {#folder-structure}
+### Folder Structure {#folder-structure}
 
 A skill is a named folder containing a `SKILL.md` file:
 
@@ -104,7 +105,7 @@ description: What this skill does and when to use it.
 Step-by-step instructions for the agent...
 ```
 
-#### Frontmatter fields {#frontmatter-fields}
+#### Frontmatter Fields {#frontmatter-fields}
 
 | Field                      | Required | Description                                                                                  |
 | -------------------------- | -------- | -------------------------------------------------------------------------------------------- |
@@ -114,7 +115,9 @@ Step-by-step instructions for the agent...
 
 > **Tip:** Write descriptions that help the agent recognize when a skill is relevant. Include specific task types and trigger phrases: "Use when handling PDFs, extracting text, or filling forms" is better than "Helps with PDFs."
 
-#### Name validation {#name-validation}
+We plan to include other fields promoted by [the Agent Skills specification](https://agentskills.io/specification) in the near future.
+
+#### Name Validation {#name-validation}
 
 The `name` field must:
 
@@ -125,7 +128,7 @@ The `name` field must:
 
 Skills with invalid names fail to load and surface an error in the UI.
 
-### Bundled resources {#bundled-resources}
+### Bundled Resources {#bundled-resources}
 
 Keep the body of `SKILL.md` under 500 lines. Move detailed material to reference files and link to them from the body:
 
@@ -138,9 +141,9 @@ scripts/extract.py
 
 The agent loads these files on demand using the `read_file` and `list_directory` tools. Global skills under `~/.agents/skills/` are accessible to the agent even though they're outside your project.
 
-### Writing effective instructions {#writing-instructions}
+### Writing Effective Instructions {#writing-instructions}
 
-Skills use [progressive disclosure](https://agentskills.io/specification): the agent sees only the name and description until it activates a skill, then loads the full body. Structure your skill to take advantage of this:
+Skills use [progressive disclosure](https://agentskills.io/specification#progressive-disclosure): the agent sees only the name and description until it activates a skill, then loads the full body. Structure your skill to take advantage of this:
 
 - Put the most important instructions near the top of the body
 - Keep `SKILL.md` under 500 lines; move detailed references to `references/`
@@ -159,17 +162,17 @@ Zed loads skills from two locations:
 
 Each skill is a direct child of the skills root. Nesting skills inside subfolders is not supported.
 
-### Project-local skills and trust {#project-local-trust}
+### Project-local Skills and Trust {#project-local-trust}
 
 Project-local skills only load from [trusted worktrees](../worktree-trust.md). Skills from a freshly cloned or untrusted project are excluded from the catalog and slash commands until you grant trust.
 
 This prevents a malicious project from injecting instructions into your agent's system prompt before you've reviewed what the project ships.
 
-### Override behavior {#override-behavior}
+### Override Behavior {#override-behavior}
 
 If a global and a project-local skill share the same name, the project-local skill takes precedence. This lets a project customize or replace a global skill for its own context.
 
-### Editing skill files {#editing-skill-files}
+### Editing Skill Files {#editing-skill-files}
 
 The agent cannot edit `SKILL.md` files or their bundled resources without your explicit authorization, even in a trusted project. This prevents a compromised conversation from modifying the skills that govern future conversations.
 
