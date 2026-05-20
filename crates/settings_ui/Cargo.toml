@@ -18,6 +18,7 @@ test-support = []
 [dependencies]
 agent.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 audio.workspace = true
 component.workspace = true

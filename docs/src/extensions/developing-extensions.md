@@ -158,11 +158,11 @@ Furthermore, please make sure that your extension fulfills the following precond
 - Extensions that intend to provide a language, debugger or MCP server must not ship the language server as part of the extension. Instead, the extension should either download the language server or check for the availability of the language server in the users environment using the APIs as provided by the [Zed Rust Extension API](https://docs.rs/zed_extension_api/latest/zed_extension_api/).
 - Themes and icon themes should not be published as part of extensions that provide other features, e.g. language support. Instead, they should be published as a distinct extension. This also applies to theme and icon themes living in the same repository.
 
-Note that non-compliance will be raised during the publishing process by reviewers and delay the release of your extension.
+Non-compliance with these rules will be raised during the publishing process by reviewers. If you fail to comply with the laid out guidelines, the publishing of your extension will either be delayed or rejected.
 
 ## Publishing your extension
 
-> Prior to publishing your extension, you should have installed as well as tested it locally thoroughly. Note that untested extension submissions where the extension is not functioning at all will be closed eagerly without further feedback.
+> Prior to publishing your extension, you should have installed as well as tested it locally thoroughly. Furthermore, you should have read the [prerequisites above](#extension-publishing-prerequisites). Note that untested extension submissions where the extension is not functioning at all will be closed eagerly without further feedback.
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
 
@@ -175,7 +175,7 @@ git submodule add https://github.com/your-username/foobar-zed.git extensions/my-
 git add extensions/my-extension
 ```
 
-> All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
+> All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`). Furthermore, your extension repository must be publicly available and the checked out submodule commit must be on a branch and thus not be detached commit.
 
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 

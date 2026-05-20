@@ -2,6 +2,7 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use agent_client_protocol::schema as acp;
+use collections::HashSet;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
@@ -12,12 +13,9 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 
 /// Renames a symbol across the project using the language server.
 ///
-/// This performs a semantic rename, updating all references to the symbol
-/// across all files in the project. The language server determines which
-/// occurrences to rename based on the symbol's type and scope.
+/// This performs a semantic rename, updating all references to the symbol across all files in the project. The language server determines which occurrences to rename based on the symbol's type and scope.
 ///
-/// Before using this tool, use read_file or grep to find the exact symbol
-/// name and line number.
+/// Before using this tool, use read_file or grep to find the exact symbol name and line number.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RenameToolInput {
     /// The symbol to rename.
@@ -97,6 +95,12 @@ impl AgentTool for RenameTool {
                     input.symbol.symbol_name
                 ));
             }
+
+            let buffers = transaction.0.keys().cloned().collect::<HashSet<_>>();
+            project
+                .update(cx, |project, cx| project.save_buffers(buffers, cx))
+                .await
+                .map_err(|e| format!("Rename succeeded, but failed to save renamed files: {e}"))?;
 
             let mut output = format!(
                 "Renamed `{}` to `{}` in {} file(s):\n",

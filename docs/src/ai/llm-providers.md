@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [ChatGPT Subscription](#chatgpt-subscription)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
@@ -150,28 +151,29 @@ We will support Cross-Region inference for each of the models on a best-effort b
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
-#### Extended Context Window {#bedrock-extended-context}
+#### Image Support {#bedrock-image-support}
 
-Anthropic models on Bedrock support a 1M token extended context window through the `anthropic_beta` API parameter. To enable this feature, set `"allow_extended_context": true` in your Bedrock configuration:
+Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
+
+#### Guardrails {#bedrock-guardrails}
+
+Some AWS environments enforce IAM policies that require a guardrail to be specified on every Bedrock API call. To apply a guardrail to all Bedrock requests, add `guardrail_identifier` to your Bedrock configuration:
 
 ```json [settings]
 {
   "language_models": {
     "bedrock": {
-      "authentication_method": "named_profile",
-      "region": "your-aws-region",
-      "profile": "your-profile-name",
-      "allow_extended_context": true
+      "guardrail_identifier": "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123",
+      "guardrail_version": "DRAFT"
     }
   }
 }
 ```
 
-Zed enables extended context for supported models (Claude Sonnet 4.5, Claude Opus 4.6, and Claude Opus 4.7). Extended context usage may increase API costs—refer to AWS Bedrock pricing for details.
+- `guardrail_identifier`: The ARN or ID of the guardrail to apply to every request.
+- `guardrail_version`: The version of the guardrail to use. Defaults to `"DRAFT"` if omitted.
 
-#### Image Support {#bedrock-image-support}
-
-Bedrock models that support vision (Claude 3 and later, Amazon Nova Pro and Lite, Meta Llama 3.2 Vision models, Mistral Pixtral) can receive images in conversations and tool results.
+> **Note**: For more information, refer to the [AWS Bedrock Guardrails documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails.html).
 
 ### Anthropic {#anthropic}
 
@@ -200,11 +202,6 @@ You can add custom models to the Anthropic provider by adding the following to y
           "display_name": "Sonnet 2024-June",
           "max_tokens": 128000,
           "max_output_tokens": 2560,
-          "cache_configuration": {
-            "max_cache_anchors": 10,
-            "min_total_token": 10000,
-            "should_speculate": false
-          },
           "tool_override": "some-model-that-supports-toolcalling"
         }
       ]
@@ -228,6 +225,18 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### ChatGPT Subscription {#chatgpt-subscription}
+
+Use your existing ChatGPT Plus or Pro subscription to access OpenAI models directly in Zed — no separate API key required.
+
+1. Open the settings view ({#action agent::OpenSettings}) and go to the ChatGPT Subscription section
+2. Click **Sign in** and complete the OpenAI authentication in your browser
+3. Once signed in, models appear in the model dropdown, including GPT-5.5 and GPT-5.3 Codex
+
+To sign out, click **Sign Out** in the ChatGPT Subscription settings.
+
+> **Note:** Model availability depends on your ChatGPT subscription tier. Some models may require ChatGPT Pro.
 
 ### DeepSeek {#deepseek}
 
@@ -362,7 +371,7 @@ Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#mistral-custom-models}
 
-The Zed agent comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba).
+The Zed agent comes pre-configured to use the latest version for common Mistral models (Large, Medium, Small, Codestral, Devstral, and others).
 All the default models support tool use.
 If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 
@@ -646,6 +655,8 @@ By default, models from all subscription types are shown. Optionally, you can hi
   }
 }
 ```
+
+**Note:** Zed only bundles configuration for long-term OpenCode Free models! Free models that are only available for a limited time are not included in Zed. To use such models, create a Custom Model using the configuration settings published on [the OpenCode website](https://opencode.ai/docs/zen#pricing) and on [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
 
 #### Custom Models {#opencode-custom-models}
 

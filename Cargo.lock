@@ -160,6 +160,7 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "gpui",
+ "indoc",
  "language",
  "log",
  "pretty_assertions",
@@ -230,6 +231,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "async-channel 2.5.0",
  "async-io",
@@ -262,12 +264,12 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
- "open",
  "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "prompt_store",
+ "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
  "reqwest_client",
@@ -301,13 +303,14 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.11.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af62fb84df2af0f933d8f5fd78b843fa5eb0ec5a48fa1b528c41951d0bbe36c"
+checksum = "4361ba6627e51de955b10f3c77fb9eb959c85191a236c1c2c84e32f4ff240faf"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
- "anyhow",
+ "async-process",
+ "blocking",
  "futures 0.3.32",
  "futures-concurrency",
  "jsonrpcmsg",
@@ -316,7 +319,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
+ "shell-words",
  "tokio",
  "tokio-util",
  "tracing",
@@ -325,20 +328,19 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce42c2d3c048c12897eef2e577dfff1e3355c632c9f1625cc953b9df48b44631"
+checksum = "cabdc9d845d08ec7ed2d0c9de1ae4a1b198301407d55855261572761be90ec9f"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.12.0"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49bae57dad1c28a362fbdcf7bab0583316a02b45a70792109fced55780a3b63c"
+checksum = "b957d8391ac3933e2a940446171c508d2b8ffc386d8fa7d0b9c936a2575b463e"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -418,6 +420,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent_skills"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "const_format",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "util",
+]
+
+[[package]]
 name = "agent_ui"
 version = "0.1.0"
 dependencies = [
@@ -427,6 +445,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
@@ -498,6 +517,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "skill_creator",
  "streaming_diff",
  "task",
  "telemetry",
@@ -1390,22 +1410,20 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
+ "agent_skills",
  "anyhow",
  "auto_update",
  "client",
  "db",
  "editor",
- "fs",
  "gpui",
  "markdown_preview",
  "notifications",
- "project",
+ "prompt_store",
  "release_channel",
  "semver",
  "serde",
  "serde_json",
- "settings",
  "smol",
  "telemetry",
  "ui",
@@ -2361,6 +2379,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3104,7 +3131,6 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "credentials_provider",
- "db",
  "derive_more",
  "feature_flags",
  "fs",
@@ -3346,6 +3372,7 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
+ "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -3705,6 +3732,7 @@ dependencies = [
  "http_client",
  "log",
  "net",
+ "oauth_callback_server",
  "parking_lot",
  "pollster 0.4.0",
  "postage",
@@ -3716,7 +3744,6 @@ dependencies = [
  "sha2",
  "slotmap",
  "tempfile",
- "tiny_http",
  "url",
  "util",
 ]
@@ -3773,7 +3800,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rpc",
- "semver",
  "serde",
  "serde_json",
  "settings",
@@ -4017,7 +4043,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c5c9868e64aa6c5410629a83450e142c80e721c727a5bc0fb18107af6c2d66b"
 dependencies = [
  "bitflags 2.10.0",
- "fontdb 0.23.0",
+ "fontdb",
  "harfrust",
  "linebender_resource_handle",
  "log",
@@ -5066,6 +5092,7 @@ dependencies = [
  "component",
  "ctor",
  "editor",
+ "futures-lite 1.13.0",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -6060,6 +6087,8 @@ dependencies = [
  "settings",
  "shellexpand",
  "terminal_view",
+ "theme",
+ "theme_settings",
  "util",
  "watch",
 ]
@@ -6196,6 +6225,7 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme_settings",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
  "tree-sitter",
@@ -6448,6 +6478,7 @@ dependencies = [
  "fuzzy",
  "fuzzy_nucleo",
  "gpui",
+ "language",
  "menu",
  "open_path_prompt",
  "picker",
@@ -6629,20 +6660,6 @@ dependencies = [
 
 [[package]]
 name = "fontdb"
-version = "0.16.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0299020c3ef3f60f526a4f64ab4a3d4ce116b1acbf24cdd22da0068e5d81dc3"
-dependencies = [
- "fontconfig-parser",
- "log",
- "memmap2",
- "slotmap",
- "tinyvec",
- "ttf-parser 0.20.0",
-]
-
-[[package]]
-name = "fontdb"
 version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "457e789b3d1202543297a350643cf459f836cade38934e7a4cf6a39e7cde2905"
@@ -6652,7 +6669,7 @@ dependencies = [
  "memmap2",
  "slotmap",
  "tinyvec",
- "ttf-parser 0.25.1",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -7481,14 +7498,17 @@ dependencies = [
  "language",
  "language_model",
  "menu",
+ "picker",
  "project",
  "project_panel",
  "rand 0.9.4",
+ "release_channel",
  "remote_connection",
  "search",
  "serde_json",
  "settings",
  "smallvec",
+ "task",
  "theme",
  "theme_settings",
  "time",
@@ -7863,7 +7883,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.17",
- "ttf-parser 0.25.1",
+ "ttf-parser",
  "unicode-segmentation",
  "url",
  "usvg",
@@ -8052,6 +8072,7 @@ dependencies = [
  "bytemuck",
  "collections",
  "cosmic-text",
+ "criterion",
  "etagere",
  "gpui",
  "gpui_util",
@@ -8064,6 +8085,7 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "swash",
+ "unicode-segmentation",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -9378,23 +9400,24 @@ dependencies = [
 
 [[package]]
 name = "js-sys"
-version = "0.3.90"
+version = "0.3.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14dc6f6450b3f6d4ed5b16327f38fed626d375a886159ca555bd7822c0c3a5a6"
+checksum = "a1840c94c045fbcf8ba2812c95db44499f7c64910a912551aaaa541decebcacf"
 dependencies = [
+ "cfg-if",
+ "futures-util",
  "once_cell",
  "wasm-bindgen",
 ]
 
 [[package]]
 name = "json5"
-version = "0.4.1"
+version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b0db21af676c1ce64250b5f40f3ce2cf27e4e47cb91ed91eb6fe9350b430c1"
+checksum = "733a844dbd6fef128e98cb4487b887cb55454d92cd9994b1bafe004fabbe670c"
 dependencies = [
- "pest",
- "pest_derive",
  "serde",
+ "ucd-trie",
 ]
 
 [[package]]
@@ -9758,6 +9781,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui_shared_string",
  "http_client",
+ "log",
  "partial-json-fixer",
  "schemars 1.0.4",
  "serde",
@@ -9808,20 +9832,26 @@ dependencies = [
  "log",
  "menu",
  "mistral",
+ "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
  "opencode",
+ "parking_lot",
  "pretty_assertions",
+ "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
+ "sha2",
+ "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
+ "url",
  "util",
  "x_ai",
 ]
@@ -9838,6 +9868,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "log",
  "open_ai",
  "schemars 1.0.4",
  "semver",
@@ -10816,18 +10847,18 @@ dependencies = [
 
 [[package]]
 name = "mermaid-rs-renderer"
-version = "0.2.0"
-source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=374db9ead5426697c6c2111151d9f246899bc638#374db9ead5426697c6c2111151d9f246899bc638"
+version = "0.2.2"
+source = "git+https://github.com/zed-industries/mermaid-rs-renderer?rev=782b89a7da3f0e91e51f98d00a93acba679be6fb#782b89a7da3f0e91e51f98d00a93acba679be6fb"
 dependencies = [
  "anyhow",
- "fontdb 0.16.2",
+ "fontdb",
  "json5",
  "once_cell",
  "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.17",
- "ttf-parser 0.20.0",
+ "ttf-parser",
 ]
 
 [[package]]
@@ -11106,8 +11137,8 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -11280,6 +11311,7 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
+ "chrono",
  "futures 0.3.32",
  "http_client",
  "log",
@@ -11631,6 +11663,17 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "oauth_callback_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "log",
+ "tiny_http",
+ "url",
 ]
 
 [[package]]
@@ -12002,9 +12045,9 @@ dependencies = [
 
 [[package]]
 name = "once_cell"
-version = "1.21.3"
+version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
+checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "once_cell_polyfill"
@@ -12094,6 +12137,7 @@ dependencies = [
  "gpui",
  "picker",
  "project",
+ "project_panel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12488,6 +12532,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
+ "const_format",
  "dirs",
  "ignore",
  "util",
@@ -13903,10 +13948,12 @@ dependencies = [
 name = "prompt_store"
 version = "0.1.0"
 dependencies = [
+ "agent_skills",
  "anyhow",
  "assets",
  "chrono",
  "collections",
+ "db",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -13919,6 +13966,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "tempfile",
  "text",
@@ -14986,6 +15034,7 @@ dependencies = [
  "anyhow",
  "async-dispatcher",
  "async-task",
+ "async-trait",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -15018,6 +15067,7 @@ dependencies = [
  "settings",
  "shlex",
  "smol",
+ "task",
  "telemetry",
  "terminal",
  "terminal_view",
@@ -15212,9 +15262,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "1.3.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2231b2c085b371c01bc90c0e6c1cab8834711b6394533375bdbf870b0166d419"
+checksum = "e12ca9067b5ebfbd5b3fcdc4acfceb81aa7d5ab2a879dff7cb75d22434276aad"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -15234,9 +15284,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "1.3.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36ea0e100fadf81be85d7ff70f86cd805c7572601d4ab2946207f36540854b43"
+checksum = "7caa6743cc0888e433105fe1bc551a7f607940b126a37bc97b478e86064627eb"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -15309,13 +15359,13 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rpassword"
-version = "7.4.0"
+version = "7.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66d4c8b64f049c6721ec8ccec37ddfc3d641c4a7fca57e8f2a89de509c73df39"
+checksum = "5ac5b223d9738ef56e0b98305410be40fa0941bf6036c56f1506751e43552d64"
 dependencies = [
  "libc",
  "rtoolbox",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -15728,7 +15778,7 @@ dependencies = [
  "core_maths",
  "log",
  "smallvec",
- "ttf-parser 0.25.1",
+ "ttf-parser",
  "unicode-bidi-mirroring",
  "unicode-ccc",
  "unicode-properties",
@@ -16281,11 +16331,12 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -16300,9 +16351,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -16315,6 +16366,19 @@ name = "serde_yaml"
 version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.11.4",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
+name = "serde_yaml_ng"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b4db627b98b36d4203a7b458cf3573730f2bb591b28871d916dfa9efabfd41f"
 dependencies = [
  "indexmap 2.11.4",
  "itoa",
@@ -16446,6 +16510,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "audio",
  "codestral",
@@ -16607,6 +16672,7 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
+ "itertools 0.14.0",
  "language",
  "language_model",
  "log",
@@ -16743,6 +16809,30 @@ name = "siphasher"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
+
+[[package]]
+name = "skill_creator"
+version = "0.1.0"
+dependencies = [
+ "agent_skills",
+ "anyhow",
+ "editor",
+ "fs",
+ "gpui",
+ "language",
+ "menu",
+ "platform_title_bar",
+ "release_channel",
+ "serde_json",
+ "serde_yaml_ng",
+ "settings",
+ "theme_settings",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+ "worktree",
+]
 
 [[package]]
 name = "skrifa"
@@ -19230,12 +19320,6 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ttf-parser"
-version = "0.20.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17f77d76d837a7830fe1d4f12b7b4ba4192c1888001c7164257e4bc6d21d96b4"
-
-[[package]]
-name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
@@ -19391,6 +19475,7 @@ dependencies = [
  "icons",
  "itertools 0.14.0",
  "menu",
+ "num-format",
  "schemars 1.0.4",
  "serde",
  "smallvec",
@@ -19582,7 +19667,7 @@ dependencies = [
  "base64 0.22.1",
  "data-url",
  "flate2",
- "fontdb 0.23.0",
+ "fontdb",
  "imagesize",
  "kurbo",
  "log",
@@ -19977,9 +20062,9 @@ checksum = "b8dad83b4f25e74f184f64c43b150b91efe7647395b42289f38e50566d82855b"
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.113"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60722a937f594b7fde9adb894d7c092fc1bb6612897c46368d18e7a20208eff2"
+checksum = "df52b6d9b87e0c74c9edfa1eb2d9bf85e5d63515474513aa50fa181b3c4f5db1"
 dependencies = [
  "cfg-if",
  "once_cell",
@@ -19990,23 +20075,19 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.63"
+version = "0.4.70"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a89f4650b770e4521aa6573724e2aed4704372151bd0de9d16a3bbabb87441a"
+checksum = "af934872acec734c2d80e6617bbb5ff4f12b052dd8e6332b0817bce889516084"
 dependencies = [
- "cfg-if",
- "futures-util",
  "js-sys",
- "once_cell",
  "wasm-bindgen",
- "web-sys",
 ]
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.113"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fac8c6395094b6b91c4af293f4c79371c163f9a6f56184d2c9a85f5a95f3950"
+checksum = "78b1041f495fb322e64aca85f5756b2172e35cd459376e67f2a6c9dffcedb103"
 dependencies = [
  "quote",
  "wasm-bindgen-macro-support",
@@ -20014,9 +20095,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.113"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab3fabce6159dc20728033842636887e4877688ae94382766e00b180abac9d60"
+checksum = "9dcd0ff20416988a18ac686d4d4d0f6aae9ebf08a389ff5d29012b05af2a1b41"
 dependencies = [
  "bumpalo",
  "proc-macro2",
@@ -20027,9 +20108,9 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-shared"
-version = "0.2.113"
+version = "0.2.120"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de0e091bdb824da87dc01d967388880d017a0a9bc4f3bdc0d86ee9f9336e3bb5"
+checksum = "49757b3c82ebf16c57d69365a142940b384176c24df52a087fb748e2085359ea"
 dependencies = [
  "unicode-ident",
 ]
@@ -20668,9 +20749,9 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.90"
+version = "0.3.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "705eceb4ce901230f8625bd1d665128056ccbe4b7408faa625eec1ba80f59a97"
+checksum = "2eadbac71025cd7b0834f20d1fe8472e8495821b4e9801eb0a60bd1f19827602"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
@@ -20782,8 +20863,8 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 
 [[package]]
 name = "wgpu"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -20811,8 +20892,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -20843,32 +20924,32 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20915,12 +20996,13 @@ dependencies = [
  "wgpu-types",
  "windows 0.62.2",
  "windows-core 0.62.2",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
 name = "wgpu-naga-bridge"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -20928,8 +21010,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",
@@ -22717,7 +22799,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.3.0"
+version = "1.4.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

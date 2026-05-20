@@ -10,14 +10,20 @@ pub use connection::*;
 pub use diff::*;
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
+use gpui::{
+    AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
+};
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
 use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
-use markdown::Markdown;
+use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
+use project::{
+    AgentLocation, Project,
+    git_store::{GitStoreCheckpoint, GitStoreEvent, RepositoryEvent},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
 use std::collections::HashMap;
@@ -570,6 +576,22 @@ impl From<RequestPermissionOutcome> for acp::RequestPermissionOutcome {
     }
 }
 
+/// What a `WaitingForConfirmation` prompt represents semantically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorizationKind {
+    /// The user is granting or denying permission for the tool call to
+    /// proceed. The selected `PermissionOptionKind` determines whether the
+    /// tool call transitions to `InProgress` (allow) or `Rejected` (reject).
+    /// This is the default for tool authorization prompts.
+    PermissionGrant,
+    /// The user is choosing between actions for the tool to take next
+    /// (for example, "Save" vs "Discard" before editing a dirty buffer).
+    /// The tool call always transitions to `InProgress` regardless of the
+    /// selected `PermissionOptionKind`; the caller interprets the chosen
+    /// `option_id` to decide what to do.
+    ActionChoice,
+}
+
 #[derive(Debug)]
 pub enum ToolCallStatus {
     /// The tool call hasn't started running yet, but we start showing it to
@@ -579,6 +601,7 @@ pub enum ToolCallStatus {
     WaitingForConfirmation {
         options: PermissionOptions,
         respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
+        kind: AuthorizationKind,
     },
     /// The tool call is currently running.
     InProgress,
@@ -625,9 +648,16 @@ impl Display for ToolCallStatus {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ContentBlock {
     Empty,
-    Markdown { markdown: Entity<Markdown> },
-    ResourceLink { resource_link: acp::ResourceLink },
-    Image { image: Arc<gpui::Image> },
+    Markdown {
+        markdown: Entity<Markdown>,
+    },
+    ResourceLink {
+        resource_link: acp::ResourceLink,
+    },
+    Image {
+        image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
+    },
 }
 
 impl ContentBlock {
@@ -669,8 +699,8 @@ impl ContentBlock {
                 };
             }
             (ContentBlock::Empty, acp::ContentBlock::Image(image_content)) => {
-                if let Some(image) = Self::decode_image(image_content) {
-                    *self = ContentBlock::Image { image };
+                if let Some((image, dimensions)) = Self::decode_image(image_content) {
+                    *self = ContentBlock::Image { image, dimensions };
                 } else {
                     let new_content = Self::image_md(image_content);
                     *self = Self::create_markdown_block(new_content, language_registry, cx);
@@ -698,14 +728,36 @@ impl ContentBlock {
         }
     }
 
-    fn decode_image(image_content: &acp::ImageContent) -> Option<Arc<gpui::Image>> {
+    fn decode_image(
+        image_content: &acp::ImageContent,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(image_content.data.as_bytes())
             .ok()?;
         let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
-        Some(Arc::new(gpui::Image::from_bytes(format, bytes)))
+        let dimensions = Self::image_dimensions(&bytes, format);
+        Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
+    }
+
+    fn image_dimensions(bytes: &[u8], format: gpui::ImageFormat) -> Option<gpui::Size<u32>> {
+        let format = match format {
+            gpui::ImageFormat::Png => image::ImageFormat::Png,
+            gpui::ImageFormat::Jpeg => image::ImageFormat::Jpeg,
+            gpui::ImageFormat::Webp => image::ImageFormat::WebP,
+            gpui::ImageFormat::Gif => image::ImageFormat::Gif,
+            gpui::ImageFormat::Svg => return None,
+            gpui::ImageFormat::Bmp => image::ImageFormat::Bmp,
+            gpui::ImageFormat::Tiff => image::ImageFormat::Tiff,
+            gpui::ImageFormat::Ico => image::ImageFormat::Ico,
+            gpui::ImageFormat::Pnm => image::ImageFormat::Pnm,
+        };
+
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), format)
+            .into_dimensions()
+            .ok()
+            .map(|(width, height)| gpui::Size { width, height })
     }
 
     fn create_markdown_block(
@@ -714,8 +766,18 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx
-                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+            markdown: cx.new(|cx| {
+                Markdown::new_with_options(
+                    content.into(),
+                    Some(language_registry.clone()),
+                    None,
+                    MarkdownOptions {
+                        render_mermaid_diagrams: true,
+                        ..Default::default()
+                    },
+                    cx,
+                )
+            }),
         }
     }
 
@@ -775,9 +837,9 @@ impl ContentBlock {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
-            ContentBlock::Image { image } => Some(image),
+            ContentBlock::Image { image, dimensions } => Some((image, *dimensions)),
             _ => None,
         }
     }
@@ -862,7 +924,7 @@ impl ToolCallContent {
         }
     }
 
-    pub fn image(&self) -> Option<&Arc<gpui::Image>> {
+    pub fn image(&self) -> Option<(&Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         match self {
             Self::ContentBlock(content) => content.image(),
             _ => None,
@@ -1050,6 +1112,8 @@ pub struct AcpThread {
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
+    _git_store_subscription: Subscription,
+    update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
     running_turn: Option<RunningTurn>,
@@ -1232,10 +1296,27 @@ impl AcpThread {
             }
         });
 
+        let git_store = project.read(cx).git_store().clone();
+        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
+            if matches!(
+                event,
+                GitStoreEvent::RepositoryUpdated(
+                    _,
+                    RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
+                    _
+                )
+            ) {
+                this.update_last_checkpoint_if_changed_task =
+                    Some(this.update_last_checkpoint_if_changed(cx));
+            }
+        });
+
         Self {
             parent_session_id,
             work_dirs,
             action_log,
+            _git_store_subscription,
+            update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
@@ -1322,6 +1403,26 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
+        for entry in &self.entries {
+            let chunks = match entry {
+                AgentThreadEntry::AssistantMessage(message) => &message.chunks,
+                _ => continue,
+            };
+            for chunk in chunks {
+                let block = match chunk {
+                    AssistantMessageChunk::Message { block } => block,
+                    AssistantMessageChunk::Thought { block } => block,
+                };
+                if let Some(markdown) = block.markdown() {
+                    markdown.update(cx, |markdown, cx| {
+                        markdown.invalidate_mermaid_cache(cx);
+                    });
+                }
+            }
+        }
     }
 
     pub fn session_id(&self) -> &acp::SessionId {
@@ -2080,6 +2181,7 @@ impl AcpThread {
         &mut self,
         tool_call: acp::ToolCallUpdate,
         options: PermissionOptions,
+        kind: AuthorizationKind,
         cx: &mut Context<Self>,
     ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
@@ -2087,6 +2189,7 @@ impl AcpThread {
         let status = ToolCallStatus::WaitingForConfirmation {
             options,
             respond_tx: tx,
+            kind,
         };
 
         let tool_call_id = tool_call.tool_call_id.clone();
@@ -2118,15 +2221,25 @@ impl AcpThread {
             return;
         };
 
-        let new_status = match outcome.option_kind {
-            acp::PermissionOptionKind::RejectOnce | acp::PermissionOptionKind::RejectAlways => {
-                ToolCallStatus::Rejected
+        let is_action_choice = matches!(
+            call.status,
+            ToolCallStatus::WaitingForConfirmation {
+                kind: AuthorizationKind::ActionChoice,
+                ..
             }
-            acp::PermissionOptionKind::AllowOnce | acp::PermissionOptionKind::AllowAlways => {
+        );
+        let new_status =
+            if is_action_choice {
                 ToolCallStatus::InProgress
-            }
-            _ => ToolCallStatus::InProgress,
-        };
+            } else {
+                match outcome.option_kind {
+                    acp::PermissionOptionKind::RejectOnce
+                    | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                    acp::PermissionOptionKind::AllowOnce
+                    | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
+                    _ => ToolCallStatus::InProgress,
+                }
+            };
 
         let curr_status = mem::replace(&mut call.status, new_status);
 
@@ -2513,6 +2626,79 @@ impl AcpThread {
                 })
             })?
             .await;
+            Ok(())
+        })
+    }
+
+    fn update_last_checkpoint_if_changed(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(turn_id) = self.running_turn.as_ref().map(|turn| turn.id) else {
+            return Task::ready(Ok(()));
+        };
+
+        let git_store = self.project.read(cx).git_store().clone();
+
+        let Some((user_message_id, checkpoint)) =
+            self.last_user_message().and_then(|(_, message)| {
+                let id = message.id.clone()?;
+                let checkpoint = message.checkpoint.as_ref()?;
+                Some((id, checkpoint))
+            })
+        else {
+            return Task::ready(Ok(()));
+        };
+        if checkpoint.show {
+            return Task::ready(Ok(()));
+        }
+        let old_checkpoint = checkpoint.git_checkpoint.clone();
+
+        let new_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
+        cx.spawn(async move |this, cx| {
+            let Some(new_checkpoint) = new_checkpoint
+                .await
+                .context("failed to get new checkpoint")
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            let Some(equal) = git_store
+                .update(cx, |git, cx| {
+                    git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                })
+                .await
+                .context("failed to compare checkpoints")
+                .log_err()
+            else {
+                return Ok(());
+            };
+
+            if equal {
+                return Ok(());
+            }
+
+            this.update(cx, |this, cx| {
+                if !this
+                    .running_turn
+                    .as_ref()
+                    .is_some_and(|turn| turn.id == turn_id)
+                {
+                    return;
+                }
+
+                let Some((ix, message)) = this.last_user_message() else {
+                    return;
+                };
+                if message.id.as_ref() != Some(&user_message_id) {
+                    return;
+                }
+                if let Some(checkpoint) = message.checkpoint.as_mut()
+                    && !checkpoint.show
+                {
+                    checkpoint.show = true;
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
+            })?;
+
             Ok(())
         })
     }
@@ -4144,6 +4330,119 @@ mod tests {
             );
         });
         assert_eq!(fs.files(), vec![Path::new(path!("/test/file-0"))]);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_checkpoint_shows_when_file_changes_during_pending_message(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let (request_started_tx, request_started_rx) = oneshot::channel::<()>();
+        let request_started_tx = Rc::new(RefCell::new(Some(request_started_tx)));
+        let (write_file_tx, write_file_rx) = oneshot::channel::<()>();
+        let write_file_rx = Rc::new(RefCell::new(Some(write_file_rx)));
+        let (file_written_tx, file_written_rx) = oneshot::channel::<()>();
+        let file_written_tx = Rc::new(RefCell::new(Some(file_written_tx)));
+        let (finish_response_tx, finish_response_rx) = oneshot::channel::<()>();
+        let finish_response_tx = Rc::new(RefCell::new(Some(finish_response_tx)));
+        let finish_response_rx = Rc::new(RefCell::new(Some(finish_response_rx)));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let request_started_tx = request_started_tx.clone();
+            let write_file_rx = write_file_rx.clone();
+            let file_written_tx = file_written_tx.clone();
+            let finish_response_rx = finish_response_rx.clone();
+            move |_request, thread, mut cx| {
+                let write_file_rx = write_file_rx.borrow_mut().take();
+                let finish_response_rx = finish_response_rx.borrow_mut().take();
+                let request_started_tx = request_started_tx.borrow_mut().take();
+                let file_written_tx = file_written_tx.borrow_mut().take();
+                async move {
+                    if let Some(request_started_tx) = request_started_tx {
+                        request_started_tx.send(()).ok();
+                    }
+                    if let Some(write_file_rx) = write_file_rx {
+                        write_file_rx.await.ok();
+                    }
+
+                    thread
+                        .update(&mut cx, |thread, cx| {
+                            thread.write_text_file(
+                                PathBuf::from(path!("/test/file")),
+                                String::new(),
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    if let Some(file_written_tx) = file_written_tx {
+                        file_written_tx.send(()).ok();
+                    }
+                    if let Some(finish_response_rx) = finish_response_rx {
+                        finish_response_rx.await.ok();
+                    }
+
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send = thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send_task = cx.background_executor.spawn(send);
+        request_started_rx.await.unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User
+
+                    hello
+
+                "}
+            );
+        });
+
+        write_file_tx.send(()).ok();
+        file_written_rx.await.unwrap();
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    hello
+
+                "}
+            );
+        });
+
+        finish_response_tx
+            .borrow_mut()
+            .take()
+            .unwrap()
+            .send(())
+            .ok();
+        send_task.await.unwrap();
     }
 
     #[gpui::test]

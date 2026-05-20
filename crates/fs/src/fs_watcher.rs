@@ -1,3 +1,4 @@
+use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
@@ -19,29 +20,66 @@ pub enum WatcherMode {
 }
 
 pub struct FsWatcher {
+    executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
+    registrations: Arc<Mutex<BTreeMap<Arc<std::path::Path>, FsWatcherRegistration>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
+}
+
+#[derive(Clone, Copy)]
+struct FsWatcherRegistration {
+    id: WatcherRegistrationId,
     mode: WatcherMode,
 }
 
 impl FsWatcher {
     pub fn new(
+        executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-        mode: WatcherMode,
     ) -> Self {
         Self {
+            executor,
             tx,
             pending_path_events,
             registrations: Default::default(),
-            mode,
+            pending_registrations: Default::default(),
         }
+    }
+
+    fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
+        let registration_path = path.clone();
+        let registration =
+            register_existing_path(path, self.tx.clone(), self.pending_path_events.clone())?;
+        self.registrations
+            .lock()
+            .insert(registration_path, registration);
+        Ok(())
+    }
+
+    fn add_pending_path(&self, path: Arc<Path>) {
+        let mut pending_registrations = self.pending_registrations.lock();
+        if pending_registrations.contains_key(path.as_ref()) {
+            return;
+        }
+
+        let task = self.executor.spawn(poll_path_until_created(
+            self.executor.clone(),
+            path.clone(),
+            self.tx.clone(),
+            self.pending_path_events.clone(),
+            self.registrations.clone(),
+            self.pending_registrations.clone(),
+        ));
+        pending_registrations.insert(path, task);
     }
 }
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
+        self.pending_registrations.lock().clear();
+
         let mut registrations = BTreeMap::new();
         {
             let old = &mut self.registrations.lock();
@@ -50,7 +88,7 @@ impl Drop for FsWatcher {
 
         let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration);
+            global_watcher.remove(registration.id);
         }
     }
 }
@@ -58,64 +96,284 @@ impl Drop for FsWatcher {
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("watcher add: {path:?}");
-        let tx = self.tx.clone();
-        let pending_path_events = self.pending_path_events.clone();
 
-        if (self.mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
-            && let Some((watched_path, _)) = self
-                .registrations
-                .lock()
-                .range::<std::path::Path, _>((
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(path),
-                ))
-                .next_back()
-            && path.starts_with(watched_path.as_ref())
-        {
-            log::trace!(
-                "path to watch is covered by existing registration: {path:?}, {watched_path:?}"
-            );
+        let (path_is_covered_by_recursive_registration, path_is_already_watched) = {
+            let registrations = self.registrations.lock();
+            (
+                path.ancestors().skip(1).any(|ancestor| {
+                    registrations.get(ancestor).is_some_and(|registration| {
+                        registration.mode == WatcherMode::Poll
+                            || cfg!(any(target_os = "windows", target_os = "macos"))
+                    })
+                }),
+                registrations.contains_key(path),
+            )
+        };
+
+        if path_is_covered_by_recursive_registration {
+            log::trace!("path to watch is covered by existing registration: {path:?}");
             return Ok(());
         }
 
-        if self.registrations.lock().contains_key(path) {
+        if path_is_already_watched {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
 
-        let root_path = SanitizedPath::new_arc(path);
+        if self.pending_registrations.lock().contains_key(path) {
+            log::trace!("path to watch is already pending: {path:?}");
+            return Ok(());
+        }
+
         let path: Arc<std::path::Path> = path.into();
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            self.add_pending_path(path);
+            return Ok(());
+        }
 
-        let registration_path = path.clone();
-        let registration_id = global_watcher().add(
-            path.clone(),
-            self.mode,
-            move |result: Result<&notify::Event, &notify::Error>| match result {
-                Ok(event) => {
-                    log::trace!("watcher received event: {event:?}");
-                    push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event);
-                }
-                Err(error) => {
-                    push_notify_error(&tx, &pending_path_events, path.as_ref(), error);
-                }
-            },
-        )?;
-
-        self.registrations
-            .lock()
-            .insert(registration_path, registration_id);
-
-        Ok(())
+        self.add_existing_path(path)
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
+        self.pending_registrations.lock().remove(path);
+
         let Some(registration) = self.registrations.lock().remove(path) else {
             return Ok(());
         };
 
-        global_watcher().remove(registration);
+        global_watcher().remove(registration.id);
         Ok(())
+    }
+}
+
+/// Detect whether a path requires polling instead of native file watching.
+///
+/// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
+/// silently fail to deliver events: 9P (WSL drvfs), NFS, CIFS/SMB, FUSE (sshfs), etc.
+///
+/// Can be overridden with the `ZED_FILE_WATCHER_MODE` environment variable:
+/// - `native` — always use native OS watcher
+/// - `poll` — always use polling
+/// - `auto` (default) — auto-detect based on filesystem type
+pub fn requires_poll_watcher(path: &Path) -> bool {
+    match std::env::var("ZED_FILE_WATCHER_MODE")
+        .as_deref()
+        .unwrap_or("auto")
+    {
+        "native" => return false,
+        "poll" => return true,
+        _ => {}
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return detect_requires_poll_watcher_linux(path);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+fn register_existing_path(
+    path: Arc<Path>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) -> anyhow::Result<FsWatcherRegistration> {
+    let mode = if requires_poll_watcher(path.as_ref()) {
+        log::info!(
+            "Using poll watcher ({}ms interval) for {}",
+            poll_interval().as_millis(),
+            path.display()
+        );
+        telemetry::event!("fs_watcher_poll", path = path.display().to_string());
+        WatcherMode::Poll
+    } else {
+        WatcherMode::Native
+    };
+    let root_path = SanitizedPath::new_arc(path.as_ref());
+    let path_for_callback = path.clone();
+    let registration_id = global_watcher().add(path, mode, move |event: &notify::Event| {
+        log::trace!("watcher received event: {event:?}");
+        push_notify_event(
+            &tx,
+            &pending_path_events,
+            &root_path,
+            path_for_callback.as_ref(),
+            event,
+        );
+    })?;
+    Ok(FsWatcherRegistration {
+        id: registration_id,
+        mode,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = match CString::new(path.as_os_str().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return false;
+    }
+
+    const V9FS_MAGIC: u64 = 0x0102_1997;
+    const NFS_SUPER_MAGIC: u64 = 0x0000_6969;
+    const CIFS_MAGIC: u64 = 0xFF53_4D42;
+    const SMB_SUPER_MAGIC: u64 = 0x0000_517B;
+    const SMB2_MAGIC: u64 = 0xFE53_4D42;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+
+    let fs_type = (stat.f_type as u64) & 0xFFFF_FFFF;
+    if fs_type == FUSE_SUPER_MAGIC && is_virtiofs(path) {
+        return false;
+    }
+
+    if fs_type == V9FS_MAGIC
+        || fs_type == NFS_SUPER_MAGIC
+        || fs_type == CIFS_MAGIC
+        || fs_type == SMB_SUPER_MAGIC
+        || fs_type == SMB2_MAGIC
+        || fs_type == FUSE_SUPER_MAGIC
+    {
+        log::info!(
+            "Detected network/virtual filesystem (type 0x{:x}) at {}, using poll watcher",
+            fs_type,
+            path.display()
+        );
+        return true;
+    }
+
+    if is_wsl_drvfs_path(path) {
+        log::info!(
+            "Detected WSL drvfs mount at {}, using poll watcher",
+            path.display()
+        );
+        return true;
+    }
+
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn is_virtiofs(path: &Path) -> bool {
+    let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+
+    let mut best_mount = None;
+    for line in mountinfo.lines() {
+        let fields = line.split(' ').collect::<Vec<_>>();
+        let Some(separator) = fields.iter().position(|field| *field == "-") else {
+            continue;
+        };
+        let (Some(mount_point), Some(fs_type)) = (fields.get(4), fields.get(separator + 1)) else {
+            continue;
+        };
+
+        let mount_point = mount_point
+            .replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\");
+        if path.starts_with(&mount_point)
+            && best_mount.is_none_or(|(length, _)| mount_point.len() > length)
+        {
+            best_mount = Some((mount_point.len(), *fs_type));
+        }
+    }
+
+    best_mount.is_some_and(|(_, fs_type)| fs_type == "virtiofs" || fs_type == "fuse.virtiofs")
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_drvfs_path(path: &Path) -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_none() {
+        if let Ok(version) = std::fs::read_to_string("/proc/version") {
+            let version = version.to_lowercase();
+            if !version.contains("microsoft") && !version.contains("wsl") {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    if !path.starts_with("/mnt/") || path.len() < 6 {
+        return false;
+    }
+    let after_mnt = &path[5..];
+    after_mnt.starts_with(|c: char| c.is_ascii_alphabetic())
+        && (after_mnt.len() == 1 || after_mnt.as_bytes()[1] == b'/')
+}
+
+async fn poll_path_until_created(
+    executor: BackgroundExecutor,
+    path: Arc<Path>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    registrations: Arc<Mutex<BTreeMap<Arc<Path>, FsWatcherRegistration>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
+) {
+    loop {
+        executor.timer(poll_interval()).await;
+
+        if !pending_registrations.lock().contains_key(path.as_ref()) {
+            return;
+        }
+
+        if smol::fs::symlink_metadata(path.as_ref()).await.is_err() {
+            continue;
+        }
+
+        if registrations.lock().contains_key(path.as_ref()) {
+            pending_registrations.lock().remove(path.as_ref());
+            return;
+        }
+
+        match register_existing_path(path.clone(), tx.clone(), pending_path_events.clone()) {
+            Ok(registration) => {
+                {
+                    let mut pending_registrations = pending_registrations.lock();
+                    if pending_registrations.remove(path.as_ref()).is_none() {
+                        global_watcher().remove(registration.id);
+                        return;
+                    }
+                    registrations.lock().insert(path.clone(), registration);
+                }
+                enqueue_path_events(
+                    &tx,
+                    &pending_path_events,
+                    vec![
+                        PathEvent {
+                            path: path.to_path_buf(),
+                            kind: Some(PathEventKind::Created),
+                        },
+                        PathEvent {
+                            path: path.to_path_buf(),
+                            kind: Some(PathEventKind::Rescan),
+                        },
+                    ],
+                );
+                return;
+            }
+            Err(error) => {
+                log::warn!("failed to watch newly-created path {path:?}: {error}; retrying");
+            }
+        }
     }
 }
 
@@ -172,25 +430,8 @@ fn push_notify_event(
             kind: Some(PathEventKind::Rescan),
         });
     }
-
+    log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
-}
-
-fn push_notify_error(
-    tx: &smol::channel::Sender<()>,
-    pending_path_events: &Arc<Mutex<Vec<PathEvent>>>,
-    watched_root: &Path,
-    error: &notify::Error,
-) {
-    log::warn!("watcher error for {watched_root:?}: {error}");
-    enqueue_path_events(
-        tx,
-        pending_path_events,
-        vec![PathEvent {
-            path: watched_root.to_path_buf(),
-            kind: Some(PathEventKind::Rescan),
-        }],
-    );
 }
 
 fn coalesce_pending_rescans(pending_paths: &mut Vec<PathEvent>, path_events: &mut Vec<PathEvent>) {
@@ -247,24 +488,65 @@ fn is_covered_rescan(kind: Option<PathEventKind>, path: &Path, ancestor: &Path) 
 pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
-    callback: Arc<dyn for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync>,
+    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
     path: Arc<std::path::Path>,
     mode: WatcherMode,
 }
 
+struct PathRegistrationState {
+    count: u32,
+    has_os_watcher: bool,
+}
+
 struct WatcherState {
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
-    native_path_registrations: HashMap<Arc<std::path::Path>, u32>,
-    poll_path_registrations: HashMap<Arc<std::path::Path>, u32>,
+    native_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
+    poll_path_registrations: HashMap<Arc<std::path::Path>, PathRegistrationState>,
     last_registration: WatcherRegistrationId,
 }
 
 impl WatcherState {
-    fn path_registrations(&mut self, mode: WatcherMode) -> &mut HashMap<Arc<std::path::Path>, u32> {
+    fn path_registrations(
+        &mut self,
+        mode: WatcherMode,
+    ) -> &mut HashMap<Arc<std::path::Path>, PathRegistrationState> {
         match mode {
             WatcherMode::Native => &mut self.native_path_registrations,
             WatcherMode::Poll => &mut self.poll_path_registrations,
         }
+    }
+
+    fn remove_registration(
+        &mut self,
+        id: WatcherRegistrationId,
+    ) -> Option<(Arc<std::path::Path>, WatcherMode)> {
+        let registration_state = self.watchers.remove(&id)?;
+        let path_registrations = self.path_registrations(registration_state.mode);
+        let count = path_registrations.get_mut(&registration_state.path)?;
+        count.count -= 1;
+        if count.count != 0 {
+            return None;
+        }
+
+        let was_actually_watched = count.has_os_watcher;
+        path_registrations.remove(&registration_state.path);
+
+        was_actually_watched.then_some((registration_state.path, registration_state.mode))
+    }
+}
+
+trait WatchBackend: Send {
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()>;
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()>;
+}
+
+impl<T: notify::Watcher + Send> WatchBackend for T {
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        notify::Watcher::watch(self, path, mode)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        notify::Watcher::unwatch(self, path)
     }
 }
 
@@ -273,8 +555,8 @@ pub struct GlobalWatcher {
 
     // DANGER: never keep state lock while holding watcher lock
     // two mutexes because calling watcher.add triggers watcher.event, which needs watchers.
-    native_watcher: Mutex<Option<notify::RecommendedWatcher>>,
-    poll_watcher: Mutex<Option<notify::PollWatcher>>,
+    native_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
+    poll_watcher: Mutex<Option<Box<dyn WatchBackend>>>,
 }
 
 impl GlobalWatcher {
@@ -283,7 +565,7 @@ impl GlobalWatcher {
         &self,
         path: Arc<std::path::Path>,
         mode: WatcherMode,
-        cb: impl for<'a> Fn(Result<&'a notify::Event, &'a notify::Error>) + Send + Sync + 'static,
+        cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<WatcherRegistrationId> {
         let mut state = self.state.lock();
         let registrations_for_mode = state.path_registrations(mode);
@@ -305,41 +587,28 @@ impl GlobalWatcher {
             mode,
         };
         state.watchers.insert(id, registration_state);
-        *state.path_registrations(mode).entry(path).or_insert(0) += 1;
+        state
+            .path_registrations(mode)
+            .entry(path)
+            .and_modify(|registration| registration.count += 1)
+            .or_insert(PathRegistrationState {
+                count: 1,
+                has_os_watcher: !path_already_covered,
+            });
 
         Ok(id)
     }
 
     pub fn remove(&self, id: WatcherRegistrationId) {
         let mut state = self.state.lock();
-        let Some(registration_state) = state.watchers.remove(&id) else {
+        let Some((path, mode)) = state.remove_registration(id) else {
             return;
         };
-
-        let path_registrations = state.path_registrations(registration_state.mode);
-        let Some(count) = path_registrations.get_mut(&registration_state.path) else {
-            return;
-        };
-        *count -= 1;
-        if *count == 0 {
-            path_registrations.remove(&registration_state.path);
-            let path_still_covered = path_already_covered(
-                registration_state.path.as_ref(),
-                path_registrations,
-                registration_state.mode,
-            );
-
-            if !path_still_covered {
-                drop(state);
-                self.unwatch(&registration_state.path, registration_state.mode)
-                    .log_err();
-            }
-        }
+        drop(state);
+        self.unwatch(&path, mode).log_err();
     }
 
     fn watch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
-        use notify::Watcher;
-
         match mode {
             WatcherMode::Native => {
                 self.ensure_native_watcher()?;
@@ -370,8 +639,6 @@ impl GlobalWatcher {
     }
 
     fn unwatch(&self, path: &Path, mode: WatcherMode) -> anyhow::Result<()> {
-        use notify::Watcher;
-
         match mode {
             WatcherMode::Native => {
                 if let Some(watcher) = self.native_watcher.lock().as_mut() {
@@ -394,7 +661,7 @@ impl GlobalWatcher {
         }
 
         let watcher = notify::recommended_watcher(handle_native_event)?;
-        *self.native_watcher.lock() = Some(watcher);
+        *self.native_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
 
@@ -405,20 +672,21 @@ impl GlobalWatcher {
 
         let config = notify::Config::default().with_poll_interval(*POLL_INTERVAL);
         let watcher = notify::PollWatcher::new(handle_poll_event, config)?;
-        *self.poll_watcher.lock() = Some(watcher);
+        *self.poll_watcher.lock() = Some(Box::new(watcher));
         Ok(())
     }
 }
 
 fn path_already_covered(
     path: &Path,
-    path_registrations: &HashMap<Arc<std::path::Path>, u32>,
+    path_registrations: &HashMap<Arc<std::path::Path>, PathRegistrationState>,
     mode: WatcherMode,
 ) -> bool {
     (mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
-        && path_registrations
-            .keys()
-            .any(|existing| path.starts_with(existing.as_ref()) && path != existing.as_ref())
+        && path
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| path_registrations.contains_key(ancestor))
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
@@ -483,13 +751,11 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
     match event {
         Ok(event) => {
             for callback in callbacks {
-                callback(Ok(&event));
+                callback(&event);
             }
         }
         Err(error) => {
-            for callback in callbacks {
-                callback(Err(&error));
-            }
+            log::warn!("watcher error for {mode:?}: {error}");
         }
     }
 }
@@ -497,7 +763,7 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::{collections::HashSet, path::PathBuf};
 
     fn rescan(path: &str) -> PathEvent {
         PathEvent {
@@ -513,12 +779,77 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct FakeWatchBackend {
+        watched_paths: HashSet<PathBuf>,
+        watch_calls: Vec<PathBuf>,
+        unwatch_calls: Vec<PathBuf>,
+    }
+
+    struct SharedFakeWatchBackend(Arc<Mutex<FakeWatchBackend>>);
+
+    impl WatchBackend for SharedFakeWatchBackend {
+        fn watch(&mut self, path: &Path, _mode: notify::RecursiveMode) -> notify::Result<()> {
+            let path = path.to_path_buf();
+            let mut backend = self.0.lock();
+            backend.watch_calls.push(path.clone());
+            backend.watched_paths.insert(path);
+            Ok(())
+        }
+
+        fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+            let path = path.to_path_buf();
+            let mut backend = self.0.lock();
+            backend.unwatch_calls.push(path.clone());
+            if backend.watched_paths.remove(&path) {
+                Ok(())
+            } else {
+                Err(notify::Error::generic("path was not watched"))
+            }
+        }
+    }
+
+    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
+        GlobalWatcher {
+            state: Mutex::new(WatcherState {
+                watchers: Default::default(),
+                native_path_registrations: Default::default(),
+                poll_path_registrations: Default::default(),
+                last_registration: Default::default(),
+            }),
+            native_watcher: Mutex::new(None),
+            poll_watcher: Mutex::new(Some(Box::new(SharedFakeWatchBackend(poll_watcher)))),
+        }
+    }
+
     struct TestCase {
         name: &'static str,
         pending_paths: Vec<PathEvent>,
         path_events: Vec<PathEvent>,
         expected_pending_paths: Vec<PathEvent>,
         expected_path_events: Vec<PathEvent>,
+    }
+
+    #[test]
+    fn covered_child_registration_is_not_unwatched_after_parent_is_removed() {
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher(backend.clone());
+        let parent = Arc::<Path>::from(Path::new("/repo"));
+        let child = Arc::<Path>::from(Path::new("/repo/foo.csproj"));
+
+        let parent_registration = watcher
+            .add(parent.as_ref().into(), WatcherMode::Poll, |_| {})
+            .expect("add parent watch");
+        let child_registration = watcher
+            .add(child.as_ref().into(), WatcherMode::Poll, |_| {})
+            .expect("add covered child watch");
+
+        watcher.remove(parent_registration);
+        watcher.remove(child_registration);
+
+        let backend = backend.lock();
+        assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
+        assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
     }
 
     #[test]

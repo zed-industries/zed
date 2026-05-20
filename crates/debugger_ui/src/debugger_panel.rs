@@ -1606,6 +1606,12 @@ impl Panel for DebugPanel {
         7
     }
 
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.debugger.get_or_insert_default().button = Some(false);
+        }))
+    }
+
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
