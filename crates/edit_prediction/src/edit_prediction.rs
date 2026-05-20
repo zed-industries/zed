@@ -89,6 +89,7 @@ mod edit_prediction_tests;
 
 use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
 use crate::example_spec::ExampleSpec;
+use crate::example_spec::RecentFile;
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
@@ -2912,6 +2913,42 @@ impl EditPredictionStore {
     ) {
         let project_state = self.get_or_init_project(project, cx);
         project_state.recent_paths = paths.into_iter().collect();
+    }
+
+    pub fn recent_paths_for_project(
+        &self,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> (Vec<RecentFile>, Vec<RecentFile>) {
+        let recently_opened_files = project
+            .read(cx)
+            .opened_buffers(cx)
+            .into_iter()
+            .filter_map(|buffer| {
+                let snapshot = buffer.read(cx).snapshot();
+                let file = snapshot.file()?;
+                Some(RecentFile {
+                    path: file.path().as_std_path().into(),
+                    cursor_position: None,
+                })
+            })
+            .collect();
+        let recently_viewed_files = self
+            .projects
+            .get(&project.entity_id())
+            .map(|project_state| {
+                project_state
+                    .recent_paths
+                    .iter()
+                    .map(|path| RecentFile {
+                        path: path.path.as_std_path().into(),
+                        cursor_position: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        (recently_opened_files, recently_viewed_files)
     }
 
     fn is_file_open_source(

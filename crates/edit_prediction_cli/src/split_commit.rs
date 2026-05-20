@@ -372,6 +372,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
         uncommitted_diff: String::new(),
         recently_opened_files: Vec::new(),
         recently_viewed_files: Vec::new(),
+        uncommitted_diff_contains_edit_history: false,
         rejected_patch: None,
 
         telemetry: None,
@@ -1373,6 +1374,7 @@ Date: Mon Jan 1 00:00:00 2024
             uncommitted_diff: String::new(),
             recently_opened_files: Vec::new(),
             recently_viewed_files: Vec::new(),
+            uncommitted_diff_contains_edit_history: false,
             rejected_patch: None,
 
             telemetry: None,

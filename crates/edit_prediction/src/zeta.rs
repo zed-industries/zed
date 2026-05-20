@@ -416,13 +416,13 @@ pub fn request_prediction_with_zeta(
             let editable_range_in_buffer = editable_range_in_buffer.clone();
             let edit_preview = prediction.edit_preview.clone();
             let model_version = prediction.model_version.clone();
-            let example_task = capture_data.map(|(events, uncommitted_diffs)| {
-                cx.spawn({
+            let example_task = capture_data.and_then(|(events, uncommitted_diffs)| {
+                let (recently_opened_files, recently_viewed_files) = this
+                    .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
+                    .ok()?;
+                Some(cx.spawn({
                     let project = project.clone();
                     let edited_buffer = edited_buffer.clone();
-                    let (recently_opened_files, recently_viewed_files) = this
-                        .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
-                        .ok()?;
                     async move |cx| {
                         let uncommitted_diffs = uncommitted_diffs.await?;
                         let Some(task) = cx.update(|cx| {
@@ -442,7 +442,7 @@ pub fn request_prediction_with_zeta(
                         };
                         task.await
                     }
-                })
+                }))
             });
             cx.spawn(async move |cx| {
                 let example_spec = if let Some(task) = example_task {

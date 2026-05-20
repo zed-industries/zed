@@ -792,6 +792,7 @@ async fn build_example(
         uncommitted_diff: String::new(),
         recently_opened_files: Vec::new(),
         recently_viewed_files: Vec::new(),
+        uncommitted_diff_contains_edit_history: false,
         cursor_path: Arc::from(Path::new(&cursor_file)),
         cursor_position: String::new(),
         edit_history,
