@@ -42,6 +42,19 @@ For each skill you can:
 
 If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
 
+## Managing Skills {#managing-skills}
+
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
+
+The **User** tab shows your global skills. The **Project** tab shows skills for the current project.
+
+For each skill you can:
+
+- **Open** — opens the skill's `SKILL.md` file in the editor
+- **Delete** — removes the skill folder from disk
+
+If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
+
 ## Using Skills {#using-skills}
 
 By default, the agent picks up skills autonomously. It sees a catalog of every installed skill (name and description) in its system prompt, and calls the `skill` tool when a task matches a skill's description.
