@@ -2787,10 +2787,7 @@ impl MarkdownElementBuilder {
         self.pending_line.text.push_str(text);
         self.current_source_index = source_range.end;
 
-        // Compute the base text style once. The style stack doesn't change
-        // while we attribute highlight runs below, so without this a single
-        // code block with hundreds of highlight tokens would otherwise pay for
-        // hundreds of `TextStyle` clones per paint.
+        // Compute the base text style once
         let text_style = self.text_style();
 
         if let Some(Some(language)) = self.code_block_stack.last() {
