@@ -338,6 +338,7 @@ impl AgentTool for ReadFileTool {
             }
 
             let mut anchor = None;
+            let mut is_outline_response = false;
 
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
@@ -377,6 +378,8 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
+                is_outline_response = buffer_content.is_outline;
+
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
@@ -409,11 +412,12 @@ impl AgentTool for ReadFileTool {
                 }
                 if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
                     let text: &str = text;
-                    let markdown = MarkdownCodeBlock {
-                        tag: &input.path,
-                        text,
-                    }
-                    .to_string();
+                    // For outline responses, omit the path tag so the markdown renderer
+                    // does not invoke tree-sitter syntax highlighting against pseudo-code
+                    // outline text. The outline is not valid source for the file's language,
+                    // so highlighting would be both expensive and incorrect.
+                    let tag: &str = if is_outline_response { "" } else { &input.path };
+                    let markdown = MarkdownCodeBlock { tag, text }.to_string();
                     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
