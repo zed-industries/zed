@@ -9171,12 +9171,8 @@ async fn compute_snapshot(
         async move { backend.worktrees().await.log_err().unwrap_or_default() }
     };
     let (branches, head_commit, all_worktrees) = cx
-        .background_spawn({
-            let backend = backend.clone();
-            async move {
-                futures::future::join3(branches_future, head_commit_future, backend.worktrees())
-                    .await
-            }
+        .background_spawn(async move {
+            futures::future::join3(branches_future, head_commit_future, worktrees_future).await
         })
         .await;
 
