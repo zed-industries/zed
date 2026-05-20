@@ -3,11 +3,11 @@ title: AI Rules in Zed - .rules, .cursorrules, CLAUDE.md
 description: Configure AI behavior in Zed with .rules files, .cursorrules, CLAUDE.md, AGENTS.md, and the Rules Library for project-level instructions.
 ---
 
-# Using Rules {#using-rules}
-
-> **Note:** Starting in Zed v1.4.0, Rules have been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
+# Rules {#rules}
 
 Rules are prompts that can be inserted either automatically at the beginning of each [Agent Panel](./agent-panel.md) interaction, through `.rules` files available in your project's file tree, or on-demand, through @-mentioning, via the Rules Library.
+
+> **Note:** Starting in Zed v1.4.0, on-demand rules (and the rules library) have been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
 
 ## `.rules` files
 
@@ -31,6 +31,8 @@ The Rules Library is an interface for writing and managing rules.
 It's a full editor with syntax highlighting and all standard keybindings.
 
 You can also use the inline assistant right in the rules editor, allowing you to get quick LLM support for writing rules.
+
+> **Note:** Starting in Zed v1.4.0, the rules library has been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
 
 ### Opening the Rules Library
 
