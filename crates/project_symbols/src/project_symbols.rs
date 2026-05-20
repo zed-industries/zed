@@ -626,16 +626,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Simulate two language servers both reporting the same symbol by returning it twice.
-        let duplicate_symbol = symbol("foo", path!("/dir/test.rs"));
+        let fake_symbol = symbol("foo", path!("/dir/test.rs"));
         let fake_server = fake_servers.next().await.unwrap();
         fake_server.set_request_handler::<lsp::WorkspaceSymbolRequest, _, _>(
             move |_params: lsp::WorkspaceSymbolParams, _cx| {
-                let duplicate_symbol = duplicate_symbol.clone();
+                let symbol = fake_symbol.clone();
                 async move {
                     Ok(Some(lsp::WorkspaceSymbolResponse::Flat(vec![
-                        duplicate_symbol.clone(),
-                        duplicate_symbol,
+                        symbol.clone(),
+                        symbol,
                     ])))
                 }
             },
