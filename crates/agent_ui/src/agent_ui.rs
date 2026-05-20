@@ -595,8 +595,22 @@ pub fn init(
     .detach();
 
     // Kick off the one-time migration of non-Default Rules to global
-    // Skills. Idempotent, so it's safe to call on every startup.
-    rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+    // Skills, deferred until server feature flags arrive.
+    //
+    // The migration itself is idempotent and no longer gated on a flag,
+    // but the deferral via `on_flags_ready` still matters: the migration
+    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
+    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
+    // server flags are never received, so this callback never fires —
+    // which keeps that sqlite worker activity from racing with the
+    // `TestScheduler` and tripping its non-determinism panic.
+    {
+        let fs = fs.clone();
+        cx.on_flags_ready(move |_, cx| {
+            rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+        })
+        .detach();
+    }
 
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
