@@ -514,10 +514,6 @@ pub mod agent {
             ResetAgentZoom,
             /// Pastes clipboard content without any formatting.
             PasteRaw,
-            /// Opens the "Skills have replaced Rules" explainer modal,
-            /// describing the one-time migration of non-Default Rules to
-            /// global Skills. Dispatched from the title-bar banner.
-            OpenRulesToSkillsMigrationInfo,
         ]
     );
 
@@ -574,6 +570,8 @@ pub mod assistant {
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus,
             FocusAgent,
+            /// Opens the skill creator window for creating a new skill.
+            OpenSkillCreator,
         ]
     );
 

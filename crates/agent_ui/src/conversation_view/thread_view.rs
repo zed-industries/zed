@@ -333,8 +333,6 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
-    /// Errors emitted by the agent while loading SKILL.md files. Each one
-    /// renders as a clickable banner that opens the offending file.
     pub skill_loading_errors: Vec<SkillLoadingError>,
     /// Errors the user has explicitly dismissed. Each entry is matched against
     /// emitted errors by full equality; when an error no longer appears in the
@@ -6446,7 +6444,6 @@ impl ThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
-                                        has_image_content,
                                         failed_or_canceled,
                                         focus_handle,
                                         window,
@@ -6578,7 +6575,6 @@ impl ThreadView {
                                         content_ix,
                                         tool_call,
                                         use_card_layout,
-                                        has_image_content,
                                         failed_or_canceled,
                                         focus_handle,
                                         window,
@@ -6587,6 +6583,32 @@ impl ThreadView {
                                 )
                             }),
                     )
+                    .when(!use_card_layout, |this| {
+                        let button_id =
+                            SharedString::from(format!("tool_output-collapse-{:?}", tool_call.id));
+                        let tool_call_id = tool_call.id.clone();
+
+                        this.child(
+                            div()
+                                .ml(rems(0.4))
+                                .px_3p5()
+                                .pt_2()
+                                .border_l_1()
+                                .border_color(self.tool_card_border_color(cx))
+                                .child(
+                                    IconButton::new(button_id, IconName::ChevronUp)
+                                        .full_width()
+                                        .style(ButtonStyle::Outlined)
+                                        .icon_color(Color::Muted)
+                                        .on_click(cx.listener({
+                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                                this.expanded_tool_calls.remove(&tool_call_id);
+                                                cx.notify();
+                                            }
+                                        })),
+                                ),
+                        )
+                    })
                     .into_any(),
                 ToolCallStatus::Rejected => Empty.into_any(),
             }
@@ -7570,7 +7592,6 @@ impl ThreadView {
         context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
-        is_image_tool_call: bool,
         has_failed: bool,
         focus_handle: &FocusHandle,
         window: &Window,
@@ -7583,20 +7604,19 @@ impl ThreadView {
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
                         markdown.clone(),
-                        tool_call.id.clone(),
                         context_ix,
                         card_layout,
                         window,
                         cx,
                     )
-                } else if let Some(image) = content.image() {
+                } else if let Some((image, dimensions)) = content.image() {
                     let location = tool_call.locations.first().cloned();
                     self.render_image_output(
                         entry_ix,
                         image.clone(),
+                        dimensions,
                         location,
                         card_layout,
-                        is_image_tool_call,
                         cx,
                     )
                 } else {
@@ -7727,14 +7747,11 @@ impl ThreadView {
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
-        tool_call_id: acp::ToolCallId,
         context_ix: usize,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id));
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -7757,20 +7774,6 @@ impl ThreadView {
                 MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
                 cx,
             ))
-            .when(!card_layout, |this| {
-                this.child(
-                    IconButton::new(button_id, IconName::ChevronUp)
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .icon_color(Color::Muted)
-                        .on_click(cx.listener({
-                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                this.expanded_tool_calls.remove(&tool_call_id);
-                                cx.notify();
-                            }
-                        })),
-                )
-            })
             .into_any_element()
     }
 
@@ -7778,30 +7781,26 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         image: Arc<gpui::Image>,
+        dimensions: Option<gpui::Size<u32>>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
-        show_dimensions: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let dimensions_label = if show_dimensions {
-            let format_name = match image.format() {
-                gpui::ImageFormat::Png => "PNG",
-                gpui::ImageFormat::Jpeg => "JPEG",
-                gpui::ImageFormat::Webp => "WebP",
-                gpui::ImageFormat::Gif => "GIF",
-                gpui::ImageFormat::Svg => "SVG",
-                gpui::ImageFormat::Bmp => "BMP",
-                gpui::ImageFormat::Tiff => "TIFF",
-                gpui::ImageFormat::Ico => "ICO",
-                gpui::ImageFormat::Pnm => "PNM",
-            };
-            let dimensions = image::ImageReader::new(std::io::Cursor::new(image.bytes()))
-                .with_guessed_format()
-                .ok()
-                .and_then(|reader| reader.into_dimensions().ok());
-            dimensions.map(|(w, h)| format!("{}×{} {}", w, h, format_name))
+        let format_name = match image.format() {
+            gpui::ImageFormat::Png => "PNG",
+            gpui::ImageFormat::Jpeg => "JPEG",
+            gpui::ImageFormat::Webp => "WebP",
+            gpui::ImageFormat::Gif => "GIF",
+            gpui::ImageFormat::Svg => "SVG",
+            gpui::ImageFormat::Bmp => "BMP",
+            gpui::ImageFormat::Tiff => "TIFF",
+            gpui::ImageFormat::Ico => "ICO",
+            gpui::ImageFormat::Pnm => "PNM",
+        };
+        let dimensions_label = if let Some(size) = dimensions {
+            format!("{}×{} {}", size.width, size.height, format_name)
         } else {
-            None
+            format_name.into()
         };
 
         v_flex()
@@ -7816,29 +7815,27 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .when(dimensions_label.is_some() || location.is_some(), |this| {
-                this.child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .items_center()
-                        .children(dimensions_label.map(|label| {
-                            Label::new(label)
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx)
-                        }))
-                        .when_some(location, |this, _loc| {
-                            this.child(
-                                Button::new(("go-to-file", entry_ix), "Go to File")
-                                    .label_size(LabelSize::Small)
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.open_tool_call_location(entry_ix, 0, window, cx);
-                                    })),
-                            )
-                        }),
-                )
-            })
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .items_center()
+                    .child(
+                        Label::new(dimensions_label)
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted)
+                            .buffer_font(cx),
+                    )
+                    .when_some(location, |this, _loc| {
+                        this.child(
+                            Button::new(("go-to-file", entry_ix), "Go to File")
+                                .label_size(LabelSize::Small)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.open_tool_call_location(entry_ix, 0, window, cx);
+                                })),
+                        )
+                    }),
+            )
             .child(
                 img(image)
                     .max_w_96()
