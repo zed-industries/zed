@@ -29,7 +29,7 @@ Initial build landed; six followups remain.
       `(section, repo_path)` entry key (`d58c593003 feat(git_ui): group git panel entries by staging state`)
 - [x] M5 — initial hover-revealed `+`/`-` per row, sticky-by-key fix
       (`e1a59f5944 feat: add staging affordances and fix stale selections`)
-- [ ] A1 — fix `+`/`-` hover regression (see below)
+- [x] A1 — fix `+`/`-` hover regression (see below)
 - [ ] A2 — section-header `+`/`-` buttons in staging-grouped mode
 - [ ] A3 — per-section diff stats
 - [ ] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
@@ -42,14 +42,22 @@ Initial build landed; six followups remain.
 
 User story: 34. PRD: M5 "Wrapper-hitbox constraint", appendix A1.
 
-- [ ] Remove `.occlude()` from the per-row staging-control wrapper
+- [x] Remove `.occlude()` from the per-row staging-control wrapper
       (`crates/git_ui/src/git_panel.rs` ≈ line 6459)
-- [ ] Remove `.occlude()` from the directory-row staging-control wrapper
-      (≈ line 6673)
-- [ ] Verify the per-row click handler still calls `cx.stop_propagation()` in
-      both `Checkbox` and `Action` branches
-- [ ] Test (gpui visual context): hover a Staged-mode row → assert button
-      visible. Move synthetic cursor onto button bounds → assert still visible.
+- [x] Remove `.occlude()` from the directory-row staging-control wrapper
+      (≈ line 6695)
+- [x] Verify the per-row click handler still calls `cx.stop_propagation()` in
+      both `Checkbox` and `Action` branches (file rows: lines 6493/6529;
+      directory rows: lines 6715/6757)
+- [x] Test (gpui visual context): position the cursor on the staging-control
+      wrapper, click, and assert the file's staging state changed. Tests
+      clickability rather than visibility because `cx.debug_bounds` is
+      registered before the `style.visibility == Hidden` early-return in
+      `Interactivity::paint`, so `.is_some()` checks are not sensitive to
+      `visible_on_hover`. Mouse-listener registration *is* gated on
+      visibility, so a click on an invisible button fails to fire — which is
+      the user's actual complaint
+      (`test_staging_group_button_remains_clickable_when_cursor_enters_button`).
 
 **Dependency:** must land **before** A2, since A2's header buttons reuse the
 same wrapper pattern.

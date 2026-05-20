@@ -6331,8 +6331,6 @@ impl GitPanel {
         let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
         let stage_control_group: SharedString =
             format!("entry_{}_{}_stage_control", display_name, ix).into();
-        let stage_control_wrapper_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_stage_control_wrapper", display_name, ix).into());
         let stage_control_id: ElementId =
             ElementId::Name(format!("entry_{}_{}_stage_control", display_name, ix).into());
         let stage_control_debug_selector = format!(
@@ -6453,11 +6451,8 @@ impl GitPanel {
             })
             .child(
                 div()
-                    .id(stage_control_wrapper_id)
                     .debug_selector(move || stage_control_debug_selector)
                     .flex_none()
-                    .occlude()
-                    .cursor_pointer()
                     .child(match staging_affordance {
                         StagingAffordance::Checkbox { toggle_state } => {
                             Checkbox::new(stage_control_id, toggle_state)
@@ -6584,8 +6579,6 @@ impl GitPanel {
             format!("dir_{}_{}_stage_control", entry.name, ix).into();
         let stage_control_id: ElementId =
             ElementId::Name(format!("dir_stage_control_{}_{}", entry.name, ix).into());
-        let stage_control_wrapper_id: ElementId =
-            ElementId::Name(format!("dir_stage_control_wrapper_{}_{}", entry.name, ix).into());
         let stage_control_debug_selector = format!(
             "git-panel-stage-control-{:?}-{}",
             entry.key.section,
@@ -6689,11 +6682,8 @@ impl GitPanel {
             .child(name_row)
             .child(
                 div()
-                    .id(stage_control_wrapper_id)
                     .debug_selector(move || stage_control_debug_selector)
                     .flex_none()
-                    .occlude()
-                    .cursor_pointer()
                     .child(match staging_affordance {
                         StagingAffordance::Checkbox { toggle_state } => {
                             Checkbox::new(stage_control_id, toggle_state)
@@ -9078,6 +9068,83 @@ mod tests {
             cx.debug_bounds("ICON-Dash").is_some(),
             "hovering a staged row should reveal the unstage button"
         );
+    }
+
+    #[gpui::test]
+    async fn test_staging_group_button_remains_clickable_when_cursor_enters_button(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(language_model::init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "unstaged.rs": "unstaged",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("unstaged.rs", StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should exist");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, cx).await;
+        render_workspace(cx);
+
+        // `cx.debug_bounds(_).is_some()` cannot detect `visible_on_hover` —
+        // the `debug_bounds` map is populated *before* `Interactivity::paint`
+        // checks `style.visibility == Hidden` (see `div.rs`). Mouse-listener
+        // registration runs *after* that check, so an invisible button drops
+        // clicks. The assertion below relies on that asymmetry: if the
+        // wrapper re-acquires `.occlude()`, the row's group-hover flips off
+        // when the cursor enters the button, no listener is registered, and
+        // the click is silently dropped.
+        let bounds = cx
+            .debug_bounds("git-panel-stage-control-Unstaged-unstaged.rs")
+            .expect("staging control should be rendered");
+        cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::none());
+        render_workspace(cx);
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        refresh_git_panel_entries(&project, &panel, cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Staged,
+                        repo_path: repo_path("unstaged.rs"),
+                    })
+                    .is_some(),
+                "clicking the + button while the cursor is over it should stage the file"
+            );
+        });
     }
 
     #[gpui::test]
