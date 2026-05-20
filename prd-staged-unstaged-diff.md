@@ -154,6 +154,14 @@ so I can review and stage with full clarity without leaving Zed.
     it visible while my cursor is over the button itself — moving onto the
     button must not hide it. The Conflicts section header is unchanged from
     today.
+35. As a developer in the staging-grouped panel, I want clicking the body of
+    the Staged or Unstaged section header (anywhere except the `+`/`-` button)
+    to open the matching per-base `ProjectDiff` — Staged header body →
+    `DiffBase::Staged`, Unstaged header body → `DiffBase::Unstaged` — so that
+    I can swap between the two single-sided diff views from the panel itself
+    without reaching for the toolbar dropdown. The `+`/`-` button still
+    bulk-stages or bulk-unstages the section without switching the diff
+    filter. The Conflicts section header is unchanged.
 
 ## Implementation Decisions
 
@@ -404,10 +412,16 @@ applied at **two levels**:
 - **Section-header level (added in revision, stories 17/18).** The Staged
   section header has a hover-revealed `−` button that unstages every file in
   the section in one click; the Unstaged section header has a hover-revealed
-  `+` button that stages every file in the section. The whole-row click on
-  the header **does not toggle** in staging-grouped mode — only the button
-  itself is the click target. The Conflicts section header still uses the
-  existing checkbox + whole-row toggle.
+  `+` button that stages every file in the section. The button itself is the
+  bulk-stage / bulk-unstage click target. The remainder of the header row
+  (the "body") is a separate click target that **switches the diff view**
+  (story 35, appendix A7): a click on the Staged header body opens a
+  `DiffBase::Staged` `ProjectDiff` via A5's `deploy_at(target_base=Staged)`,
+  and the Unstaged header body opens `DiffBase::Unstaged`. The button's
+  `cx.stop_propagation()` (per A1's fix) prevents button clicks from
+  cascading into the body handler, so the two targets stay disjoint. The
+  Conflicts section header still uses the existing checkbox + whole-row
+  toggle.
 
 **Wrapper-hitbox constraint (story 34, bug A1 in the followups appendix).**
 The `visible_on_hover` mechanism relies on the parent's group-hover state. A
@@ -538,6 +552,25 @@ gets a dedicated assertion:
   `sort_by_path` to the expected pair. Menu-render test: the kebab menu
   shows a "Sort by …" submenu with the active option inline, and "By
   Path" disabled when Tree View is active.
+- **A7 / story 35** — M5 UI tests in staging-grouped mode:
+  *Body click opens matching base:* simulate-clicking the header body
+  (left of the `git-panel-section-header-stage-control-Staged` bounds)
+  opens an active `ProjectDiff` with `diff_base == Staged`; same for
+  Unstaged. *Branch override:* with a `DiffBase::Merge` view already
+  open, a header body click on Staged exits Merge and lands on
+  `DiffBase::Staged` (analogue of A5's branch-override row-click test).
+  *Selection untouched:* with `selected_entry` set to a known row,
+  clicking the Staged header body leaves `selected_entry` unchanged —
+  the click is a view-switch, not a navigation. *No-stage side effect
+  (renamed legacy test):* the existing
+  `test_staging_grouped_section_header_body_click_does_not_toggle` is
+  retitled to make the no-stage assertion explicit
+  (`..._does_not_stage_files`); its assertions stand unchanged — the
+  body click must not bulk-stage anything. *Button still wins:*
+  simulate-click the `−` button itself; assert the bulk-unstage fires
+  and **no** new `DiffBase::Staged` view is created — the existing
+  `Head` view stays active. Regression guard for the
+  `cx.stop_propagation()` chain on the button.
 
 ## Out of Scope
 
@@ -785,3 +818,52 @@ underlying settings (`group_by`, `sort_by_path`) stay; they are jointly set
 by a new parameterized action `git_panel::SetSortBy { mode: SortBy }`. The
 **"Tree View"** toggle is unchanged. Documented in M4 ("Menu surfacing") and
 story 16 (revised).
+
+### A7 — Section-header body click opens the matching per-base ProjectDiff (M5, story 35)
+
+**Observed.** After A2 landed, the Staged and Unstaged section headers in
+staging-grouped mode became inert outside the `+`/`-` button. The most
+natural "switch between Staged and Unstaged diff views" interaction —
+clicking the section header itself — does nothing, so users have to reach
+for the toolbar dropdown to swap filters. The header looks clickable
+(`cursor_pointer`, hover background) but isn't.
+
+**Design decision.** Make the body of the Staged and Unstaged section
+headers a click target that opens the matching per-base `ProjectDiff` via
+A5's `deploy_at`:
+
+- **Click target.** The header click handler calls
+  `ProjectDiff::deploy_at(workspace, None, target_base, …)` where
+  `target_base = match section { Staged → DiffBase::Staged, Unstaged →
+  DiffBase::Unstaged }`. No specific entry is passed; the view opens at
+  its default scroll position. A5's invariant — never retarget across
+  `DiffBase` values — carries over, so header clicks activate the
+  existing matching per-base view when one is already open and otherwise
+  create a fresh one.
+- **Branch override is automatic.** The mapping is unconditional on
+  `current_base` for `Section::Staged` / `Section::Unstaged`, so the
+  full A5 precedence (`target_diff_base_for_click`) collapses to a
+  constant for these two sections. No additional logic is needed at the
+  header click site.
+- **Selection is left alone.** The panel's `selected_entry` stays put;
+  the header click is a view-switch, not a navigation. (Compare A5's
+  row click, which moves the selected entry to the clicked row.)
+- **Affordance reuses existing visuals.** The header row already carries
+  `.cursor_pointer()` and a hover background; the new click target is
+  discovered through hover, matching the per-row affordance.
+- **Empty section is still a target.** Clicking the Staged header when
+  no files are staged still opens an empty `DiffBase::Staged` view —
+  the placeholder ("No staged changes") is the affordance.
+- **Conflicts header is unchanged.** It still uses the existing
+  checkbox + whole-row toggle. Status-grouped header bodies are also
+  untouched.
+- **The `+`/`-` button's `cx.stop_propagation()`** (A1's fix) prevents
+  button clicks from cascading into the body handler, so bulk
+  stage/unstage stays disjoint from the diff-view switch.
+
+This supersedes A2's "the whole-row click on the header does not toggle —
+only the button itself is the click target" rule for the Staged and
+Unstaged headers: the body is now clickable, but the click no longer
+toggles staging (the `+`/`-` button retains that responsibility) — it
+switches the diff filter via the A5 deploy path. Documented in M5
+("Section-header level") and story 35.
