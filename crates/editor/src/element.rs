@@ -7391,59 +7391,138 @@ impl EditorElement {
                     ..cmp::min(range.end.row().next_row(), end_row)
             };
 
-            let highlighted_range = HighlightedRange {
-                color,
-                line_height: layout.position_map.line_height,
-                corner_radius,
-                start_y: layout.content_origin.y
+            let mut highlighted_ranges = Vec::new();
+            let mut contiguous_lines = Vec::new();
+            let mut contiguous_start_y = Pixels::ZERO;
+
+            for row in row_range.iter_rows() {
+                let line_layout = &layout.position_map.line_layouts[row.minus(start_row) as usize];
+                let row_y = layout.content_origin.y
                     + Pixels::from(
-                        (row_range.start.as_f64() - layout.position_map.scroll_position.y)
+                        (row.as_f64() - layout.position_map.scroll_position.y)
                             * ScrollOffset::from(layout.position_map.line_height),
-                    ),
-                lines: row_range
-                    .iter_rows()
-                    .map(|row| {
-                        let line_layout =
-                            &layout.position_map.line_layouts[row.minus(start_row) as usize];
-                        let alignment_offset =
-                            line_layout.alignment_offset(layout.text_align, layout.content_width);
+                    );
+                let alignment_offset =
+                    line_layout.alignment_offset(layout.text_align, layout.content_width);
+                let range_start = if row == range.start.row() {
+                    range.start.column() as usize
+                } else {
+                    0
+                };
+                let range_end = if row == range.end.row() {
+                    range.end.column() as usize
+                } else {
+                    line_layout.len
+                };
+                let mut x_ranges = line_layout.x_ranges_for_range(range_start..range_end);
+                if x_ranges.is_empty() {
+                    x_ranges.push(
+                        line_layout.x_for_index(range_start)..line_layout.x_for_index(range_end),
+                    );
+                }
+                if row != range.end.row() {
+                    // Continue multi-line selections from the visual edge that contains the logical line end.
+                    let line_end_x = line_layout.x_for_index(line_layout.len);
+                    let mut nearest_endpoint = None::<(usize, bool, Pixels)>;
+                    for (ix, x_range) in x_ranges.iter().enumerate() {
+                        let start_distance = (x_range.start - line_end_x).abs();
+                        let end_distance = (x_range.end - line_end_x).abs();
+                        let (extend_start, distance) = if start_distance == end_distance {
+                            (
+                                line_layout.len > 0 && line_end_x < line_layout.width,
+                                start_distance,
+                            )
+                        } else if start_distance < end_distance {
+                            (true, start_distance)
+                        } else {
+                            (false, end_distance)
+                        };
+
+                        if nearest_endpoint
+                            .is_none_or(|(_, _, nearest_distance)| distance < nearest_distance)
+                        {
+                            nearest_endpoint = Some((ix, extend_start, distance));
+                        }
+                    }
+
+                    if let Some((ix, extend_start, _)) = nearest_endpoint
+                        && let Some(x_range) = x_ranges.get_mut(ix)
+                    {
+                        if extend_start {
+                            let overshot_start = line_end_x - line_end_overshoot;
+                            if overshot_start < x_range.start {
+                                x_range.start = overshot_start;
+                            }
+                        } else {
+                            let overshot_end = line_end_x + line_end_overshoot;
+                            if overshot_end > x_range.end {
+                                x_range.end = overshot_end;
+                            }
+                        }
+                    }
+                }
+
+                let to_screen_x = |x| {
+                    layout.content_origin.x
+                        + Pixels::from(
+                            ScrollPixelOffset::from(x + alignment_offset)
+                                - layout.position_map.scroll_pixel_position.x,
+                        )
+                };
+                let lines = x_ranges
+                    .into_iter()
+                    .map(|x_range| {
+                        let mut start_x = x_range.start;
+                        let mut end_x = x_range.end;
+                        if start_x > end_x {
+                            mem::swap(&mut start_x, &mut end_x);
+                        }
                         HighlightedRangeLine {
-                            start_x: if row == range.start.row() {
-                                layout.content_origin.x
-                                    + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.start.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
-                                    )
-                            } else {
-                                layout.content_origin.x + alignment_offset
-                                    - Pixels::from(layout.position_map.scroll_pixel_position.x)
-                            },
-                            end_x: if row == range.end.row() {
-                                layout.content_origin.x
-                                    + Pixels::from(
-                                        ScrollPixelOffset::from(
-                                            line_layout.x_for_index(range.end.column() as usize)
-                                                + alignment_offset,
-                                        ) - layout.position_map.scroll_pixel_position.x,
-                                    )
-                            } else {
-                                Pixels::from(
-                                    ScrollPixelOffset::from(
-                                        layout.content_origin.x
-                                            + line_layout.width
-                                            + alignment_offset
-                                            + line_end_overshoot,
-                                    ) - layout.position_map.scroll_pixel_position.x,
-                                )
-                            },
+                            start_x: to_screen_x(start_x),
+                            end_x: to_screen_x(end_x),
                         }
                     })
-                    .collect(),
-            };
+                    .collect::<Vec<_>>();
 
-            highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
+                if lines.len() == 1 {
+                    if contiguous_lines.is_empty() {
+                        contiguous_start_y = row_y;
+                    }
+                    contiguous_lines.extend(lines);
+                } else {
+                    if !contiguous_lines.is_empty() {
+                        highlighted_ranges.push(HighlightedRange {
+                            color,
+                            line_height: layout.position_map.line_height,
+                            corner_radius,
+                            start_y: contiguous_start_y,
+                            lines: mem::take(&mut contiguous_lines),
+                        });
+                    }
+
+                    highlighted_ranges.extend(lines.into_iter().map(|line| HighlightedRange {
+                        color,
+                        line_height: layout.position_map.line_height,
+                        corner_radius,
+                        start_y: row_y,
+                        lines: vec![line],
+                    }));
+                }
+            }
+
+            if !contiguous_lines.is_empty() {
+                highlighted_ranges.push(HighlightedRange {
+                    color,
+                    line_height: layout.position_map.line_height,
+                    corner_radius,
+                    start_y: contiguous_start_y,
+                    lines: contiguous_lines,
+                });
+            }
+
+            for highlighted_range in highlighted_ranges {
+                highlighted_range.paint(fill, layout.position_map.text_hitbox.bounds, window);
+            }
         }
     }
 
@@ -9590,6 +9669,75 @@ impl LineWithInvisibles {
         }
 
         fragment_start_x
+    }
+
+    pub fn x_ranges_for_range(&self, range: Range<usize>) -> SmallVec<[Range<Pixels>; 4]> {
+        let mut ranges = SmallVec::new();
+        if range.start >= range.end {
+            return ranges;
+        }
+
+        let mut fragment_start_x = Pixels::ZERO;
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_index = fragment_start_index + shaped_line.len;
+                    let overlap_start = range.start.max(fragment_start_index);
+                    let overlap_end = range.end.min(fragment_end_index);
+                    if overlap_start < overlap_end {
+                        for x_range in shaped_line.x_ranges_for_range(
+                            (overlap_start - fragment_start_index)
+                                ..(overlap_end - fragment_start_index),
+                        ) {
+                            Self::push_x_range(
+                                &mut ranges,
+                                fragment_start_x + x_range.start,
+                                fragment_start_x + x_range.end,
+                            );
+                        }
+                    }
+                    fragment_start_x += shaped_line.width;
+                    fragment_start_index = fragment_end_index;
+                }
+                LineFragment::Element { len, size, .. } => {
+                    let fragment_end_index = fragment_start_index + len;
+                    if range.start < fragment_end_index && fragment_start_index < range.end {
+                        Self::push_x_range(
+                            &mut ranges,
+                            fragment_start_x,
+                            fragment_start_x + size.width,
+                        );
+                    }
+                    fragment_start_x += size.width;
+                    fragment_start_index = fragment_end_index;
+                }
+            }
+        }
+
+        ranges
+    }
+
+    fn push_x_range(ranges: &mut SmallVec<[Range<Pixels>; 4]>, start_x: Pixels, end_x: Pixels) {
+        let (start_x, end_x) = if start_x <= end_x {
+            (start_x, end_x)
+        } else {
+            (end_x, start_x)
+        };
+
+        if start_x == end_x {
+            return;
+        }
+
+        if let Some(last_range) = ranges.last_mut()
+            && last_range.end == start_x
+        {
+            last_range.end = end_x;
+            return;
+        }
+
+        ranges.push(start_x..end_x);
     }
 
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
