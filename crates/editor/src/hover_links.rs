@@ -859,7 +859,12 @@ fn surrounding_filename(
             found_start = true;
             break;
         }
-        if (ch == '"' || ch == '\'' || ch == '`') && !inside_quotes {
+        // Quote characters open a quoted region that is stripped from the
+        // returned filename. Backticks and parens are NOT treated this way —
+        // they are kept as part of the token so that downstream candidate
+        // generation (link_pattern_file_candidates) can trim them and produce
+        // a tight highlight range via make_range.
+        if (ch == '"' || ch == '\'') && !inside_quotes {
             found_start = true;
             inside_quotes = true;
             break;
@@ -892,7 +897,7 @@ fn surrounding_filename(
             found_end = true;
             break;
         }
-        if ch == '"' || ch == '\'' || ch == '`' {
+        if ch == '"' || ch == '\'' {
             // If we're inside quotes, we stop when we come across the next quote
             if inside_quotes {
                 found_end = true;
