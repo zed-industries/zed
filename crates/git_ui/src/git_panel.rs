@@ -310,6 +310,12 @@ fn sort_by_menu_entry(
 const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+/// Window during which `select_entry_by_path` calls triggered by a freshly
+/// opened `ProjectDiff` (story 35) are ignored. Long enough to swallow the
+/// editor's initial `SelectionsChanged` events; short enough that real user
+/// navigation inside the diff resumes syncing the panel.
+const SUPPRESS_PATH_SYNC_WINDOW: Duration = Duration::from_millis(100);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
 const TREE_INDENT: f32 = 16.0;
 
@@ -876,6 +882,14 @@ pub(crate) fn target_diff_base_for_click(
     }
 }
 
+fn header_body_target_diff_base(group_by: GitPanelGroupBy, section: Section) -> Option<DiffBase> {
+    match (group_by, section) {
+        (GitPanelGroupBy::Staging, Section::Staged) => Some(DiffBase::Staged),
+        (GitPanelGroupBy::Staging, Section::Unstaged) => Some(DiffBase::Unstaged),
+        _ => None,
+    }
+}
+
 struct TruncatedPatch {
     header: String,
     hunks: Vec<String>,
@@ -968,6 +982,12 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
+    /// Set by header-body clicks that open a per-base `ProjectDiff` via
+    /// `deploy_at`. Suppresses the very next `select_entry_by_path` call —
+    /// otherwise the editor's initial `SelectionsChanged` event would re-sync
+    /// the panel's selection to the first file of the freshly opened diff,
+    /// contradicting story 35's "view-switch, not navigation" semantics.
+    suppress_next_path_sync: bool,
     marked_entries: Vec<usize>,
     tracked_count: usize,
     tracked_staged_count: usize,
@@ -1173,6 +1193,7 @@ impl GitPanel {
                 scroll_handle,
                 max_width_item_index: None,
                 selected_entry: None,
+                suppress_next_path_sync: false,
                 marked_entries: Vec::new(),
                 tracked_count: 0,
                 tracked_staged_count: 0,
@@ -1239,6 +1260,10 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.suppress_next_path_sync {
+            return;
+        }
+
         let Some(git_repo) = self.active_repository.as_ref() else {
             return;
         };
@@ -1673,6 +1698,30 @@ impl GitPanel {
             window.focus(&editor.focus_handle(cx), cx);
         });
         cx.notify();
+    }
+
+    fn deploy_section_diff(
+        &mut self,
+        target_base: DiffBase,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.suppress_next_path_sync = true;
+        self.workspace
+            .update(cx, |workspace, cx| {
+                ProjectDiff::deploy_at(workspace, None, target_base, window, cx);
+            })
+            .ok();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(SUPPRESS_PATH_SYNC_WINDOW)
+                .await;
+            this.update(cx, |this, _| {
+                this.suppress_next_path_sync = false;
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -6339,18 +6388,33 @@ impl GitPanel {
                         ),
                     }),
             )
-            .when(needs_whole_row_toggle, |row| {
-                row.on_click(move |_, window, cx| {
-                    if !has_write_access {
-                        return;
-                    }
-                    weak.update(cx, |this, cx| {
-                        this.toggle_staged_for_entry(&header_entry, window, cx);
-                        cx.stop_propagation();
+            .when(needs_whole_row_toggle, {
+                let weak = weak.clone();
+                |row| {
+                    row.on_click(move |_, window, cx| {
+                        if !has_write_access {
+                            return;
+                        }
+                        weak.update(cx, |this, cx| {
+                            this.toggle_staged_for_entry(&header_entry, window, cx);
+                            cx.stop_propagation();
+                        })
+                        .ok();
                     })
-                    .ok();
-                })
+                }
             })
+            .when_some(
+                header_body_target_diff_base(group_by, section),
+                |row, target_base| {
+                    row.on_click(move |_, window, cx| {
+                        weak.update(cx, |this, cx| {
+                            this.deploy_section_diff(target_base.clone(), window, cx);
+                            cx.stop_propagation();
+                        })
+                        .ok();
+                    })
+                },
+            )
             .into_any_element()
     }
 
@@ -8240,6 +8304,83 @@ mod tests {
         render_workspace(cx);
     }
 
+    async fn build_mounted_staging_grouped_panel(
+        cx: &mut TestAppContext,
+        files: &[(&'static str, FileStatus)],
+    ) -> (
+        Entity<Project>,
+        Entity<GitPanel>,
+        Entity<Workspace>,
+        VisualTestContext,
+    ) {
+        init_test(cx);
+        cx.update(language_model::init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let mut project_dir = serde_json::Map::new();
+        project_dir.insert(".git".into(), serde_json::json!({}));
+        for (name, _) in files {
+            project_dir.insert((*name).into(), serde_json::Value::String((*name).into()));
+        }
+        let tree = serde_json::json!({ "project": serde_json::Value::Object(project_dir) });
+        fs.insert_tree("/root", tree).await;
+        fs.set_status_for_repo(Path::new(path!("/root/project/.git")), files);
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .expect("workspace should exist");
+        let mut visual_cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        visual_cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(&mut visual_cx, GitPanel::new);
+        workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, &mut visual_cx).await;
+        render_workspace(&mut visual_cx);
+
+        (project, panel, workspace, visual_cx)
+    }
+
+    fn click_section_header_body(section: Section, cx: &mut VisualTestContext) {
+        let selector = match section {
+            Section::Staged => "git-panel-section-header-stage-control-Staged",
+            Section::Unstaged => "git-panel-section-header-stage-control-Unstaged",
+            Section::Conflict => "git-panel-section-header-stage-control-Conflict",
+            Section::Tracked => "git-panel-section-header-stage-control-Tracked",
+            Section::New => "git-panel-section-header-stage-control-New",
+        };
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{} should be rendered", selector));
+        cx.simulate_click(
+            point(bounds.left() - px(100.), bounds.center().y),
+            gpui::Modifiers::none(),
+        );
+    }
+
+    fn active_diff_base(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) -> DiffBase {
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("a ProjectDiff should be active")
+                .read(cx)
+                .diff_base(cx)
+                .clone()
+        })
+    }
+
     #[test]
     fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
         let rpc_error = RpcError::from_proto(
@@ -10005,63 +10146,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_staging_grouped_section_header_body_click_does_not_toggle(
+    async fn test_staging_grouped_section_header_body_click_does_not_stage_files(
         cx: &mut TestAppContext,
     ) {
-        init_test(cx);
-        cx.update(language_model::init);
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/root",
-            json!({
-                "project": {
-                    ".git": {},
-                    "unstaged.rs": "u",
-                }
-            }),
+        let (project, panel, _workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[("unstaged.rs", StatusCode::Modified.worktree())],
         )
         .await;
+        let cx = &mut visual_cx;
 
-        fs.set_status_for_repo(
-            Path::new(path!("/root/project/.git")),
-            &[("unstaged.rs", StatusCode::Modified.worktree())],
-        );
-
-        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
-        let window_handle =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = window_handle
-            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
-            .expect("workspace should exist");
-        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
-
-        cx.update(|_window, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().group_by =
-                        Some(GitPanelGroupBy::Staging);
-                })
-            });
-        });
-
-        let panel = workspace.update_in(cx, GitPanel::new);
-        workspace.update_in(cx, |workspace, window, cx| {
-            workspace.add_panel(panel.clone(), window, cx);
-            workspace.open_panel::<GitPanel>(window, cx);
-        });
-        refresh_git_panel_entries(&project, &panel, cx).await;
-        render_workspace(cx);
-
-        // Story 17/18: in staging-grouped mode, only the button is the click
-        // target — clicking the label area is intentionally a no-op.
-        let stage_control_bounds = cx
-            .debug_bounds("git-panel-section-header-stage-control-Unstaged")
-            .expect("Unstaged section header should expose a stage-control wrapper");
-        let body_point = point(
-            stage_control_bounds.left() - px(100.),
-            stage_control_bounds.center().y,
-        );
-        cx.simulate_click(body_point, gpui::Modifiers::none());
+        // Story 35 (A7) makes the body click open a per-base ProjectDiff — so
+        // the body click is no longer a no-op. The narrower invariant we still
+        // guard: the body click must not bulk-stage the section; only the +
+        // button stages.
+        click_section_header_body(Section::Unstaged, cx);
         refresh_git_panel_entries(&project, &panel, cx).await;
 
         panel.read_with(cx, |panel, _| {
@@ -10079,6 +10178,168 @@ mod tests {
                 "the Staged section should remain empty after a body-only click"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_header_body_opens_staged_diff(cx: &mut TestAppContext) {
+        let (_project, _panel, workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[("staged.rs", StatusCode::Modified.index())],
+        )
+        .await;
+        let cx = &mut visual_cx;
+
+        click_section_header_body(Section::Staged, cx);
+        cx.run_until_parked();
+
+        assert_eq!(active_diff_base(&workspace, cx), DiffBase::Staged);
+    }
+
+    #[gpui::test]
+    async fn test_clicking_unstaged_header_body_opens_unstaged_diff(cx: &mut TestAppContext) {
+        let (_project, _panel, workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[("unstaged.rs", StatusCode::Modified.worktree())],
+        )
+        .await;
+        let cx = &mut visual_cx;
+
+        click_section_header_body(Section::Unstaged, cx);
+        cx.run_until_parked();
+
+        assert_eq!(active_diff_base(&workspace, cx), DiffBase::Unstaged);
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_header_body_does_not_change_panel_selection(
+        cx: &mut TestAppContext,
+    ) {
+        let (_project, panel, _workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        )
+        .await;
+        let cx = &mut visual_cx;
+
+        let unstaged_ix = panel
+            .read_with(cx, |panel, _| {
+                panel.entry_by_key(&GitPanelEntryKey {
+                    section: Section::Unstaged,
+                    repo_path: repo_path("unstaged.rs"),
+                })
+            })
+            .expect("unstaged.rs should have an Unstaged row");
+        panel.update_in(cx, |panel, _, _| {
+            panel.selected_entry = Some(unstaged_ix);
+        });
+
+        click_section_header_body(Section::Staged, cx);
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _| {
+            assert_eq!(
+                panel.selected_entry,
+                Some(unstaged_ix),
+                "header body click must not move the panel selection"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_header_body_while_branch_diff_open_exits_to_staged(
+        cx: &mut TestAppContext,
+    ) {
+        let (_project, _panel, workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[("staged.rs", StatusCode::Modified.index())],
+        )
+        .await;
+        let cx = &mut visual_cx;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(
+                workspace,
+                None,
+                DiffBase::Merge {
+                    base_ref: "main".into(),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        render_workspace(cx);
+
+        click_section_header_body(Section::Staged, cx);
+        cx.run_until_parked();
+
+        assert_eq!(
+            active_diff_base(&workspace, cx),
+            DiffBase::Staged,
+            "header body click on Staged must exit Merge and land on Staged"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_header_button_does_not_switch_filter(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, panel, workspace, mut visual_cx) = build_mounted_staging_grouped_panel(
+            cx,
+            &[("staged.rs", StatusCode::Modified.index())],
+        )
+        .await;
+        let cx = &mut visual_cx;
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Head, window, cx);
+        });
+        cx.run_until_parked();
+        render_workspace(cx);
+        let head_view = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("a Head ProjectDiff should be active")
+        });
+
+        let bounds = cx
+            .debug_bounds("git-panel-section-header-stage-control-Staged")
+            .expect("Staged section header should expose a stage-control wrapper");
+        cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::none());
+        render_workspace(cx);
+        cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+        refresh_git_panel_entries(&project, &panel, cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Unstaged,
+                        repo_path: repo_path("staged.rs"),
+                    })
+                    .is_some(),
+                "the − button must bulk-unstage staged.rs"
+            );
+        });
+
+        let active = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("a ProjectDiff should still be active after the button click")
+        });
+        assert_eq!(
+            active.entity_id(),
+            head_view.entity_id(),
+            "clicking the − button must not switch the active ProjectDiff to a new base"
+        );
+        assert_eq!(
+            active.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Head,
+            "the active diff base must remain Head after the button click"
+        );
     }
 
     #[gpui::test]

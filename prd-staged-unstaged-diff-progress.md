@@ -37,7 +37,7 @@ Initial build landed; six followups remain.
 - [x] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
 - [x] A5 — click → filter switch coupling
 - [x] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
-- [ ] A7 — section-header body click opens matching per-base `ProjectDiff`
+- [x] A7 — section-header body click opens matching per-base `ProjectDiff`
 
 ## Followups (detailed checklists)
 
@@ -353,7 +353,7 @@ User story: 16 (revised). PRD: M4 "Menu surfacing", appendix A6.
       `test_toggle_group_by_updates_git_panel_setting` was deleted
       (the three SetSortBy tests subsume its coverage).
 
-### A7 — Section-header body click opens matching per-base ProjectDiff (M5)
+### A7 — Section-header body click opens matching per-base ProjectDiff (M5) — DONE
 
 User story: 35. PRD: M5 "Section-header level", appendix A7.
 
@@ -363,53 +363,69 @@ click target that opens the matching `DiffBase` view via A5's
 `deploy_at(target_base, …)`. The `+`/`-` button retains the
 bulk-stage/unstage responsibility.
 
-- [ ] In `render_list_header` (`crates/git_ui/src/git_panel.rs`), add a
-      `.when(...)` branch that attaches `.on_click(...)` for staging-grouped
-      `Section::Staged` and `Section::Unstaged` headers (parallel to the
-      existing `needs_whole_row_toggle` branch, which stays for headers
-      with the `Checkbox` affordance — Conflicts in staging-grouped mode
-      and every header in status-grouped mode).
-- [ ] Handler computes `target_base = match section { Staged →
+- [x] In `render_list_header` (`crates/git_ui/src/git_panel.rs`), added a
+      second `.when(...)` branch (sibling to the existing
+      `needs_whole_row_toggle` branch) that attaches `.on_click(...)` for
+      staging-grouped `Section::Staged` and `Section::Unstaged` headers.
+      Conflicts in staging-grouped mode keeps its Checkbox + whole-row
+      toggle via the existing branch; status-grouped headers are
+      untouched.
+- [x] Handler computes `target_base = match section { Staged →
       DiffBase::Staged, Unstaged → DiffBase::Unstaged }` directly — no
       call to `target_diff_base_for_click` because the mapping collapses
       to a constant for these two sections (including under the Branch
       override).
-- [ ] Handler calls `ProjectDiff::deploy_at(workspace, None, target_base,
+- [x] Handler calls `ProjectDiff::deploy_at(workspace, None, target_base,
       window, cx)` via `self.workspace.update(...)`.
-- [ ] Handler does **not** mutate `selected_entry` — the panel's row
-      selection is left alone.
-- [ ] Handler calls `cx.stop_propagation()` (defensive — the `+`/`-`
+- [x] Handler does **not** mutate `selected_entry` directly. The naive
+      version still loses the user's panel selection because
+      `deploy_at` triggers `EditorEvent::SelectionsChanged`, which
+      re-syncs the panel via `select_entry_by_path`. To preserve story
+      35's "view-switch, not navigation" semantics:
+      - New field `GitPanel::suppress_next_path_sync: bool`.
+      - Set to `true` by the header-body click handler before
+        `deploy_at`. Cleared async by a follow-up `cx.spawn` after
+        `SUPPRESS_PATH_SYNC_WINDOW` (100 ms) so legitimate user-driven
+        editor navigation resumes syncing the panel.
+      - `select_entry_by_path` short-circuits when the flag is set
+        (without clearing it — the timer owns the clear). The flag is
+        checked before any other work, so all `SelectionsChanged`
+        events fired during the suppression window are ignored.
+- [x] Handler calls `cx.stop_propagation()` (defensive — the `+`/`-`
       button already stops propagation, but explicit is safer).
-- [ ] **Rename the existing legacy test.** Rename
+- [x] **Renamed the existing legacy test:**
       `test_staging_grouped_section_header_body_click_does_not_toggle` →
-      `test_staging_grouped_section_header_body_click_does_not_stage_files`
-      and rewrite its leading comment — the body click is no longer a
+      `test_staging_grouped_section_header_body_click_does_not_stage_files`.
+      The leading comment was rewritten — the body click is no longer a
       no-op; what the test now guards is that the body click does **not**
       bulk-stage the section. The two assertions (`entry_by_key(Unstaged,
       ...)` still resolves; `staging_group_staged_count == 0`) stay
       unchanged.
-- [ ] **New tests** in `crates/git_ui/src/git_panel.rs`:
+- [x] **New tests** in `crates/git_ui/src/git_panel.rs`:
       - `test_clicking_staged_header_body_opens_staged_diff` —
         staging-grouped mode, simulate-click left of the
-        `git-panel-section-header-stage-control-Staged` bounds; assert
+        `git-panel-section-header-stage-control-Staged` bounds; asserts
         the active `ProjectDiff` has `diff_base == Staged`.
       - `test_clicking_unstaged_header_body_opens_unstaged_diff` — mirror
         for the Unstaged header.
       - `test_clicking_staged_header_body_does_not_change_panel_selection`
-        — set `selected_entry` to a known row, click the Staged header
-        body, assert `selected_entry` is unchanged.
+        — sets `selected_entry` to the Unstaged row of `unstaged.rs`,
+        clicks the Staged header body, asserts `selected_entry` is
+        unchanged. RED on a single-file fixture (the editor sync moves
+        the selection to the first file in the newly opened diff);
+        GREEN after wiring the `suppress_next_path_sync` flag.
       - `test_clicking_staged_header_body_while_branch_diff_open_exits_to_staged`
-        — open a `DiffBase::Merge` `ProjectDiff` first, then body-click
-        the Staged header; assert the resulting active diff has
-        `diff_base == Staged`. Branch-override regression guard
-        analogous to A5's
+        — opens a `DiffBase::Merge` `ProjectDiff` first, then
+        body-clicks the Staged header; asserts the resulting active
+        diff has `diff_base == Staged`. Branch-override regression
+        guard analogous to A5's
         `test_clicking_staged_row_while_branch_diff_open_exits_to_staged_base`.
       - `test_clicking_staged_header_button_does_not_switch_filter` —
-        click directly on the `−` button; assert (a) the bulk-unstage
-        fires (status updates as expected) and (b) **no** new
-        `DiffBase::Staged` `ProjectDiff` is created (the existing `Head`
-        view stays active). Regression guard for the
-        `cx.stop_propagation()` chain.
+        clicks directly on the `−` button; asserts (a) the bulk-unstage
+        fires (file moves from Staged to Unstaged) and (b) the active
+        `ProjectDiff`'s entity_id and `diff_base` are both unchanged
+        (the existing `Head` view stays active). Regression guard for
+        the `cx.stop_propagation()` chain on the button.
 
 **Dependency:** A5 (uses `ProjectDiff::deploy_at(target_base, …)`).
 
