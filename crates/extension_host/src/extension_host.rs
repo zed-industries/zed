@@ -85,7 +85,7 @@ static SUPPRESSED_EXTENSIONS: LazyLock<FxHashSet<&str>> = LazyLock::new(|| {
         "ty",
         "basedpyright",
         "basher",
-        /* ACP */
+        // ACP
         "opencode",
         "mistral-vibe",
         "auggie",
