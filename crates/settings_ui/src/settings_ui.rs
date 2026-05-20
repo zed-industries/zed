@@ -3477,12 +3477,19 @@ impl SettingsWindow {
                 window.focus_prev(cx);
             }))
             .when(current_sub_page.is_none(), |this| {
-                this.vertical_scrollbar_for(&self.list_state, window, cx)
+                this.custom_scrollbars(
+                    Scrollbars::new(ui::ScrollAxes::Vertical)
+                        .tracked_scroll_handle(&self.list_state)
+                        .with_overlay_track_along(ui::ScrollAxes::Vertical),
+                    window,
+                    cx,
+                )
             })
             .when_some(current_sub_page, |this, current_sub_page| {
                 this.custom_scrollbars(
                     Scrollbars::new(ui::ScrollAxes::Vertical)
                         .tracked_scroll_handle(&current_sub_page.scroll_handle)
+                        .with_overlay_track_along(ui::ScrollAxes::Vertical)
                         .id((current_sub_page.link.title.clone(), 42)),
                     window,
                     cx,

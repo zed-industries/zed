@@ -7089,12 +7089,11 @@ impl Render for ProjectPanel {
                     {
                         let mut scrollbars =
                             Scrollbars::for_settings::<ProjectPanelScrollbarProxy>()
-                                .tracked_scroll_handle(&self.scroll_handle);
+                                .tracked_scroll_handle(&self.scroll_handle)
+                                .with_overlay_track_along(ScrollAxes::Vertical);
                         if horizontal_scroll {
-                            scrollbars = scrollbars.with_track_along(
-                                ScrollAxes::Horizontal,
-                                cx.theme().colors().panel_background,
-                            );
+                            scrollbars =
+                                scrollbars.with_overlay_track_along(ScrollAxes::Horizontal);
                         }
                         scrollbars.notify_content()
                     },
