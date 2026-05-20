@@ -2784,6 +2784,15 @@ impl LocalLspStore {
         let Some(file) = File::from_dyn(buffer.file()) else {
             return;
         };
+        log::debug!(
+            "registering buffer with language servers buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={}, worktree_single_file={}, root_file_handle_fd={:?}",
+            buffer_id,
+            file.abs_path(cx),
+            file.worktree_id(cx),
+            file.worktree.read(cx).is_visible(),
+            file.worktree.read(cx).is_single_file(),
+            file.worktree.read(cx).root_file_handle_debug_fd()
+        );
         if !file.is_local() {
             return;
         }
@@ -2883,6 +2892,13 @@ impl LocalLspStore {
                 }
             })
             .collect::<Vec<_>>();
+        log::debug!(
+            "selected language servers for buffer buffer_id={:?}, path={:?}, server_count={}, reused={}",
+            buffer_id,
+            abs_path,
+            servers_and_adapters.len(),
+            reused
+        );
         for (server, adapter) in servers_and_adapters {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
@@ -3027,6 +3043,18 @@ impl LocalLspStore {
         cx: &mut App,
     ) {
         buffer.update(cx, |buffer, cx| {
+            let file = File::from_dyn(buffer.file()).cloned();
+            log::debug!(
+                "unregistering buffer from language servers buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={:?}, worktree_single_file={:?}, root_file_handle_fd={:?}, uri={}",
+                buffer.remote_id(),
+                file.as_ref().map(|file| file.abs_path(cx)),
+                file.as_ref().map(|file| file.worktree_id(cx)),
+                file.as_ref().map(|file| file.worktree.read(cx).is_visible()),
+                file.as_ref().map(|file| file.worktree.read(cx).is_single_file()),
+                file.as_ref()
+                    .and_then(|file| file.worktree.read(cx).root_file_handle_debug_fd()),
+                file_url
+            );
             let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
@@ -4614,6 +4642,21 @@ impl LspStore {
     ) -> OpenLspBufferHandle {
         let buffer_id = buffer.read(cx).remote_id();
         let handle = OpenLspBufferHandle(cx.new(|_| OpenLspBuffer(buffer.clone())));
+        let file = File::from_dyn(buffer.read(cx).file()).cloned();
+        log::debug!(
+            "creating open lsp buffer handle entity_id={:?}, buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={:?}, worktree_single_file={:?}, root_file_handle_fd={:?}, ignore_refcounts={}",
+            handle.0.entity_id(),
+            buffer_id,
+            file.as_ref().map(|file| file.abs_path(cx)),
+            file.as_ref().map(|file| file.worktree_id(cx)),
+            file.as_ref()
+                .map(|file| file.worktree.read(cx).is_visible()),
+            file.as_ref()
+                .map(|file| file.worktree.read(cx).is_single_file()),
+            file.as_ref()
+                .and_then(|file| file.worktree.read(cx).root_file_handle_debug_fd()),
+            ignore_refcounts
+        );
         if let Some(local) = self.as_local_mut() {
             let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
             if !ignore_refcounts {
@@ -4636,6 +4679,18 @@ impl LspStore {
             }
             if !ignore_refcounts {
                 cx.observe_release(&handle.0, move |lsp_store, buffer, cx| {
+                    let file = File::from_dyn(buffer.0.read(cx).file()).cloned();
+                    log::debug!(
+                        "open lsp buffer handle released entity_id={:?}, buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={:?}, worktree_single_file={:?}, root_file_handle_fd={:?}",
+                        buffer.0.entity_id(),
+                        buffer_id,
+                        file.as_ref().map(|file| file.abs_path(cx)),
+                        file.as_ref().map(|file| file.worktree_id(cx)),
+                        file.as_ref().map(|file| file.worktree.read(cx).is_visible()),
+                        file.as_ref().map(|file| file.worktree.read(cx).is_single_file()),
+                        file.as_ref()
+                            .and_then(|file| file.worktree.read(cx).root_file_handle_debug_fd())
+                    );
                     let refcount = {
                         let local = lsp_store.as_local_mut().unwrap();
                         let Some(refcount) = local.registered_buffers.get_mut(&buffer_id) else {
@@ -4646,6 +4701,11 @@ impl LspStore {
                         *refcount -= 1;
                         *refcount
                     };
+                    log::debug!(
+                        "open lsp buffer handle refcount after release buffer_id={:?}, refcount={}",
+                        buffer_id,
+                        refcount
+                    );
                     if refcount == 0 {
                         lsp_store.lsp_data.remove(&buffer_id);
                         lsp_store.buffer_reload_tasks.remove(&buffer_id);

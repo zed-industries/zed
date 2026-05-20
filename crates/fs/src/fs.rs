@@ -530,9 +530,18 @@ pub struct RealFs {
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf>;
+
+    fn debug_fd(&self) -> Option<i64> {
+        None
+    }
 }
 
 impl FileHandle for std::fs::File {
+    #[cfg(unix)]
+    fn debug_fd(&self) -> Option<i64> {
+        Some(self.as_raw_fd().into())
+    }
+
     #[cfg(target_os = "macos")]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         use std::{

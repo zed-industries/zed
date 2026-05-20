@@ -888,6 +888,16 @@ impl WorktreeStore {
         } else {
             WorktreeHandle::Weak(worktree.downgrade())
         };
+        log::debug!(
+            "adding worktree entity_id={:?}, worktree_id={:?}, path={:?}, visible={}, single_file={}, retained_strongly={}, root_file_handle_fd={:?}",
+            worktree.entity_id(),
+            worktree_id,
+            worktree.read(cx).abs_path(),
+            worktree.read(cx).is_visible(),
+            worktree.read(cx).is_single_file(),
+            push_strong_handle,
+            worktree.read(cx).root_file_handle_debug_fd()
+        );
         self.worktrees.push(handle);
 
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
@@ -925,6 +935,15 @@ impl WorktreeStore {
         })
         .detach();
         cx.observe_release(worktree, move |this, worktree, cx| {
+            log::debug!(
+                "worktree released entity_id={:?}, worktree_id={:?}, path={:?}, visible={}, single_file={}, root_file_handle_fd={:?}",
+                handle_id,
+                worktree.id(),
+                worktree.abs_path(),
+                worktree.is_visible(),
+                worktree.is_single_file(),
+                worktree.root_file_handle_debug_fd()
+            );
             cx.emit(WorktreeStoreEvent::WorktreeReleased(
                 handle_id,
                 worktree.id(),
@@ -942,6 +961,15 @@ impl WorktreeStore {
         self.worktrees.retain(|worktree| {
             if let Some(worktree) = worktree.upgrade() {
                 if worktree.read(cx).id() == id_to_remove {
+                    log::debug!(
+                        "removing worktree entity_id={:?}, worktree_id={:?}, path={:?}, visible={}, single_file={}, root_file_handle_fd={:?}",
+                        worktree.entity_id(),
+                        id_to_remove,
+                        worktree.read(cx).abs_path(),
+                        worktree.read(cx).is_visible(),
+                        worktree.read(cx).is_single_file(),
+                        worktree.read(cx).root_file_handle_debug_fd()
+                    );
                     cx.emit(WorktreeStoreEvent::WorktreeRemoved(
                         worktree.entity_id(),
                         id_to_remove,

@@ -57,6 +57,7 @@ use std::{
     future::Future,
     mem::{self},
     ops::{Deref, DerefMut, Range},
+    panic::Location,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -150,6 +151,7 @@ pub struct PathPrefixScanRequest {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<RelPath>>,
+    trigger_locations: SmallVec<[&'static Location<'static>; 1]>,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
@@ -256,6 +258,34 @@ pub struct LocalSnapshot {
     /// The file handle of the worktree root
     /// (so we can find it after it's been moved)
     root_file_handle: Option<Arc<dyn fs::FileHandle>>,
+}
+
+#[derive(Debug)]
+struct RootFileHandle {
+    inner: Arc<dyn fs::FileHandle>,
+    path: Arc<Path>,
+    worktree_id: WorktreeId,
+}
+
+impl fs::FileHandle for RootFileHandle {
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
+        self.inner.current_path(fs)
+    }
+
+    fn debug_fd(&self) -> Option<i64> {
+        self.inner.debug_fd()
+    }
+}
+
+impl Drop for RootFileHandle {
+    fn drop(&mut self) {
+        log::debug!(
+            "dropping root file handle worktree_id={:?}, path={:?}, root_file_handle_fd={:?}",
+            self.worktree_id,
+            self.path,
+            self.inner.debug_fd()
+        );
+    }
 }
 
 struct BackgroundScannerState {
@@ -411,9 +441,26 @@ impl Worktree {
                     )
                 })
                 .log_err()
+                .map(|inner| {
+                    Arc::new(RootFileHandle {
+                        inner,
+                        path: abs_path.clone(),
+                        worktree_id,
+                    }) as Arc<dyn fs::FileHandle>
+                })
         } else {
             None
         };
+        log::debug!(
+            "created local worktree root handle path={:?}, visible={}, is_single_file={}, root_file_handle_fd={:?}, worktree_id={:?}",
+            abs_path,
+            visible,
+            metadata.as_ref().is_some_and(|metadata| !metadata.is_dir),
+            root_file_handle
+                .as_ref()
+                .and_then(|handle| handle.debug_fd()),
+            worktree_id
+        );
 
         let root_repo_common_dir = if visible {
             discover_root_repo_common_dir(&abs_path, fs.as_ref())
@@ -736,6 +783,13 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
             Worktree::Remote(worktree) => SanitizedPath::cast_arc(worktree.abs_path.clone()),
+        }
+    }
+
+    pub fn root_file_handle_debug_fd(&self) -> Option<i64> {
+        match self {
+            Worktree::Local(worktree) => worktree.root_file_handle_debug_fd(),
+            Worktree::Remote(_) => None,
         }
     }
 
@@ -1111,9 +1165,29 @@ impl Worktree {
     }
 }
 
+impl Drop for LocalWorktree {
+    fn drop(&mut self) {
+        log::debug!(
+            "dropping local worktree worktree_id={:?}, path={:?}, visible={}, single_file={}, root_file_handle_fd={:?}",
+            self.snapshot.id(),
+            self.snapshot.abs_path,
+            self.visible,
+            self.snapshot.root_dir().is_none(),
+            self.root_file_handle_debug_fd()
+        );
+    }
+}
+
 impl LocalWorktree {
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
+    }
+
+    pub fn root_file_handle_debug_fd(&self) -> Option<i64> {
+        self.snapshot
+            .root_file_handle
+            .as_ref()
+            .and_then(|handle| handle.debug_fd())
     }
 
     pub fn is_path_private(&self, path: &RelPath) -> bool {
@@ -1924,11 +1998,13 @@ impl LocalWorktree {
         }))
     }
 
+    #[track_caller]
     pub fn refresh_entries_for_paths(&self, paths: Vec<Arc<RelPath>>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.scan_requests_tx
             .try_send(ScanRequest {
                 relative_paths: paths,
+                trigger_locations: smallvec![Location::caller()],
                 done: smallvec![tx],
             })
             .ok();
@@ -4210,7 +4286,24 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
-        log::debug!("rescanning paths {:?}", request.relative_paths);
+        let trigger_locations = request
+            .trigger_locations
+            .iter()
+            .map(|location| {
+                format!(
+                    "{}:{}:{}",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                )
+            })
+            .collect::<Vec<_>>();
+        log::debug!(
+            "rescanning paths {:?}, requested from {:?}, single_file_worktree={}",
+            request.relative_paths,
+            trigger_locations,
+            self.is_single_file
+        );
 
         request.relative_paths.sort_unstable();
         self.forcibly_load_paths(&request.relative_paths).await;
@@ -5572,6 +5665,9 @@ impl BackgroundScanner {
         let mut request = self.scan_requests_rx.recv().await?;
         while let Ok(next_request) = self.scan_requests_rx.try_recv() {
             request.relative_paths.extend(next_request.relative_paths);
+            request
+                .trigger_locations
+                .extend(next_request.trigger_locations);
             request.done.extend(next_request.done);
         }
         Ok(request)

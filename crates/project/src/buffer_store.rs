@@ -12,7 +12,8 @@ use gpui::{
     WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, LocalFile as _,
+    Operation,
     language_settings::{AllLanguageSettings, LineEndingSetting},
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
@@ -963,7 +964,21 @@ impl BufferStore {
             path: file.path.clone(),
             worktree_id: file.worktree_id(cx),
         });
+        let file = File::from_dyn(buffer.file()).cloned();
         let is_remote = buffer.replica_id().is_remote();
+        log::debug!(
+            "adding buffer entity_id={:?}, buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={:?}, worktree_single_file={:?}, root_file_handle_fd={:?}",
+            buffer_entity.entity_id(),
+            remote_id,
+            file.as_ref().map(|file| file.abs_path(cx)),
+            file.as_ref().map(|file| file.worktree_id(cx)),
+            file.as_ref()
+                .map(|file| file.worktree.read(cx).is_visible()),
+            file.as_ref()
+                .map(|file| file.worktree.read(cx).is_single_file()),
+            file.as_ref()
+                .and_then(|file| file.worktree.read(cx).root_file_handle_debug_fd())
+        );
         let open_buffer = OpenBuffer::Complete {
             buffer: buffer_entity.downgrade(),
         };
@@ -971,6 +986,17 @@ impl BufferStore {
         let handle = cx.entity().downgrade();
         buffer_entity.update(cx, move |_, cx| {
             cx.on_release(move |buffer, cx| {
+                let file = File::from_dyn(buffer.file()).cloned();
+                log::debug!(
+                    "buffer released buffer_id={:?}, path={:?}, worktree_id={:?}, worktree_visible={:?}, worktree_single_file={:?}, root_file_handle_fd={:?}",
+                    buffer.remote_id(),
+                    file.as_ref().map(|file| file.abs_path(cx)),
+                    file.as_ref().map(|file| file.worktree_id(cx)),
+                    file.as_ref().map(|file| file.worktree.read(cx).is_visible()),
+                    file.as_ref().map(|file| file.worktree.read(cx).is_single_file()),
+                    file.as_ref()
+                        .and_then(|file| file.worktree.read(cx).root_file_handle_debug_fd())
+                );
                 handle
                     .update(cx, |_, cx| {
                         cx.emit(BufferStoreEvent::BufferDropped(buffer.remote_id()))
