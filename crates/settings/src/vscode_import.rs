@@ -179,6 +179,7 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            credentials_url: None,
             debugger: None,
             diagnostics: None,
             editor: self.editor_settings_content(),
@@ -191,6 +192,7 @@ impl VsCodeSettings {
                 ..GlobalLspSettingsContent::default()
             }),
             helix_mode: None,
+            hide_mouse: None,
             image_viewer: None,
             journal: None,
             language_models: None,
@@ -221,6 +223,7 @@ impl VsCodeSettings {
             which_key: None,
             modeline_lines: None,
             feature_flags: None,
+            instrumentation: None,
         }
     }
 
@@ -263,8 +266,8 @@ impl VsCodeSettings {
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
+            go_to_definition_scroll_strategy: None,
             gutter: self.gutter_content(),
-            hide_mouse: None,
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
@@ -312,6 +315,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            completion_menu_item_kind: None,
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
@@ -898,6 +902,21 @@ impl VsCodeSettings {
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
             max_scroll_history_lines: self.read_usize("terminal.integrated.scrollback"),
+            bell: self
+                .read_value("accessibility.signals.terminalBell")
+                .and_then(|v| Some(v.get("sound")?.as_str()? == "on"))
+                .or_else(|| {
+                    // Older deprecated setting, might as well still support it:
+                    self.read_value("terminal.integrated.enableBell")
+                        .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("both"))
+                })
+                .map(|enabled| {
+                    if enabled {
+                        TerminalBell::System
+                    } else {
+                        TerminalBell::Off
+                    }
+                }),
             minimum_contrast: None,
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
@@ -958,6 +977,9 @@ impl VsCodeSettings {
             buffer_font_features: None,
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
+            markdown_preview_font_family: None,
+            markdown_preview_code_font_family: None,
+            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -1013,7 +1035,7 @@ impl VsCodeSettings {
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
-            use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
+            use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {

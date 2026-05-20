@@ -63,9 +63,17 @@ pub struct WindowsWindowState {
     pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
+    /// Set after a GPU device-lost recovery so the next `draw_window` call is
+    /// treated as a forced render. This guarantees the next frame both
+    /// re-enables drawing (via `mark_drawable`) and bypasses the GPUI view
+    /// cache, which would otherwise replay stale atlas tile references from
+    /// the previous frame and panic in `DirectXAtlasState::texture`.
+    pub force_render_after_recovery: Cell<bool>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
+    /// Shared with [`WindowsPlatformState::cursor_visible`].
+    pub cursor_visible: Arc<AtomicBool>,
     pub nc_button_pressed: Cell<Option<u32>>,
 
     pub display: Cell<WindowsDisplay>,
@@ -98,6 +106,7 @@ impl WindowsWindowState {
         directx_devices: &DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
+        cursor_visible: Arc<AtomicBool>,
         display: WindowsDisplay,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
@@ -156,8 +165,10 @@ impl WindowsWindowState {
             last_reported_capslock: Cell::new(last_reported_capslock),
             hovered: Cell::new(hovered),
             renderer: RefCell::new(renderer),
+            force_render_after_recovery: Cell::new(false),
             click_state,
             current_cursor: Cell::new(current_cursor),
+            cursor_visible,
             nc_button_pressed: Cell::new(nc_button_pressed),
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
@@ -234,6 +245,7 @@ impl WindowsWindowInner {
             &context.directx_devices,
             cs,
             context.current_cursor,
+            context.cursor_visible.clone(),
             context.display,
             context.min_size,
             context.appearance,
@@ -373,6 +385,7 @@ struct WindowCreateContext {
     min_size: Option<Size<Pixels>>,
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
+    cursor_visible: Arc<AtomicBool>,
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: PriorityQueueReceiver<RunnableVariant>,
@@ -394,6 +407,7 @@ impl WindowsWindow {
             icon,
             executor,
             current_cursor,
+            cursor_visible,
             drop_target_helper,
             validation_number,
             main_receiver,
@@ -458,11 +472,12 @@ impl WindowsWindow {
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
-            // if we obtain a display_id, then this ID must be valid.
-            WindowsDisplay::new(display_id).unwrap()
+            WindowsDisplay::new(display_id)
         } else {
-            WindowsDisplay::primary_monitor().unwrap()
-        };
+            None
+        }
+        .or_else(WindowsDisplay::primary_monitor)
+        .context("failed to find any monitor")?;
         let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
@@ -473,6 +488,7 @@ impl WindowsWindow {
             min_size: params.window_min_size,
             executor,
             current_cursor,
+            cursor_visible,
             drop_target_helper,
             validation_number,
             main_receiver,

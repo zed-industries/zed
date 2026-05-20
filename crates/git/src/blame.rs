@@ -29,7 +29,7 @@ impl Blame {
     ) -> Result<Self> {
         let output = run_git_blame(git, path, content, line_ending).await?;
         let mut entries = parse_git_blame(&output)?;
-        entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start));
+        entries.sort_unstable_by_key(|entry| entry.range.start);
 
         let mut unique_shas = HashSet::default();
 
@@ -63,6 +63,7 @@ async fn run_git_blame(
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .context("starting git blame process")?
     };

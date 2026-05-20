@@ -63,7 +63,6 @@ pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
     mode: PromptEditorMode,
     mention_set: Entity<MentionSet>,
-    prompt_store: Option<Entity<PromptStore>>,
     workspace: WeakEntity<Workspace>,
     model_selector: Entity<AgentModelSelector>,
     edited_since_done: bool,
@@ -334,7 +333,6 @@ impl<T: 'static> PromptEditor<T> {
                 PromptEditorCompletionProviderDelegate,
                 cx.weak_entity(),
                 self.mention_set.clone(),
-                self.prompt_store.clone(),
                 self.workspace.clone(),
             ))));
         });
@@ -1163,6 +1161,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
+            .image_resolver(|dest_url| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 
@@ -1213,7 +1212,7 @@ impl PromptCompletionProviderDelegate for PromptEditorCompletionProviderDelegate
             PromptContextType::Symbol,
             PromptContextType::Thread,
             PromptContextType::Fetch,
-            PromptContextType::Rules,
+            PromptContextType::Skill,
         ]
     }
 
@@ -1285,7 +1284,6 @@ impl PromptEditor<BufferCodegen> {
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
             mention_set,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1437,7 +1435,6 @@ impl PromptEditor<TerminalCodegen> {
         let mut this = Self {
             editor: prompt_editor.clone(),
             mention_set,
-            prompt_store,
             workspace,
             model_selector: cx.new(|cx| {
                 AgentModelSelector::new(
@@ -1539,26 +1536,6 @@ pub enum CodegenStatus {
     Pending,
     Done,
     Error(anyhow::Error),
-}
-
-/// This is just CodegenStatus without the anyhow::Error, which causes a lifetime issue for rendering the Cancel button.
-#[derive(Copy, Clone)]
-pub enum CancelButtonState {
-    Idle,
-    Pending,
-    Done,
-    Error,
-}
-
-impl Into<CancelButtonState> for &CodegenStatus {
-    fn into(self) -> CancelButtonState {
-        match self {
-            CodegenStatus::Idle => CancelButtonState::Idle,
-            CodegenStatus::Pending => CancelButtonState::Pending,
-            CodegenStatus::Done => CancelButtonState::Done,
-            CodegenStatus::Error(_) => CancelButtonState::Error,
-        }
-    }
 }
 
 #[derive(Copy, Clone)]

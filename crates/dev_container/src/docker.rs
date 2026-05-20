@@ -379,8 +379,28 @@ impl DockerClient for Docker {
         &self,
         filters: Vec<String>,
     ) -> Result<Option<DockerPs>, DevContainerError> {
-        let command = self.create_docker_query_containers(filters);
-        evaluate_json_command(command).await
+        let mut command = self.create_docker_query_containers(filters);
+        let output = command.output().await.map_err(|e| {
+            log::error!("Error running command {:?}: {e}", command);
+            DevContainerError::CommandFailed(command.get_program().display().to_string())
+        })?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("Non-success status from docker ps: {stderr}");
+            return Err(DevContainerError::CommandFailed(
+                command.get_program().display().to_string(),
+            ));
+        }
+        let raw = String::from_utf8_lossy(&output.stdout);
+        parse_find_process_output(&raw).map_err(|e| {
+            // Preserve the dedicated multi-match error; log and re-wrap other parse failures.
+            if let DevContainerError::MultipleMatchingContainers(_) = &e {
+                e
+            } else {
+                log::error!("Error parsing docker ps output: {e}");
+                DevContainerError::CommandFailed(command.get_program().display().to_string())
+            }
+        })
     }
 
     fn docker_cli(&self) -> String {
@@ -389,6 +409,33 @@ impl DockerClient for Docker {
 
     fn supports_compose_buildkit(&self) -> bool {
         self.has_buildx
+    }
+}
+
+/// Parses output of `docker ps -a --format={{ json . }}`. When a single
+/// container matches the label filters, docker emits one JSON object; when
+/// multiple match, it emits newline-delimited JSON (one object per line).
+///
+/// Returns `Ok(None)` for no matches, `Ok(Some(_))` for exactly one match,
+/// and `DevContainerError::MultipleMatchingContainers` for ≥2 matches — the
+/// spec expects identifying labels to be unique per project, so the caller
+/// can't silently pick one.
+fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainerError> {
+    if raw.trim().is_empty() {
+        return Ok(None);
+    }
+    let containers: Vec<DockerPs> = serde_json_lenient::Deserializer::from_str(raw)
+        .into_iter::<DockerPs>()
+        .collect::<Result<_, _>>()
+        .map_err(|e| {
+            DevContainerError::CommandFailed(format!("failed to parse docker ps output: {e}"))
+        })?;
+    match containers.len() {
+        0 => Ok(None),
+        1 => Ok(containers.into_iter().next()),
+        _ => Err(DevContainerError::MultipleMatchingContainers(
+            containers.into_iter().map(|c| c.id).collect(),
+        )),
     }
 }
 
@@ -532,10 +579,11 @@ mod test {
 
     use crate::{
         command_json::deserialize_json_output,
+        devcontainer_api::DevContainerError,
         devcontainer_json::MountDefinition,
         docker::{
             Docker, DockerComposeConfig, DockerComposeService, DockerComposeServicePort,
-            DockerComposeVolume, DockerInspect, DockerPs,
+            DockerComposeVolume, DockerInspect, DockerPs, parse_find_process_output,
         },
     };
 
@@ -716,6 +764,33 @@ mod test {
         assert!(result.is_some());
         let result = result.unwrap();
         assert_eq!(result.id, "abdb6ab59573".to_string());
+    }
+
+    #[test]
+    fn parse_find_process_output_none() {
+        assert!(matches!(parse_find_process_output(""), Ok(None)));
+        assert!(matches!(parse_find_process_output("   \n\n"), Ok(None)));
+    }
+
+    #[test]
+    fn parse_find_process_output_single() {
+        let raw = r#"{"ID":"abc123"}"#;
+        let result = parse_find_process_output(raw).expect("single match must parse");
+        assert_eq!(result.unwrap().id, "abc123");
+    }
+
+    #[test]
+    fn parse_find_process_output_multiple_errors() {
+        // `docker ps --format={{ json . }}` emits newline-delimited JSON when
+        // multiple containers match the filters. The spec expects the
+        // identifying labels to be unique per project, so this is an error.
+        let raw = "{\"ID\":\"abc\"}\n{\"ID\":\"def\"}\n";
+        match parse_find_process_output(raw) {
+            Err(DevContainerError::MultipleMatchingContainers(ids)) => {
+                assert_eq!(ids, vec!["abc".to_string(), "def".to_string()]);
+            }
+            other => panic!("expected MultipleMatchingContainers, got {other:?}"),
+        }
     }
 
     #[test]

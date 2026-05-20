@@ -1,5 +1,5 @@
 use editor::{Editor, EditorSettings};
-use gpui::{Action, Context, Window, actions};
+use gpui::{Action, Context, TaskExt, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
@@ -389,6 +389,15 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
+
+        if self.search.cmd_f_search {
+            self.search.cmd_f_search = false;
+            if self.mode.is_visual() {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
+            self.sync_vim_settings(window, cx);
+        }
+
         let prior_selections = self.editor_selections(window, cx);
 
         let success = pane.update(cx, |pane, cx| {
@@ -433,6 +442,15 @@ impl Vim {
         };
         let count = Vim::take_count(cx).unwrap_or(1);
         Vim::take_forced_motion(cx);
+
+        if self.search.cmd_f_search {
+            self.search.cmd_f_search = false;
+            if self.mode.is_visual() {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
+            self.sync_vim_settings(window, cx);
+        }
+
         let prior_selections = self.editor_selections(window, cx);
         let vim = cx.entity();
 
@@ -455,7 +473,11 @@ impl Vim {
                 if !search_bar.show(window, cx) {
                     return None;
                 }
-                let Some(query) = search_bar.query_suggestion(true, window, cx) else {
+                let Some(query) = search_bar.query_suggestion(
+                    Some(settings::SeedQuerySetting::Always),
+                    window,
+                    cx,
+                ) else {
                     drop(search_bar.search("", None, false, window, cx));
                     return None;
                 };
@@ -669,7 +691,9 @@ impl Replacement {
     // convert a vim query into something more usable by zed.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
-    // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
+    // convert \0..\9 to $0..$9 in the replacement so that common idioms work,
+    // and escape literal `$` to `$$` in the replacement so vim's literal `$`
+    // is not interpreted as a Rust regex capture-group reference.
     pub(crate) fn parse(mut chars: Peekable<Chars>) -> Option<Replacement> {
         let delimiter = chars
             .next()
@@ -691,6 +715,9 @@ impl Replacement {
             if escaped {
                 escaped = false;
                 if phase == 1 && c.is_ascii_digit() {
+                    buffer.push('$')
+                } else if phase == 1 && c == '$' {
+                    // Second '$' escapes by fallthrough
                     buffer.push('$')
                 // unescape escaped parens
                 } else if phase == 0 && (c == '(' || c == ')') {
@@ -714,6 +741,10 @@ impl Replacement {
                 // escape unescaped parens
                 if phase == 0 && (c == '(' || c == ')') {
                     buffer.push('\\')
+                } else if phase == 1 && c == '$' {
+                    // '$' is not special in the replacement clause,
+                    // so we also escape here.
+                    buffer.push('$')
                 }
                 buffer.push(c)
             }
@@ -756,6 +787,16 @@ mod test {
     use indoc::indoc;
     use search::BufferSearchBar;
     use settings::SettingsStore;
+
+    #[test]
+    fn test_replacement_parse_escaped_dollar() {
+        let parsed = super::Replacement::parse(r"/\$test/\$rest/g".chars().peekable())
+            .expect("parse should succeed");
+
+        assert_eq!(parsed.search, r"\$test");
+        assert_eq!(parsed.replacement, "$$rest");
+        assert!(parsed.flag_g);
+    }
 
     #[gpui::test]
     async fn test_move_to_next(cx: &mut gpui::TestAppContext) {
@@ -995,6 +1036,46 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_n_after_cmd_f_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone two one two one", Mode::Normal);
+        cx.run_until_parked();
+
+        // Use cmd+f to search (non-vim style)
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Now use n to go to next match — should move cursor, not create selection
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        cx.assert_state("one two ˇone two one", Mode::Normal);
+
+        cx.simulate_keystrokes("n");
+        cx.run_until_parked();
+        cx.assert_state("one two one two ˇone", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_star_after_cmd_f_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state("ˇone two one two one", Mode::Normal);
+        cx.run_until_parked();
+
+        // Use cmd+f to search (non-vim style)
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        // Now use * to search under cursor — should move cursor, not create selection
+        cx.simulate_keystrokes("*");
+        cx.run_until_parked();
+        cx.assert_state("one two ˇone two one", Mode::Normal);
+    }
+
+    #[gpui::test]
     async fn test_visual_star_hash(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -1180,6 +1261,27 @@ mod test {
             assert_eq!(search_bar.query(cx), "bb".to_string());
             assert_eq!(search_bar.replacement(cx), "dd".to_string());
         })
+    }
+
+    #[gpui::test]
+    async fn test_replace_literal_dollar(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "ˇBase=hello
+            echo $Base"
+        })
+        .await;
+
+        cx.simulate_shared_keystrokes(
+            ": % s / \\ $ shift-b a s e / \\ $ shift-b a s e shift-n e w / g",
+        )
+        .await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        cx.shared_state().await.assert_eq(indoc! {
+            "Base=hello
+            ˇecho $BaseNew"
+        });
     }
 
     #[gpui::test]

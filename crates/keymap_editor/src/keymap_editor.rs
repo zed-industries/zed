@@ -3518,6 +3518,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),
@@ -3627,7 +3628,7 @@ async fn save_keybinding_update(
     };
 
     let source = settings::KeybindUpdateTarget {
-        context: action_mapping.context.as_ref().map(|a| &***a),
+        context: action_mapping.context.as_deref(),
         keystrokes: &action_mapping.keystrokes,
         action_name: existing.action().name,
         action_arguments: new_args,

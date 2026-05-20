@@ -4,10 +4,11 @@ use super::{
     fold_map::{Chunk, FoldRows},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
+
+use futures_lite::future::yield_now;
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{LanguageAwareStyling, Point};
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
-use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, sync::LazyLock, time::Duration};
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
@@ -205,7 +206,7 @@ impl WrapMap {
             }];
 
             if total_rows < WRAP_YIELD_ROW_INTERVAL {
-                let edits = smol::block_on(new_snapshot.update(
+                let edits = gpui::block_on(new_snapshot.update(
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
@@ -299,7 +300,7 @@ impl WrapMap {
                     < WRAP_YIELD_ROW_INTERVAL
                 && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
             {
-                let wrap_edits = smol::block_on(snapshot.update(
+                let wrap_edits = gpui::block_on(snapshot.update(
                     tab_snapshot,
                     &tab_edits,
                     wrap_width,
@@ -1357,10 +1358,10 @@ mod tests {
         display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap},
         test::test_font,
     };
+    use futures::stream::StreamExt;
     use gpui::{LineFragment, px, test::observe};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use smol::stream::StreamExt;
     use std::{cmp, env, num::NonZeroU32};
     use text::Rope;
     use theme::LoadThemes;

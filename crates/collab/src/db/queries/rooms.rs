@@ -790,6 +790,7 @@ impl Database {
                             current_merge_conflicts,
                             branch_summary,
                             head_commit_details,
+                            branch_list: Vec::new(),
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path.clone(),
@@ -799,7 +800,8 @@ impl Database {
                             stash_entries: Vec::new(),
                             remote_upstream_url: db_repository.remote_upstream_url.clone(),
                             remote_origin_url: db_repository.remote_origin_url.clone(),
-                            original_repo_abs_path: Some(db_repository.abs_path),
+                            repository_dir_abs_path: db_repository.repository_dir_abs_path,
+                            common_dir_abs_path: db_repository.common_dir_abs_path,
                             linked_worktrees: db_repository
                                 .linked_worktrees
                                 .as_deref()
