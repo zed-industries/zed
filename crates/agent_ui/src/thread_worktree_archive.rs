@@ -831,6 +831,27 @@ pub fn all_open_workspaces(cx: &App) -> Vec<Entity<Workspace>> {
         .collect()
 }
 
+pub fn workspaces_for_archive(
+    multi_workspace: Option<&Entity<MultiWorkspace>>,
+    cx: &App,
+) -> Vec<Entity<Workspace>> {
+    let mut workspaces = multi_workspace
+        .map(|multi_workspace| {
+            multi_workspace
+                .read(cx)
+                .workspaces()
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for workspace in all_open_workspaces(cx) {
+        if !workspaces.contains(&workspace) {
+            workspaces.push(workspace);
+        }
+    }
+    workspaces
+}
+
 fn current_app_state(cx: &mut AsyncApp) -> Option<Arc<AppState>> {
     cx.update(|cx| {
         all_open_workspaces(cx)

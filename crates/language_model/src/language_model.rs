@@ -232,10 +232,6 @@ pub trait LanguageModel: Send + Sync {
         .boxed()
     }
 
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        None
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> &fake_provider::FakeLanguageModel {
         unimplemented!()

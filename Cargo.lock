@@ -81,6 +81,7 @@ dependencies = [
  "futures 0.3.32",
  "git",
  "gpui",
+ "indoc",
  "language",
  "log",
  "pretty_assertions",
@@ -223,13 +224,14 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.11.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2af62fb84df2af0f933d8f5fd78b843fa5eb0ec5a48fa1b528c41951d0bbe36c"
+checksum = "4361ba6627e51de955b10f3c77fb9eb959c85191a236c1c2c84e32f4ff240faf"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
- "anyhow",
+ "async-process",
+ "blocking",
  "futures 0.3.32",
  "futures-concurrency",
  "jsonrpcmsg",
@@ -238,7 +240,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "thiserror 2.0.17",
+ "shell-words",
  "tokio",
  "tokio-util",
  "tracing",
@@ -247,20 +249,19 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce42c2d3c048c12897eef2e577dfff1e3355c632c9f1625cc953b9df48b44631"
+checksum = "cabdc9d845d08ec7ed2d0c9de1ae4a1b198301407d55855261572761be90ec9f"
 dependencies = [
- "proc-macro2",
  "quote",
  "syn 2.0.117",
 ]
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.12.0"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49bae57dad1c28a362fbdcf7bab0583316a02b45a70792109fced55780a3b63c"
+checksum = "b957d8391ac3933e2a940446171c508d2b8ffc386d8fa7d0b9c936a2575b463e"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -344,6 +345,7 @@ name = "agent_skills"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "const_format",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -364,6 +366,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
+ "agent_skills",
  "ai_onboarding",
  "anyhow",
  "async-channel 2.5.0",
@@ -1290,22 +1293,20 @@ dependencies = [
 name = "auto_update_ui"
 version = "0.1.0"
 dependencies = [
- "agent_settings",
+ "agent_skills",
  "anyhow",
  "auto_update",
  "client",
  "db",
  "editor",
- "fs",
  "gpui",
  "markdown_preview",
  "notifications",
- "project",
+ "prompt_store",
  "release_channel",
  "semver",
  "serde",
  "serde_json",
- "settings",
  "smol",
  "telemetry",
  "ui",
@@ -2249,6 +2250,15 @@ dependencies = [
  "thiserror 2.0.17",
  "tracing",
  "utf8-chars",
+]
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
@@ -3597,6 +3607,7 @@ dependencies = [
  "http_client",
  "log",
  "net",
+ "oauth_callback_server",
  "parking_lot",
  "pollster 0.4.0",
  "postage",
@@ -3608,7 +3619,6 @@ dependencies = [
  "sha2",
  "slotmap",
  "tempfile",
- "tiny_http",
  "url",
  "util",
 ]
@@ -5952,6 +5962,8 @@ dependencies = [
  "settings",
  "shellexpand",
  "terminal_view",
+ "theme",
+ "theme_settings",
  "util",
  "watch",
 ]
@@ -6088,6 +6100,7 @@ dependencies = [
  "snippet_provider",
  "task",
  "theme_settings",
+ "thiserror 2.0.17",
  "tokio",
  "toml 0.8.23",
  "tree-sitter",
@@ -7364,6 +7377,7 @@ dependencies = [
  "project",
  "project_panel",
  "rand 0.9.4",
+ "release_channel",
  "remote_connection",
  "search",
  "serde_json",
@@ -7928,6 +7942,7 @@ dependencies = [
  "bytemuck",
  "collections",
  "cosmic-text",
+ "criterion",
  "etagere",
  "gpui",
  "gpui_util",
@@ -7940,6 +7955,7 @@ dependencies = [
  "raw-window-handle",
  "smallvec",
  "swash",
+ "unicode-segmentation",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -9633,6 +9649,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui_shared_string",
  "http_client",
+ "log",
  "partial-json-fixer",
  "schemars 1.0.4",
  "serde",
@@ -9683,20 +9700,26 @@ dependencies = [
  "log",
  "menu",
  "mistral",
+ "oauth_callback_server",
  "ollama",
  "open_ai",
  "open_router",
  "opencode",
+ "parking_lot",
  "pretty_assertions",
+ "rand 0.9.4",
  "release_channel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
+ "sha2",
+ "smol",
  "strum 0.27.2",
  "tokio",
  "ui",
  "ui_input",
+ "url",
  "util",
  "x_ai",
 ]
@@ -10982,8 +11005,8 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -11156,6 +11179,7 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
+ "chrono",
  "futures 0.3.32",
  "http_client",
  "log",
@@ -11507,6 +11531,17 @@ dependencies = [
  "rmpv",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "oauth_callback_server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "log",
+ "tiny_http",
+ "url",
 ]
 
 [[package]]
@@ -11877,6 +11912,7 @@ dependencies = [
  "gpui",
  "picker",
  "project",
+ "project_panel",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -12271,6 +12307,7 @@ dependencies = [
 name = "paths"
 version = "0.1.0"
 dependencies = [
+ "const_format",
  "dirs",
  "ignore",
  "util",
@@ -13648,6 +13685,7 @@ dependencies = [
  "assets",
  "chrono",
  "collections",
+ "db",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -13660,6 +13698,7 @@ dependencies = [
  "paths",
  "rope",
  "serde",
+ "serde_json",
  "strum 0.27.2",
  "tempfile",
  "text",
@@ -14717,6 +14756,7 @@ dependencies = [
  "anyhow",
  "async-dispatcher",
  "async-task",
+ "async-trait",
  "async-tungstenite",
  "base64 0.22.1",
  "client",
@@ -14749,6 +14789,7 @@ dependencies = [
  "settings",
  "shlex",
  "smol",
+ "task",
  "telemetry",
  "terminal",
  "terminal_view",
@@ -16012,11 +16053,12 @@ dependencies = [
 
 [[package]]
 name = "serde_with"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd5414fad8e6907dbdd5bc441a50ae8d6e26151a03b1de04d89a5576de61d01f"
+checksum = "e72c1c2cb7b223fafb600a619537a871c2818583d619401b785e7c0b746ccde2"
 dependencies = [
  "base64 0.22.1",
+ "bs58",
  "chrono",
  "hex",
  "indexmap 1.9.3",
@@ -16031,9 +16073,9 @@ dependencies = [
 
 [[package]]
 name = "serde_with_macros"
-version = "3.18.0"
+version = "3.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3db8978e608f1fe7357e211969fd9abdcae80bac1ba7a3369bb7eb6b404eb65"
+checksum = "b90c488738ecb4fb0262f41f43bc40efc5868d9fb744319ddf5f5317f417bfac"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -16190,6 +16232,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "audio",
  "codestral",
@@ -20517,8 +20560,8 @@ checksum = "a751b3277700db47d3e574514de2eced5e54dc8a5436a3bf7a0b248b2cee16f3"
 
 [[package]]
 name = "wgpu"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bitflags 2.10.0",
@@ -20546,8 +20589,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -20578,32 +20621,32 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -20650,12 +20693,13 @@ dependencies = [
  "wgpu-types",
  "windows 0.62.2",
  "windows-core 0.62.2",
+ "windows-result 0.4.1",
 ]
 
 [[package]]
 name = "wgpu-naga-bridge"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -20663,8 +20707,8 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "29.0.0"
-source = "git+https://github.com/zed-industries/wgpu.git?branch=v29#a466bc382ea747f8e1ac810efdb6dcd49a514575"
+version = "29.0.3"
+source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",

@@ -2494,8 +2494,21 @@ impl Window {
         self.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
+        // Place it back into a None slot (left by a previous .take()) so that
+        // cached paint_range indices in reuse_paint find the handler at the
+        // expected position.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
-            self.rendered_frame.input_handlers.push(Some(input_handler));
+            if let Some(slot) = self
+                .rendered_frame
+                .input_handlers
+                .iter_mut()
+                .rev()
+                .find(|h| h.is_none())
+            {
+                *slot = Some(input_handler);
+            } else {
+                self.rendered_frame.input_handlers.push(Some(input_handler));
+            }
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
@@ -2504,9 +2517,18 @@ impl Window {
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
-        if let Some(input_handler) = self.next_frame.input_handlers.pop() {
-            self.platform_window
-                .set_input_handler(input_handler.unwrap());
+        // Use .take() instead of .pop() to preserve Vec length, so that cached
+        // paint_range indices remain valid for reuse_paint on the next frame.
+        // Search backwards to find the last Some entry, since reuse_paint may
+        // have copied None slots from the previous frame. (Fixes #50456)
+        if let Some(input_handler) = self
+            .next_frame
+            .input_handlers
+            .iter_mut()
+            .rev()
+            .find_map(|h| h.take())
+        {
+            self.platform_window.set_input_handler(input_handler);
         }
 
         self.layout_engine.as_mut().unwrap().clear();

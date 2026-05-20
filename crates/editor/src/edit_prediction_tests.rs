@@ -522,7 +522,11 @@ async fn test_hidden_edit_prediction_opens_snippet_menu_for_strong_prefix_match(
             panic!("expected completions menu");
         };
         let entries = menu.entries.borrow();
-        assert!(entries.iter().any(|entry| entry.string == "Theta"));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| { entry.as_match().is_some_and(|m| m.string == "Theta") })
+        );
     });
 }
 
@@ -1536,6 +1540,7 @@ impl CompletionProvider for FakeCompletionMenuProvider {
                 snippet_deduplication_key: None,
                 insert_text_mode: None,
                 confirm: None,
+                group: None,
             })
             .collect();
 

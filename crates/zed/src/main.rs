@@ -719,6 +719,7 @@ fn main() {
             false,
             cx,
         );
+        zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
         recent_projects::init(cx);
@@ -924,6 +925,14 @@ fn main() {
             .ok()
             .and_then(|request| OpenRequest::parse(request, cx).log_err())
         {
+            Some(request) if request.is_focus_app_only() => cx.spawn({
+                let app_state = app_state.clone();
+                async move |cx| {
+                    if let Err(e) = restore_or_create_workspace(app_state, cx).await {
+                        fail_to_open_window_async(e, cx)
+                    }
+                }
+            }),
             Some(request) => {
                 handle_open_request(request, app_state.clone(), cx);
                 Task::ready(())
@@ -977,6 +986,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
                     .detach();
             }
+            OpenRequestKind::FocusApp => {
+                cx.spawn(async move |cx| {
+                    if workspace::activate_any_workspace_window(cx).is_some() {
+                        return anyhow::Ok(());
+                    }
+                    restore_or_create_workspace(app_state, cx).await
+                })
+                .detach_and_log_err(cx);
+            }
             OpenRequestKind::Extension { extension_id } => {
                 cx.spawn(async move |cx| {
                     let workspace =
@@ -1000,6 +1018,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let multi_workspace =
                         workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
+                    let panels_task = multi_workspace.update(cx, |multi_workspace, _, cx| {
+                        multi_workspace
+                            .workspace()
+                            .update(cx, |workspace, _| workspace.take_panels_task())
+                    })?;
+                    if let Some(task) = panels_task {
+                        task.await.log_err();
+                    }
+
                     multi_workspace.update(cx, |multi_workspace, window, cx| {
                         multi_workspace.workspace().update(cx, |workspace, cx| {
                             if let Some(panel) = workspace.focus_panel::<AgentPanel>(window, cx) {
@@ -1010,6 +1037,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                                         cx,
                                     );
                                 });
+                            } else {
+                                log::warn!(
+                                    "zed://agent received but the AgentPanel is not registered \
+                                     (is `disable_ai` enabled?)"
+                                );
                             }
                         });
                     })
@@ -1025,16 +1057,35 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     let workspace =
                         multi_workspace.read_with(cx, |mw, _| mw.workspace().clone())?;
 
-                    let (client, thread_store) =
-                        multi_workspace.update(cx, |_, _window, cx| {
-                            workspace.update(cx, |workspace, cx| {
-                                let client = workspace.project().read(cx).client();
-                                let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
-                                    .panel::<AgentPanel>(cx)
-                                    .map(|panel| panel.read(cx).thread_store().clone());
-                                anyhow::Ok((client, thread_store))
-                            })
-                        })??;
+                    let import_state = multi_workspace.update(cx, |_, window, cx| {
+                        workspace.update(cx, |workspace, cx| {
+                            if workspace.root_paths(cx).is_empty() {
+                                workspace.focus_panel::<AgentPanel>(window, cx);
+
+                                struct OpenProjectForSharedThreadToast;
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<OpenProjectForSharedThreadToast>(),
+                                        "Open a project to import shared threads",
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+
+                                return anyhow::Ok(None);
+                            }
+
+                            let client = workspace.project().read(cx).client();
+                            let thread_store: Option<gpui::Entity<ThreadStore>> = workspace
+                                .panel::<AgentPanel>(cx)
+                                .map(|panel| panel.read(cx).thread_store().clone());
+                            anyhow::Ok(Some((client, thread_store)))
+                        })
+                    })??;
+
+                    let Some((client, thread_store)) = import_state else {
+                        return Ok(());
+                    };
 
                     let Some(thread_store): Option<gpui::Entity<ThreadStore>> = thread_store else {
                         anyhow::bail!("Agent panel not available");

@@ -529,6 +529,17 @@ impl CompletionIntent {
     }
 }
 
+/// Describes a visual group for a completion item in the menu.
+/// When the group changes between consecutive completions, the menu inserts a divider.
+/// If a label is provided, a non-selectable header row is also rendered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionGroup {
+    /// Identity of this group, used to detect transitions between consecutive items.
+    pub key: SharedString,
+    /// When set, a non-selectable header with this text is rendered below the divider.
+    pub label: Option<SharedString>,
+}
+
 /// Similar to `CoreCompletion`, but with extra metadata attached.
 #[derive(Clone)]
 pub struct Completion {
@@ -557,6 +568,10 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+    /// An optional group for this completion. When the group changes between consecutive
+    /// items, the completion menu inserts a divider. If the group also carries a label,
+    /// a non-selectable header row is rendered below the divider.
+    pub group: Option<CompletionGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -4977,18 +4992,33 @@ impl Project {
                 }
             }
         } else {
+            // First pass: for each worktree, try two interpretations of the path and
+            // return whichever finds an existing entry first:
+            //   (a) Strip the worktree root name as a prefix.
+            //   (b) Treat the path as a literal worktree-relative path.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(rel_path) = RelPath::new(path, path_style) {
-                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
-                        return Some(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: entry.path.clone(),
-                        });
-                    }
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path())
+                    && let Ok(rel_path) = RelPath::new(relative_path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
+                if let Ok(rel_path) = RelPath::new(path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
                 }
             }
 
+            // Second pass: strip the worktree root name prefix without requiring the
+            // entry to exist, to allow resolving paths that don't exist yet.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
                 if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())

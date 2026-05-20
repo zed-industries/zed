@@ -33,6 +33,7 @@ agent.workspace = true
 async-channel.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 heapless.workspace = true
@@ -144,3 +145,4 @@ tempfile.workspace = true
 vim.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true
+terminal = { workspace = true, features = ["test-support"] }

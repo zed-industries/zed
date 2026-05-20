@@ -505,6 +505,8 @@ pub mod agent {
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
             ReauthenticateAgent,
+            /// Logs out of the current external agent
+            LogoutAgent,
             /// Add the current selection as context for threads in the agent panel.
             #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
             AddSelectionToThread,

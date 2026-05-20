@@ -1498,6 +1498,7 @@ impl GitStore {
                 else {
                     return;
                 };
+                log::debug!("received worktree update for repositories: {changed_repos:?}");
                 self.update_repositories_from_worktree(
                     *worktree_id,
                     project_environment.clone(),

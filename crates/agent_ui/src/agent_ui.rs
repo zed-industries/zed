@@ -26,6 +26,7 @@ mod model_selector_popover;
 mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
+pub mod terminal_thread_metadata_store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 mod thread_import;
@@ -55,10 +56,10 @@ use language_model::{
     ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::{AgentId, DisableAiSettings};
-use prompt_store::PromptBuilder;
+use prompt_store::{PromptBuilder, rules_to_skills_migration};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{LanguageModelSelection, Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::Workspace;
@@ -113,6 +114,31 @@ pub(crate) fn resolve_agent_image(
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentThreadSource {
+    AgentPanel,
+    GitPanel,
+    Sidebar,
+}
+
+impl AgentThreadSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::AgentPanel => "agent_panel",
+            Self::GitPanel => "git_panel",
+            Self::Sidebar => "sidebar",
+        }
+    }
+}
+
+pub(crate) fn agent_sidebar_side(cx: &App) -> &'static str {
+    match AgentSettings::get_global(cx).sidebar_side() {
+        SidebarSide::Left => "left",
+        SidebarSide::Right => "right",
+    }
+}
+
 actions!(
     agent,
     [
@@ -488,6 +514,7 @@ pub fn init(
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
     thread_metadata_store::init(cx);
+    terminal_thread_metadata_store::init(cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
@@ -555,6 +582,24 @@ pub fn init(
     })
     .detach();
 
+    // Kick off the one-time migration of non-Default Rules to global
+    // Skills, deferred until server feature flags arrive.
+    //
+    // The migration itself is idempotent and no longer gated on a flag,
+    // but the deferral via `on_flags_ready` still matters: the migration
+    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
+    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
+    // server flags are never received, so this callback never fires —
+    // which keeps that sqlite worker activity from racing with the
+    // `TestScheduler` and tripping its non-determinism panic.
+    {
+        let fs = fs.clone();
+        cx.on_flags_ready(move |_, cx| {
+            rules_to_skills_migration::migrate_rules_to_skills_if_needed(fs.clone(), cx);
+        })
+        .detach();
+    }
+
     maybe_backfill_editor_layout(fs, is_new_install, cx);
 }
 
@@ -604,6 +649,8 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<ToggleEditPrediction>(),
         ];
 
+        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
+
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("agents");
@@ -651,6 +698,17 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
 
             filter.show_namespace("multi_workspace");
+        }
+
+        // Hide `assistant: open rules library` — Rules are surfaced
+        // through the Skills UI now. Applied after the disable-ai /
+        // agent-enabled branches so it overrides the
+        // `show_namespace("assistant")` call above without affecting the
+        // rest of that namespace's actions.
+        if !disable_ai {
+            filter.hide_action_types(&open_rules_library_action);
+        } else {
+            filter.show_action_types(open_rules_library_action.iter());
         }
     });
 }
