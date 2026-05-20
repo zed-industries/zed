@@ -2995,10 +2995,7 @@ impl AgentPanel {
         // The legacy Rules action is rerouted to the skill creator so the
         // existing keyboard shortcut (still bound to `OpenRulesLibrary` in
         // the default keymaps) and any persisted user keymap entries keep
-        // working. The options-menu "Skills" entry already dispatches
-        // `OpenSkillCreator` directly, so this reroute only serves the
-        // key-press path and is intended to disappear once the keymaps
-        // migrate to `OpenSkillCreator`.
+        // working.
         self.deploy_skill_creator(&OpenSkillCreator, window, cx);
     }
 
@@ -4779,18 +4776,6 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator();
 
-                            // Clicking "Skills" dispatches `OpenSkillCreator`
-                            // directly so that observers, command-palette
-                            // filters, and telemetry see the correct action
-                            // firing. The display action stays as
-                            // `OpenRulesLibrary` purely for keystroke lookup —
-                            // the default keymaps still bind `cmd-alt-l` /
-                            // `ctrl-alt-l` / `shift-alt-l` to
-                            // `OpenRulesLibrary`, and `deploy_rules_library`
-                            // reroutes those key presses to the skill
-                            // creator. Once the keymaps migrate to
-                            // `OpenSkillCreator`, this can collapse back to
-                            // `menu.action(...)`.
                             menu = menu.entry(
                                 "Skills",
                                 Some(Box::new(OpenRulesLibrary::default())),

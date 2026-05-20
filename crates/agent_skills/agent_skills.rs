@@ -457,12 +457,6 @@ pub fn validate_name(name: &str) -> Result<(), &'static str> {
 
 /// Validate a skill description against the rules enforced by both the
 /// loader and the create-skill UI.
-///
-/// The length cap is measured in bytes (matching `str::len`) — the UI
-/// counter and error message both report this as bytes so users are not
-/// misled into thinking emoji-heavy text fits when it does not. The
-/// empty check trims first so a description of pure whitespace is
-/// rejected rather than silently passing the loader.
 pub fn validate_description(description: &str) -> Result<(), &'static str> {
     if description.trim().is_empty() {
         return Err("Skill description cannot be empty");
