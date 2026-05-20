@@ -9001,6 +9001,15 @@ impl LineWithInvisibles {
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
+                if line_exceeded_max_len {
+                    continue;
+                }
+
+                if len + line.len() + highlighted_chunk.text.len() > max_line_len {
+                    line_exceeded_max_len = true;
+                    continue;
+                }
+
                 if !line.is_empty() {
                     let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
                     let text_runs: &[TextRun] = if segments.is_empty() {
@@ -9132,13 +9141,18 @@ impl LineWithInvisibles {
                             Cow::Borrowed(text_style)
                         };
 
-                        if line.len() + line_chunk.len() > max_line_len {
-                            let mut chunk_len = max_line_len - line.len();
+                        let current_line_len = len + line.len();
+                        if current_line_len + line_chunk.len() > max_line_len {
+                            let mut chunk_len = max_line_len - current_line_len;
                             while !line_chunk.is_char_boundary(chunk_len) {
                                 chunk_len -= 1;
                             }
                             line_chunk = &line_chunk[..chunk_len];
                             line_exceeded_max_len = true;
+                        }
+
+                        if line_chunk.is_empty() {
+                            continue;
                         }
 
                         styles.push(TextRun {
@@ -13571,6 +13585,67 @@ mod tests {
                 line_end_offset: 5,
             }]
         );
+    }
+
+    #[gpui::test]
+    fn test_replacement_chunks_are_clipped_to_max_line_len(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let editor_mode = EditorMode::full();
+        let max_line_len = "\u{00a0}abcdef".len();
+
+        window
+            .update(cx, |_, window, cx| {
+                let chunks = std::iter::once(HighlightedChunk {
+                    text: "\u{00a0}",
+                    style: None,
+                    is_tab: false,
+                    is_inlay: false,
+                    replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
+                })
+                .chain(std::iter::once(HighlightedChunk {
+                    text: "abcdefghi",
+                    style: None,
+                    is_tab: false,
+                    is_inlay: false,
+                    replacement: None,
+                }))
+                .chain(
+                    std::iter::repeat_with(|| HighlightedChunk {
+                        text: "\u{00a0}",
+                        style: None,
+                        is_tab: false,
+                        is_inlay: false,
+                        replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
+                    })
+                    .take(8),
+                );
+
+                let layouts = LineWithInvisibles::from_chunks(
+                    chunks,
+                    &style,
+                    max_line_len,
+                    1,
+                    &editor_mode,
+                    px(500.),
+                    |_| false,
+                    &[],
+                    window,
+                    cx,
+                );
+
+                assert_eq!(layouts.len(), 1);
+                assert_eq!(layouts[0].len, max_line_len);
+                assert!(layouts[0].fragments.len() <= max_line_len);
+            })
+            .unwrap();
     }
 
     #[gpui::test]
