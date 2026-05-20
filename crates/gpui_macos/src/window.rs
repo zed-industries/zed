@@ -63,7 +63,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicPtr, Ordering},
     },
     time::Duration,
 };
@@ -75,6 +75,7 @@ static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
 static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
+static FIRE_CURSOR: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -320,24 +321,19 @@ pub(crate) fn convert_mouse_position(position: NSPoint, window_height: Pixels) -
 /// This function is not thread safe. Callers must ensure this is called on the AppKit main
 /// thread because it reads the active AppKit window and updates GPUI window state associated
 /// with Objective-C objects.
+pub(crate) unsafe fn active_window_cursor_style() -> Option<CursorStyle> {
+    unsafe {
+        let active_window = active_gpui_window()?;
+        let window_state = get_window_state(&*active_window);
+        Some(window_state.lock().cursor_style)
+    }
+}
+
 pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
     // SAFETY: The caller guarantees AppKit main-thread access. The class check ensures the
     // window has our WINDOW_STATE_IVAR before reading it.
     unsafe {
-        let app = NSApplication::sharedApplication(nil);
-        let key_window: id = msg_send![app, keyWindow];
-        let main_window: id = msg_send![app, mainWindow];
-        let active_window = if !key_window.is_null()
-            && msg_send![key_window, isKindOfClass: WINDOW_CLASS]
-        {
-            Some(key_window)
-        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
-            Some(main_window)
-        } else {
-            None
-        };
-
-        let Some(active_window) = active_window else {
+        let Some(active_window) = active_gpui_window() else {
             return;
         };
 
@@ -349,6 +345,28 @@ pub(crate) unsafe fn set_active_window_cursor_style(style: CursorStyle) {
                 window_state.native_window,
                 invalidateCursorRectsForView: window_state.native_view.as_ptr()
             ];
+        }
+
+        if style == CursorStyle::Fire {
+            let _: () = msg_send![class!(NSCursor), setHiddenUntilMouseMoves: NO];
+            window_state.cursor_visible.store(true, Ordering::Relaxed);
+        }
+        let cursor = cursor_for_style(style);
+        let _: () = msg_send![cursor, set];
+    }
+}
+
+unsafe fn active_gpui_window() -> Option<id> {
+    unsafe {
+        let app = NSApplication::sharedApplication(nil);
+        let key_window: id = msg_send![app, keyWindow];
+        let main_window: id = msg_send![app, mainWindow];
+        if !key_window.is_null() && msg_send![key_window, isKindOfClass: WINDOW_CLASS] {
+            Some(key_window)
+        } else if !main_window.is_null() && msg_send![main_window, isKindOfClass: WINDOW_CLASS] {
+            Some(main_window)
+        } else {
+            None
         }
     }
 }
@@ -1857,19 +1875,163 @@ extern "C" fn dealloc_view(this: &Object, _: Sel) {
     }
 }
 
-extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
-    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
-    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
-    // below is a valid NSCursor.
+unsafe fn fire_cursor() -> id {
     unsafe {
-        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
+        let cursor = FIRE_CURSOR.load(Ordering::Relaxed);
+        if !cursor.is_null() {
+            return cursor as id;
+        }
 
-        let window_state = get_window_state(this);
-        let cursor_style = window_state.lock().cursor_style;
+        let cursor = create_fire_cursor();
+        match FIRE_CURSOR.compare_exchange(
+            ptr::null_mut(),
+            cursor as *mut c_void,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        ) {
+            Ok(_) => cursor,
+            Err(existing) => {
+                let _: () = msg_send![cursor, release];
+                existing as id
+            }
+        }
+    }
+}
 
-        let cursor: id = match cursor_style {
+unsafe fn create_fire_cursor() -> id {
+    unsafe {
+        let image: id = msg_send![class!(NSImage), alloc];
+        let image: id = msg_send![image, initWithSize: NSSize::new(28., 28.)];
+        let _: () = msg_send![image, lockFocus];
+
+        let glow_color: id = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: 1.0
+            green: 0.22
+            blue: 0.0
+            alpha: 0.28
+        ];
+        let _: () = msg_send![glow_color, set];
+        let glow: id = msg_send![
+            class!(NSBezierPath),
+            bezierPathWithOvalInRect: NSRect::new(NSPoint::new(3., 3.), NSSize::new(22., 22.))
+        ];
+        let _: () = msg_send![glow, fill];
+
+        let outer_color: id = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: 1.0
+            green: 0.24
+            blue: 0.0
+            alpha: 1.0
+        ];
+        let _: () = msg_send![outer_color, set];
+        let outer: id = msg_send![class!(NSBezierPath), bezierPath];
+        let _: () = msg_send![outer, moveToPoint: NSPoint::new(14., 26.)];
+        let _: () = msg_send![
+            outer,
+            curveToPoint: NSPoint::new(5., 11.)
+            controlPoint1: NSPoint::new(7., 22.)
+            controlPoint2: NSPoint::new(2., 15.)
+        ];
+        let _: () = msg_send![
+            outer,
+            curveToPoint: NSPoint::new(14., 2.)
+            controlPoint1: NSPoint::new(4., 5.)
+            controlPoint2: NSPoint::new(9., 2.)
+        ];
+        let _: () = msg_send![
+            outer,
+            curveToPoint: NSPoint::new(23., 12.)
+            controlPoint1: NSPoint::new(20., 2.)
+            controlPoint2: NSPoint::new(27., 6.)
+        ];
+        let _: () = msg_send![
+            outer,
+            curveToPoint: NSPoint::new(17., 20.)
+            controlPoint1: NSPoint::new(22., 16.)
+            controlPoint2: NSPoint::new(17., 17.)
+        ];
+        let _: () = msg_send![
+            outer,
+            curveToPoint: NSPoint::new(14., 26.)
+            controlPoint1: NSPoint::new(16., 22.)
+            controlPoint2: NSPoint::new(15., 24.)
+        ];
+        let _: () = msg_send![outer, closePath];
+        let _: () = msg_send![outer, fill];
+
+        let inner_color: id = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: 1.0
+            green: 0.78
+            blue: 0.08
+            alpha: 1.0
+        ];
+        let _: () = msg_send![inner_color, set];
+        let inner: id = msg_send![class!(NSBezierPath), bezierPath];
+        let _: () = msg_send![inner, moveToPoint: NSPoint::new(14., 20.)];
+        let _: () = msg_send![
+            inner,
+            curveToPoint: NSPoint::new(9., 10.)
+            controlPoint1: NSPoint::new(10., 17.)
+            controlPoint2: NSPoint::new(7., 13.)
+        ];
+        let _: () = msg_send![
+            inner,
+            curveToPoint: NSPoint::new(14., 4.)
+            controlPoint1: NSPoint::new(9., 6.)
+            controlPoint2: NSPoint::new(11., 4.)
+        ];
+        let _: () = msg_send![
+            inner,
+            curveToPoint: NSPoint::new(20., 11.)
+            controlPoint1: NSPoint::new(18., 4.)
+            controlPoint2: NSPoint::new(22., 7.)
+        ];
+        let _: () = msg_send![
+            inner,
+            curveToPoint: NSPoint::new(16., 16.)
+            controlPoint1: NSPoint::new(19., 14.)
+            controlPoint2: NSPoint::new(16., 14.)
+        ];
+        let _: () = msg_send![
+            inner,
+            curveToPoint: NSPoint::new(14., 20.)
+            controlPoint1: NSPoint::new(16., 18.)
+            controlPoint2: NSPoint::new(15., 19.)
+        ];
+        let _: () = msg_send![inner, closePath];
+        let _: () = msg_send![inner, fill];
+
+        let core_color: id = msg_send![
+            class!(NSColor),
+            colorWithCalibratedRed: 1.0
+            green: 0.96
+            blue: 0.54
+            alpha: 1.0
+        ];
+        let _: () = msg_send![core_color, set];
+        let core: id = msg_send![
+            class!(NSBezierPath),
+            bezierPathWithOvalInRect: NSRect::new(NSPoint::new(12., 4.), NSSize::new(5., 7.))
+        ];
+        let _: () = msg_send![core, fill];
+
+        let _: () = msg_send![image, unlockFocus];
+        let cursor: id = msg_send![class!(NSCursor), alloc];
+        let cursor: id = msg_send![cursor, initWithImage: image hotSpot: NSPoint::new(14., 14.)];
+        let _: () = msg_send![image, release];
+        cursor
+    }
+}
+
+unsafe fn cursor_for_style(cursor_style: CursorStyle) -> id {
+    unsafe {
+        match cursor_style {
             CursorStyle::Arrow => msg_send![class!(NSCursor), arrowCursor],
             CursorStyle::IBeam => msg_send![class!(NSCursor), IBeamCursor],
+            CursorStyle::Fire => fire_cursor(),
             CursorStyle::Crosshair => msg_send![class!(NSCursor), crosshairCursor],
             CursorStyle::ClosedHand => msg_send![class!(NSCursor), closedHandCursor],
             CursorStyle::OpenHand => msg_send![class!(NSCursor), openHandCursor],
@@ -1891,7 +2053,6 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::ResizeUpRightDownLeft => {
                 msg_send![class!(NSCursor), _windowResizeNorthEastSouthWestCursor]
             }
-
             CursorStyle::IBeamCursorForVerticalLayout => {
                 msg_send![class!(NSCursor), IBeamCursorForVerticalLayout]
             }
@@ -1901,7 +2062,21 @@ extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
             CursorStyle::DragLink => msg_send![class!(NSCursor), dragLinkCursor],
             CursorStyle::DragCopy => msg_send![class!(NSCursor), dragCopyCursor],
             CursorStyle::ContextualMenu => msg_send![class!(NSCursor), contextualMenuCursor],
-        };
+        }
+    }
+}
+
+extern "C" fn reset_cursor_rects(this: &Object, _: Sel) {
+    // SAFETY: AppKit invokes cursor-rect updates on the main thread for GPUIView instances,
+    // whose WINDOW_STATE_IVAR is initialized when the view is created. The cursor registered
+    // below is a valid NSCursor.
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSView)), resetCursorRects];
+
+        let window_state = get_window_state(this);
+        let cursor_style = window_state.lock().cursor_style;
+
+        let cursor: id = cursor_for_style(cursor_style);
 
         let bounds = NSView::bounds(this as *const Object as id);
         let _: () = msg_send![this, addCursorRect: bounds cursor: cursor];

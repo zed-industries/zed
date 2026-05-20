@@ -239,6 +239,8 @@ impl Editor {
             let trigger_in_words =
                 this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
 
+            #[cfg(target_os = "macos")]
+            this.push_insert_explosion_for_text(&clipboard_text, window, cx);
             this.trigger_completion_on_input(text, trigger_in_words, window, cx);
         });
     }

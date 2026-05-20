@@ -1770,6 +1770,9 @@ pub enum CursorStyle {
     /// corresponds to the CSS cursor value `text`
     IBeam,
 
+    /// A flame cursor.
+    Fire,
+
     /// A crosshair cursor
     /// corresponds to the CSS cursor value `crosshair`
     Crosshair,

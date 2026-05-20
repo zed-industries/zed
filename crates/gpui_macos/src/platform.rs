@@ -1,6 +1,6 @@
 use crate::{
     BoolExt, MacDispatcher, MacDisplay, MacKeyboardLayout, MacKeyboardMapper, MacWindow,
-    events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
+    active_window_cursor_style, events::key_to_native, ns_string, pasteboard::Pasteboard, renderer,
     set_active_window_cursor_style,
 };
 use anyhow::{Context as _, anyhow};
@@ -1003,6 +1003,12 @@ impl Platform for MacPlatform {
     }
 
     fn hide_cursor_until_mouse_moves(&self) {
+        unsafe {
+            if active_window_cursor_style() == Some(CursorStyle::Fire) {
+                return;
+            }
+        }
+
         let cursor_visible = self.0.lock().cursor_visible.clone();
         if !cursor_visible.swap(false, Ordering::Relaxed) {
             return;

@@ -287,6 +287,7 @@ pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const BUFFER_HEADER_PADDING: Rems = rems(0.25);
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+pub(crate) const TYPING_EXPLOSION_DURATION: Duration = Duration::from_millis(520);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
@@ -882,6 +883,45 @@ struct ActionFetchReady {
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
+#[derive(Clone, Copy)]
+pub(crate) enum TypingExplosionKind {
+    Insert {
+        text_len: usize,
+        lines: u32,
+        seed: u32,
+    },
+    Delete {
+        columns: u32,
+        rows: u32,
+        backward: bool,
+        seed: u32,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TypingExplosion {
+    pub(crate) origin: gpui::Point<Pixels>,
+    pub(crate) created_at: Instant,
+    pub(crate) kind: TypingExplosionKind,
+}
+
+impl TypingExplosion {
+    pub(crate) fn duration(&self) -> Duration {
+        match self.kind {
+            TypingExplosionKind::Insert {
+                text_len, lines, ..
+            } => {
+                let scale = text_len.min(80) as u64 * 3 + u64::from(lines.min(12)) * 80;
+                TYPING_EXPLOSION_DURATION + Duration::from_millis(scale)
+            }
+            TypingExplosionKind::Delete { columns, rows, .. } => {
+                let scale = columns.min(120) + rows.saturating_mul(24).min(180);
+                Duration::from_millis(700 + u64::from(scale) * 4)
+            }
+        }
+    }
+}
+
 pub struct Editor {
     focus_handle: FocusHandle,
     last_focused_descendant: Option<WeakFocusHandle>,
@@ -1023,6 +1063,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
+    typing_explosions: Vec<TypingExplosion>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
@@ -2217,6 +2258,7 @@ impl Editor {
             inline_value_cache: InlineValueCache::new(inlay_hint_settings.show_value_hints),
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
+            typing_explosions: Vec::new(),
             last_bounds: None,
             last_position_map: None,
             expect_bounds_change: None,
@@ -2964,6 +3006,118 @@ impl Editor {
 
     pub fn show_cursor(&mut self, cx: &mut Context<Self>) {
         self.blink_manager.update(cx, BlinkManager::show_cursor);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn push_insert_explosion_for_text(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if text.is_empty() {
+            return;
+        }
+
+        self.push_typing_explosion(
+            text.chars().count(),
+            text.bytes().filter(|byte| *byte == b'\n').count() as u32,
+            Self::explosion_seed(text),
+            window,
+            cx,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn push_typing_explosion(
+        &mut self,
+        text_len: usize,
+        lines: u32,
+        seed: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_explosion(
+            TypingExplosionKind::Insert {
+                text_len,
+                lines,
+                seed,
+            },
+            window,
+            cx,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn push_delete_explosion(
+        &mut self,
+        columns: u32,
+        rows: u32,
+        backward: bool,
+        seed: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if columns == 0 && rows == 0 {
+            return;
+        }
+
+        self.push_explosion(
+            TypingExplosionKind::Delete {
+                columns,
+                rows,
+                backward,
+                seed,
+            },
+            window,
+            cx,
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn push_explosion(
+        &mut self,
+        kind: TypingExplosionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_focused(window) {
+            return;
+        }
+
+        let Some(origin) = self.pixel_position_of_newest_cursor else {
+            return;
+        };
+
+        let now = Instant::now();
+        self.typing_explosions
+            .retain(|explosion| now.duration_since(explosion.created_at) < explosion.duration());
+        self.typing_explosions.push(TypingExplosion {
+            origin,
+            created_at: now,
+            kind,
+        });
+
+        if self.typing_explosions.len() > 36 {
+            let drain_count = self.typing_explosions.len() - 36;
+            self.typing_explosions.drain(0..drain_count);
+        }
+
+        cx.notify();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn explosion_seed(text: &str) -> u32 {
+        Self::extend_explosion_seed(0x811c_9dc5, text)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn extend_explosion_seed(mut seed: u32, text: &str) -> u32 {
+        for byte in text.bytes().take(4096) {
+            seed ^= u32::from(byte);
+            seed = seed.wrapping_mul(16_777_619);
+        }
+        seed
     }
 
     pub fn cursor_shape(&self) -> CursorShape {
@@ -4508,6 +4662,9 @@ impl Editor {
             choices: Option<Vec<String>>,
         }
 
+        #[cfg(target_os = "macos")]
+        let snippet_effect_text = snippet.text.clone();
+
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
             let edits = insertion_ranges
@@ -4555,6 +4712,9 @@ impl Editor {
                 })
                 .collect::<Vec<_>>()
         });
+        #[cfg(target_os = "macos")]
+        self.push_insert_explosion_for_text(&snippet_effect_text, window, cx);
+
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Default::default(), window, cx, |s| {
                 // Reverse order so that the first range is the newest created selection.
@@ -4974,10 +5134,18 @@ impl Editor {
             row_delta += tab_size.len;
         }
 
+        #[cfg(target_os = "macos")]
+        let insert_effect_text = edits
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<String>();
+
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.refresh_edit_prediction(true, false, window, cx);
+            #[cfg(target_os = "macos")]
+            this.push_insert_explosion_for_text(&insert_effect_text, window, cx);
         });
     }
 
@@ -5006,9 +5174,17 @@ impl Editor {
                 Self::indent_selection(buffer, &snapshot, selection, &mut edits, row_delta, cx);
         }
 
+        #[cfg(target_os = "macos")]
+        let insert_effect_text = edits
+            .iter()
+            .map(|(_, text)| text.as_str())
+            .collect::<String>();
+
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+            #[cfg(target_os = "macos")]
+            this.push_insert_explosion_for_text(&insert_effect_text, window, cx);
         });
     }
 
@@ -5101,6 +5277,12 @@ impl Editor {
         let selections = self.selections.all::<Point>(&display_map);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
+        #[cfg(target_os = "macos")]
+        let mut deletion_columns = 0_u32;
+        #[cfg(target_os = "macos")]
+        let mut deletion_rows = 0_u32;
+        #[cfg(target_os = "macos")]
+        let mut deletion_seed = Self::explosion_seed("");
         {
             let buffer = self.buffer.read(cx);
             let snapshot = buffer.snapshot(cx);
@@ -5139,9 +5321,20 @@ impl Editor {
                         } else {
                             selection.start.column - deletion_len
                         };
-                        deletion_ranges.push(
-                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len),
-                        );
+                        let range =
+                            Point::new(row.0, start)..Point::new(row.0, start + deletion_len);
+                        #[cfg(target_os = "macos")]
+                        {
+                            deletion_columns = deletion_columns.saturating_add(deletion_len);
+                            deletion_rows = deletion_rows.saturating_add(1);
+                            let deleted_text = snapshot
+                                .text_for_range(range.clone())
+                                .take(4096)
+                                .collect::<String>();
+                            deletion_seed =
+                                Self::extend_explosion_seed(deletion_seed, &deleted_text);
+                        }
+                        deletion_ranges.push(range);
                         last_outdent = Some(row);
                     }
                 }
@@ -5163,6 +5356,15 @@ impl Editor {
                 .selections
                 .all::<MultiBufferOffset>(&this.display_snapshot(cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
+            #[cfg(target_os = "macos")]
+            this.push_delete_explosion(
+                deletion_columns,
+                deletion_rows,
+                true,
+                deletion_seed,
+                window,
+                cx,
+            );
         });
     }
 
@@ -5201,6 +5403,9 @@ impl Editor {
 
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
+        let mut deleted_rows = 0_u32;
+        #[cfg(target_os = "macos")]
+        let mut deletion_seed = Self::explosion_seed("");
         let mut selections = selections.iter().peekable();
         while let Some(selection) = selections.next() {
             let mut rows = selection.spanned_rows(false, &display_map);
@@ -5215,6 +5420,9 @@ impl Editor {
                     break;
                 }
             }
+
+            deleted_rows =
+                deleted_rows.saturating_add(rows.end.0.saturating_sub(rows.start.0).max(1));
 
             let buffer = display_map.buffer_snapshot();
             let mut edit_start = ToOffset::to_offset(&Point::new(rows.start.0, 0), buffer);
@@ -5246,6 +5454,14 @@ impl Editor {
                 buffer.anchor_after(DisplayPoint::new(row, column).to_point(&display_map)),
                 SelectionGoal::None,
             ));
+            #[cfg(target_os = "macos")]
+            {
+                let deleted_text = buffer
+                    .text_for_range(edit_start..edit_end)
+                    .take(4096)
+                    .collect::<String>();
+                deletion_seed = Self::extend_explosion_seed(deletion_seed, &deleted_text);
+            }
             edit_ranges.push(edit_start..edit_end);
         }
 
@@ -5278,6 +5494,9 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.select(new_selections);
             });
+
+            #[cfg(target_os = "macos")]
+            this.push_delete_explosion(0, deleted_rows, true, deletion_seed, window, cx);
         });
     }
 

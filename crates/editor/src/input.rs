@@ -526,6 +526,9 @@ impl Editor {
             this.refresh_edit_prediction(true, false, window, cx);
             jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
         });
+
+        #[cfg(target_os = "macos")]
+        self.push_insert_explosion_for_text(text.as_ref(), window, cx);
     }
 
     pub fn newline(&mut self, _: &Newline, window: &mut Window, cx: &mut Context<Self>) {
@@ -764,6 +767,9 @@ impl Editor {
                 task.detach_and_log_err(cx);
             }
         });
+
+        #[cfg(target_os = "macos")]
+        self.push_insert_explosion_for_text("\n", window, cx);
     }
 
     pub fn newline_above(&mut self, _: &NewlineAbove, window: &mut Window, cx: &mut Context<Self>) {
@@ -1935,6 +1941,40 @@ impl Editor {
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
+            #[cfg(target_os = "macos")]
+            let deletion_explosion = if text.is_empty() {
+                let buffer_snapshot = this.buffer.read(cx).read(cx);
+                let mut columns = 0_u32;
+                let mut rows = 0_u32;
+                let mut backward = false;
+                let mut seed = Self::explosion_seed("");
+
+                for selection in &old_selections {
+                    if selection.is_empty() {
+                        continue;
+                    }
+
+                    let range = selection.range();
+                    let deleted_text = buffer_snapshot
+                        .text_for_range(range.clone())
+                        .take(4096)
+                        .collect::<String>();
+                    seed = Self::extend_explosion_seed(seed, &deleted_text);
+
+                    let row_count = range.end.row.saturating_sub(range.start.row);
+                    rows = rows.saturating_add(row_count);
+                    columns = columns.saturating_add(if row_count == 0 {
+                        range.end.column.saturating_sub(range.start.column).max(1)
+                    } else {
+                        range.start.column.saturating_add(range.end.column).max(1)
+                    });
+                    backward |= selection.reversed;
+                }
+
+                Some((columns, rows, backward, seed))
+            } else {
+                None
+            };
             let linked_edits = if apply_linked_edits {
                 this.linked_edits_for_selections(text.clone(), cx)
             } else {
@@ -1970,6 +2010,11 @@ impl Editor {
 
             if apply_linked_edits {
                 refresh_linked_ranges(this, window, cx);
+            }
+
+            #[cfg(target_os = "macos")]
+            if let Some((columns, rows, backward, seed)) = deletion_explosion {
+                this.push_delete_explosion(columns, rows, backward, seed, window, cx);
             }
 
             cx.notify();

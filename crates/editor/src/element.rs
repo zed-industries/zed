@@ -9,7 +9,7 @@ use crate::{
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
     PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
     SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
-    ToggleFold, ToggleFoldAll,
+    ToggleFold, ToggleFoldAll, TypingExplosion, TypingExplosionKind,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -95,6 +95,24 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
+
+fn text_cursor_style(show_fire: bool) -> CursorStyle {
+    if cfg!(target_os = "macos") && show_fire {
+        CursorStyle::Fire
+    } else {
+        CursorStyle::IBeam
+    }
+}
+
+fn seeded_unit(seed: u32, index: usize, salt: u32) -> f32 {
+    let mut value = seed ^ (index as u32).wrapping_mul(0x9e37_79b9) ^ salt;
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^= value >> 16;
+    value as f32 / u32::MAX as f32
+}
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
     CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
@@ -6281,7 +6299,10 @@ impl EditorElement {
                 // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
                 // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
                 if is_singleton {
-                    window.set_cursor_style(CursorStyle::IBeam, hitbox);
+                    window.set_cursor_style(
+                        text_cursor_style(!layout.typing_explosions.is_empty()),
+                        hitbox,
+                    );
                 } else {
                     window.set_cursor_style(CursorStyle::PointingHand, hitbox);
                 }
@@ -6638,7 +6659,10 @@ impl EditorElement {
                         &layout.position_map.text_hitbox,
                     );
                 } else {
-                    window.set_cursor_style(CursorStyle::IBeam, &layout.position_map.text_hitbox);
+                    window.set_cursor_style(
+                        text_cursor_style(!layout.typing_explosions.is_empty()),
+                        &layout.position_map.text_hitbox,
+                    );
                 };
 
                 self.paint_lines_background(layout, window, cx);
@@ -6648,6 +6672,7 @@ impl EditorElement {
                 self.paint_redactions(layout, window);
                 self.paint_navigation_overlays(layout, window, cx);
                 self.paint_cursors(layout, window, cx);
+                self.paint_typing_explosions(layout, window);
                 self.paint_inline_diagnostics(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 self.paint_inline_code_actions(layout, window, cx);
@@ -6941,6 +6966,264 @@ impl EditorElement {
         for cursor in &mut layout.visible_cursors {
             cursor.paint(layout.content_origin, window, cx);
         }
+    }
+
+    fn paint_typing_explosions(&mut self, layout: &mut EditorLayout, window: &mut Window) {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+
+        let now = Instant::now();
+        for explosion in &layout.typing_explosions {
+            let elapsed = now.duration_since(explosion.created_at).as_secs_f32();
+            let progress = (elapsed / explosion.duration().as_secs_f32()).clamp(0., 1.);
+
+            match explosion.kind {
+                TypingExplosionKind::Insert {
+                    text_len,
+                    lines,
+                    seed,
+                } => {
+                    let alpha = (1. - progress).powf(1.45);
+                    let burst = text_len.min(14) as f32;
+                    let vertical_burst = lines.min(8) as f32;
+                    let hue_shift = (seeded_unit(seed, 0, 0x51a7) - 0.5) * 0.035;
+                    let spin = (seeded_unit(seed, 0, 0xa11c) - 0.5) * 1.6;
+                    let particle_count = 12 + text_len.min(14) + lines.min(8) as usize * 4;
+                    let radius = 4. + progress * (24. + burst * 1.7 + vertical_burst * 4.);
+
+                    for index in 0..particle_count {
+                        let particle_seed = index as f32;
+                        let angle = particle_seed * 2.3999631
+                            + progress * (0.45 + spin)
+                            + seeded_unit(seed, index, 0xb117) * 0.9;
+                        let distance = radius * (0.45 + seeded_unit(seed, index, 0xd15c) * 0.55);
+                        let lift = if seeded_unit(seed, index, 0x71f7) > 0.58 {
+                            progress * (10. + vertical_burst * 4.)
+                        } else {
+                            0.
+                        };
+                        let particle_size = (5.6 - progress * 3.8
+                            + seeded_unit(seed, index, 0x515e) * 2.4)
+                            .max(1.1);
+                        let center = explosion.origin
+                            + point(
+                                px(angle.cos() * distance),
+                                px(angle.sin() * distance - lift),
+                            );
+                        let bounds = Bounds::new(
+                            center - point(px(particle_size / 2.), px(particle_size / 2.)),
+                            size(px(particle_size), px(particle_size)),
+                        );
+                        let color = match index % 4 {
+                            0 => Hsla {
+                                h: 0.13 + hue_shift,
+                                s: 1.,
+                                l: 0.72,
+                                a: alpha,
+                            },
+                            1 => Hsla {
+                                h: 0.08 + hue_shift,
+                                s: 1.,
+                                l: 0.62,
+                                a: alpha * 0.95,
+                            },
+                            2 => Hsla {
+                                h: 0.02 + hue_shift,
+                                s: 1.,
+                                l: 0.54,
+                                a: alpha * 0.9,
+                            },
+                            _ => Hsla {
+                                h: hue_shift.max(0.),
+                                s: 0.85,
+                                l: 0.34 + seeded_unit(seed, index, 0xa5e5) * 0.1,
+                                a: alpha * 0.62,
+                            },
+                        };
+                        window.paint_quad(fill(bounds, color).corner_radii(px(particle_size / 2.)));
+                    }
+
+                    for index in 0..4 {
+                        let flame_progress = (progress + index as f32 * 0.08).clamp(0., 1.);
+                        let width = 4.5 - flame_progress * 2.;
+                        let height = 13. - flame_progress * 8.;
+                        let bend = seeded_unit(seed, index, 0xf1a) - 0.5;
+                        let x = (index as f32 - 1.5) * (2.4 + progress * 1.5)
+                            + bend * progress * (6. + vertical_burst);
+                        let y = -4. - flame_progress * (16. + burst + vertical_burst * 5.);
+                        let bounds = Bounds::new(
+                            explosion.origin + point(px(x - width / 2.), px(y - height / 2.)),
+                            size(px(width.max(1.)), px(height.max(1.))),
+                        );
+                        window.paint_quad(
+                            fill(
+                                bounds,
+                                Hsla {
+                                    h: 0.1 + hue_shift,
+                                    s: 1.,
+                                    l: 0.63 + seeded_unit(seed, index, 0xfeed) * 0.08,
+                                    a: alpha * (1. - index as f32 * 0.12),
+                                },
+                            )
+                            .corner_radii(px(width)),
+                        );
+                    }
+
+                    let core_size = 11. * (1. - progress).powf(0.7);
+                    if core_size > 0.5 {
+                        let bounds = Bounds::new(
+                            explosion.origin - point(px(core_size / 2.), px(core_size / 2.)),
+                            size(px(core_size), px(core_size)),
+                        );
+                        window.paint_quad(
+                            fill(
+                                bounds,
+                                Hsla {
+                                    h: 0.14 + hue_shift,
+                                    s: 1.,
+                                    l: 0.74 + seeded_unit(seed, 0, 0xc04e) * 0.08,
+                                    a: alpha,
+                                },
+                            )
+                            .corner_radii(px(core_size / 2.)),
+                        );
+                    }
+                }
+                TypingExplosionKind::Delete {
+                    columns,
+                    rows,
+                    backward,
+                    seed,
+                } => {
+                    let alpha = (1. - progress).powf(1.15);
+                    let direction = if backward { -1. } else { 1. };
+                    let hue_shift = (seeded_unit(seed, 0, 0xde1e) - 0.5) * 0.045;
+                    let gravity = 38. + seeded_unit(seed, 0, 0x9a11) * 34.;
+                    let row_lanes = rows.min(10).saturating_add(1);
+                    let line_height = layout.position_map.line_height.as_f32();
+                    let em_advance = layout.position_map.em_advance.as_f32();
+                    let trace = (columns as f32 * em_advance * 0.9)
+                        .max(rows as f32 * line_height * 0.8)
+                        .clamp(12., 220.);
+                    let particle_count = (14 + columns / 2 + rows * 9).min(64) as usize;
+
+                    for index in 0..particle_count {
+                        let lane = index as u32 % row_lanes;
+                        let particle_seed = index as f32;
+                        let lane_jitter = seeded_unit(seed, index, 0x1a9e) - 0.5;
+                        let lane_progress = if row_lanes > 1 {
+                            (lane as f32 + lane_jitter * 0.35).clamp(0., (row_lanes - 1) as f32)
+                                / (row_lanes - 1) as f32
+                        } else {
+                            0.
+                        };
+                        let stagger = seeded_unit(seed, index, 0x57a6) * 0.34;
+                        let particle_progress = (progress - stagger).max(0.) / (1. - stagger);
+                        let fall = particle_progress
+                            * particle_progress
+                            * (gravity
+                                + rows as f32 * (3. + seeded_unit(seed, index, 0xfa11) * 3.));
+                        let trail = direction
+                            * trace
+                            * (seeded_unit(seed, index, 0x7ac5) * 0.92 + 0.08)
+                            * (1. - particle_progress * 0.35);
+                        let drift = direction
+                            * (particle_progress * (14. + seeded_unit(seed, index, 0xd41f) * 28.))
+                            + (particle_seed * 1.7 + seeded_unit(seed, index, 0xbeef) * 4.).sin()
+                                * 10.
+                                * particle_progress;
+                        let y = -(lane_progress * rows as f32 * line_height)
+                            + fall
+                            + (particle_seed * 0.93 + seeded_unit(seed, index, 0xcafe) * 3.).cos()
+                                * 5.;
+                        let particle_size = (4.2 - particle_progress * 2.7
+                            + seeded_unit(seed, index, 0x515e) * 2.1)
+                            .max(1.);
+                        let center = explosion.origin + point(px(trail + drift), px(y));
+                        let bounds = Bounds::new(
+                            center - point(px(particle_size / 2.), px(particle_size / 2.)),
+                            size(px(particle_size), px(particle_size)),
+                        );
+                        let ember_alpha = alpha * (1. - stagger * 0.9);
+                        let color = match index % 5 {
+                            0 => Hsla {
+                                h: 0.11 + hue_shift,
+                                s: 1.,
+                                l: 0.62 + seeded_unit(seed, index, 0x101) * 0.1,
+                                a: ember_alpha,
+                            },
+                            1 | 2 => Hsla {
+                                h: 0.04 + hue_shift,
+                                s: 1.,
+                                l: 0.46 + seeded_unit(seed, index, 0x202) * 0.12,
+                                a: ember_alpha * 0.86,
+                            },
+                            _ => Hsla {
+                                h: hue_shift.max(0.),
+                                s: 0.6 + seeded_unit(seed, index, 0x303) * 0.2,
+                                l: 0.22 + seeded_unit(seed, index, 0x404) * 0.12,
+                                a: ember_alpha * 0.58,
+                            },
+                        };
+                        window.paint_quad(fill(bounds, color).corner_radii(px(particle_size / 2.)));
+                    }
+
+                    let smoke_count = (3 + columns / 12 + rows * 2).min(18);
+                    for index in 0..smoke_count {
+                        let smoke_seed = index as f32;
+                        let smoke_progress = (progress
+                            + seeded_unit(seed, index as usize, 0x5e0) * 0.08)
+                            .clamp(0., 1.);
+                        let smoke_size = 7.
+                            + smoke_progress
+                                * (18. + seeded_unit(seed, index as usize, 0x5e1) * 10.)
+                            + (index % 3) as f32 * 3.;
+                        let x = direction * seeded_unit(seed, index as usize, 0x5e2) * trace * 0.9
+                            + (smoke_seed * 1.31).sin() * smoke_progress * 10.;
+                        let y = smoke_progress * smoke_progress * (24. + rows as f32 * 3.)
+                            - (index % row_lanes) as f32 * line_height * 0.5;
+                        let bounds = Bounds::new(
+                            explosion.origin
+                                + point(px(x - smoke_size / 2.), px(y - smoke_size / 2.)),
+                            size(px(smoke_size), px(smoke_size)),
+                        );
+                        window.paint_quad(
+                            fill(
+                                bounds,
+                                Hsla {
+                                    h: 0.03,
+                                    s: 0.35,
+                                    l: 0.24,
+                                    a: alpha * 0.18 * (1. - smoke_progress),
+                                },
+                            )
+                            .corner_radii(px(smoke_size / 2.)),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    fn collect_typing_explosions(&self, window: &mut Window, cx: &mut App) -> Vec<TypingExplosion> {
+        if !cfg!(target_os = "macos") {
+            return Vec::new();
+        }
+
+        let now = Instant::now();
+        let explosions = self.editor.update(cx, |editor, _| {
+            editor.typing_explosions.retain(|explosion| {
+                now.duration_since(explosion.created_at) < explosion.duration()
+            });
+            editor.typing_explosions.clone()
+        });
+
+        if !explosions.is_empty() {
+            window.request_animation_frame();
+        }
+
+        explosions
     }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
@@ -10898,6 +11181,7 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
+                    let typing_explosions = self.collect_typing_explosions(window, cx);
                     let navigation_overlay_paint_commands = self.layout_navigation_overlays(
                         &snapshot,
                         start_row..end_row,
@@ -11296,6 +11580,7 @@ impl Element for EditorElement {
                         spacer_blocks,
                         cursors,
                         visible_cursors,
+                        typing_explosions,
                         navigation_overlay_paint_commands,
                         selections,
                         edit_prediction_popover,
@@ -11514,6 +11799,7 @@ pub struct EditorLayout {
     redacted_ranges: Vec<Range<DisplayPoint>>,
     cursors: Vec<(DisplayPoint, Hsla)>,
     visible_cursors: Vec<CursorLayout>,
+    typing_explosions: Vec<TypingExplosion>,
     navigation_overlay_paint_commands: Vec<NavigationOverlayPaintCommand>,
     selections: Vec<(PlayerColor, Vec<SelectionLayout>)>,
     test_indicators: Vec<AnyElement>,
@@ -11606,7 +11892,10 @@ impl StickyHeaders {
                 },
             );
 
-            window.set_cursor_style(CursorStyle::IBeam, &line.hitbox);
+            window.set_cursor_style(
+                text_cursor_style(!layout.typing_explosions.is_empty()),
+                &line.hitbox,
+            );
         }
     }
 }

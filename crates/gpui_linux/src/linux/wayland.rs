@@ -17,7 +17,7 @@ use gpui::CursorStyle;
 pub(super) fn to_shape(style: CursorStyle) -> Shape {
     match style {
         CursorStyle::Arrow => Shape::Default,
-        CursorStyle::IBeam => Shape::Text,
+        CursorStyle::IBeam | CursorStyle::Fire => Shape::Text,
         CursorStyle::Crosshair => Shape::Crosshair,
         CursorStyle::ClosedHand => Shape::Grabbing,
         CursorStyle::OpenHand => Shape::Grab,

@@ -287,7 +287,7 @@ impl Platform for WebPlatform {
     fn set_cursor_style(&self, style: CursorStyle) {
         let css_cursor = match style {
             CursorStyle::Arrow => "default",
-            CursorStyle::IBeam => "text",
+            CursorStyle::IBeam | CursorStyle::Fire => "text",
             CursorStyle::Crosshair => "crosshair",
             CursorStyle::ClosedHand => "grabbing",
             CursorStyle::OpenHand => "grab",
