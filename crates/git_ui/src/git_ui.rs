@@ -38,6 +38,7 @@ mod conflict_view;
 pub mod file_diff_view;
 pub mod git_panel;
 mod git_panel_settings;
+mod git_runtime_diagnostics;
 pub mod git_picker;
 pub mod multi_diff_view;
 pub mod picker_prompt;
