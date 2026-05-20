@@ -78,13 +78,3 @@ When you update to Zed v1.4.0, your existing Rules are migrated to Skills automa
 - **Default Rules** are appended to your global `AGENTS.md` file (`~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows), preserving their behavior of being included in every conversation.
 
 A banner in the title bar announces the migration when it runs. Your original Rule data is not deleted, so downgrading to an earlier version of Zed leaves your Rules intact.
-
-## Migrating from Prompt Library
-
-Previously, the Rules Library was called the "Prompt Library".
-The new rules system replaces the Prompt Library except in a few specific cases, which are outlined below.
-
-### Slash Commands in Rules
-
-Previously, it was possible to use slash commands (now @-mentions) in custom prompts (now rules).
-There is currently no support for using @-mentions in rules files.
