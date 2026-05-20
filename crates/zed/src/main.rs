@@ -301,11 +301,6 @@ fn main() {
     }
     ztracing::init();
 
-    #[cfg(target_os = "macos")]
-    if let Err(err) = util::try_raise_fd_limit() {
-        log::warn!("failed to raise macOS file descriptor limit: {err:#}");
-    }
-
     let version = option_env!("ZED_BUILD_ID");
     let app_commit_sha =
         option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));

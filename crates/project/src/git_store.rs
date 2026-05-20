@@ -1499,19 +1499,18 @@ impl GitStore {
                     return;
                 };
                 log::debug!("received worktree update for repositories: {changed_repos:?}");
-                let updates_tx = downstream
-                    .as_ref()
-                    .map(|downstream| downstream.updates_tx.clone());
                 self.update_repositories_from_worktree(
                     *worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
-                    updates_tx.clone(),
+                    downstream
+                        .as_ref()
+                        .map(|downstream| downstream.updates_tx.clone()),
                     changed_repos.clone(),
                     fs.clone(),
                     cx,
                 );
-                self.local_worktree_git_repos_changed(worktree, changed_repos, updates_tx, cx);
+                self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_entity_id, worktree_id) => {
                 let repos_without_worktree: Vec<RepositoryId> = self
@@ -1889,12 +1888,9 @@ impl GitStore {
         &mut self,
         worktree: Entity<Worktree>,
         changed_repos: &UpdatedGitRepositoriesSet,
-        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        log::debug!(
-            "local worktree repos changed; refreshing diff bases and scheduling status scan"
-        );
+        log::debug!("local worktree repos changed");
         debug_assert!(worktree.read(cx).is_local());
 
         for repository in self.repositories.values() {
@@ -1905,7 +1901,6 @@ impl GitStore {
                         || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
-                    repository.schedule_scan(updates_tx.clone(), cx);
                 }
             });
         }
@@ -4857,21 +4852,6 @@ impl Repository {
         result_rx
     }
 
-    fn log_result_job<R>(
-        result_rx: oneshot::Receiver<Result<R>>,
-        description: &'static str,
-        cx: &mut Context<Self>,
-    ) where
-        R: Send + 'static,
-    {
-        cx.spawn(async move |_, _| match result_rx.await {
-            Ok(Ok(_)) => {}
-            Ok(Err(err)) => log::error!("{description} failed: {err:#}"),
-            Err(err) => log::debug!("{description} was canceled before completion: {err}"),
-        })
-        .detach();
-    }
-
     pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
         let Some(git_store) = self.git_store.upgrade() else {
             return;
@@ -7784,7 +7764,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let this = cx.weak_entity();
-        let result_rx = self.send_keyed_job(
+        let _ = self.send_keyed_job(
             "schedule_scan",
             Some(GitJobKey::ReloadGitState),
             None,
@@ -7809,7 +7789,6 @@ impl Repository {
                 Ok(())
             },
         );
-        Self::log_result_job(result_rx, "scheduled git status scan", cx);
     }
 
     fn spawn_local_git_worker(
@@ -8031,7 +8010,7 @@ impl Repository {
         }
 
         let this = cx.weak_entity();
-        let result_rx = self.send_keyed_job(
+        let _ = self.send_keyed_job(
             "paths_changed",
             Some(GitJobKey::RefreshStatuses),
             None,
@@ -8132,7 +8111,6 @@ impl Repository {
                 })
             },
         );
-        Self::log_result_job(result_rx, "git path status refresh", cx);
     }
 
     /// currently running git command and when it started
@@ -8999,61 +8977,6 @@ mod tests {
         Ok(())
     }
 
-    #[gpui::test]
-    async fn test_compute_snapshot_applies_statuses_when_branches_fail(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            Path::new("/project"),
-            json!({
-                ".git": {},
-                "tracked.txt": "modified",
-            }),
-        )
-        .await;
-        let tracked_path = RepoPath::from_rel_path(
-            &RelPath::new("tracked.txt".as_ref(), PathStyle::local()).unwrap(),
-        );
-        fs.with_git_state(Path::new("/project/.git"), false, |state| {
-            state.simulated_branches_error = Some("failed to enumerate branches".into());
-            state
-                .head_contents
-                .insert(tracked_path.clone(), "clean".into());
-            state
-                .index_contents
-                .insert(tracked_path.clone(), "clean".into());
-        })
-        .unwrap();
-
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-        project
-            .update(cx, |project, cx| project.git_scans_complete(cx))
-            .await;
-
-        let repository = project.read_with(cx, |project, cx| {
-            project
-                .active_repository(cx)
-                .expect("should have a repository")
-        });
-
-        repository.read_with(cx, |repository, _| {
-            let status = repository
-                .snapshot
-                .status_for_path(&tracked_path)
-                .expect("status should still be applied when branch enumeration fails");
-            assert_eq!(
-                status.status,
-                FileStatus::Tracked(TrackedStatus {
-                    index_status: StatusCode::Unmodified,
-                    worktree_status: StatusCode::Modified,
-                })
-            );
-            assert!(repository.snapshot.branch.is_none());
-            assert!(repository.snapshot.branch_list.is_empty());
-        });
-    }
-
     #[gpui::property_test(config = ProptestConfig {
         cases: 20,
         ..Default::default()
@@ -9233,7 +9156,7 @@ async fn compute_snapshot(
     let head_commit_future = {
         let backend = backend.clone();
         async move {
-            Ok::<_, anyhow::Error>(match backend.head_sha().await {
+            Ok(match backend.head_sha().await {
                 Some(head_sha) => backend.show(head_sha).await.log_err(),
                 None => None,
             })
@@ -9243,35 +9166,17 @@ async fn compute_snapshot(
         .background_spawn({
             let backend = backend.clone();
             async move {
-                Ok::<_, anyhow::Error>(
-                    futures::future::join3(
-                        backend.branches(),
-                        head_commit_future,
-                        backend.worktrees(),
-                    )
-                    .await,
+                futures::future::try_join3(
+                    backend.branches(),
+                    head_commit_future,
+                    backend.worktrees(),
                 )
+                .await
             }
         })
         .await?;
-    let head_commit = head_commit?;
-    let all_worktrees = all_worktrees?;
-    let (branch, branch_list): (Option<Branch>, Arc<[Branch]>) = match branches {
-        Ok(branches) => (
-            branches.iter().find(|branch| branch.is_head).cloned(),
-            branches.into(),
-        ),
-        Err(err) => {
-            log::warn!(
-                "failed to enumerate git branches for {}; reusing previous branch snapshot: {err:#}",
-                work_directory_abs_path.display()
-            );
-            (
-                prev_snapshot.branch.clone(),
-                prev_snapshot.branch_list.clone(),
-            )
-        }
-    };
+    let branch = branches.iter().find(|branch| branch.is_head).cloned();
+    let branch_list: Arc<[Branch]> = branches.into();
 
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
         .into_iter()
