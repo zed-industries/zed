@@ -11,11 +11,13 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 
 ## Adding Skills {#adding-skills}
 
-### Create Your Own {#create-your-own}
+### Create your own {#create-your-own}
 
-Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or let the agent pick it up automatically when you ask it to help create a skill.
+Zed includes a built-in `create-skill` skill — invoke it with `/create-skill` and the agent walks you through the process.
 
-See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
+You can also open the Skill Creator directly with the {#action agent::OpenSkillCreator} action. It opens a window where you fill in the skill's name, description, scope (global or project-local), body, and optionally toggle `disable-model-invocation`.
+
+See [Skill format](#skill-format) below for the full format reference.
 
 ### From the skills.sh Registry {#from-the-registry}
 
@@ -37,6 +39,19 @@ git sparse-checkout set frontend-design
 ```
 
 For a project-local install, do the same inside your project's `.agents/skills/` folder.
+
+## Managing Skills {#managing-skills}
+
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
+
+The **User** tab shows your global skills. The **Project** tab shows skills for the current project.
+
+For each skill you can:
+
+- **Open** — opens the skill's `SKILL.md` file in the editor
+- **Delete** — removes the skill folder from disk
+
+If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
 
 ## Using Skills {#using-skills}
 
