@@ -43,7 +43,7 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
     Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
@@ -582,10 +582,16 @@ pub fn init(
     })
     .detach();
 
-    // Once the `skills` feature flag has resolved, kick off the one-time
-    // migration of non-Default Rules to global Skills. Idempotent and
-    // self-gated on the flag, so it's safe to call on every flag-ready
-    // notification (and a no-op for users without the flag).
+    // Kick off the one-time migration of non-Default Rules to global
+    // Skills, deferred until server feature flags arrive.
+    //
+    // The migration itself is idempotent and no longer gated on a flag,
+    // but the deferral via `on_flags_ready` still matters: the migration
+    // writes to the on-disk `GlobalKeyValueStore`, which dispatches work
+    // on the `sqlezWorker` background thread. In `gpui::test` contexts,
+    // server flags are never received, so this callback never fires —
+    // which keeps that sqlite worker activity from racing with the
+    // `TestScheduler` and tripping its non-determinism panic.
     {
         let fs = fs.clone();
         cx.on_flags_ready(move |_, cx| {
@@ -626,12 +632,6 @@ fn update_command_palette_filter(cx: &mut App) {
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
         .provider;
-
-    // The Skills feature flag is loaded asynchronously, so this value may
-    // be `false` before flags resolve. `update_command_palette_filter`
-    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
-    // filter is reapplied with the correct value once flags arrive.
-    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
 
     CommandPaletteFilter::update_global(cx, |filter, _| {
         use editor::actions::{
@@ -700,12 +700,12 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `assistant: open rules library` when Skills are enabled —
-        // Rules are surfaced through the Skills UI in that case. Applied
-        // after the disable-ai / agent-enabled branches so it overrides
-        // the `show_namespace("assistant")` call above without affecting
-        // the rest of that namespace's actions.
-        if !disable_ai && skills_enabled {
+        // Hide `assistant: open rules library` — Rules are surfaced
+        // through the Skills UI now. Applied after the disable-ai /
+        // agent-enabled branches so it overrides the
+        // `show_namespace("assistant")` call above without affecting the
+        // rest of that namespace's actions.
+        if !disable_ai {
             filter.hide_action_types(&open_rules_library_action);
         } else {
             filter.show_action_types(open_rules_library_action.iter());

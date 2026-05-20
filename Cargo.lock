@@ -13687,7 +13687,6 @@ dependencies = [
  "chrono",
  "collections",
  "db",
- "feature_flags",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -16234,6 +16233,7 @@ version = "0.1.0"
 dependencies = [
  "agent",
  "agent_settings",
+ "agent_skills",
  "anyhow",
  "audio",
  "codestral",
