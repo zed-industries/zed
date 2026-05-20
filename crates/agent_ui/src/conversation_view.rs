@@ -50,6 +50,7 @@ use rope::Point;
 use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore, ThinkingBlockDisplay};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 use std::{collections::BTreeMap, rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
@@ -61,8 +62,13 @@ use ui::{
     KeyBinding, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, WithScrollbar, prelude::*,
     right_click_menu,
 };
-use util::{ResultExt, size::format_file_size, time::duration_alt_display};
-use util::{debug_panic, defer};
+use util::{
+    ResultExt, debug_panic, defer,
+    paths::{PathStyle, PathWithPosition},
+    rel_path::RelPath,
+    size::format_file_size,
+    time::duration_alt_display,
+};
 use workspace::PathList;
 use workspace::{
     CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
@@ -3122,6 +3128,7 @@ fn render_agent_markdown(
     cx: &App,
 ) -> MarkdownElement {
     let workspace = workspace.clone();
+    let resolver = AgentCodeSpanResolver::new(project, cx);
     let worktree_roots: Vec<PathBuf> = project
         .upgrade()
         .map(|project| {
@@ -3137,6 +3144,183 @@ fn render_agent_markdown(
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);
         })
+        .on_code_span_link(move |text| resolver.try_resolve(text))
+}
+
+struct AgentCodeSpanResolver {
+    worktrees: Vec<AgentCodeSpanWorktree>,
+    file_extensions: HashSet<Arc<str>>,
+    call_count: AtomicUsize,
+    total_work_nanos: AtomicU64,
+}
+
+struct AgentCodeSpanWorktree {
+    abs_path: PathBuf,
+    path_style: PathStyle,
+    files: HashSet<Arc<RelPath>>,
+}
+
+impl AgentCodeSpanResolver {
+    fn new(project: &WeakEntity<Project>, cx: &App) -> Self {
+        let Some(project) = project.upgrade() else {
+            return Self {
+                worktrees: Vec::new(),
+                file_extensions: HashSet::default(),
+                call_count: AtomicUsize::new(0),
+                total_work_nanos: AtomicU64::new(0),
+            };
+        };
+
+        let mut file_extensions = HashSet::default();
+        let mut worktrees = Vec::new();
+        for worktree in project.read(cx).visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let mut files = HashSet::default();
+            for entry in worktree.entries(false, 0) {
+                if !entry.is_file() {
+                    continue;
+                }
+
+                if let Some(extension) = entry
+                    .path
+                    .as_std_path()
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .filter(|extension| !extension.is_empty())
+                {
+                    file_extensions.insert(Arc::from(extension));
+                }
+                files.insert(entry.path.clone());
+            }
+
+            worktrees.push(AgentCodeSpanWorktree {
+                abs_path: worktree.abs_path().to_path_buf(),
+                path_style: worktree.path_style(),
+                files,
+            });
+        }
+
+        Self {
+            worktrees,
+            file_extensions,
+            call_count: AtomicUsize::new(0),
+            total_work_nanos: AtomicU64::new(0),
+        }
+    }
+
+    fn try_resolve(&self, text: &str) -> Option<SharedString> {
+        let text = workspace::path_link::sanitize_path_text(text.trim());
+        if !self.is_path_like(text) {
+            return None;
+        }
+
+        let path_with_position = PathWithPosition::parse_str(text);
+        let candidate_path = &path_with_position.path;
+        if candidate_path.as_os_str().is_empty() {
+            return None;
+        }
+
+        let count = self.call_count.fetch_add(1, Ordering::Relaxed) + 1;
+
+        let mut worktrees_inspected = 0usize;
+        let walk_started_at = Instant::now();
+        let result = 'walk: {
+            for worktree in &self.worktrees {
+                let Some(relative_path) = worktree.relative_path(candidate_path) else {
+                    continue;
+                };
+                worktrees_inspected += 1;
+                if !worktree.files.contains(relative_path.as_ref()) {
+                    continue;
+                }
+
+                let abs_path = worktree.absolutize(relative_path.as_ref());
+                let mention = if let Some(row) = path_with_position.row {
+                    let Some(line) = row.checked_sub(1) else {
+                        break 'walk None;
+                    };
+                    MentionUri::Selection {
+                        abs_path: Some(abs_path),
+                        line_range: line..=line,
+                    }
+                } else {
+                    MentionUri::File { abs_path }
+                };
+
+                break 'walk Some(mention.to_uri().to_string().into());
+            }
+            None
+        };
+        let walk_elapsed = walk_started_at.elapsed();
+
+        let cumulative_nanos = self
+            .total_work_nanos
+            .fetch_add(walk_elapsed.as_nanos() as u64, Ordering::Relaxed)
+            + walk_elapsed.as_nanos() as u64;
+        let cumulative = Duration::from_nanos(cumulative_nanos);
+        let outcome = if result.is_some() { "hit" } else { "miss" };
+        log::info!(
+            "AgentCodeSpanResolver::try_resolve #{count} {outcome}: \
+             worktree walk took {walk_elapsed:?} \
+             ({worktrees_inspected}/{total_worktrees} worktrees inspected); \
+             cumulative walk {cumulative:?}",
+            total_worktrees = self.worktrees.len(),
+        );
+
+        result
+    }
+
+    fn is_path_like(&self, text: &str) -> bool {
+        if text.is_empty()
+            || text.contains("://")
+            || text.chars().any(char::is_control)
+            || text.chars().all(|character| character.is_ascii_digit())
+        {
+            return false;
+        }
+
+        let path = PathWithPosition::parse_str(text).path;
+        let path_text = path.to_string_lossy();
+        if path_text.contains('/') || path_text.contains('\\') {
+            return true;
+        }
+
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| self.file_extensions.contains(extension))
+    }
+}
+
+impl AgentCodeSpanWorktree {
+    fn relative_path(&self, path: &Path) -> Option<Arc<RelPath>> {
+        let path_text = path.to_string_lossy();
+        if util::paths::is_absolute(path_text.as_ref(), self.path_style) {
+            self.path_style
+                .strip_prefix(path, &self.abs_path)
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        } else {
+            RelPath::new(path, self.path_style)
+                .ok()
+                .map(std::borrow::Cow::into_owned)
+                .map(Into::into)
+        }
+    }
+
+    fn absolutize(&self, relative_path: &RelPath) -> PathBuf {
+        if relative_path.file_name().is_some() {
+            let mut abs_path = self.abs_path.to_string_lossy().into_owned();
+            for component in relative_path.components() {
+                if !abs_path.ends_with(self.path_style.primary_separator()) {
+                    abs_path.push_str(self.path_style.primary_separator());
+                }
+                abs_path.push_str(component);
+            }
+            PathBuf::from(abs_path)
+        } else {
+            self.abs_path.clone()
+        }
+    }
 }
 
 fn plan_label_markdown_style(
@@ -3249,6 +3433,41 @@ pub(crate) mod tests {
             assert_eq!(view.message_editor.read(cx).text(cx), "");
             assert_eq!(view.thread.read(cx).entries().len(), 2);
         });
+    }
+
+    #[gpui::test]
+    async fn test_agent_code_span_resolver_resolves_worktree_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "src": {
+                    "main.rs": ""
+                },
+                "README.md": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new("/project")], cx).await;
+        let resolver = cx.update(|cx| AgentCodeSpanResolver::new(&project.downgrade(), cx));
+
+        let uri = resolver
+            .try_resolve("src/main.rs:10")
+            .expect("expected worktree-relative file path to resolve");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from("/project/src/main.rs")),
+                line_range: 9..=9,
+            }
+        );
+
+        assert!(resolver.try_resolve("String").is_none());
+        assert!(resolver.try_resolve("does/not/exist.rs").is_none());
+        assert!(resolver.try_resolve("src/main.rs.").is_some());
     }
 
     #[gpui::test]
