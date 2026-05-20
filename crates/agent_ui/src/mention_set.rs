@@ -1004,6 +1004,7 @@ fn is_binary_file(path: &Path, executor: &BackgroundExecutor) -> Task<bool> {
         };
         let mut buf = [0u8; 8192];
         let n = file.read(&mut buf).unwrap_or(0);
+        // Binary files contain null bytes; text files extremely rarely do
         buf[..n].contains(&0)
     })
 }
