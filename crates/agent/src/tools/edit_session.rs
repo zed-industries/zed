@@ -2,17 +2,16 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use super::restore_file_from_disk_tool::RestoreFileFromDiskTool;
-use super::save_file_tool::SaveFileTool;
-use crate::{AgentTool, Thread, ToolCallEventStream};
+use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::{ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::Result;
 use collections::HashSet;
+use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, BufferEvent, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{AgentLocation, Project, ProjectPath};
@@ -665,7 +664,8 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let file_changed_since_last_read = ensure_buffer_saved(&buffer, &abs_path, &context, cx)?;
+        let file_changed_since_last_read =
+            ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
 
         let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
         event_stream.update_diff(diff.clone());
@@ -932,53 +932,25 @@ fn agent_edit_buffer<I, S, T>(
     });
 }
 
-fn ensure_buffer_saved(
+async fn ensure_buffer_saved(
     buffer: &Entity<Buffer>,
     abs_path: &PathBuf,
+    mode: EditSessionMode,
     context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<bool, String> {
     let last_read_mtime = context
         .action_log
         .read_with(cx, |log, _| log.file_read_time(abs_path));
-    let check_result = context.thread.read_with(cx, |thread, cx| {
-        let current = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| file.disk_state().mtime());
-        let dirty = buffer.read(cx).is_dirty();
-        let has_save = thread.has_tool(SaveFileTool::NAME);
-        let has_restore = thread.has_tool(RestoreFileFromDiskTool::NAME);
-        (current, dirty, has_save, has_restore)
+    let (current_mtime, is_dirty) = buffer.read_with(cx, |buffer, _cx| {
+        let current = buffer.file().and_then(|file| file.disk_state().mtime());
+        let dirty = buffer.is_dirty();
+        (current, dirty)
     });
 
-    let Ok((current_mtime, is_dirty, has_save_tool, has_restore_tool)) = check_result else {
-        return Ok(false);
-    };
-
     if is_dirty {
-        let message = match (has_save_tool, has_restore_tool) {
-            (true, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (true, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask for confirmation then use the save_file tool to save the file, then retry this edit. \
-                         If they want to discard them, ask the user to manually revert the file, then inform you when it's ok to proceed."
-            }
-            (false, true) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes. \
-                         If they want to keep them, ask the user to manually save the file, then inform you when it's ok to proceed. \
-                         If they want to discard them, ask for confirmation then use the restore_file_from_disk tool to restore the on-disk contents, then retry this edit."
-            }
-            (false, false) => {
-                "This file has unsaved changes. Ask the user whether they want to keep or discard those changes, \
-                         then ask them to save or revert the file manually and inform you when it's ok to proceed."
-            }
-        };
-        return Err(message.to_string());
+        resolve_dirty_buffer(buffer, mode, context, event_stream, cx).await?;
     }
 
     if let (Some(last_read), Some(current)) = (last_read_mtime, current_mtime)
@@ -988,6 +960,99 @@ fn ensure_buffer_saved(
     }
 
     Ok(false)
+}
+
+/// Prompts the user about how to handle a dirty buffer that the agent
+/// wants to edit (`EditSessionMode::Edit`) or overwrite
+/// (`EditSessionMode::Write`), and performs the chosen action so the
+/// edit session can proceed (or returns `Err` to cancel).
+///
+/// If the user resolves the dirty state externally (e.g. cmd-s or
+/// reload) while the prompt is visible, the prompt is dismissed
+/// automatically.
+async fn resolve_dirty_buffer(
+    buffer: &Entity<Buffer>,
+    mode: EditSessionMode,
+    context: &EditSessionContext,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<(), String> {
+    let (manual_resolve_tx, manual_resolve_rx) = oneshot::channel::<()>();
+    let _buffer_subscription = cx.update(|cx| {
+        let mut tx = Some(manual_resolve_tx);
+        cx.subscribe(buffer, move |buffer, event: &BufferEvent, cx| {
+            if matches!(
+                event,
+                BufferEvent::Saved | BufferEvent::Reloaded | BufferEvent::DirtyChanged
+            ) && !buffer.read(cx).is_dirty()
+                && let Some(tx) = tx.take()
+            {
+                tx.send(()).ok();
+            }
+        })
+    });
+
+    let prompt_kind = match mode {
+        EditSessionMode::Edit => super::tool_permissions::DirtyBufferPromptKind::Edit,
+        EditSessionMode::Write => super::tool_permissions::DirtyBufferPromptKind::Overwrite,
+    };
+    let prompt = cx.update(|cx| {
+        super::tool_permissions::authorize_dirty_buffer(prompt_kind, event_stream, cx)
+    });
+
+    let decision = futures::select_biased! {
+        _ = manual_resolve_rx.fuse() => {
+            None
+        }
+        decision = prompt.fuse() => {
+            Some(decision.map_err(|e| e.to_string())?)
+        }
+    };
+
+    let Some(decision) = decision else {
+        event_stream.update_fields(
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+        );
+        return match mode {
+            EditSessionMode::Edit => Ok(()),
+            EditSessionMode::Write => Err(
+                "The user saved their unsaved changes while the prompt was visible; \
+                 the file overwrite was cancelled to preserve them. Ask the user how \
+                 they'd like to proceed before retrying."
+                    .to_string(),
+            ),
+        };
+    };
+
+    match decision {
+        super::tool_permissions::DirtyBufferDecision::Save => {
+            context
+                .project
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+                .await
+                .map_err(|e| format!("Failed to save buffer: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Discard => {
+            context
+                .project
+                .update(cx, |project, cx| {
+                    project.reload_buffers(HashSet::from_iter([buffer.clone()]), false, cx)
+                })
+                .await
+                .map_err(|e| format!("Failed to discard unsaved changes: {e}"))?;
+        }
+        super::tool_permissions::DirtyBufferDecision::Keep => {
+            let error = "The user chose to keep their unsaved changes; the file overwrite \
+             was cancelled. Ask the user how they'd like to proceed before \
+             retrying."
+                .to_string();
+            event_stream.update_fields(
+                acp::ToolCallUpdateFields::new().content(vec![error.clone().into()]),
+            );
+            return Err(error);
+        }
+    }
+    Ok(())
 }
 
 fn resolve_path(

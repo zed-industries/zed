@@ -19,6 +19,7 @@ cloud_llm_client.workspace = true
 futures.workspace = true
 gpui_shared_string.workspace = true
 http_client.workspace = true
+log.workspace = true
 partial-json-fixer.workspace = true
 schemars.workspace = true
 serde.workspace = true

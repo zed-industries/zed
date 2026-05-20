@@ -8,7 +8,8 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
-    Fs, MTime, PathEvent, RemoveOptions, TrashedEntry, Watcher, copy_recursive, read_dir_items,
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashedEntry, Watcher, copy_recursive,
+    read_dir_items,
 };
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -140,6 +141,7 @@ pub struct LocalWorktree {
     settings: WorktreeSettings,
     share_private_files: bool,
     scanning_enabled: bool,
+    force_defer_watch: bool,
 }
 
 pub struct PathPrefixScanRequest {
@@ -504,6 +506,7 @@ impl Worktree {
                 visible,
                 settings,
                 scanning_enabled,
+                force_defer_watch: false,
             };
             worktree.start_background_scanner(scan_requests_rx, path_prefixes_to_scan_rx, cx);
             Worktree::Local(worktree)
@@ -1151,6 +1154,7 @@ impl LocalWorktree {
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
         let scanning_enabled = self.scanning_enabled;
+        let force_defer_watch = self.force_defer_watch;
         let track_git_repositories = self.visible;
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
@@ -1158,7 +1162,10 @@ impl LocalWorktree {
             let abs_path = snapshot.abs_path.as_path().to_path_buf();
             let background = cx.background_executor().clone();
             async move {
-                let (events, watcher) = if scanning_enabled {
+                let defer_watch =
+                    force_defer_watch || (scanning_enabled && fs::requires_poll_watcher(&abs_path));
+
+                let (events, watcher) = if scanning_enabled && !defer_watch {
                     fs.watch(&abs_path, FS_WATCH_LATENCY).await
                 } else {
                     (Box::pin(stream::pending()) as _, Arc::new(NullWatcher) as _)
@@ -1192,11 +1199,10 @@ impl LocalWorktree {
                     watcher,
                     track_git_repositories,
                     is_single_file,
+                    defer_watch,
                 };
 
-                scanner
-                    .run(Box::pin(events.map(|events| events.into_iter().collect())))
-                    .await;
+                scanner.run(events).await;
             }
         });
         let scan_state_updater = cx.spawn(async move |this, cx| {
@@ -2053,6 +2059,12 @@ impl LocalWorktree {
         self.snapshot.update_abs_path(new_path, root_name);
         self.restart_background_scanners(cx);
     }
+    #[cfg(feature = "test-support")]
+    pub fn set_defer_watch(&mut self, defer: bool, cx: &mut Context<Worktree>) {
+        self.force_defer_watch = defer;
+        self.restart_background_scanners(cx);
+    }
+
     #[cfg(feature = "test-support")]
     pub fn repositories(&self) -> Vec<Arc<Path>> {
         self.git_repositories
@@ -3946,6 +3958,7 @@ struct BackgroundScanner {
     /// Whether this is a single-file worktree (root is a file, not a directory).
     /// Used to determine if we should give up after repeated canonicalization failures.
     is_single_file: bool,
+    defer_watch: bool,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -4086,6 +4099,37 @@ impl BackgroundScanner {
         }
 
         self.send_status_update(false, SmallVec::new(), &[]).await;
+
+        if self.defer_watch {
+            let (events, watcher) = self
+                .fs
+                .watch(root_abs_path.as_path(), FS_WATCH_LATENCY)
+                .await;
+            self.watcher = watcher;
+            fs_events_rx = Box::pin(events.map(|events| events.into_iter().collect()));
+
+            let state = self.state.lock().await;
+            for target in state.symlink_paths_by_target.keys() {
+                if !target.starts_with(root_abs_path.as_path()) {
+                    self.watcher.add(target).log_err();
+                }
+            }
+            for repo in state.snapshot.git_repositories.values() {
+                if !repo
+                    .common_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.common_dir_abs_path).log_err();
+                }
+                if !repo
+                    .repository_dir_abs_path
+                    .starts_with(root_abs_path.as_path())
+                {
+                    self.watcher.add(&repo.repository_dir_abs_path).log_err();
+                }
+            }
+            drop(state);
+        }
 
         // Process any any FS events that occurred while performing the initial scan.
         // For these events, update events cannot be as precise, because we didn't
@@ -4331,6 +4375,8 @@ impl BackgroundScanner {
             events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
         }
 
+        log::debug!("raw events for process_events: {events:?}");
+
         fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
             if let Some(last_range) = ranges.last_mut()
                 && last_range.end == ix
@@ -4375,16 +4421,25 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let skip = skipped_files_in_dot_git.iter().any(|skipped| {
+                    let is_ignored = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
                     }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
-                        || path_in_git_dir == Path::new("")
-                            && self.fs.is_dir(&dot_git_abs_path).await;
-                    if skip {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
+                    let is_dot_git = path_in_git_dir == Path::new("")
+                        && matches!(event.kind, Some(PathEventKind::Changed))
+                        && self.fs.is_dir(&dot_git_abs_path).await;
+                    if is_ignored {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
+                        );
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
+                    if is_dot_git {
+                        log::debug!(
+                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            event.kind
                         );
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;

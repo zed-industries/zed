@@ -1,16 +1,19 @@
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
 use anyhow::{Context as _, Result, anyhow};
+use fs::Fs;
+use futures::StreamExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -48,6 +51,54 @@ pub struct ListDirectoryTool {
 impl ListDirectoryTool {
     pub fn new(project: Entity<Project>) -> Self {
         Self { project }
+    }
+
+    /// List the contents of a directory under the global skills tree directly
+    /// via the filesystem. Used for skill resources that live outside any
+    /// worktree.
+    async fn list_global_skill_directory(
+        canonical_path: &Path,
+        fs: &dyn Fs,
+        input_path: &str,
+    ) -> Result<String, String> {
+        let mut entries = fs
+            .read_dir(canonical_path)
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let mut folders = Vec::new();
+        let mut files = Vec::new();
+        while let Some(entry) = entries.next().await {
+            let Ok(entry_path) = entry else {
+                continue;
+            };
+            let display = entry_path.to_string_lossy().into_owned();
+            // Use a metadata call rather than `is_dir` so we can short-circuit
+            // on missing entries (e.g. dangling symlinks).
+            let Ok(Some(metadata)) = fs.metadata(&entry_path).await else {
+                continue;
+            };
+            if metadata.is_dir {
+                folders.push(display);
+            } else {
+                files.push(display);
+            }
+        }
+
+        folders.sort();
+        files.sort();
+
+        let mut output = String::new();
+        if !folders.is_empty() {
+            writeln!(output, "# Folders:\n{}", folders.join("\n")).unwrap();
+        }
+        if !files.is_empty() {
+            writeln!(output, "\n# Files:\n{}", files.join("\n")).unwrap();
+        }
+        if output.is_empty() {
+            writeln!(output, "{input_path} is empty.").unwrap();
+        }
+        Ok(output)
     }
 
     fn build_directory_output(
@@ -180,6 +231,20 @@ impl AgentTool for ListDirectoryTool {
             }
 
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+
+            // Fast path: a global skill resource lives outside any worktree, so
+            // standard project-path resolution would refuse it. If the path
+            // resolves under the global skills tree, list it directly.
+            if let Some(skill_path) =
+                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                return Self::list_global_skill_directory(
+                    &skill_path,
+                    fs.as_ref(),
+                    &input.path,
+                )
+                .await;
+            }
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =
@@ -267,7 +332,6 @@ impl AgentTool for ListDirectoryTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fs::Fs as _;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use project::{FakeFs, Project};
@@ -1089,6 +1153,95 @@ mod tests {
                 Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested for intra-project symlinks",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            skill_dir.join("SKILL.md"),
+            b"---\nname: my-skill\ndescription: x\n---\nbody".to_vec(),
+        )
+        .await;
+        fs.insert_file(skill_dir.join("rubric.md"), b"# rubric".to_vec())
+            .await;
+        fs.create_dir(&skill_dir.join("scripts")).await.unwrap();
+        fs.insert_file(skill_dir.join("scripts/run.py"), b"print('hi')".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let tool = Arc::new(ListDirectoryTool::new(project));
+
+        let input = ListDirectoryToolInput {
+            path: skill_dir.to_string_lossy().into_owned(),
+        };
+        let output = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        // Output should include both the file siblings of SKILL.md and the
+        // nested resource directory — listed by their absolute paths.
+        assert!(
+            output.contains("# Folders:"),
+            "expected folders section: {output}"
+        );
+        assert!(
+            output.contains("scripts"),
+            "expected nested directory: {output}"
+        );
+        assert!(
+            output.contains("SKILL.md"),
+            "expected SKILL.md to appear: {output}"
+        );
+        assert!(
+            output.contains("rubric.md"),
+            "expected rubric.md to appear: {output}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_outside_skills_dir_still_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+        fs.create_dir(path!("/etc").as_ref()).await.unwrap();
+        fs.insert_file(path!("/etc/secret"), b"top secret".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let tool = Arc::new(ListDirectoryTool::new(project));
+
+        let input = ListDirectoryToolInput {
+            path: path!("/etc").to_string(),
+        };
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "path outside skills dir should be rejected"
         );
     }
 }

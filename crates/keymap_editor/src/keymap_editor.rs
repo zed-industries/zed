@@ -3518,6 +3518,7 @@ impl CompletionProvider for KeyContextCompletionProvider {
                     snippet_deduplication_key: None,
                     insert_text_mode: None,
                     confirm: None,
+                    group: None,
                 })
                 .collect(),
             display_options: CompletionDisplayOptions::default(),
