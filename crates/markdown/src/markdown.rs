@@ -2787,33 +2787,39 @@ impl MarkdownElementBuilder {
         self.pending_line.text.push_str(text);
         self.current_source_index = source_range.end;
 
+        // Compute the base text style once. The style stack doesn't change
+        // while we attribute highlight runs below, so without this a single
+        // code block with hundreds of highlight tokens would otherwise pay for
+        // hundreds of `TextStyle` clones per paint.
+        let text_style = self.text_style();
+
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
                     self.pending_line
                         .runs
-                        .push(self.text_style().to_run(range.start - offset));
+                        .push(text_style.to_run(range.start - offset));
                 }
 
-                let mut run_style = self.text_style();
+                let run_len = range.len();
                 if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
-                    run_style = run_style.highlight(highlight);
+                    self.pending_line
+                        .runs
+                        .push(text_style.clone().highlight(highlight).to_run(run_len));
+                } else {
+                    self.pending_line.runs.push(text_style.to_run(run_len));
                 }
-
-                self.pending_line.runs.push(run_style.to_run(range.len()));
                 offset = range.end;
             }
 
             if offset < text.len() {
                 self.pending_line
                     .runs
-                    .push(self.text_style().to_run(text.len() - offset));
+                    .push(text_style.to_run(text.len() - offset));
             }
         } else {
-            self.pending_line
-                .runs
-                .push(self.text_style().to_run(text.len()));
+            self.pending_line.runs.push(text_style.to_run(text.len()));
         }
     }
 
