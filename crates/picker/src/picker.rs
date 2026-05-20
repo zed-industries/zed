@@ -3,27 +3,27 @@ pub mod highlighted_match_with_paths;
 pub mod popover_menu;
 
 use anyhow::Result;
-use editor::{
-    Editor, SelectionEffects,
-    actions::{MoveDown, MoveUp},
-    scroll::Autoscroll,
-};
+
 use gpui::{
-    Action, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
-    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, div, list, prelude::*,
+    Action, AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
+    Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, Render,
+    ScrollStrategy, Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*,
     uniform_list,
 };
 use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::{ops::Range, sync::Arc, time::Duration};
-use theme::ThemeSettings;
-use ui::{
-    Color, Divider, DocumentationAside, DocumentationEdge, DocumentationSide, Label, ListItem,
-    ListItemSpacing, ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
+use std::{
+    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
+use theme_settings::ThemeSettings;
+use ui::{
+    Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
+    ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
+};
+use ui_input::{ErasedEditor, ErasedEditorEvent};
 use workspace::{ModalView, item::Settings};
+use zed_actions::editor::{MoveDown, MoveUp};
 
 enum ElementContainer {
     List(ListState),
@@ -33,6 +33,12 @@ enum ElementContainer {
 pub enum Direction {
     Up,
     Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollBehavior {
+    RevealSelected,
+    PreserveOffset,
 }
 
 actions!(
@@ -72,6 +78,10 @@ pub struct Picker<D: PickerDelegate> {
     ///
     /// Set this to `false` when rendering the `Picker` as part of a larger modal.
     is_modal: bool,
+    /// Bounds tracking for the picker container (for aside positioning)
+    picker_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Bounds tracking for items (for aside positioning) - maps item index to bounds
+    item_bounds: Rc<RefCell<HashMap<usize, Bounds<Pixels>>>>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -110,11 +120,14 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn can_select(
-        &mut self,
+        &self,
         _ix: usize,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
+        true
+    }
+    fn select_on_hover(&self) -> bool {
         true
     }
 
@@ -189,9 +202,9 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn render_editor(
         &self,
-        editor: &Entity<Editor>,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Div {
         v_flex()
             .when(
@@ -204,7 +217,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .flex_none()
                     .h_9()
                     .px_2p5()
-                    .child(editor.clone()),
+                    .child(editor.render(window, cx)),
             )
             .when(
                 self.editor_position() == PickerEditorPosition::Start,
@@ -241,6 +254,13 @@ pub trait PickerDelegate: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<DocumentationAside> {
+        None
+    }
+
+    /// Returns the index of the item whose documentation aside should be shown.
+    /// This is used to position the aside relative to that item.
+    /// Typically this is the hovered item, not necessarily the selected item.
+    fn documentation_aside_index(&self) -> Option<usize> {
         None
     }
 }
@@ -329,6 +349,8 @@ impl<D: PickerDelegate> Picker<D> {
             max_height: Some(rems(24.).into()),
             show_scrollbar: false,
             is_modal: true,
+            picker_bounds: Rc::new(Cell::new(None)),
+            item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
@@ -465,7 +487,7 @@ impl<D: PickerDelegate> Picker<D> {
             .delegate
             .select_history(Direction::Down, &query, window, cx)
         {
-            self.set_query(query, window, cx);
+            self.set_query(&query, window, cx);
             return;
         }
         let count = self.delegate.match_count();
@@ -492,7 +514,7 @@ impl<D: PickerDelegate> Picker<D> {
             .delegate
             .select_history(Direction::Up, &query, window, cx)
         {
-            self.set_query(query, window, cx);
+            self.set_query(&query, window, cx);
             return;
         }
         let count = self.delegate.match_count();
@@ -591,7 +613,7 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
-            self.set_query(new_query, window, cx);
+            self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
         }
@@ -606,13 +628,16 @@ impl<D: PickerDelegate> Picker<D> {
     ) {
         cx.stop_propagation();
         window.prevent_default();
+        if !self.delegate.can_select(ix, window, cx) {
+            return;
+        }
         self.set_selected_index(ix, None, false, window, cx);
         self.do_confirm(secondary, window, cx)
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
-            self.set_query(update_query, window, cx);
+            self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
             self.delegate.confirm(secondary, window, cx)
@@ -621,8 +646,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn on_input_editor_event(
         &mut self,
-        _: &Entity<Editor>,
-        event: &editor::EditorEvent,
+        event: &ErasedEditorEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -630,16 +654,15 @@ impl<D: PickerDelegate> Picker<D> {
             panic!("unexpected call");
         };
         match event {
-            editor::EditorEvent::BufferEdited => {
-                let query = editor.read(cx).text(cx);
+            ErasedEditorEvent::BufferEdited => {
+                let query = editor.text(cx);
                 self.update_matches(query, window, cx);
             }
-            editor::EditorEvent::Blurred => {
+            ErasedEditorEvent::Blurred => {
                 if self.is_modal && window.is_window_active() {
                     self.cancel(&menu::Cancel, window, cx);
                 }
             }
-            _ => {}
         }
     }
 
@@ -652,14 +675,13 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut App) {
+    pub fn refresh_placeholder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.head {
             Head::Editor(editor) => {
                 let placeholder = self.delegate.placeholder_text(window, cx);
-                editor.update(cx, |editor, cx| {
-                    editor.set_placeholder_text(placeholder.as_ref(), window, cx);
-                    cx.notify();
-                });
+
+                editor.set_placeholder_text(placeholder.as_ref(), window, cx);
+                cx.notify();
             }
             Head::Empty(_) => {}
         }
@@ -671,9 +693,19 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
+    }
+
+    pub fn update_matches_with_options(
+        &mut self,
+        query: String,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
-        self.matches_updated(window, cx);
+        self.matches_updated(scroll_behavior, window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -693,19 +725,40 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.matches_updated(window, cx);
+                    this.matches_updated(scroll_behavior, window, cx);
                 })
             }),
         });
     }
 
-    fn matches_updated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count());
+    fn matches_updated(
+        &mut self,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let match_count = self.delegate.match_count();
+        match &mut self.element_container {
+            ElementContainer::List(state) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    state.reset(match_count);
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {
+                    let offset = state.logical_scroll_top();
+                    state.reset(match_count);
+                    state.scroll_to(offset);
+                }
+            },
+            ElementContainer::UniformList(_) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {}
+            },
         }
-
-        let index = self.delegate.selected_index();
-        self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
@@ -715,23 +768,15 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn query(&self, cx: &App) -> String {
         match &self.head {
-            Head::Editor(editor) => editor.read(cx).text(cx),
+            Head::Editor(editor) => editor.text(cx),
             Head::Empty(_) => "".to_string(),
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+    pub fn set_query(&self, query: &str, window: &mut Window, cx: &mut App) {
         if let Head::Editor(editor) = &self.head {
-            editor.update(cx, |editor, cx| {
-                editor.set_text(query, window, cx);
-                let editor_offset = editor.buffer().read(cx).len(cx);
-                editor.change_selections(
-                    SelectionEffects::scroll(Autoscroll::Next),
-                    window,
-                    cx,
-                    |s| s.select_ranges(Some(editor_offset..editor_offset)),
-                );
-            });
+            editor.set_text(query, window, cx);
+            editor.move_selection_to_end(window, cx);
         }
     }
 
@@ -744,15 +789,37 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        match &self.element_container {
+            ElementContainer::List(state) => state.is_scrolled_to_end(),
+            ElementContainer::UniformList(scroll_handle) => scroll_handle.is_scrolled_to_end(),
+        }
+    }
+
     fn render_element(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
         ix: usize,
     ) -> impl IntoElement + use<D> {
+        let item_bounds = self.item_bounds.clone();
+        let selectable = self.delegate.can_select(ix, window, cx);
+
         div()
             .id(("item", ix))
-            .cursor_pointer()
+            .when(selectable, |this| this.cursor_pointer())
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        item_bounds.borrow_mut().insert(ix, bounds);
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0(),
+            )
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.handle_click(ix, event.modifiers().secondary(), window, cx)
             }))
@@ -768,6 +835,14 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
+            .when(self.delegate.select_on_hover(), |this| {
+                this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                    if *hovered {
+                        this.set_selected_index(ix, None, false, window, cx);
+                        cx.notify();
+                    }
+                }))
+            })
             .children(self.delegate.render_match(
                 ix,
                 ix == self.delegate.selected_index(),
@@ -807,7 +882,7 @@ impl<D: PickerDelegate> Picker<D> {
                 el.with_width_from_item(Some(widest_item))
             })
             .flex_grow()
-            .py_1()
+            .py(DynamicSpacing::Base04.rems(cx))
             .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
@@ -818,7 +893,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py_2()
+            .py(DynamicSpacing::Base04.rems(cx))
             .into_any_element(),
         }
     }
@@ -831,6 +906,175 @@ impl<D: PickerDelegate> Picker<D> {
                 scroll_handle.logical_scroll_top_index()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::cell::Cell;
+
+    struct TestDelegate {
+        items: Vec<bool>,
+        selected_index: usize,
+        confirmed_index: Rc<Cell<Option<usize>>>,
+    }
+
+    impl TestDelegate {
+        fn new(items: Vec<bool>) -> Self {
+            Self {
+                items,
+                selected_index: 0,
+                confirmed_index: Rc::new(Cell::new(None)),
+            }
+        }
+    }
+
+    impl PickerDelegate for TestDelegate {
+        type ListItem = ui::ListItem;
+
+        fn match_count(&self) -> usize {
+            self.items.len()
+        }
+
+        fn selected_index(&self) -> usize {
+            self.selected_index
+        }
+
+        fn set_selected_index(
+            &mut self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.selected_index = ix;
+        }
+
+        fn can_select(
+            &self,
+            ix: usize,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> bool {
+            self.items.get(ix).copied().unwrap_or(false)
+        }
+
+        fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+            "Test".into()
+        }
+
+        fn update_matches(
+            &mut self,
+            _query: String,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Task<()> {
+            Task::ready(())
+        }
+
+        fn confirm(
+            &mut self,
+            _secondary: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) {
+            self.confirmed_index.set(Some(self.selected_index));
+        }
+
+        fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+        fn render_match(
+            &self,
+            ix: usize,
+            selected: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Picker<Self>>,
+        ) -> Option<Self::ListItem> {
+            Some(
+                ui::ListItem::new(ix)
+                    .inset(true)
+                    .toggle_state(selected)
+                    .child(ui::Label::new(format!("Item {ix}"))),
+            )
+        }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_clicking_non_selectable_item_does_not_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let confirmed_index = Rc::new(Cell::new(None));
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            let mut delegate = TestDelegate::new(vec![true, false, true]);
+            delegate.confirmed_index = confirmed_index.clone();
+            Picker::uniform_list(delegate, window, cx)
+        });
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 0);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.handle_click(1, false, window, cx);
+        });
+        assert!(
+            confirmed_index.get().is_none(),
+            "clicking a non-selectable item should not confirm"
+        );
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.handle_click(0, false, window, cx);
+        });
+        assert_eq!(
+            confirmed_index.get(),
+            Some(0),
+            "clicking a selectable item should confirm"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_keyboard_navigation_skips_non_selectable_items(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true, false, true]), window, cx)
+        });
+
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(picker.delegate.selected_index(), 0);
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.select_next(&menu::SelectNext, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(
+                picker.delegate.selected_index(),
+                2,
+                "select_next should skip non-selectable item at index 1"
+            );
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            picker.select_previous(&menu::SelectPrevious, window, cx);
+        });
+        picker.update(cx, |picker, _cx| {
+            assert_eq!(
+                picker.delegate.selected_index(),
+                0,
+                "select_previous should skip non-selectable item at index 1"
+            );
+        });
     }
 }
 
@@ -847,11 +1091,24 @@ impl<D: PickerDelegate> Render for Picker<D> {
         let aside = self.delegate.documentation_aside(window, cx);
 
         let editor_position = self.delegate.editor_position();
+        let picker_bounds = self.picker_bounds.clone();
         let menu = v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
             .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _window, _cx| {
+                        picker_bounds.set(Some(bounds));
+                    },
+                    |_bounds, _state, _window, _cx| {},
+                )
+                .size_full()
+                .absolute()
+                .top_0()
+                .left_0(),
+            )
             // This is a bit of a hack to remove the modal styling when we're rendering the `Picker`
             // as a part of a modal rather than the entire modal.
             //
@@ -889,8 +1146,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
                         .when(self.show_scrollbar, |this| {
-                            let base_scrollbar_config =
-                                Scrollbars::new(ScrollAxes::Vertical).width_sm();
+                            let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
 
                             this.map(|this| match &self.element_container {
                                 ElementContainer::List(state) => this.custom_scrollbars(
@@ -910,13 +1166,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
-                        v_flex().flex_grow().py_2().child(
-                            ListItem::new("empty_state")
-                                .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
-                                .disabled(true)
-                                .child(Label::new(text).color(Color::Muted)),
-                        ),
+                        v_flex()
+                            .flex_grow()
+                            .py(DynamicSpacing::Base04.rems(cx))
+                            .child(
+                                ListItem::new("empty_state")
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .disabled(true)
+                                    .child(Label::new(text).color(Color::Muted)),
+                            ),
                     )
                 })
             })
@@ -949,21 +1208,39 @@ impl<D: PickerDelegate> Render for Picker<D> {
         };
 
         if is_wide_window {
-            div().relative().child(menu).child(
-                h_flex()
-                    .absolute()
-                    .when(aside.side == DocumentationSide::Left, |this| {
-                        this.right_full().mr_1()
-                    })
-                    .when(aside.side == DocumentationSide::Right, |this| {
-                        this.left_full().ml_1()
-                    })
-                    .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
-                    .when(aside.edge == DocumentationEdge::Bottom, |this| {
-                        this.bottom_0()
-                    })
-                    .child(render_aside(aside, cx)),
-            )
+            let aside_index = self.delegate.documentation_aside_index();
+            let picker_bounds = self.picker_bounds.get();
+            let item_bounds =
+                aside_index.and_then(|ix| self.item_bounds.borrow().get(&ix).copied());
+
+            let item_position = match (picker_bounds, item_bounds) {
+                (Some(picker_bounds), Some(item_bounds)) => {
+                    let relative_top = item_bounds.origin.y - picker_bounds.origin.y;
+                    let height = item_bounds.size.height;
+                    Some((relative_top, height))
+                }
+                _ => None,
+            };
+
+            div()
+                .relative()
+                .child(menu)
+                // Only render the aside once we have bounds to avoid flicker
+                .when_some(item_position, |this, (top, height)| {
+                    this.child(
+                        h_flex()
+                            .absolute()
+                            .when(aside.side == DocumentationSide::Left, |el| {
+                                el.right_full().mr_1()
+                            })
+                            .when(aside.side == DocumentationSide::Right, |el| {
+                                el.left_full().ml_1()
+                            })
+                            .top(top)
+                            .h(height)
+                            .child(render_aside(aside, cx)),
+                    )
+                })
         } else {
             v_flex()
                 .w_full()

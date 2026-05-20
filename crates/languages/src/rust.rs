@@ -2,21 +2,24 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
-use gpui::{App, AppContext, AsyncApp, SharedString, Task};
+use futures::lock::OwnedMutexGuard;
+use gpui::{App, AppContext, AsyncApp, Entity, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use http_client::github_download::{GithubBinaryMetadata, download_server_binary};
 pub use language::*;
-use lsp::{InitializeParams, LanguageServerBinary};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
+use project::lsp_store::lsp_ext_command;
 use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
-use settings::Settings as _;
+use settings::{SemanticTokenRules, Settings as _};
 use smallvec::SmallVec;
 use smol::fs::{self};
 use std::cmp::Reverse;
 use std::fmt::Display;
+use std::future::Future;
 use std::ops::Range;
 use std::{
     borrow::Cow,
@@ -24,12 +27,21 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::command::Stdio;
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
-use crate::language_settings::language_settings;
+use crate::language_settings::LanguageSettings;
+
+pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
+    let content = grammars::get_file("rust/semantic_token_rules.json")
+        .expect("missing rust/semantic_token_rules.json");
+    let json = std::str::from_utf8(&content.data).expect("invalid utf-8 in semantic_token_rules");
+    settings::parse_json_with_comments::<SemanticTokenRules>(json)
+        .expect("failed to parse rust semantic_token_rules.json")
+}
 
 pub struct RustLspAdapter;
 
@@ -66,18 +78,76 @@ enum LibcType {
 }
 
 impl RustLspAdapter {
+    fn convert_rust_analyzer_schema(raw_schema: &serde_json::Value) -> serde_json::Value {
+        let Some(schema_array) = raw_schema.as_array() else {
+            return raw_schema.clone();
+        };
+
+        let mut root_properties = serde_json::Map::new();
+
+        for item in schema_array {
+            if let Some(props) = item.get("properties").and_then(|p| p.as_object()) {
+                for (key, value) in props {
+                    let parts: Vec<&str> = key.split('.').collect();
+
+                    if parts.is_empty() {
+                        continue;
+                    }
+
+                    let parts_to_process = if parts.first() == Some(&"rust-analyzer") {
+                        &parts[1..]
+                    } else {
+                        &parts[..]
+                    };
+
+                    if parts_to_process.is_empty() {
+                        continue;
+                    }
+
+                    let mut current = &mut root_properties;
+
+                    for (i, part) in parts_to_process.iter().enumerate() {
+                        let is_last = i == parts_to_process.len() - 1;
+
+                        if is_last {
+                            current.insert(part.to_string(), value.clone());
+                        } else {
+                            let next_current = current
+                                .entry(part.to_string())
+                                .or_insert_with(|| {
+                                    serde_json::json!({
+                                        "type": "object",
+                                        "properties": {}
+                                    })
+                                })
+                                .as_object_mut()
+                                .expect("should be an object")
+                                .entry("properties")
+                                .or_insert_with(|| serde_json::json!({}))
+                                .as_object_mut()
+                                .expect("properties should be an object");
+
+                            current = next_current;
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::json!({
+            "type": "object",
+            "properties": root_properties
+        })
+    }
+
     #[cfg(target_os = "linux")]
     async fn determine_libc_type() -> LibcType {
         use futures::pin_mut;
 
         async fn from_ldd_version() -> Option<LibcType> {
-            use util::command::new_smol_command;
+            use util::command::new_command;
 
-            let ldd_output = new_smol_command("ldd")
-                .arg("--version")
-                .output()
-                .await
-                .ok()?;
+            let ldd_output = new_command("ldd").arg("--version").output().await.ok()?;
             let ldd_version = String::from_utf8_lossy(&ldd_output.stdout);
 
             if ldd_version.contains("GNU libc") || ldd_version.contains("GLIBC") {
@@ -133,6 +203,7 @@ impl RustLspAdapter {
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
+            AssetKind::TarBz2 => "tar.bz2",
             AssetKind::Gz => "gz",
             AssetKind::Zip => "zip",
         };
@@ -193,12 +264,7 @@ impl LspAdapter for RustLspAdapter {
         Some("rust-analyzer/flycheck".into())
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        _: LanguageServerId,
-        _: Option<&'_ Buffer>,
-    ) {
+    fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams, _: LanguageServerId) {
         static REGEX: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"(?m)`([^`]+)\n`$").expect("Failed to create REGEX"));
 
@@ -448,20 +514,81 @@ impl LspAdapter for RustLspAdapter {
         Some(label)
     }
 
+    async fn initialization_options_schema(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        cached_binary: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        cx: &mut AsyncApp,
+    ) -> Option<serde_json::Value> {
+        let binary = self
+            .get_language_server_command(
+                delegate.clone(),
+                None,
+                LanguageServerBinaryOptions {
+                    allow_path_lookup: true,
+                    allow_binary_download: false,
+                    pre_release: false,
+                },
+                cached_binary,
+                cx.clone(),
+            )
+            .await
+            .0
+            .ok()?;
+
+        let mut command = util::command::new_command(&binary.path);
+        command
+            .arg("--print-config-schema")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let cmd = command
+            .spawn()
+            .map_err(|e| log::debug!("failed to spawn command {command:?}: {e}"))
+            .ok()?;
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| log::debug!("failed to execute command {command:?}: {e}"))
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let raw_schema: serde_json::Value = serde_json::from_slice(output.stdout.as_slice())
+            .map_err(|e| log::debug!("failed to parse rust-analyzer's JSON schema output: {e}"))
+            .ok()?;
+
+        // Convert rust-analyzer's array-based schema format to nested JSON Schema
+        let converted_schema = Self::convert_rust_analyzer_schema(&raw_schema);
+        Some(converted_schema)
+    }
+
     async fn label_for_symbol(
         &self,
-        name: &str,
-        kind: lsp::SymbolKind,
+        symbol: &language::Symbol,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (prefix, suffix) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
-            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
-            lsp::SymbolKind::ENUM => ("enum ", " {}"),
-            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
-            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
-            lsp::SymbolKind::MODULE => ("mod ", " {}"),
-            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
+        let name = &symbol.name;
+        let (prefix, suffix) = match symbol.kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", "();"),
+            lsp::SymbolKind::STRUCT => ("struct ", ";"),
+            lsp::SymbolKind::ENUM => ("enum ", "{}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", "{}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ":()=();"),
+            lsp::SymbolKind::MODULE => ("mod ", ";"),
+            lsp::SymbolKind::PACKAGE => ("extern crate ", ";"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", "=();"),
+            lsp::SymbolKind::ENUM_MEMBER => {
+                let prefix = "enum E {";
+                return Some(CodeLabel::new(
+                    name.to_string(),
+                    0..name.len(),
+                    language.highlight_text(
+                        &Rope::from_iter([prefix, name, "}"]),
+                        prefix.len()..prefix.len() + name.len(),
+                    ),
+                ));
+            }
             _ => return None,
         };
 
@@ -483,20 +610,60 @@ impl LspAdapter for RustLspAdapter {
             .lsp
             .get(&SERVER_NAME)
             .is_some_and(|s| s.enable_lsp_tasks);
-        if enable_lsp_tasks {
-            let experimental = json!({
-                "runnables": {
-                    "kinds": [ "cargo", "shell" ],
-                },
-            });
-            if let Some(original_experimental) = &mut original.capabilities.experimental {
-                merge_json_value_into(experimental, original_experimental);
-            } else {
-                original.capabilities.experimental = Some(experimental);
+
+        let mut experimental = json!({
+            "commands": {
+                "commands": [
+                    "rust-analyzer.showReferences",
+                    "rust-analyzer.gotoLocation",
+                    "rust-analyzer.triggerParameterHints",
+                    "rust-analyzer.rename",
+                ]
             }
+        });
+
+        if enable_lsp_tasks {
+            merge_json_value_into(
+                json!({
+                    "runnables": {
+                        "kinds": [ "cargo", "shell" ],
+                    },
+                    "commands": {
+                        "commands": [
+                            "rust-analyzer.runSingle",
+                        ]
+                    }
+                }),
+                &mut experimental,
+            );
+        }
+
+        if let Some(original_experimental) = &mut original.capabilities.experimental {
+            merge_json_value_into(experimental, original_experimental);
+        } else {
+            original.capabilities.experimental = Some(experimental);
         }
 
         Ok(original)
+    }
+
+    fn client_command(
+        &self,
+        command_name: &str,
+        arguments: &[serde_json::Value],
+    ) -> Option<ClientCommand> {
+        match command_name {
+            "rust-analyzer.showReferences" => Some(ClientCommand::ShowLocations),
+            "rust-analyzer.runSingle" => {
+                let first_arg = arguments.first()?;
+                let runnable =
+                    serde_json::from_value::<lsp_ext_command::Runnable>(first_arg.clone()).ok()?;
+                let template =
+                    lsp_ext_command::runnable_to_task_template(runnable.label, runnable.args);
+                Some(ClientCommand::ScheduleTask(template))
+            }
+            _ => None,
+        }
     }
 }
 
@@ -563,87 +730,93 @@ impl LspInstaller for RustLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion {
-            name,
-            url,
-            digest: expected_digest,
-        } = version;
-        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
-        let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
-        };
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
 
-        let binary = LanguageServerBinary {
-            path: server_path.clone(),
-            env: None,
-            arguments: Default::default(),
-        };
-
-        let metadata_path = destination_path.with_extension("metadata");
-        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
-            .await
-            .ok();
-        if let Some(metadata) = metadata {
-            let validity_check = async || {
-                delegate
-                    .try_exec(LanguageServerBinary {
-                        path: server_path.clone(),
-                        arguments: vec!["--version".into()],
-                        env: None,
-                    })
-                    .await
-                    .inspect_err(|err| {
-                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err:#}",)
-                    })
-            };
-            if let (Some(actual_digest), Some(expected_digest)) =
-                (&metadata.digest, &expected_digest)
-            {
-                if actual_digest == expected_digest {
-                    if validity_check().await.is_ok() {
-                        return Ok(binary);
-                    }
-                } else {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                    );
-                }
-            } else if validity_check().await.is_ok() {
-                return Ok(binary);
-            }
-        }
-
-        download_server_binary(
-            &*delegate.http_client(),
-            &url,
-            expected_digest.as_deref(),
-            &destination_path,
-            Self::GITHUB_ASSET_KIND,
-        )
-        .await?;
-        make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| path != destination_path).await;
-        GithubBinaryMetadata::write_to_file(
-            &GithubBinaryMetadata {
-                metadata_version: 1,
+        async move {
+            let GitHubLspBinaryVersion {
+                name,
+                url,
                 digest: expected_digest,
-            },
-            &metadata_path,
-        )
-        .await?;
+            } = version;
+            let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
+            let server_path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+                AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+            };
 
-        Ok(LanguageServerBinary {
-            path: server_path,
-            env: None,
-            arguments: Default::default(),
-        })
+            let binary = LanguageServerBinary {
+                path: server_path.clone(),
+                env: None,
+                arguments: Default::default(),
+            };
+
+            let metadata_path = destination_path.with_extension("metadata");
+            let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+                .await
+                .ok();
+            if let Some(metadata) = metadata {
+                let validity_check = async || {
+                    delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await
+                        .inspect_err(|err| {
+                            log::warn!(
+                                "Unable to run {server_path:?} asset, redownloading: {err:#}",
+                            )
+                        })
+                };
+                if let (Some(actual_digest), Some(expected_digest)) =
+                    (&metadata.digest, &expected_digest)
+                {
+                    if actual_digest == expected_digest {
+                        if validity_check().await.is_ok() {
+                            return Ok(binary);
+                        }
+                    } else {
+                        log::info!(
+                            "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                        );
+                    }
+                } else if validity_check().await.is_ok() {
+                    return Ok(binary);
+                }
+            }
+
+            download_server_binary(
+                &*delegate.http_client(),
+                &url,
+                expected_digest.as_deref(),
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+            make_file_executable(&server_path).await?;
+            remove_matching(&container_dir, |path| path != destination_path).await;
+            GithubBinaryMetadata::write_to_file(
+                &GithubBinaryMetadata {
+                    metadata_version: 1,
+                    digest: expected_digest,
+                },
+                &metadata_path,
+            )
+            .await?;
+
+            Ok(LanguageServerBinary {
+                path: server_path,
+                env: None,
+                arguments: Default::default(),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -732,7 +905,7 @@ impl ContextProvider for RustContextProvider {
             }
             if let Some(path) = local_abs_path.as_ref()
                 && let Some((target, manifest_path)) =
-                    target_info_from_abs_path(path, project_env.as_ref()).await
+                    target_info_from_abs_path(path, project_env.as_ref()).await?
             {
                 if let Some(target) = target {
                     variables.extend(TaskVariables::from_iter([
@@ -768,23 +941,16 @@ impl ContextProvider for RustContextProvider {
 
     fn associated_tasks(
         &self,
-        file: Option<Arc<dyn language::File>>,
+        buffer: Option<Entity<Buffer>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
-        let language_sets = language_settings(Some("Rust".into()), file.as_ref(), cx);
-        let package_to_run = language_sets
-            .tasks
-            .variables
-            .get(DEFAULT_RUN_NAME_STR)
-            .cloned();
-        let custom_target_dir = language_sets
-            .tasks
-            .variables
-            .get(CUSTOM_TARGET_DIR)
-            .cloned();
+        let language = LanguageName::new_static("Rust");
+        let settings = LanguageSettings::resolve(buffer.map(|b| b.read(cx)), Some(&language), cx);
+        let package_to_run = settings.tasks.variables.get(DEFAULT_RUN_NAME_STR).cloned();
+        let custom_target_dir = settings.tasks.variables.get(CUSTOM_TARGET_DIR).cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
@@ -1005,24 +1171,31 @@ struct TargetInfo {
 async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(Option<TargetInfo>, Arc<Path>)> {
-    let mut command = util::command::new_smol_command("cargo");
+) -> Result<Option<(Option<TargetInfo>, Arc<Path>)>> {
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
     let output = command
-        .current_dir(abs_path.parent()?)
+        .current_dir(
+            abs_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("failed to get parent directory"))?,
+        )
         .arg("metadata")
         .arg("--no-deps")
         .arg("--format-version")
         .arg("1")
         .output()
-        .await
-        .log_err()?
-        .stdout;
+        .await?;
 
-    let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
-    target_info_from_metadata(metadata, abs_path)
+    if !output.status.success() {
+        let stderr_msg = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Cargo metadata failed\n {stderr_msg}");
+    }
+
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
+    Ok(target_info_from_metadata(metadata, abs_path))
 }
 
 fn target_info_from_metadata(
@@ -1081,7 +1254,7 @@ async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_smol_command("cargo");
+    let mut command = util::command::new_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -1150,8 +1323,8 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             None => return Ok(None),
         };
         let path = match RustLspAdapter::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-            AssetKind::Zip => path.join("rust-analyzer.exe"), // zip contains a .exe
+            AssetKind::TarGz | AssetKind::TarBz2 | AssetKind::Gz => path, // Tar and gzip extract in place.
+            AssetKind::Zip => path.join("rust-analyzer.exe"),             // zip contains a .exe
         };
 
         anyhow::Ok(Some(LanguageServerBinary {
@@ -1234,7 +1407,7 @@ mod tests {
                 },
             ],
         };
-        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0), None);
+        RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 
@@ -1424,10 +1597,10 @@ mod tests {
                 "await.as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 6..18,
                 vec![
-                    (6..18, HighlightId(2)),
-                    (20..23, HighlightId(1)),
-                    (33..40, HighlightId(0)),
-                    (45..46, HighlightId(0))
+                    (6..18, HighlightId::new(2)),
+                    (20..23, HighlightId::new(1)),
+                    (33..40, HighlightId::new(0)),
+                    (45..46, HighlightId::new(0))
                 ],
             ))
         );
@@ -1454,12 +1627,12 @@ mod tests {
                 "pub fn as_deref_mut(&mut self) -> IterMut<'_, T>".to_string(),
                 7..19,
                 vec![
-                    (0..3, HighlightId(1)),
-                    (4..6, HighlightId(1)),
-                    (7..19, HighlightId(2)),
-                    (21..24, HighlightId(1)),
-                    (34..41, HighlightId(0)),
-                    (46..47, HighlightId(0))
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..19, HighlightId::new(2)),
+                    (21..24, HighlightId::new(1)),
+                    (34..41, HighlightId::new(0)),
+                    (46..47, HighlightId::new(0))
                 ],
             ))
         );
@@ -1480,7 +1653,7 @@ mod tests {
             Some(CodeLabel::new(
                 "inner_value: String".to_string(),
                 6..11,
-                vec![(0..11, HighlightId(3)), (13..19, HighlightId(0))],
+                vec![(0..11, HighlightId::new(3)), (13..19, HighlightId::new(0))],
             ))
         );
 
@@ -1507,8 +1680,8 @@ mod tests {
                 vec![
                     (10..13, HighlightId::TABSTOP_INSERT_ID),
                     (16..19, HighlightId::TABSTOP_INSERT_ID),
-                    (0..7, HighlightId(2)),
-                    (7..8, HighlightId(2)),
+                    (0..7, HighlightId::new(2)),
+                    (7..8, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1535,8 +1708,8 @@ mod tests {
                 0..4,
                 vec![
                     (5..9, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(2)),
-                    (3..4, HighlightId(2)),
+                    (0..3, HighlightId::new(2)),
+                    (3..4, HighlightId::new(2)),
                 ],
             ))
         );
@@ -1564,8 +1737,8 @@ mod tests {
                 vec![
                     (7..10, HighlightId::TABSTOP_REPLACE_ID),
                     (13..16, HighlightId::TABSTOP_INSERT_ID),
-                    (0..2, HighlightId(1)),
-                    (3..6, HighlightId(1)),
+                    (0..2, HighlightId::new(1)),
+                    (3..6, HighlightId::new(1)),
                 ],
             ))
         );
@@ -1593,8 +1766,8 @@ mod tests {
                 vec![
                     (4..8, HighlightId::TABSTOP_REPLACE_ID),
                     (12..16, HighlightId::TABSTOP_REPLACE_ID),
-                    (0..3, HighlightId(1)),
-                    (9..11, HighlightId(1)),
+                    (0..3, HighlightId::new(1)),
+                    (9..11, HighlightId::new(1)),
                 ],
             ))
         );
@@ -1692,7 +1865,14 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("hello", lsp::SymbolKind::FUNCTION, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "hello".to_string(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "fn hello".to_string(),
@@ -1703,12 +1883,55 @@ mod tests {
 
         assert_eq!(
             adapter
-                .label_for_symbol("World", lsp::SymbolKind::TYPE_PARAMETER, &language)
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "World".to_string(),
+                        kind: lsp::SymbolKind::TYPE_PARAMETER,
+                        container_name: None,
+                    },
+                    &language
+                )
                 .await,
             Some(CodeLabel::new(
                 "type World".to_string(),
                 5..10,
                 vec![(0..4, highlight_keyword), (5..10, highlight_type)],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "zed".to_string(),
+                        kind: lsp::SymbolKind::PACKAGE,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "extern crate zed".to_string(),
+                13..16,
+                vec![(0..6, highlight_keyword), (7..12, highlight_keyword),],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_symbol(
+                    &language::Symbol {
+                        name: "Variant".to_string(),
+                        kind: lsp::SymbolKind::ENUM_MEMBER,
+                        container_name: None,
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "Variant".to_string(),
+                0..7,
+                vec![(0..7, highlight_type)],
             ))
         );
     }
@@ -1884,6 +2107,21 @@ mod tests {
     }
 
     #[test]
+    fn target_info_from_abs_path_failed() {
+        let project_root = tempfile::tempdir().unwrap();
+        let cargo_toml_path = project_root.path().join("Cargo.toml");
+        let src_dir = project_root.path().join("src");
+        let main_rs_path = src_dir.join("main.rs");
+
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(&cargo_toml_path, "invalid_toml = {[[{").unwrap();
+        std::fs::write(&main_rs_path, "// rust").unwrap();
+
+        let e = smol::block_on(target_info_from_abs_path(&main_rs_path, None)).unwrap_err();
+        assert!(e.to_string().contains("Cargo metadata failed"));
+    }
+
+    #[test]
     fn test_rust_test_fragment() {
         #[track_caller]
         fn check(
@@ -1911,5 +2149,91 @@ mod tests {
             "--bin=x",
         );
         check([], "/project/src/main.rs", "--");
+    }
+
+    #[test]
+    fn test_convert_rust_analyzer_schema() {
+        let raw_schema = serde_json::json!([
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.emitMustUse": {
+                        "markdownDescription": "Insert #[must_use] when generating `as_` methods for enum variants.",
+                        "default": false,
+                        "type": "boolean"
+                    }
+                }
+            },
+            {
+                "title": "Assist",
+                "properties": {
+                    "rust-analyzer.assist.expressionFillDefault": {
+                        "markdownDescription": "Placeholder expression to use for missing expressions in assists.",
+                        "default": "todo",
+                        "type": "string"
+                    }
+                }
+            },
+            {
+                "title": "Cache Priming",
+                "properties": {
+                    "rust-analyzer.cachePriming.enable": {
+                        "markdownDescription": "Warm up caches on project load.",
+                        "default": true,
+                        "type": "boolean"
+                    }
+                }
+            }
+        ]);
+
+        let converted = RustLspAdapter::convert_rust_analyzer_schema(&raw_schema);
+
+        assert_eq!(
+            converted.get("type").and_then(|v| v.as_str()),
+            Some("object")
+        );
+
+        let properties = converted
+            .pointer("/properties")
+            .expect("should have properties")
+            .as_object()
+            .expect("properties should be object");
+
+        assert!(properties.contains_key("assist"));
+        assert!(properties.contains_key("cachePriming"));
+        assert!(!properties.contains_key("rust-analyzer"));
+
+        let assist_props = properties
+            .get("assist")
+            .expect("should have assist")
+            .pointer("/properties")
+            .expect("assist should have properties")
+            .as_object()
+            .expect("assist properties should be object");
+
+        assert!(assist_props.contains_key("emitMustUse"));
+        assert!(assist_props.contains_key("expressionFillDefault"));
+
+        let emit_must_use = assist_props
+            .get("emitMustUse")
+            .expect("should have emitMustUse");
+        assert_eq!(
+            emit_must_use.get("type").and_then(|v| v.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            emit_must_use.get("default").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let cache_priming_props = properties
+            .get("cachePriming")
+            .expect("should have cachePriming")
+            .pointer("/properties")
+            .expect("cachePriming should have properties")
+            .as_object()
+            .expect("cachePriming properties should be object");
+
+        assert!(cache_priming_props.contains_key("enable"));
     }
 }

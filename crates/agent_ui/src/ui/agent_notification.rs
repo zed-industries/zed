@@ -5,12 +5,11 @@ use gpui::{
 };
 use release_channel::ReleaseChannel;
 use std::rc::Rc;
-use theme;
 use ui::{Render, prelude::*};
 
 pub struct AgentNotification {
     title: SharedString,
-    caption: SharedString,
+    caption: Option<SharedString>,
     icon: IconName,
     project_name: Option<SharedString>,
 }
@@ -18,13 +17,13 @@ pub struct AgentNotification {
 impl AgentNotification {
     pub fn new(
         title: impl Into<SharedString>,
-        caption: impl Into<SharedString>,
+        caption: Option<SharedString>,
         icon: IconName,
         project_name: Option<impl Into<SharedString>>,
     ) -> Self {
         Self {
             title: title.into(),
-            caption: caption.into(),
+            caption: caption,
             icon,
             project_name: project_name.map(|name| name.into()),
         }
@@ -75,9 +74,19 @@ pub enum AgentNotificationEvent {
 
 impl EventEmitter<AgentNotificationEvent> for AgentNotification {}
 
+impl AgentNotification {
+    pub fn accept(&mut self, cx: &mut Context<Self>) {
+        cx.emit(AgentNotificationEvent::Accepted);
+    }
+
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) {
+        cx.emit(AgentNotificationEvent::Dismissed);
+    }
+}
+
 impl Render for AgentNotification {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(window, cx);
+        let ui_font = theme_settings::setup_ui_font(window, cx);
         let line_height = window.line_height();
 
         let bg = cx.theme().colors().elevated_surface_background;
@@ -141,26 +150,27 @@ impl Render for AgentNotification {
                                     .when_some(
                                         self.project_name.clone(),
                                         |description, project_name| {
-                                            description.child(
-                                                h_flex()
-                                                    .gap_1p5()
-                                                    .child(
-                                                        div()
-                                                            .max_w_16()
-                                                            .truncate()
-                                                            .child(project_name),
-                                                    )
-                                                    .child(
-                                                        div().size(px(3.)).rounded_full().bg(cx
-                                                            .theme()
-                                                            .colors()
-                                                            .text
-                                                            .opacity(0.5)),
-                                                    ),
-                                            )
+                                            let has_caption = self.caption.is_some();
+                                            let project = div()
+                                                .truncate()
+                                                .when(has_caption, |this| this.max_w_16())
+                                                .child(project_name);
+                                            let mut row = h_flex().gap_1p5().child(project);
+                                            if has_caption {
+                                                row = row.child(
+                                                    div().size(px(3.)).rounded_full().bg(cx
+                                                        .theme()
+                                                        .colors()
+                                                        .text
+                                                        .opacity(0.5)),
+                                                );
+                                            }
+                                            description.child(row)
                                         },
                                     )
-                                    .child(self.caption.clone())
+                                    .when_some(self.caption.clone(), |description, caption| {
+                                        description.child(caption)
+                                    })
                                     .child(gradient_overflow()),
                             ),
                     ),
@@ -170,18 +180,18 @@ impl Render for AgentNotification {
                     .gap_1()
                     .items_center()
                     .child(
-                        Button::new("open", "View Panel")
+                        Button::new("open", "View")
                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click({
-                                cx.listener(move |_this, _event, _, cx| {
-                                    cx.emit(AgentNotificationEvent::Accepted);
+                                cx.listener(move |this, _event, _, cx| {
+                                    this.accept(cx);
                                 })
                             }),
                     )
                     .child(Button::new("dismiss", "Dismiss").full_width().on_click({
-                        cx.listener(move |_, _event, _, cx| {
-                            cx.emit(AgentNotificationEvent::Dismissed);
+                        cx.listener(move |this, _event, _, cx| {
+                            this.dismiss(cx);
                         })
                     })),
             )

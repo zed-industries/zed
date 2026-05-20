@@ -1,26 +1,29 @@
-use std::sync::{Arc, Mutex};
-
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
+
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
-    Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    Subscription, Task, TaskExt, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity,
+    prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use notifications::status_toast::{StatusToast, ToastIcon};
+use notifications::status_toast::StatusToast;
+use parking_lot::Mutex;
 use project::{
     context_server_store::{
-        ContextServerStatus, ContextServerStore, registry::ContextServerDescriptorRegistry,
+        ContextServerStatus, ContextServerStore, ServerStatusChangedEvent,
+        registry::ContextServerDescriptorRegistry,
     },
-    project_settings::{ContextServerSettings, ProjectSettings},
+    project_settings::{ContextServerSettings, OAuthClientSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use serde::Deserialize;
 use settings::{Settings as _, update_settings_file};
-use theme::ThemeSettings;
+use std::sync::Arc;
+use theme_settings::ThemeSettings;
 use ui::{
     CommonAnimationExt, KeyBinding, Modal, ModalFooter, ModalHeader, Section, Tooltip,
     WithScrollbar, prelude::*,
@@ -40,7 +43,9 @@ enum ConfigurationTarget {
         id: ContextServerId,
         url: String,
         headers: HashMap<String, String>,
+        oauth: Option<OAuthClientSettings>,
     },
+
     Extension {
         id: ContextServerId,
         repository_url: Option<SharedString>,
@@ -118,15 +123,17 @@ impl ConfigurationSource {
                 id,
                 url,
                 headers: auth,
+                oauth,
             } => ConfigurationSource::Existing {
                 editor: create_editor(
-                    context_server_http_input(Some((id, url, auth))),
+                    context_server_http_input(Some((id, url, auth, oauth))),
                     jsonc_language,
                     window,
                     cx,
                 ),
                 is_http: true,
             },
+
             ConfigurationTarget::Extension {
                 id,
                 repository_url,
@@ -165,13 +172,15 @@ impl ConfigurationSource {
             ConfigurationSource::New { editor, is_http }
             | ConfigurationSource::Existing { editor, is_http } => {
                 if *is_http {
-                    parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth)| {
+                    parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth, oauth)| {
                         (
                             id,
                             ContextServerSettings::Http {
                                 enabled: true,
                                 url,
                                 headers: auth,
+                                timeout: None,
+                                oauth,
                             },
                         )
                     })
@@ -181,6 +190,7 @@ impl ConfigurationSource {
                             id,
                             ContextServerSettings::Stdio {
                                 enabled: true,
+                                remote: false,
                                 command,
                             },
                         )
@@ -208,6 +218,7 @@ impl ConfigurationSource {
                     id.clone(),
                     ContextServerSettings::Extension {
                         enabled: true,
+                        remote: false,
                         settings,
                     },
                 ))
@@ -234,6 +245,8 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
 
     format!(
         r#"{{
+  /// Configure an MCP server that runs locally via stdin/stdout
+  ///
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
@@ -248,11 +261,16 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
 }
 
 fn context_server_http_input(
-    existing: Option<(ContextServerId, String, HashMap<String, String>)>,
+    existing: Option<(
+        ContextServerId,
+        String,
+        HashMap<String, String>,
+        Option<OAuthClientSettings>,
+    )>,
 ) -> String {
-    let (name, url, headers) = match existing {
-        Some((id, url, headers)) => {
-            let header = if headers.is_empty() {
+    let (name, url, headers, oauth) = match existing {
+        Some((id, url, headers, oauth)) => {
+            let headers = if headers.is_empty() {
                 r#"// "Authorization": "Bearer <token>"#.to_string()
             } else {
                 let json = serde_json::to_string_pretty(&headers).unwrap();
@@ -266,21 +284,56 @@ fn context_server_http_input(
                     .map(|line| format!("  {}", line))
                     .collect::<String>()
             };
-            (id.0.to_string(), url, header)
+            (id.0.to_string(), url, headers, oauth)
         }
         None => (
             "some-remote-server".to_string(),
             "https://example.com/mcp".to_string(),
             r#"// "Authorization": "Bearer <token>"#.to_string(),
+            None,
         ),
     };
 
+    let oauth = oauth.map_or_else(
+        || {
+            r#"
+    /// Uncomment to use a pre-registered OAuth client. You can include the client secret here as well, otherwise it will be prompted interactively and saved in the system keychain.
+    // "oauth": {
+    //   "client_id": "your-client-id",
+    // },"#
+                .to_string()
+        },
+
+        |oauth| {
+            let mut lines = vec![
+                String::from("\n    \"oauth\": {"),
+
+                format!("      \"client_id\": {},", serde_json::to_string(&oauth.client_id).unwrap()),
+            ];
+            if let Some(client_secret) = oauth.client_secret {
+                lines.push(format!(
+                    "      \"client_secret\": {}",
+                    serde_json::to_string(&client_secret).unwrap()
+                ));
+            } else {
+                lines.push(String::from(
+                    "      /// Optional client secret for confidential clients\n      // \"client_secret\": \"your-client-secret\"",
+                ));
+            }
+            lines.push(String::from("    },"));
+
+            lines.join("\n")
+        },
+    );
+
     format!(
         r#"{{
+  /// Configure an MCP server that you connect to over HTTP
+  ///
   /// The name of your remote MCP server
   "{name}": {{
     /// The URL of the remote MCP server
-    "url": "{url}",
+    "url": "{url}",{oauth}
     "headers": {{
      /// Any headers to send along
      {headers}
@@ -290,12 +343,21 @@ fn context_server_http_input(
     )
 }
 
-fn parse_http_input(text: &str) -> Result<(ContextServerId, String, HashMap<String, String>)> {
+fn parse_http_input(
+    text: &str,
+) -> Result<(
+    ContextServerId,
+    String,
+    HashMap<String, String>,
+    Option<OAuthClientSettings>,
+)> {
     #[derive(Deserialize)]
     struct Temp {
         url: String,
         #[serde(default)]
         headers: HashMap<String, String>,
+        #[serde(default)]
+        oauth: Option<OAuthClientSettings>,
     }
     let value: HashMap<String, Temp> = serde_json_lenient::from_str(text)?;
     if value.len() != 1 {
@@ -304,7 +366,12 @@ fn parse_http_input(text: &str) -> Result<(ContextServerId, String, HashMap<Stri
 
     let (key, value) = value.into_iter().next().unwrap();
 
-    Ok((ContextServerId(key.into()), value.url, value.headers))
+    Ok((
+        ContextServerId(key.into()),
+        value.url,
+        value.headers,
+        value.oauth,
+    ))
 }
 
 fn resolve_context_server_extension(
@@ -339,6 +406,16 @@ fn resolve_context_server_extension(
 enum State {
     Idle,
     Waiting,
+    AuthRequired {
+        server_id: ContextServerId,
+    },
+    ClientSecretRequired {
+        server_id: ContextServerId,
+        error: Option<SharedString>,
+    },
+    Authenticating {
+        server_id: ContextServerId,
+    },
     Error(SharedString),
 }
 
@@ -349,9 +426,47 @@ pub struct ConfigureContextServerModal {
     state: State,
     original_server_id: Option<ContextServerId>,
     scroll_handle: ScrollHandle,
+    secret_editor: Entity<Editor>,
+    _auth_subscription: Option<Subscription>,
 }
 
 impl ConfigureContextServerModal {
+    fn initial_state(
+        context_server_store: &Entity<ContextServerStore>,
+        target: &ConfigurationTarget,
+        cx: &App,
+    ) -> State {
+        let Some(server_id) = (match target {
+            ConfigurationTarget::Existing { id, .. }
+            | ConfigurationTarget::ExistingHttp { id, .. }
+            | ConfigurationTarget::Extension { id, .. } => Some(id),
+            ConfigurationTarget::New => None,
+        }) else {
+            return State::Idle;
+        };
+
+        match context_server_store.read(cx).status_for_server(server_id) {
+            Some(ContextServerStatus::AuthRequired) => State::AuthRequired {
+                server_id: server_id.clone(),
+            },
+            Some(ContextServerStatus::ClientSecretRequired { error }) => {
+                State::ClientSecretRequired {
+                    server_id: server_id.clone(),
+                    error: error.map(SharedString::from),
+                }
+            }
+            Some(ContextServerStatus::Authenticating) => State::Authenticating {
+                server_id: server_id.clone(),
+            },
+            Some(ContextServerStatus::Error(error)) => State::Error(error.into()),
+
+            Some(ContextServerStatus::Starting)
+            | Some(ContextServerStatus::Running)
+            | Some(ContextServerStatus::Stopped)
+            | None => State::Idle,
+        }
+    }
+
     pub fn register(
         workspace: &mut Workspace,
         language_registry: Arc<LanguageRegistry>,
@@ -403,6 +518,7 @@ impl ConfigureContextServerModal {
                 ContextServerSettings::Stdio {
                     enabled: _,
                     command,
+                    ..
                 } => Some(ConfigurationTarget::Existing {
                     id: server_id,
                     command,
@@ -411,11 +527,15 @@ impl ConfigureContextServerModal {
                     enabled: _,
                     url,
                     headers,
+                    timeout: _,
+                    oauth,
                 } => Some(ConfigurationTarget::ExistingHttp {
                     id: server_id,
                     url,
                     headers,
+                    oauth,
                 }),
+
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
@@ -452,9 +572,10 @@ impl ConfigureContextServerModal {
                 let workspace_handle = cx.weak_entity();
                 let context_server_store = workspace.project().read(cx).context_server_store();
                 workspace.toggle_modal(window, cx, |window, cx| Self {
-                    context_server_store,
+                    context_server_store: context_server_store.clone(),
                     workspace: workspace_handle,
-                    state: State::Idle,
+                    state: Self::initial_state(&context_server_store, &target, cx),
+
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
@@ -469,6 +590,17 @@ impl ConfigureContextServerModal {
                         cx,
                     ),
                     scroll_handle: ScrollHandle::new(),
+                    secret_editor: cx.new(|cx| {
+                        let mut editor = Editor::single_line(window, cx);
+                        editor.set_placeholder_text(
+                            "Enter client secret (leave empty for public clients)",
+                            window,
+                            cx,
+                        );
+                        editor.set_masked(true, cx);
+                        editor
+                    }),
+                    _auth_subscription: None,
                 })
             })
         })
@@ -480,6 +612,12 @@ impl ConfigureContextServerModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut Context<Self>) {
+        if matches!(self.state, State::Waiting | State::Authenticating { .. }) {
+            return;
+        }
+
+        self._auth_subscription = None;
+
         self.state = State::Idle;
         let Some(workspace) = self.workspace.upgrade() else {
             return;
@@ -495,7 +633,7 @@ impl ConfigureContextServerModal {
 
         self.state = State::Waiting;
 
-        let existing_server = self.context_server_store.read(cx).get_running_server(&id);
+        let existing_server = self.context_server_store.read(cx).get_server(&id);
         if existing_server.is_some() {
             self.context_server_store.update(cx, |store, cx| {
                 store.stop_server(&id, cx).log_err();
@@ -509,14 +647,26 @@ impl ConfigureContextServerModal {
             async move |this, cx| {
                 let result = wait_for_context_server_task.await;
                 this.update(cx, |this, cx| match result {
-                    Ok(_) => {
+                    Ok(ContextServerStatus::Running) => {
                         this.state = State::Idle;
                         this.show_configured_context_server_toast(id, cx);
                         cx.emit(DismissEvent);
                     }
+                    Ok(ContextServerStatus::AuthRequired) => {
+                        this.state = State::AuthRequired { server_id: id };
+                        cx.notify();
+                    }
+                    Ok(ContextServerStatus::ClientSecretRequired { error }) => {
+                        this.state = State::ClientSecretRequired {
+                            server_id: id,
+                            error: error.map(SharedString::from),
+                        };
+                        cx.notify();
+                    }
                     Err(err) => {
                         this.set_error(err, cx);
                     }
+                    Ok(_) => {}
                 })
             }
         })
@@ -552,6 +702,77 @@ impl ConfigureContextServerModal {
         cx.emit(DismissEvent);
     }
 
+    fn cancel_authentication(&mut self, server_id: &ContextServerId, cx: &mut Context<Self>) {
+        self._auth_subscription = None;
+        self.context_server_store.update(cx, |store, cx| {
+            store.stop_server(server_id, cx).log_err();
+        });
+        self.state = State::Idle;
+        cx.notify();
+    }
+
+    fn authenticate(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        self.context_server_store.update(cx, |store, cx| {
+            store.authenticate_server(&server_id, cx).log_err();
+        });
+        self.await_auth_outcome(server_id, cx);
+    }
+
+    fn submit_client_secret(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        let secret = self.secret_editor.read(cx).text(cx);
+        self.context_server_store.update(cx, |store, cx| {
+            store.submit_client_secret(&server_id, secret, cx).log_err();
+        });
+        self.await_auth_outcome(server_id, cx);
+    }
+
+    fn await_auth_outcome(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
+        self.state = State::Authenticating {
+            server_id: server_id.clone(),
+        };
+
+        self._auth_subscription = Some(cx.subscribe(
+            &self.context_server_store,
+            move |this, _, event: &ServerStatusChangedEvent, cx| {
+                if event.server_id != server_id {
+                    return;
+                }
+                match &event.status {
+                    ContextServerStatus::Running => {
+                        this._auth_subscription = None;
+                        this.state = State::Idle;
+                        this.show_configured_context_server_toast(event.server_id.clone(), cx);
+                        cx.emit(DismissEvent);
+                    }
+                    ContextServerStatus::AuthRequired => {
+                        this._auth_subscription = None;
+                        this.state = State::AuthRequired {
+                            server_id: event.server_id.clone(),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::ClientSecretRequired { error } => {
+                        this._auth_subscription = None;
+                        this.state = State::ClientSecretRequired {
+                            server_id: event.server_id.clone(),
+                            error: error.clone().map(SharedString::from),
+                        };
+                        cx.notify();
+                    }
+                    ContextServerStatus::Error(error) => {
+                        this._auth_subscription = None;
+                        this.set_error(error.clone(), cx);
+                    }
+                    ContextServerStatus::Authenticating
+                    | ContextServerStatus::Starting
+                    | ContextServerStatus::Stopped => {}
+                }
+            },
+        ));
+
+        cx.notify();
+    }
+
     fn show_configured_context_server_toast(&self, id: ContextServerId, cx: &mut App) {
         self.workspace
             .update(cx, {
@@ -560,8 +781,12 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
-                                .action("Dismiss", |_, _| {})
+                            this.icon(
+                                Icon::new(IconName::ToolHammer)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .action("Dismiss", |_, _| {})
                         },
                     );
 
@@ -609,7 +834,8 @@ impl ConfigureContextServerModal {
     }
 
     fn render_modal_description(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        const MODAL_DESCRIPTION: &str = "Visit the MCP server configuration docs to find all necessary arguments and environment variables.";
+        const MODAL_DESCRIPTION: &str =
+            "Check the server docs for required arguments and environment variables.";
 
         if let ConfigurationSource::Extension {
             installation_instructions: Some(installation_instructions),
@@ -629,6 +855,67 @@ impl ConfigureContextServerModal {
                 .color(Color::Muted)
                 .into_any_element()
         }
+    }
+
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let is_http = match &self.source {
+            ConfigurationSource::New { is_http, .. } => *is_http,
+            _ => return None,
+        };
+
+        let tab = |label: &'static str, active: bool| {
+            div()
+                .id(label)
+                .cursor_pointer()
+                .p_1()
+                .text_sm()
+                .border_b_1()
+                .when(active, |this| {
+                    this.border_color(cx.theme().colors().border_focused)
+                })
+                .when(!active, |this| {
+                    this.border_color(gpui::transparent_black())
+                        .text_color(cx.theme().colors().text_muted)
+                        .hover(|s| s.text_color(cx.theme().colors().text))
+                })
+                .child(label)
+        };
+
+        Some(
+            h_flex()
+                .pt_1()
+                .mb_2p5()
+                .gap_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border.opacity(0.5))
+                .child(
+                    tab("Local", !is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if *is_http {
+                                *is_http = false;
+                                let new_text = context_server_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .child(
+                    tab("Remote", is_http).on_click(cx.listener(|this, _, window, cx| {
+                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
+                            if !*is_http {
+                                *is_http = true;
+                                let new_text = context_server_http_input(None);
+                                editor.update(cx, |editor, cx| {
+                                    editor.set_text(new_text, window, cx);
+                                });
+                            }
+                        }
+                    })),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_modal_content(&self, cx: &App) -> AnyElement {
@@ -676,7 +963,7 @@ impl ConfigureContextServerModal {
 
     fn render_modal_footer(&self, cx: &mut Context<Self>) -> ModalFooter {
         let focus_handle = self.focus_handle(cx);
-        let is_connecting = matches!(self.state, State::Waiting);
+        let is_busy = matches!(self.state, State::Waiting | State::Authenticating { .. });
 
         ModalFooter::new()
             .start_slot::<Button>(
@@ -687,9 +974,11 @@ impl ConfigureContextServerModal {
                 {
                     Some(
                         Button::new("open-repository", "Open Repository")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_color(Color::Muted)
-                            .icon_size(IconSize::Small)
+                            .end_icon(
+                                Icon::new(IconName::ArrowUpRight)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |_window, cx| {
@@ -705,36 +994,6 @@ impl ConfigureContextServerModal {
                                 let repository_url = repository_url.clone();
                                 move |_, _, cx| cx.open_url(&repository_url)
                             }),
-                    )
-                } else if let ConfigurationSource::New { is_http, .. } = &self.source {
-                    let label = if *is_http {
-                        "Configure Local"
-                    } else {
-                        "Configure Remote"
-                    };
-                    let tooltip = if *is_http {
-                        "Configure an MCP server that runs on stdin/stdout."
-                    } else {
-                        "Configure an MCP server that you connect to over HTTP"
-                    };
-
-                    Some(
-                        Button::new("toggle-kind", label)
-                            .tooltip(Tooltip::text(tooltip))
-                            .on_click(cx.listener(|this, _, window, cx| match &mut this.source {
-                                ConfigurationSource::New { editor, is_http } => {
-                                    *is_http = !*is_http;
-                                    let new_text = if *is_http {
-                                        context_server_http_input(None)
-                                    } else {
-                                        context_server_input(None)
-                                    };
-                                    editor.update(cx, |editor, cx| {
-                                        editor.set_text(new_text, window, cx);
-                                    })
-                                }
-                                _ => {}
-                            })),
                     )
                 } else {
                     None
@@ -769,7 +1028,7 @@ impl ConfigureContextServerModal {
                                 "Configure Server"
                             },
                         )
-                        .disabled(is_connecting)
+                        .disabled(is_busy)
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
                                 .map(|kb| kb.size(rems_from_px(12.))),
@@ -783,29 +1042,168 @@ impl ConfigureContextServerModal {
             )
     }
 
-    fn render_waiting_for_context_server() -> Div {
+    fn render_loading(&self, label: impl Into<SharedString>) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
-                Icon::new(IconName::ArrowCircle)
+                Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
-                    .color(Color::Info)
-                    .with_rotate_animation(2)
-                    .into_any_element(),
+                    .color(Color::Muted)
+                    .with_rotate_animation(3),
+            )
+            .child(Label::new(label).size(LabelSize::Small).color(Color::Muted))
+    }
+
+    fn render_auth_required(&self, server_id: &ContextServerId, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .h_8()
+            .min_w_0()
+            .w_full()
+            .gap_2()
+            .justify_center()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new("Authenticate to connect this server")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .child(
-                Label::new("Waiting for Context Server")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
+                Button::new("authenticate-server", "Authenticate")
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.authenticate(server_id.clone(), cx);
+                        })
+                    }),
+            )
+    }
+
+    fn render_client_secret_required(
+        &self,
+        server_id: &ContextServerId,
+        error: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            ..Default::default()
+        };
+
+        v_flex()
+            .w_full()
+            .gap_2()
+            .when_some(error, |this, error| {
+                this.child(Self::render_modal_error(error))
+            })
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        Label::new(
+                            "Enter your OAuth client secret, or leave empty for public clients",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .capture_action({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _: &editor::actions::Newline, _window, cx| {
+                            this.submit_client_secret(server_id.clone(), cx);
+                        })
+                    })
+                    .child(div().flex_1().child(EditorElement::new(
+                        &self.secret_editor,
+                        EditorStyle {
+                            background: cx.theme().colors().editor_background,
+                            local_player: cx.theme().players().local(),
+                            text: text_style,
+                            syntax: cx.theme().syntax().clone(),
+                            ..Default::default()
+                        },
+                    )))
+                    .child(
+                        Button::new("submit-client-secret", "Submit")
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .on_click({
+                                let server_id = server_id.clone();
+                                cx.listener(move |this, _event, _window, cx| {
+                                    this.submit_client_secret(server_id.clone(), cx);
+                                })
+                            }),
+                    ),
+            )
+    }
+
+    fn render_authenticating(&self, server_id: &ContextServerId, cx: &mut Context<Self>) -> Div {
+        h_flex()
+            .h_8()
+            .gap_2()
+            .justify_center()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        Icon::new(IconName::LoadCircle)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted)
+                            .with_rotate_animation(3),
+                    )
+                    .child(
+                        Label::new("Authenticating…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Button::new("cancel-authentication", "Cancel")
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let server_id = server_id.clone();
+                        cx.listener(move |this, _event, _window, cx| {
+                            this.cancel_authentication(&server_id, cx);
+                        })
+                    }),
             )
     }
 
     fn render_modal_error(error: SharedString) -> Div {
         h_flex()
-            .gap_2()
+            .h_8()
+            .gap_1p5()
+            .justify_center()
             .child(
                 Icon::new(IconName::Warning)
-                    .size(IconSize::XSmall)
+                    .size(IconSize::Small)
                     .color(Color::Warning),
             )
             .child(
@@ -820,7 +1218,7 @@ impl Render for ConfigureContextServerModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .elevation_3(cx)
-            .w(rems(34.))
+            .w(rems(40.))
             .key_context("ConfigureContextServerModal")
             .on_action(
                 cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
@@ -847,11 +1245,25 @@ impl Render for ConfigureContextServerModal {
                                         .overflow_y_scroll()
                                         .track_scroll(&self.scroll_handle)
                                         .child(self.render_modal_description(window, cx))
+                                        .children(self.render_tab_bar(cx))
                                         .child(self.render_modal_content(cx))
                                         .child(match &self.state {
                                             State::Idle => div(),
                                             State::Waiting => {
-                                                Self::render_waiting_for_context_server()
+                                                self.render_loading("Connecting Server…")
+                                            }
+                                            State::AuthRequired { server_id } => {
+                                                self.render_auth_required(&server_id.clone(), cx)
+                                            }
+                                            State::ClientSecretRequired { server_id, error } => {
+                                                self.render_client_secret_required(
+                                                    &server_id.clone(),
+                                                    error.clone(),
+                                                    cx,
+                                                )
+                                            }
+                                            State::Authenticating { server_id } => {
+                                                self.render_authenticating(&server_id.clone(), cx)
                                             }
                                             State::Error(error) => {
                                                 Self::render_modal_error(error.clone())
@@ -870,45 +1282,58 @@ fn wait_for_context_server(
     context_server_store: &Entity<ContextServerStore>,
     context_server_id: ContextServerId,
     cx: &mut App,
-) -> Task<Result<(), Arc<str>>> {
+) -> Task<Result<ContextServerStatus, Arc<str>>> {
+    use std::time::Duration;
+
+    const WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+
     let (tx, rx) = futures::channel::oneshot::channel();
     let tx = Arc::new(Mutex::new(Some(tx)));
 
-    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| match event {
-        project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
-            match status {
-                ContextServerStatus::Running => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Ok(()));
-                    }
+    let context_server_id_for_timeout = context_server_id.clone();
+    let subscription = cx.subscribe(context_server_store, move |_, event, _cx| {
+        let ServerStatusChangedEvent { server_id, status } = event;
+
+        if server_id != &context_server_id {
+            return;
+        }
+
+        match status {
+            ContextServerStatus::Running
+            | ContextServerStatus::AuthRequired
+            | ContextServerStatus::ClientSecretRequired { .. } => {
+                if let Some(tx) = tx.lock().take() {
+                    let _ = tx.send(Ok(status.clone()));
                 }
-                ContextServerStatus::Stopped => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err("Context server stopped running".into()));
-                    }
-                }
-                ContextServerStatus::Error(error) => {
-                    if server_id == &context_server_id
-                        && let Some(tx) = tx.lock().unwrap().take()
-                    {
-                        let _ = tx.send(Err(error.clone()));
-                    }
-                }
-                _ => {}
             }
+            ContextServerStatus::Stopped => {
+                if let Some(tx) = tx.lock().take() {
+                    let _ = tx.send(Err("Context server stopped running".into()));
+                }
+            }
+            ContextServerStatus::Error(error) => {
+                if let Some(tx) = tx.lock().take() {
+                    let _ = tx.send(Err(error.clone()));
+                }
+            }
+            ContextServerStatus::Starting | ContextServerStatus::Authenticating => {}
         }
     });
 
-    cx.spawn(async move |_cx| {
-        let result = rx
-            .await
-            .map_err(|_| Arc::from("Context server store was dropped"))?;
+    cx.spawn(async move |cx| {
+        let timeout = cx.background_executor().timer(WAIT_TIMEOUT);
+        let result = futures::future::select(rx, timeout).await;
         drop(subscription);
-        result
+        match result {
+            futures::future::Either::Left((Ok(inner), _)) => inner,
+            futures::future::Either::Left((Err(_), _)) => {
+                Err(Arc::from("Context server store was dropped"))
+            }
+            futures::future::Either::Right(_) => Err(Arc::from(format!(
+                "Timed out waiting for context server `{}` to start. Check the Zed log for details.",
+                context_server_id_for_timeout
+            ))),
+        }
     })
 }
 
@@ -938,5 +1363,54 @@ pub(crate) fn default_markdown_style(window: &Window, cx: &App) -> MarkdownStyle
             ..Default::default()
         },
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_http_input_reads_oauth_settings() {
+        let (id, url, headers, oauth) = parse_http_input(
+            r#"{
+  "figma": {
+    "url": "https://mcp.figma.com/mcp",
+    "oauth": {
+      "client_id": "client-id",
+      "client_secret": "client-secret"
+    },
+    "headers": {
+      "X-Test": "test"
+    }
+  }
+}"#,
+        )
+        .unwrap();
+
+        assert_eq!(id, ContextServerId("figma".into()));
+        assert_eq!(url, "https://mcp.figma.com/mcp");
+        assert_eq!(headers.get("X-Test"), Some(&String::from("test")));
+        let oauth = oauth.expect("oauth should be present");
+        assert_eq!(oauth.client_id, "client-id");
+        assert_eq!(oauth.client_secret.as_deref(), Some("client-secret"));
+    }
+
+    #[test]
+    fn context_server_http_input_preserves_existing_oauth_settings() {
+        let text = context_server_http_input(Some((
+            ContextServerId("figma".into()),
+            String::from("https://mcp.figma.com/mcp"),
+            HashMap::default(),
+            Some(OAuthClientSettings {
+                client_id: String::from("client-id"),
+                client_secret: Some(String::from("client-secret")),
+            }),
+        )));
+
+        let (_, _, _, oauth) = parse_http_input(&text).unwrap();
+        let oauth = oauth.expect("oauth should be present");
+        assert_eq!(oauth.client_id, "client-id");
+        assert_eq!(oauth.client_secret.as_deref(), Some("client-secret"));
     }
 }

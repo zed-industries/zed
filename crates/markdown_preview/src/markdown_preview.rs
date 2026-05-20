@@ -1,11 +1,9 @@
 use gpui::{App, actions};
 use workspace::Workspace;
 
-pub mod markdown_elements;
-mod markdown_minifier;
-pub mod markdown_parser;
 pub mod markdown_preview_view;
-pub mod markdown_renderer;
+
+pub use zed_actions::preview::markdown::{OpenPreview, OpenPreviewToTheSide};
 
 actions!(
     markdown,
@@ -24,10 +22,10 @@ actions!(
         ScrollUpByItem,
         /// Scrolls down by one markdown element in the markdown preview
         ScrollDownByItem,
-        /// Opens a markdown preview for the current file.
-        OpenPreview,
-        /// Opens a markdown preview in a split pane.
-        OpenPreviewToTheSide,
+        /// Scrolls to the top of the markdown preview.
+        ScrollToTop,
+        /// Scrolls to the bottom of the markdown preview.
+        ScrollToBottom,
         /// Opens a following markdown preview that syncs with the editor.
         OpenFollowingPreview
     ]

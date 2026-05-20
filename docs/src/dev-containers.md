@@ -1,3 +1,8 @@
+---
+title: Dev Containers - Zed
+description: Open projects in dev containers with Zed. Reproducible development environments using devcontainer.json configuration.
+---
+
 # Dev Containers
 
 Dev Containers provide a consistent, reproducible development environment by defining your project's dependencies, tools, and settings in a container configuration.
@@ -6,7 +11,7 @@ If your repository includes a `.devcontainer/devcontainer.json` file, Zed can op
 
 ## Requirements
 
-- Docker must be installed and available in your `PATH`. Zed requires the `docker` command to be present. If you use Podman, you can alias it to `docker` (e.g., `alias docker=podman`).
+- Docker or Podman must be installed and available in your `PATH`. If you use `podman`, you must set the `use_podman` setting in your Zed settings.json to true.
 - Your project must contain a `.devcontainer/devcontainer.json` directory/file.
 
 ## Using Dev Containers in Zed

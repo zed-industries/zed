@@ -1,7 +1,8 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use convert_case::{Case, Casing};
-use futures::{FutureExt, StreamExt, future, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use credentials_provider::CredentialsProvider;
+use futures::{FutureExt, StreamExt, future::BoxFuture};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -10,14 +11,20 @@ use language_model::{
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
-use open_ai::{ResponseStreamEvent, stream_completion};
+use open_ai::{
+    ResponseStreamEvent,
+    responses::{Request as ResponseRequest, StreamEvent as ResponsesStreamEvent, stream_response},
+    stream_completion,
+};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
-use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use crate::provider::open_ai::{
+    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+};
 pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
 pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
@@ -38,6 +45,7 @@ pub struct State {
     id: Arc<str>,
     api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
+    credentials_provider: Arc<dyn CredentialsProvider>,
 }
 
 impl State {
@@ -46,20 +54,36 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = SharedString::new(self.settings.api_url.as_str());
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        self.api_key_state.store(
+            api_url,
+            api_key,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let credentials_provider = self.credentials_provider.clone();
         let api_url = SharedString::new(self.settings.api_url.clone());
-        self.api_key_state
-            .load_if_needed(api_url, |this| &mut this.api_key_state, cx)
+        self.api_key_state.load_if_needed(
+            api_url,
+            |this| &mut this.api_key_state,
+            credentials_provider,
+            cx,
+        )
     }
 }
 
 impl OpenAiCompatibleLanguageModelProvider {
-    pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+    pub fn new(
+        id: Arc<str>,
+        http_client: Arc<dyn HttpClient>,
+        credentials_provider: Arc<dyn CredentialsProvider>,
+        cx: &mut App,
+    ) -> Self {
         fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
             crate::AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
@@ -73,10 +97,12 @@ impl OpenAiCompatibleLanguageModelProvider {
                     return;
                 };
                 if &this.settings != &settings {
+                    let credentials_provider = this.credentials_provider.clone();
                     let api_url = SharedString::new(settings.api_url.as_str());
                     this.api_key_state.handle_url_change(
                         api_url,
                         |this| &mut this.api_key_state,
+                        credentials_provider,
                         cx,
                     );
                     this.settings = settings;
@@ -92,6 +118,7 @@ impl OpenAiCompatibleLanguageModelProvider {
                     EnvVar::new(api_key_env_var_name),
                 ),
                 settings,
+                credentials_provider,
             }
         });
 
@@ -208,15 +235,13 @@ impl OpenAiCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
             (
                 state.api_key_state.key(api_url),
                 state.settings.api_url.clone(),
             )
-        }) else {
-            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
-        };
+        });
 
         let provider = self.provider_name.clone();
         let future = self.request_limiter.stream(async move {
@@ -229,6 +254,42 @@ impl OpenAiCompatibleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+            );
+            let response = request.await?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_response(
+        &self,
+        request: ResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
+    {
+        let http_client = self.http_client.clone();
+
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
+        });
+
+        let provider = self.provider_name.clone();
+        let future = self.request_limiter.stream(async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey { provider });
+            };
+            let request = stream_response(
+                http_client.as_ref(),
+                provider.0.as_str(),
+                &api_url,
+                &api_key,
+                request,
+                vec![],
             );
             let response = request.await?;
             Ok(response)
@@ -280,6 +341,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         }
     }
 
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.name)
     }
@@ -290,27 +359,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens
-    }
-
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>> {
-        let max_token_count = self.max_token_count();
-        cx.background_spawn(async move {
-            let messages = super::open_ai::collect_tiktoken_messages(request);
-            let model = if max_token_count >= 100_000 {
-                // If the max tokens is 100k or more, it is likely the o200k_base tokenizer from gpt4o
-                "gpt-4o"
-            } else {
-                // Otherwise fallback to gpt-4, since only cl100k_base and o200k_base are
-                // supported with this tiktoken method
-                "gpt-4"
-            };
-            tiktoken_rs::num_tokens_from_messages(model, &messages).map(|tokens| tokens as u64)
-        })
-        .boxed()
     }
 
     fn stream_completion(
@@ -327,20 +375,41 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(
-            request,
-            &self.model.name,
-            self.model.capabilities.parallel_tool_calls,
-            self.model.capabilities.prompt_cache_key,
-            self.max_output_tokens(),
-            None,
-        );
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+        if self.model.capabilities.chat_completions {
+            let request = into_open_ai(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                self.model.reasoning_effort,
+                self.model.capabilities.interleaved_reasoning,
+            );
+            let completions = self.stream_completion(request, cx);
+            async move {
+                let mapper = OpenAiEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
+        } else {
+            let request = into_open_ai_response(
+                request,
+                &self.model.name,
+                self.model.capabilities.parallel_tool_calls,
+                self.model.capabilities.prompt_cache_key,
+                self.max_output_tokens(),
+                self.model
+                    .reasoning_effort
+                    .filter(|effort| *effort != open_ai::ReasoningEffort::None),
+                self.model.reasoning_effort == Some(open_ai::ReasoningEffort::None),
+            );
+            let completions = self.stream_response(request, cx);
+            async move {
+                let mapper = OpenAiResponseEventMapper::new();
+                Ok(mapper.map_stream(completions.await?).boxed())
+            }
+            .boxed()
         }
-        .boxed()
     }
 }
 
@@ -368,10 +437,7 @@ impl ConfigurationView {
         let load_credentials_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
+                if let Some(task) = Some(state.update(cx, |state, cx| state.authenticate(cx))) {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
@@ -403,7 +469,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -416,7 +482,7 @@ impl ConfigurationView {
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .update(cx, |state, cx| state.set_api_key(None, cx))
                 .await
         })
         .detach_and_log_err(cx);
@@ -444,7 +510,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {env_var_name} environment variable and restart Zed."),
+                        format!("You can also set the {env_var_name} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -484,9 +550,7 @@ impl Render for ConfigurationView {
                         .child(
                             Button::new("reset-api-key", "Reset API Key")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Undo)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
+                                .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                                 .layer(ElevationIndex::ModalSurface)
                                 .when(env_var_set, |this| {
                                     this.tooltip(Tooltip::text(format!("To reset your API key, unset the {env_var_name} environment variable.")))

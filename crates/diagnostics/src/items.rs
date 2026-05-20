@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use editor::{Editor, MultiBufferOffset};
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task,
-    WeakEntity, Window,
+    App, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use language::Diagnostic;
 use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
-use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
@@ -28,7 +28,7 @@ pub struct DiagnosticIndicator {
 
 impl Render for DiagnosticIndicator {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let indicator = h_flex().gap_2();
+        let indicator = h_flex().gap_2().min_w_0().overflow_x_hidden();
         if !ProjectSettings::get_global(cx).diagnostics.button {
             return indicator.hidden();
         }
@@ -67,6 +67,7 @@ impl Render for DiagnosticIndicator {
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
+                    .truncate(true)
                     .tooltip(|_window, cx| {
                         Tooltip::for_action(
                             "Next Diagnostic",
@@ -222,5 +223,11 @@ impl StatusItemView for DiagnosticIndicator {
             self._observe_active_editor = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings.diagnostics.get_or_insert_default().button = Some(false);
+        }))
     }
 }

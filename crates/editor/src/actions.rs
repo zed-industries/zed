@@ -150,6 +150,12 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
+/// Toggles block comment markers for the selected text.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleBlockComments;
+
 /// Moves the cursor up by a specified number of lines.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -186,7 +192,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-/// Expands all excerpts in the editor.
+/// Expands all excerpts with selections.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -237,6 +243,32 @@ pub struct DeleteToNextWordEnd {
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Deletes from the cursor to the end of the next subword.
+/// Stops before the end of the next subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToNextSubwordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Deletes from the cursor to the start of the previous subword.
+/// Stops before the start of the previous subword, if whitespace sequences of length >= 2 are encountered.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteToPreviousSubwordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
     // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
@@ -428,6 +460,10 @@ actions!(
         ConvertToRot13,
         /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Base64-encodes the selected text or word under cursor.
+        ConvertToBase64,
+        /// Base64-decodes the selected text or word under cursor.
+        ConvertFromBase64,
         /// Copies selected text to the clipboard.
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.
@@ -450,10 +486,6 @@ actions!(
         DeleteLine,
         /// Deletes from cursor to end of line.
         DeleteToEndOfLine,
-        /// Deletes to the end of the next subword.
-        DeleteToNextSubwordEnd,
-        /// Deletes to the start of the previous subword.
-        DeleteToPreviousSubwordStart,
         /// Diffs the text stored in the clipboard against the current selection.
         DiffClipboardWithSelection,
         /// Displays names of all active cursors.
@@ -469,6 +501,9 @@ actions!(
         ExpandAllDiffHunks,
         /// Collapses all diff hunks in the editor.
         CollapseAllDiffHunks,
+        /// Toggles all diff hunks in the editor. Collapses all hunks if any are
+        /// currently expanded, otherwise expands all hunks.
+        ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds the next match in the search.
@@ -523,6 +558,14 @@ actions!(
         /// Formats the entire document.
         Format,
         /// Formats only the selected text.
+        ///
+        /// This action is only available when the active formatter can format ranges.
+        /// When using a language server, this sends an LSP range formatting request for each
+        /// selection, and is hidden when the selected buffer's configured language server does
+        /// not advertise range-formatting support. When using Prettier, Prettier's own range
+        /// formatting is used to format the encompassing range of all selections, and resulting
+        /// edits outside the selected ranges are discarded. External command formatters do not
+        /// support range formatting and are skipped.
         FormatSelections,
         /// Goes to the declaration of the symbol at cursor.
         GoToDeclaration,
@@ -540,12 +583,20 @@ actions!(
         GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
+        /// Goes to the next bookmark in the file.
+        GoToNextBookmark,
         /// Goes to the next change in the file.
         GoToNextChange,
         /// Goes to the parent module of the current file.
         GoToParentModule,
+        /// Goes to the previous bookmark in the file.
+        GoToPreviousBookmark,
         /// Goes to the previous change in the file.
         GoToPreviousChange,
+        /// Goes to the next symbol.
+        GoToNextSymbol,
+        /// Goes to the previous symbol.
+        GoToPreviousSymbol,
         /// Goes to the next reference to the symbol under the cursor.
         GoToNextReference,
         /// Goes to the previous reference to the symbol under the cursor.
@@ -580,8 +631,6 @@ actions!(
         LineDown,
         /// Moves cursor up one line.
         LineUp,
-        /// Moves cursor down.
-        MoveDown,
         /// Moves cursor left.
         MoveLeft,
         /// Moves the current line down.
@@ -616,8 +665,10 @@ actions!(
         MoveToEndOfExcerpt,
         /// Moves cursor to the end of the previous excerpt.
         MoveToEndOfPreviousExcerpt,
-        /// Moves cursor up.
-        MoveUp,
+        /// Moves cursor to the start of the next larger syntax node.
+        MoveToStartOfLargerSyntaxNode,
+        /// Moves cursor to the end of the next larger syntax node.
+        MoveToEndOfLargerSyntaxNode,
         /// Inserts a new line and moves cursor to it.
         Newline,
         /// Inserts a new line above the current line.
@@ -630,6 +681,8 @@ actions!(
         NextScreen,
         /// Goes to the next snippet tabstop if one exists.
         NextSnippetTabstop,
+        /// Opens a view of all bookmarks in the project.
+        ViewBookmarks,
         /// Opens the context menu at cursor position.
         OpenContextMenu,
         /// Opens excerpts from the current file.
@@ -673,8 +726,6 @@ actions!(
         Rename,
         /// Restarts the language server for the current file.
         RestartLanguageServer,
-        /// Reveals the current file in the system file manager.
-        RevealInFileManager,
         /// Reverses the order of selected lines.
         ReverseLines,
         /// Reloads the file from disk.
@@ -711,6 +762,10 @@ actions!(
         SelectDown,
         /// Selects the enclosing symbol.
         SelectEnclosingSymbol,
+        /// Selects to the start of the next larger syntax node.
+        SelectToStartOfLargerSyntaxNode,
+        /// Selects to the end of the next larger syntax node.
+        SelectToEndOfLargerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
         /// Selects the next syntax node sibling.
@@ -777,6 +832,8 @@ actions!(
         Tab,
         /// Removes a tab character or outdents.
         Backtab,
+        /// Toggles a bookmark at the current line.
+        ToggleBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -799,6 +856,10 @@ actions!(
         ToggleIndentGuides,
         /// Toggles inlay hints display.
         ToggleInlayHints,
+        /// Toggles code lens display.
+        ToggleCodeLens,
+        /// Toggles semantic highlights display.
+        ToggleSemanticHighlights,
         /// Toggles inline values display.
         ToggleInlineValues,
         /// Toggles inline diagnostics display.
@@ -818,6 +879,12 @@ actions!(
         /// Toggles diff display for selected hunks.
         #[action(deprecated_aliases = ["editor::ToggleHunkDiff"])]
         ToggleSelectedDiffHunks,
+        /// Stores the diff review comment locally (for later batch submission).
+        SubmitDiffReviewComment,
+        /// Toggles the expanded state of the comments section in the overlay.
+        ToggleReviewCommentsExpanded,
+        /// Sends all stored review comments to the Agent panel.
+        SendReviewToAgent,
         /// Toggles the selection menu.
         ToggleSelectionMenu,
         /// Toggles soft wrap mode.
@@ -844,7 +911,11 @@ actions!(
         /// from the current selections.
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
-        WrapSelectionsInTag
+        WrapSelectionsInTag,
+        /// Aligns selections from different rows into the same column
+        AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
     ]
 );
 
@@ -863,4 +934,36 @@ impl Default for FindAllReferences {
             always_open_multibuffer: true,
         }
     }
+}
+
+/// Edits a stored review comment inline.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct EditReviewComment {
+    pub id: usize,
+}
+
+/// Deletes a stored review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteReviewComment {
+    pub id: usize,
+}
+
+/// Confirms an inline edit of a review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ConfirmEditReviewComment {
+    pub id: usize,
+}
+
+/// Cancels an inline edit of a review comment.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CancelEditReviewComment {
+    pub id: usize,
 }
