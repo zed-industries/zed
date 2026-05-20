@@ -77,8 +77,7 @@ fn collect_process_tree() -> anyhow::Result<Value> {
     let refresh = ProcessRefreshKind::nothing()
         .with_cmd(UpdateKind::Always)
         .with_exe(UpdateKind::Always);
-    let mut system =
-        System::new_with_specifics(RefreshKind::nothing().with_processes(refresh.clone()));
+    let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 
     let descendants = descendants_of(&system, current_pid);
@@ -139,8 +138,7 @@ fn collect_linux_proc_info() -> anyhow::Result<Value> {
     let current_pid = sysinfo::get_current_pid()
         .map_err(|e| anyhow::anyhow!("sysinfo::get_current_pid failed: {e}"))?;
     let refresh = ProcessRefreshKind::nothing();
-    let mut system =
-        System::new_with_specifics(RefreshKind::nothing().with_processes(refresh.clone()));
+    let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 
     let descendants = descendants_of(&system, current_pid);
@@ -201,8 +199,7 @@ async fn collect_macos_git_child_diagnostics() -> anyhow::Result<Value> {
         .map_err(|e| anyhow::anyhow!("sysinfo::get_current_pid failed: {e}"))?;
 
     let refresh = ProcessRefreshKind::nothing().with_exe(UpdateKind::Always);
-    let mut system =
-        System::new_with_specifics(RefreshKind::nothing().with_processes(refresh.clone()));
+    let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 
     let descendants = descendants_of(&system, current_pid);
