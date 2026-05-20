@@ -7487,7 +7487,7 @@ fn ai_page(cx: &App) -> SettingsPage {
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
-                json_path: None,
+                json_path: Some("agent.skills"),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
                 in_json: false,
                 files: USER | PROJECT,
