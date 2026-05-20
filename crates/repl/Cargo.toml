@@ -62,6 +62,7 @@ picker.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
@@ -70,6 +71,7 @@ language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+task.workspace = true
 terminal_view = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true

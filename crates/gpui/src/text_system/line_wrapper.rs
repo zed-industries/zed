@@ -201,9 +201,11 @@ impl LineWrapper {
                     "{truncation_affix}{}",
                     &line[line.ceil_char_boundary(truncate_ix + 1)..]
                 )),
-                TruncateFrom::End => {
-                    SharedString::from(format!("{}{truncation_affix}", &line[..truncate_ix]))
-                }
+                TruncateFrom::End => SharedString::from(format!(
+                    "{}{truncation_affix}",
+                    line[..truncate_ix]
+                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+                )),
             };
             let mut runs = runs.to_vec();
             update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);

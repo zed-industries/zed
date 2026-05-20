@@ -19,7 +19,7 @@ To check which version of Zed you're using:
 
 Open the Command Palette (Cmd+Shift+P on macOS, Ctrl+Shift+P on Linux/Windows).
 
-Type and select `zed: about`. A modal will appear with your version information.
+Type and select {#action zed::About}. A modal will appear with your version information.
 
 ## How to control update behavior
 

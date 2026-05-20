@@ -983,10 +983,17 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let behaviour = if self.mode.is_visual() {
-            HelixJumpBehaviour::Extend
-        } else {
-            HelixJumpBehaviour::Move
+        let behaviour = match self.mode {
+            // Vim normal mode treats jump-to-word as a cursor motion, while Helix
+            // normal mode treats the cursor as a single-character selection.
+            Mode::Normal => HelixJumpBehaviour::MoveToWordStart,
+            // Vim visual mode extends like a motion, so the cursor stops at the
+            // same word boundary as normal mode instead of selecting the word.
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                HelixJumpBehaviour::ExtendToWordStart
+            }
+            Mode::HelixSelect => HelixJumpBehaviour::Extend,
+            _ => HelixJumpBehaviour::Move,
         };
         self.start_helix_jump(behaviour, window, cx);
     }
@@ -1709,7 +1716,7 @@ mod test {
     use editor::{HighlightKey, MultiBufferOffset};
     use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
-    use language::Point;
+    use language::{CursorShape, Point};
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
@@ -1718,7 +1725,7 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::HELIX_JUMP_LABEL_LIMIT;
+    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
@@ -1772,7 +1779,11 @@ mod test {
     }
 
     fn jump_to_word(cx: &mut VimTestContext, target_word: &str) {
-        cx.simulate_keystrokes("g w");
+        jump_to_word_with_keystrokes(cx, "g w", target_word);
+    }
+
+    fn jump_to_word_with_keystrokes(cx: &mut VimTestContext, keystrokes: &str, target_word: &str) {
+        cx.simulate_keystrokes(keystrokes);
 
         let label = helix_jump_label_for_word(cx, target_word);
 
@@ -1780,6 +1791,16 @@ mod test {
         let first = chars.next().expect("jump labels are two characters long");
         let second = chars.next().expect("jump labels are two characters long");
         cx.simulate_keystrokes(&format!("{first} {second}"));
+    }
+
+    fn bind_vim_jump_to_word(cx: &mut VimTestContext, keystrokes: &'static str) {
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                keystrokes,
+                HelixJumpToWord,
+                Some("vim_mode == normal || vim_mode == visual"),
+            )])
+        });
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -3465,6 +3486,70 @@ mod test {
         jump_to_word(&mut cx, "three");
 
         cx.assert_state("one two «threeˇ»", Mode::HelixNormal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_moves_to_target_word_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "two");
+
+        cx.assert_state("one ˇtwo three", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_keeps_normal_cursor_shape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.vim.get_or_insert_default().cursor_shape =
+                        Some(settings::CursorShapeSettings {
+                            normal: Some(settings::CursorShape::Bar),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("g z");
+
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        );
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(editor.cursor_shape(), CursorShape::Bar);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("one «twoˇ» three four", Mode::Visual);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "three");
+
+        cx.assert_state("one «two tˇ»hree four", Mode::Visual);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("one two «threeˇ» four", Mode::Visual);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "one");
+
+        cx.assert_state("«ˇone two three» four", Mode::Visual);
         assert_eq!(cx.active_operator(), None);
     }
 
