@@ -734,25 +734,24 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
         let privileged = dev_container.privileged.unwrap_or(false)
             || self.features.iter().any(|f| f.privileged());
 
-        let entrypoint_script =
-            if dev_container.override_command == Some(false) {
-                None
-            } else {
-                let mut entrypoint_script_lines = vec![
-                    "echo Container started".to_string(),
-                    "trap \"exit 0\" 15".to_string(),
-                ];
+        let entrypoint_script = if dev_container.override_command == Some(false) {
+            None
+        } else {
+            let mut entrypoint_script_lines = vec![
+                "echo Container started".to_string(),
+                "trap \"exit 0\" 15".to_string(),
+            ];
 
-                for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
-                    entrypoint_script_lines.push(entrypoint.clone());
-                }
-                entrypoint_script_lines.append(&mut vec![
-                    "exec \"$@\"".to_string(),
-                    "while sleep 1 & wait $!; do :; done".to_string(),
-                ]);
+            for entrypoint in self.features.iter().filter_map(|f| f.entrypoint()) {
+                entrypoint_script_lines.push(entrypoint.clone());
+            }
+            entrypoint_script_lines.append(&mut vec![
+                "exec \"$@\"".to_string(),
+                "while sleep 1 & wait $!; do :; done".to_string(),
+            ]);
 
-                Some(entrypoint_script_lines.join("\n").trim().to_string())
-            };
+            Some(entrypoint_script_lines.join("\n").trim().to_string())
+        };
 
         Ok(DockerBuildResources {
             image: base_image,
