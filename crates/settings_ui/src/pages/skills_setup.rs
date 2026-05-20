@@ -56,7 +56,7 @@ pub(crate) fn render_skills_setup_page(
                         .gap_2()
                         .child(Label::new(message).color(Color::Muted))
                         .child(
-                            Button::new("open-agent-panel", "Create with Agent")
+                            Button::new("open-skill-creator", "Create a Skill")
                                 .tab_index(0_isize)
                                 .style(ButtonStyle::Outlined)
                                 .end_icon(
@@ -71,10 +71,10 @@ pub(crate) fn render_skills_setup_page(
                                     original_window
                                         .update(cx, |_workspace, original_window, cx| {
                                             original_window.dispatch_action(
-                                                zed_actions::assistant::ToggleFocus.boxed_clone(),
+                                                zed_actions::assistant::OpenSkillCreator
+                                                    .boxed_clone(),
                                                 cx,
                                             );
-                                            original_window.activate_window();
                                         })
                                         .log_err();
                                     window.remove_window();

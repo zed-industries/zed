@@ -506,6 +506,7 @@ pub fn init(
 ) {
     agent::ThreadStore::init_global(cx);
     rules_library::init(cx);
+    skill_creator::init(cx);
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
@@ -650,6 +651,7 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
+        let open_skill_creator_action = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -707,8 +709,10 @@ fn update_command_palette_filter(cx: &mut App) {
         // rest of that namespace's actions.
         if !disable_ai {
             filter.hide_action_types(&open_rules_library_action);
+            filter.show_action_types(open_skill_creator_action.iter());
         } else {
             filter.show_action_types(open_rules_library_action.iter());
+            filter.hide_action_types(&open_skill_creator_action);
         }
     });
 }

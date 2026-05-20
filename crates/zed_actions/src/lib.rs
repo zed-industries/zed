@@ -570,6 +570,8 @@ pub mod assistant {
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus,
             FocusAgent,
+            /// Opens the skill creator window for creating a new skill.
+            OpenSkillCreator,
         ]
     );
 
