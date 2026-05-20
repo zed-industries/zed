@@ -1267,6 +1267,11 @@ impl AgentPanel {
             },
         );
 
+        cx.on_release(|this, cx| {
+            this.dismiss_all_terminal_notifications(cx);
+        })
+        .detach();
+
         let mut panel = Self {
             workspace_id,
             base_view,
@@ -2209,16 +2214,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_active = self.active_terminal_id() == Some(terminal_id);
-        // Only suppress when the user can actually see the bell, i.e. the
-        // terminal is focused AND the OS window is active. A bell delivered to
-        // a background window should still be marked unseen.
-        let user_is_looking = is_active
-            && window.is_window_active()
-            && self.terminals.get(&terminal_id).is_some_and(|terminal| {
-                terminal.view.focus_handle(cx).contains_focused(window, cx)
-            });
-        if user_is_looking {
+        if self.active_terminal_visible(terminal_id, window, cx) {
             return;
         }
         let newly_notified = {
@@ -2236,7 +2232,10 @@ impl AgentPanel {
             cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
             #[cfg(feature = "audio")]
-            self.play_terminal_notification_sound(cx);
+            self.play_terminal_notification_sound(
+                self.terminal_status_visible(terminal_id, window, cx),
+                cx,
+            );
             self.show_terminal_notification(terminal_id, window, cx);
         }
     }
@@ -2254,6 +2253,9 @@ impl AgentPanel {
             return;
         }
         let title = terminal.title(cx);
+        if self.terminal_status_visible(terminal_id, window, cx) {
+            return;
+        }
         let settings = AgentSettings::get_global(cx);
         match settings.notify_when_agent_waiting {
             NotifyWhenAgentWaiting::PrimaryScreen => {
@@ -2330,6 +2332,8 @@ impl AgentPanel {
                             })
                             .log_err();
                     });
+
+                    this.dismiss_terminal_notifications(terminal_id, cx);
                 }
                 AgentNotificationEvent::Dismissed => {
                     this.dismiss_terminal_notifications(terminal_id, cx);
@@ -2345,10 +2349,25 @@ impl AgentPanel {
             }
         });
 
-        let multi_workspace_subscription = window.root::<MultiWorkspace>().flatten().map(|mw| {
-            cx.observe_in(&mw, window, move |this, _, window, cx| {
-                this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+        let multi_workspace_subscription = {
+            let pop_up_weak = pop_up_weak.clone();
+            window.root::<MultiWorkspace>().flatten().map(|mw| {
+                cx.observe_in(&mw, window, move |this, _, window, cx| {
+                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+                })
             })
+        };
+
+        let this_panel = cx.entity();
+        let agent_panel_subscription = cx.subscribe_in(&this_panel, window, {
+            move |this, _, event: &AgentPanelEvent, window, cx| match event {
+                AgentPanelEvent::ActiveViewChanged | AgentPanelEvent::ActiveViewFocused => {
+                    this.dismiss_terminal_pop_up_if_visible(terminal_id, &pop_up_weak, window, cx);
+                }
+                AgentPanelEvent::EntryChanged
+                | AgentPanelEvent::TerminalClosed { .. }
+                | AgentPanelEvent::ThreadInteracted { .. } => {}
+            }
         });
 
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
@@ -2362,12 +2381,15 @@ impl AgentPanel {
         terminal
             .notification_subscriptions
             .push(window_activation_subscription);
+        terminal
+            .notification_subscriptions
+            .push(agent_panel_subscription);
         if let Some(subscription) = multi_workspace_subscription {
             terminal.notification_subscriptions.push(subscription);
         }
     }
 
-    fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut Context<Self>) {
+    fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut App) {
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
@@ -2382,7 +2404,14 @@ impl AgentPanel {
         }
     }
 
-    fn terminal_visible_to_user(&self, terminal_id: TerminalId, window: &Window, cx: &App) -> bool {
+    fn dismiss_all_terminal_notifications(&mut self, cx: &mut App) {
+        let terminal_ids = self.terminals.keys().copied().collect::<Vec<_>>();
+        for terminal_id in terminal_ids {
+            self.dismiss_terminal_notifications(terminal_id, cx);
+        }
+    }
+
+    fn active_terminal_visible(&self, terminal_id: TerminalId, window: &Window, cx: &App) -> bool {
         if !window.is_window_active() {
             return false;
         }
@@ -2394,14 +2423,36 @@ impl AgentPanel {
         };
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
             let multi_workspace = multi_workspace.read(cx);
-            if multi_workspace.sidebar_open() {
-                return true;
-            }
             if multi_workspace.workspace() != &workspace {
                 return false;
             }
         }
         AgentPanel::is_visible(&workspace, cx)
+    }
+
+    fn terminal_status_visible(&self, terminal_id: TerminalId, window: &Window, cx: &App) -> bool {
+        if !window.is_window_active() {
+            return false;
+        }
+
+        if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
+            let multi_workspace = multi_workspace.read(cx);
+            if multi_workspace.sidebar_open() {
+                return true;
+            }
+
+            let Some(workspace) = self.workspace.upgrade() else {
+                return false;
+            };
+
+            return multi_workspace.workspace() == &workspace
+                && self.active_terminal_id() == Some(terminal_id)
+                && AgentPanel::is_visible(&workspace, cx);
+        }
+
+        self.workspace.upgrade().is_some_and(|workspace| {
+            self.active_terminal_id() == Some(terminal_id) && AgentPanel::is_visible(&workspace, cx)
+        })
     }
 
     fn dismiss_terminal_pop_up_if_visible(
@@ -2411,8 +2462,16 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.terminal_visible_to_user(terminal_id, window, cx) {
+        if !self.terminal_status_visible(terminal_id, window, cx) {
             return;
+        }
+        if self.active_terminal_visible(terminal_id, window, cx)
+            && let Some(terminal) = self.terminals.get_mut(&terminal_id)
+            && terminal.has_notification
+        {
+            terminal.has_notification = false;
+            cx.emit(AgentPanelEvent::EntryChanged);
+            cx.notify();
         }
         if let Some(pop_up) = pop_up.upgrade() {
             pop_up.update(cx, |notification, cx| {
@@ -2422,11 +2481,9 @@ impl AgentPanel {
     }
 
     #[cfg(feature = "audio")]
-    fn play_terminal_notification_sound(&self, cx: &mut App) {
-        // We only reach this when the user isn't looking at the terminal,
-        // so it is effectively hidden — only `Never` suppresses the sound.
+    fn play_terminal_notification_sound(&self, visible: bool, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done.should_play(false) {
+        if settings.play_sound_when_agent_done.should_play(visible) {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
@@ -7835,6 +7892,48 @@ mod tests {
         (panel, cx)
     }
 
+    async fn setup_visible_panel(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AgentPanel>, VisualTestContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
+            panel
+        });
+
+        (panel, cx)
+    }
+
     fn expected_terminal_drop_text(paths: &[PathBuf]) -> String {
         let mut text = String::new();
         for path in paths {
@@ -8551,6 +8650,395 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_visible_terminal_bell_is_suppressed(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            assert!(window.is_window_active());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(!terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visible_terminal_bell_is_suppressed_without_focus(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        let workspace = cx.update(|window, cx| {
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("test window should have a MultiWorkspace root")
+                .read(cx)
+                .workspace()
+                .clone()
+        });
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_handle(cx).focus(window, cx);
+        });
+        cx.update(|window, cx| {
+            assert!(window.is_window_active());
+            assert!(workspace.read(cx).focus_handle(cx).is_focused(window));
+            assert!(!panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(!terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_bell_marks_without_popup_when_sidebar_open(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+        cx.update(|window, cx| {
+            let multi_workspace = window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("test window should have a MultiWorkspace root");
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.open_sidebar(cx);
+            });
+        });
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(first_terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_notification_dismissed_when_sidebar_opens(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("inactive terminal bell should show a notification");
+
+        cx.update(|window, cx| {
+            let multi_workspace = window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("test window should have a MultiWorkspace root");
+            multi_workspace.update(cx, |multi_workspace, cx| {
+                multi_workspace.open_sidebar(cx);
+            });
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let first_terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == first_terminal_id)
+                .expect("first terminal should remain in the panel");
+            assert!(first_terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_focused_terminal_bell_notifies_when_window_inactive(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            assert!(window.is_window_active());
+            assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
+        });
+        cx.deactivate_window();
+        cx.update(|window, _cx| {
+            assert!(!window.is_window_active());
+        });
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.has_notification);
+        });
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("background terminal bell should show a notification");
+    }
+
+    #[gpui::test]
+    async fn test_active_terminal_notification_clears_when_window_reactivates(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        cx.deactivate_window();
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.has_notification);
+        });
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("background terminal bell should show a notification");
+
+        cx.update(|window, _cx| {
+            window.activate_window();
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(!terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_notification_dismissed_when_active_terminal_becomes_visible(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(terminal.has_notification);
+        });
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("hidden terminal bell should show a notification");
+
+        let workspace = cx.update(|window, cx| {
+            window
+                .root::<MultiWorkspace>()
+                .flatten()
+                .expect("test window should have a MultiWorkspace root")
+                .read(cx)
+                .workspace()
+                .clone()
+        });
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminal = panel
+                .terminals(cx)
+                .into_iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .expect("terminal should remain in the panel");
+            assert!(!terminal.has_notification);
+        });
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_notification_closed_when_panel_dropped(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Claude", true, window, cx)
+            })
+            .expect("test terminal should be inserted");
+        let weak_panel = panel.downgrade();
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        cx.windows()
+            .iter()
+            .find_map(|window| window.downcast::<AgentNotification>())
+            .expect("hidden terminal bell should show a notification");
+
+        drop(panel);
+        cx.update(|_window, _cx| {});
+        cx.run_until_parked();
+
+        assert!(
+            !weak_panel.is_upgradable(),
+            "agent panel should be released after dropping the last handle"
+        );
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
     async fn test_terminal_notification_view_activates_terminal_workspace(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
@@ -8628,6 +9116,11 @@ mod tests {
         notification
             .update(cx, |notification, _window, cx| notification.accept(cx))
             .unwrap();
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
         cx.run_until_parked();
 
         multi_workspace
