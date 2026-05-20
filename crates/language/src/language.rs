@@ -17,6 +17,7 @@ mod manifest;
 pub mod modeline;
 mod outline;
 pub mod proto;
+mod runnable;
 mod syntax_map;
 mod task_context;
 mod text_diff;
@@ -62,6 +63,7 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
+pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, RunnableResolver};
 use semver::Version;
 use serde_json::Value;
 use settings::WorktreeId;
@@ -77,7 +79,7 @@ use std::{
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
+pub use task_context::{ContextLocation, ContextProvider};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, apply_reversed_diff_patch, char_diff, line_diff, text_diff,
     text_diff_with_options, unified_diff, unified_diff_with_context, unified_diff_with_offsets,
@@ -106,7 +108,7 @@ pub use syntax_map::{
     OwnedSyntaxLayer, SyntaxLayer, SyntaxMapMatches, ToTreeSitterPoint, TreeSitterOptions,
 };
 pub use text::{AnchorRangeExt, LineEnding};
-pub use tree_sitter::{Node, Parser, Tree, TreeCursor};
+pub use tree_sitter::{Node, Parser, QueryCapture, Tree, TreeCursor};
 
 pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings::SoftWrap {
     match value {
@@ -851,6 +853,7 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
+    pub(crate) runnable_resolver: Option<Arc<dyn RunnableResolver>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
     pub(crate) manifest_name: Option<ManifestName>,
 }
@@ -874,6 +877,7 @@ impl Language {
             config,
             grammar: ts_language.map(|ts_language| Arc::new(Grammar::new(ts_language))),
             context_provider: None,
+            runnable_resolver: None,
             toolchain: None,
             manifest_name: None,
         }
@@ -881,6 +885,11 @@ impl Language {
 
     pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
+        self
+    }
+
+    pub fn with_runnable_resolver(mut self, resolver: Option<Arc<dyn RunnableResolver>>) -> Self {
+        self.runnable_resolver = resolver;
         self
     }
 
@@ -1017,6 +1026,10 @@ impl Language {
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
+    }
+
+    pub fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
+        self.runnable_resolver.clone()
     }
 
     pub fn toolchain_lister(&self) -> Option<Arc<dyn ToolchainLister>> {

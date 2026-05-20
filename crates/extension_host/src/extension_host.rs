@@ -1349,6 +1349,7 @@ impl ExtensionStore {
                         config,
                         queries,
                         context_provider,
+                        runnable_resolver: None,
                         toolchain_provider: None,
                         manifest_name: None,
                     })

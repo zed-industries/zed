@@ -161,6 +161,7 @@ impl HeadlessExtensionStore {
                             config: config.clone(),
                             queries: LanguageQueries::default(),
                             context_provider: None,
+                            runnable_resolver: None,
                             toolchain_provider: None,
                             manifest_name: None,
                         })
