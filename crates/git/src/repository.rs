@@ -1796,7 +1796,13 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let fields = [
+                // These ref-filter atoms include `SOURCE_OBJ` fields, so Git must
+                // read object data to format them. A missing or corrupt object can
+                // make `for-each-ref` fail after emitting only a prefix of refs.
+                // See Git's atom table and object-loading path:
+                // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#946
+                // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#2614
+                let object_backed_field_names = [
                     "%(HEAD)",
                     "%(objectname)",
                     "%(parent)",
@@ -1806,26 +1812,59 @@ impl GitRepository for RealGitRepository {
                     "%(committerdate:unix)",
                     "%(authorname)",
                     "%(contents:subject)",
-                ]
-                .join("%00");
-                let args = vec![
+                ];
+                let object_backed_fields = object_backed_field_names.join("%00");
+                let object_backed_args = vec![
                     "for-each-ref",
                     "refs/heads/**/*",
                     "refs/remotes/**/*",
                     "--format",
-                    &fields,
+                    &object_backed_fields,
                 ];
-                let output = git.build_command(&args).output().await?;
-
-                if !output.status.success() {
-                    log::warn!(
-                        "failed to get git branches with commit metadata:\n{}",
-                        String::from_utf8_lossy(&output.stderr)
-                    );
-                }
+                let output = git.build_command(&object_backed_args).output().await?;
 
                 let input = String::from_utf8_lossy(&output.stdout);
                 let mut branches = parse_branch_input(&input)?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stderr = stderr.trim();
+                    log::warn!(
+                        "failed to get git branches with object-backed metadata; status: {}; fields: {}; stderr:\n{}",
+                        output.status,
+                        object_backed_field_names.join(", "),
+                        if stderr.is_empty() { "no stderr" } else { stderr }
+                    );
+                    // `%(refname)`, `%(HEAD)`, and full `%(objectname)` can be
+                    // satisfied from ref metadata before Git needs to call
+                    // `get_object()`, so this can recover refs whose commit
+                    // metadata cannot be read.
+                    // See Git's special-case handling for `%(objectname)`:
+                    // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#2537
+                    let ref_metadata_field_names = ["%(HEAD)", "%(objectname)", "%(refname)"];
+                    let ref_metadata_fields = ref_metadata_field_names.join("%00");
+                    let ref_metadata_args = vec![
+                        "for-each-ref",
+                        "refs/heads/**/*",
+                        "refs/remotes/**/*",
+                        "--format",
+                        &ref_metadata_fields,
+                    ];
+                    let ref_metadata_output =
+                        git.build_command(&ref_metadata_args).output().await?;
+                    if !ref_metadata_output.status.success() {
+                        let stderr = String::from_utf8_lossy(&ref_metadata_output.stderr);
+                        let stderr = stderr.trim();
+                        log::warn!(
+                            "failed to get git branch ref names; status: {}; fields: {}; stderr:\n{}",
+                            ref_metadata_output.status,
+                            ref_metadata_field_names.join(", "),
+                            if stderr.is_empty() { "no stderr" } else { stderr }
+                        );
+                    }
+                    let ref_metadata_input = String::from_utf8_lossy(&ref_metadata_output.stdout);
+                    append_branch_refs(&mut branches, parse_branch_ref_input(&ref_metadata_input));
+                }
+
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
@@ -3630,7 +3669,7 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
                 sha: head_sha,
                 subject,
                 commit_timestamp: commiterdate,
-                author_name: author_name,
+                author_name,
                 has_parent: !parent_sha.is_empty(),
             }),
             upstream: if upstream_name.is_empty() {
@@ -3645,6 +3684,50 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     }
 
     Ok(branches)
+}
+
+fn parse_branch_ref_input(input: &str) -> Vec<Branch> {
+    let mut branches = Vec::new();
+    for line in input.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut fields = line.split('\x00');
+        let Some(head) = fields.next() else {
+            continue;
+        };
+        if fields.next().is_none() {
+            continue;
+        }
+        let Some(ref_name) = fields.next().filter(|field| !field.is_empty()) else {
+            continue;
+        };
+
+        branches.push(Branch {
+            is_head: head == "*",
+            ref_name: ref_name.to_string().into(),
+            upstream: None,
+            most_recent_commit: None,
+        });
+    }
+
+    branches
+}
+
+fn append_branch_refs(branches: &mut Vec<Branch>, branch_refs: Vec<Branch>) {
+    for branch_ref in branch_refs {
+        if let Some(branch) = branches
+            .iter_mut()
+            .find(|branch| branch.ref_name == branch_ref.ref_name)
+        {
+            if branch_ref.is_head {
+                branch.is_head = true;
+            }
+        } else {
+            branches.push(branch_ref);
+        }
+    }
 }
 
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
@@ -4021,7 +4104,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_branches_return_head_when_commit_metadata_cannot_be_read(
+    async fn test_branches_fall_back_to_ref_names_when_remote_commit_metadata_cannot_be_read(
         cx: &mut TestAppContext,
     ) {
         disable_git_global_config();
@@ -4054,12 +4137,29 @@ mod tests {
         .await
         .unwrap();
 
+        smol::fs::write(repo_dir.path().join("untracked.txt"), "untracked")
+            .await
+            .unwrap();
+        smol::fs::create_dir_all(repo_dir.path().join(".git").join("refs/remotes/origin"))
+            .await
+            .unwrap();
         smol::fs::write(
-            repo_dir.path().join(".git").join("refs/heads/broken"),
+            repo_dir
+                .path()
+                .join(".git")
+                .join("refs/remotes/origin/broken"),
             "0a103ede22f159c792dc6405e0c8304d9bd4dc29\n",
         )
         .await
         .unwrap();
+
+        let root_path =
+            RepoPath::from_rel_path(&RelPath::new(".".as_ref(), PathStyle::local()).unwrap());
+        let status = repo.status(&[root_path]).await.unwrap();
+        assert!(status.entries.iter().any(|(path, status)| {
+            path.as_std_path() == Path::new("untracked.txt")
+                && *status == crate::status::FileStatus::Untracked
+        }));
 
         let branches = repo.branches().await.unwrap();
         let head_branch = branches
@@ -4068,11 +4168,13 @@ mod tests {
             .expect("branch list should include HEAD");
         assert!(head_branch.ref_name.starts_with("refs/heads/"));
 
-        assert!(
-            branches
-                .iter()
-                .all(|branch| branch.ref_name.as_ref() != "refs/heads/broken")
-        );
+        let broken_branch = branches
+            .iter()
+            .find(|branch| branch.ref_name.as_ref() == "refs/remotes/origin/broken")
+            .expect("branch list should include the broken ref");
+        assert!(!broken_branch.is_head);
+        assert_eq!(broken_branch.upstream, None);
+        assert_eq!(broken_branch.most_recent_commit, None);
     }
 
     #[gpui::test]
