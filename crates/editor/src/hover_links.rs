@@ -1910,14 +1910,14 @@ Sentence ending file2.rs.
 
             if let Some(highlight) = highlight_version {
                 let expected = base.replace(original, highlight);
-                cx.assert_editor_text_highlights::<HoveredLinkState>(&expected);
+                cx.assert_editor_text_highlights(HighlightKey::HoveredLinkState, &expected);
             } else {
                 // Expect no highlight
                 cx.update_editor(|editor, window, cx| {
                     assert!(
                         editor
                             .snapshot(window, cx)
-                            .text_highlight_ranges::<HoveredLinkState>()
+                            .text_highlight_ranges(HighlightKey::HoveredLinkState)
                             .unwrap_or_default()
                             .1
                             .is_empty(),
