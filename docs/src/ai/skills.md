@@ -13,9 +13,9 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 
 ### Create your own {#create-your-own}
 
-Open the Skill Creator with the {#action assistant::OpenSkillCreator} action. It opens a window where you fill in the skill's name, description, scope (global or project-local), body, and optionally toggle `disable-model-invocation`.
+Zed includes a built-in `create-skill` skill — invoke it with `/create-skill` and the agent walks you through the process.
 
-You can also ask the agent to help. Zed includes a built-in `create-skill` skill — invoke it with `/create-skill` and the agent walks you through the process.
+You can also open the Skill Creator directly with the {#action assistant::OpenSkillCreator} action. It opens a window where you fill in the skill's name, description, scope (global or project-local), body, and optionally toggle `disable-model-invocation`.
 
 See [Skill format](#skill-format) below for the full format reference.
 
