@@ -2,6 +2,7 @@ syntax = "proto3";
 package zed.messages;
 
 import "buffer.proto";
+import "worktree.proto";
 
 message GetDefinition {
   uint64 project_id = 1;
@@ -12,6 +13,17 @@ message GetDefinition {
 
 message GetDefinitionResponse {
   repeated LocationLink links = 1;
+}
+
+message GetDefinitionPaths {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetDefinitionPathsResponse {
+  repeated LocationPathLink links = 1;
 }
 
 message GetDeclaration {
@@ -34,6 +46,17 @@ message GetTypeDefinition {
 
 message GetTypeDefinitionResponse {
   repeated LocationLink links = 1;
+}
+
+message GetTypeDefinitionPaths {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetTypeDefinitionPathsResponse {
+  repeated LocationPathLink links = 1;
 }
 message GetImplementation {
   uint64 project_id = 1;
@@ -71,6 +94,34 @@ message GetDocumentHighlightsResponse {
 message LocationLink {
   optional Location origin = 1;
   Location target = 2;
+}
+
+message LocationPathLink {
+  optional LocationPathRange origin = 1;
+  LocationPathTarget target = 2;
+}
+
+message LocationPathTarget {
+  oneof target {
+    InProjectLocationPath in_project = 1;
+    OutsideProjectLocationPath outside_project = 2;
+  }
+}
+
+message InProjectLocationPath {
+  ProjectPath path = 1;
+  bool is_single_file_worktree = 2;
+  LocationPathRange range = 3;
+}
+
+message OutsideProjectLocationPath {
+  string abs_path = 1;
+  LocationPathRange range = 2;
+}
+
+message LocationPathRange {
+  PointUtf16 start = 1;
+  PointUtf16 end = 2;
 }
 
 message DocumentHighlight {
@@ -847,6 +898,8 @@ message LspQuery {
     GetDeclaration get_declaration = 11;
     GetTypeDefinition get_type_definition = 12;
     GetImplementation get_implementation = 13;
+    GetDefinitionPaths get_definition_paths = 19;
+    GetTypeDefinitionPaths get_type_definition_paths = 20;
     InlayHints inlay_hints = 14;
     SemanticTokens semantic_tokens = 16;
     GetFoldingRanges get_folding_ranges = 17;
@@ -872,6 +925,8 @@ message LspResponse {
     GetDeclarationResponse get_declaration_response = 9;
     GetTypeDefinitionResponse get_type_definition_response = 10;
     GetImplementationResponse get_implementation_response = 11;
+    GetDefinitionPathsResponse get_definition_paths_response = 17;
+    GetTypeDefinitionPathsResponse get_type_definition_paths_response = 18;
     GetReferencesResponse get_references_response = 12;
     InlayHintsResponse inlay_hints_response = 13;
     SemanticTokensResponse semantic_tokens_response = 14;

@@ -845,6 +845,25 @@ pub struct LocationLink {
     pub target: Location,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocationPathLink {
+    pub origin: Option<Range<PointUtf16>>,
+    pub target: LocationPathTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocationPathTarget {
+    InProject {
+        path: ProjectPath,
+        is_single_file_worktree: bool,
+        range: Range<PointUtf16>,
+    },
+    OutsideProject {
+        abs_path: PathBuf,
+        range: Range<PointUtf16>,
+    },
+}
+
 #[derive(Debug)]
 pub struct DocumentHighlight {
     pub range: Range<language::Anchor>,
@@ -4180,6 +4199,18 @@ impl Project {
         })
     }
 
+    pub fn definition_paths<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.definition_paths(buffer, position, cx)
+        })
+    }
+
     pub fn declarations<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -4213,6 +4244,18 @@ impl Project {
             let result = task.await;
             drop(guard);
             result
+        })
+    }
+
+    pub fn type_definition_paths<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationPathLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.type_definition_paths(buffer, position, cx)
         })
     }
 
