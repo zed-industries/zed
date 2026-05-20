@@ -1800,8 +1800,8 @@ impl GitRepository for RealGitRepository {
                 // read object data to format them. A missing or corrupt object can
                 // make `for-each-ref` fail after emitting only a prefix of refs.
                 // See Git's atom table and object-loading path:
-                // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#946
-                // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#2614
+                // https://github.com/git/git/blob/1c00d2d8392f603a6263f11f1a50fde96ae5475e/ref-filter.c#L946
+                // https://github.com/git/git/blob/1c00d2d8392f603a6263f11f1a50fde96ae5475e/ref-filter.c#L2614
                 let object_backed_field_names = [
                     "%(HEAD)",
                     "%(objectname)",
@@ -1839,7 +1839,7 @@ impl GitRepository for RealGitRepository {
                     // `get_object()`, so this can recover refs whose commit
                     // metadata cannot be read.
                     // See Git's special-case handling for `%(objectname)`:
-                    // https://code.googlesource.com/git/+/1da4c0e60df3fa8eed3eb806e958964c90b1df3b/ref-filter.c#2537
+                    // https://github.com/git/git/blob/1c00d2d8392f603a6263f11f1a50fde96ae5475e/ref-filter.c#L2537
                     let ref_metadata_field_names = ["%(HEAD)", "%(objectname)", "%(refname)"];
                     let ref_metadata_fields = ref_metadata_field_names.join("%00");
                     let ref_metadata_args = vec![
