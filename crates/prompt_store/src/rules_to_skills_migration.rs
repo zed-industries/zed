@@ -24,14 +24,10 @@
 //!   (still using Zed's shipped default content) are skipped so we don't
 //!   pollute AGENTS.md with text the user never wrote.
 //!
-//! Both migrations are gated by:
-//!
-//! * the `skills` feature flag — users without it never have their Rules
-//!   touched in any way;
-//! * a single global "migration already ran" flag persisted in
-//!   [`GlobalKeyValueStore`] — keyed by [`MIGRATION_DONE_KEY`], so a
-//!   shared home directory only gets populated once per machine even
-//!   across release channels.
+//! Both migrations are gated by a single global "migration already ran"
+//! flag persisted in [`GlobalKeyValueStore`] — keyed by
+//! [`MIGRATION_DONE_KEY`], so a shared home directory only gets
+//! populated once per machine even across release channels.
 //!
 //! The migration is intentionally non-destructive: rule rows in the LMDB
 //! database are left in place after the migration. That way users can
@@ -45,7 +41,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use agent_skills::{SKILL_FILE_NAME, global_skills_dir, slugify_skill_name};
 use anyhow::{Context as _, Result};
 use db::kvp::GlobalKeyValueStore;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 use fs::Fs;
 use gpui::{App, AsyncApp, Entity, TaskExt as _};
 use serde::{Deserialize, Serialize};
@@ -151,13 +146,9 @@ static MIGRATION_TASK_SPAWNED: AtomicBool = AtomicBool::new(false);
 /// Migrate non-Default user rules to global Skills, if not already done.
 ///
 /// Safe to call on every startup — short-circuits immediately when the
-/// migration has already run, when another invocation in this process
-/// has already started it, or when the user doesn't have the `skills`
-/// feature flag enabled.
+/// migration has already run or when another invocation in this process
+/// has already started it.
 pub fn migrate_rules_to_skills_if_needed(fs: Arc<dyn Fs>, cx: &mut App) {
-    if !cx.has_flag::<SkillsFeatureFlag>() {
-        return;
-    }
     if migration_done() {
         return;
     }

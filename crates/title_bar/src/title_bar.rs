@@ -25,7 +25,6 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
@@ -469,7 +468,6 @@ impl TitleBar {
                 zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
                 cx,
             )
-            .visible_when(|cx| cx.has_flag::<SkillsFeatureFlag>())
         }));
 
         let mut this = Self {
