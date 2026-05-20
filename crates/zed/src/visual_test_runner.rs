@@ -102,6 +102,7 @@ use {
     editor::display_map::DisplayRow,
     feature_flags::FeatureFlagAppExt as _,
     git_ui::project_diff::ProjectDiff,
+    project::git_store::branch_diff::DiffBase,
     gpui::{
         App, AppContext as _, Bounds, Entity, KeyBinding, Modifiers, VisualTestAppContext,
         WindowBounds, WindowHandle, WindowOptions, point, px, size,
@@ -1591,7 +1592,7 @@ import { AiPaneTabContext } from 'context';
     // Create and add the ProjectDiff using the public deploy_at method
     workspace_window
         .update(cx, |workspace, window, cx| {
-            ProjectDiff::deploy_at(workspace, None, window, cx);
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Head, window, cx);
         })
         .log_err();
 

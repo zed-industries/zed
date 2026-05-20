@@ -111,7 +111,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_at(workspace, None, window, cx)
+        Self::deploy_at(workspace, None, DiffBase::Head, window, cx)
     }
 
     fn deploy_branch_diff(
@@ -238,6 +238,7 @@ impl ProjectDiff {
     pub fn deploy_at(
         workspace: &mut Workspace,
         entry: Option<GitStatusEntry>,
+        target_base: DiffBase,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -253,7 +254,7 @@ impl ProjectDiff {
 
         let existing = workspace
             .items_of_type::<Self>(cx)
-            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
+            .find(|item| item.read(cx).diff_base(cx) == &target_base);
         let project_diff = if let Some(existing) = existing {
             existing.update(cx, |project_diff, cx| {
                 project_diff.move_to_beginning(window, cx);
@@ -263,8 +264,15 @@ impl ProjectDiff {
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    workspace.project().clone(),
+                    workspace_handle,
+                    target_base,
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -301,20 +309,28 @@ impl ProjectDiff {
     pub fn deploy_at_project_path(
         workspace: &mut Workspace,
         project_path: ProjectPath,
+        target_base: DiffBase,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         telemetry::event!("Git Diff Opened", source = "Agent Panel");
         let existing = workspace
             .items_of_type::<Self>(cx)
-            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Head));
+            .find(|item| item.read(cx).diff_base(cx) == &target_base);
         let project_diff = if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
+            let project_diff = cx.new(|cx| {
+                Self::new(
+                    workspace.project().clone(),
+                    workspace_handle,
+                    target_base,
+                    window,
+                    cx,
+                )
+            });
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -371,11 +387,13 @@ impl ProjectDiff {
     fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        initial_diff_base: DiffBase,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff =
-            cx.new(|cx| branch_diff::BranchDiff::new(DiffBase::Head, project.clone(), window, cx));
+        let branch_diff = cx.new(|cx| {
+            branch_diff::BranchDiff::new(initial_diff_base, project.clone(), window, cx)
+        });
         Self::new_impl(branch_diff, project, workspace, window, cx)
     }
 
@@ -489,6 +507,14 @@ impl ProjectDiff {
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
         self.branch_diff.read(cx).diff_base()
+    }
+
+    pub fn active_diff_base_in(workspace: &Workspace, cx: &App) -> DiffBase {
+        workspace
+            .items_of_type::<Self>(cx)
+            .next()
+            .map(|diff| diff.read(cx).diff_base(cx).clone())
+            .unwrap_or(DiffBase::Head)
     }
 
     fn empty_state_text(&self, cx: &App) -> SharedString {
@@ -1191,7 +1217,7 @@ impl Item for ProjectDiff {
             return Task::ready(None);
         };
         Task::ready(Some(cx.new(|cx| {
-            ProjectDiff::new(self.project.clone(), workspace, window, cx)
+            ProjectDiff::new(self.project.clone(), workspace, DiffBase::Head, window, cx)
         })))
     }
 
@@ -2126,7 +2152,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
         let toolbar = cx.new(|cx| ProjectDiffToolbar {
@@ -2169,7 +2195,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2214,7 +2240,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2256,7 +2282,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2296,7 +2322,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
         let toolbar = cx.new(|cx| ProjectDiffToolbar {
@@ -2364,7 +2390,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
         let toolbar = cx.new(|cx| ProjectDiffToolbar {
@@ -2416,7 +2442,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
         let toolbar = cx.new(|cx| ProjectDiffToolbar {
@@ -2455,7 +2481,7 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), window, cx)
+            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
         let toolbar = cx.new(|cx| ProjectDiffToolbar {
@@ -2510,7 +2536,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2559,7 +2585,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2645,7 +2671,7 @@ mod tests {
             Editor::for_buffer(buffer, Some(project.clone()), window, cx)
         });
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -2933,7 +2959,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -3173,7 +3199,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace, window, cx)
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Head, window, cx)
         });
         cx.run_until_parked();
 
@@ -3516,5 +3542,106 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_creates_fresh_view_under_target_base(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Staged, window, cx);
+        });
+        cx.run_until_parked();
+
+        let staged_view = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after deploy_at")
+        });
+        assert_eq!(
+            staged_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged,
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Unstaged, window, cx);
+        });
+        cx.run_until_parked();
+
+        let unstaged_view = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after deploy_at")
+        });
+        assert_eq!(
+            unstaged_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Unstaged,
+        );
+        assert_ne!(staged_view.entity_id(), unstaged_view.entity_id());
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_does_not_retarget_existing_view_to_new_base(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Head, window, cx);
+        });
+        cx.run_until_parked();
+        let head_view = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after deploy_at")
+        });
+        assert_eq!(
+            head_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Head,
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Staged, window, cx);
+        });
+        cx.run_until_parked();
+        let staged_view = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after deploy_at")
+        });
+        assert_eq!(
+            staged_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged,
+        );
+        assert_ne!(head_view.entity_id(), staged_view.entity_id());
+        assert_eq!(
+            head_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Head,
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Head, window, cx);
+        });
+        cx.run_until_parked();
+        let head_view_again = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after deploy_at")
+        });
+        assert_eq!(head_view.entity_id(), head_view_again.entity_id());
     }
 }

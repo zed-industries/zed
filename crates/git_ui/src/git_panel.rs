@@ -58,7 +58,8 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
+        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        branch_diff::DiffBase, pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -782,6 +783,50 @@ fn entry_for_section(
     entry
 }
 
+// Pure target_base computation extracted so it can be tested without
+// constructing a workspace. The precedence is:
+// 1. Branch override — when the current base is `Merge`, the click always
+//    exits Merge. Staged/Unstaged rows route to their matching `DiffBase`;
+//    every other case falls back to `Head`.
+// 2. Staging-grouped mode — Staged → `Staged`, Unstaged → `Unstaged`,
+//    Conflicts (or any non-staging-side row) keeps the current base.
+// 3. Status-grouped mode — keep the current base unless it would not
+//    contain the file (e.g. current = `Staged` but the file is fully
+//    unstaged), in which case fall back to `Head`.
+pub(crate) fn target_diff_base_for_click(
+    current_base: &DiffBase,
+    group_by: GitPanelGroupBy,
+    section: Section,
+    staging: StageStatus,
+) -> DiffBase {
+    if current_base.is_merge_base() {
+        return match (group_by, section) {
+            (GitPanelGroupBy::Staging, Section::Staged) => DiffBase::Staged,
+            (GitPanelGroupBy::Staging, Section::Unstaged) => DiffBase::Unstaged,
+            _ => DiffBase::Head,
+        };
+    }
+
+    match (group_by, section) {
+        (GitPanelGroupBy::Staging, Section::Staged) => DiffBase::Staged,
+        (GitPanelGroupBy::Staging, Section::Unstaged) => DiffBase::Unstaged,
+        (GitPanelGroupBy::Staging, _) => current_base.clone(),
+        (GitPanelGroupBy::Status, _) => {
+            let contains = match current_base {
+                DiffBase::Head => true,
+                DiffBase::Staged => staging.has_staged(),
+                DiffBase::Unstaged => staging.has_unstaged(),
+                DiffBase::Merge { .. } => unreachable!(),
+            };
+            if contains {
+                current_base.clone()
+            } else {
+                DiffBase::Head
+            }
+        }
+    }
+}
+
 struct TruncatedPatch {
     header: String,
     hunks: Vec<String>,
@@ -1126,6 +1171,16 @@ impl GitPanel {
 
     fn entry_by_key(&self, key: &GitPanelEntryKey) -> Option<usize> {
         self.entries_indices.get(key).copied()
+    }
+
+    fn target_diff_base_for_entry(&self, entry: &GitStatusEntry, cx: &App) -> DiffBase {
+        let current_base = self
+            .workspace
+            .upgrade()
+            .map(|workspace| ProjectDiff::active_diff_base_in(workspace.read(cx), cx))
+            .unwrap_or(DiffBase::Head);
+        let group_by = GitPanelSettings::get_global(cx).group_by;
+        target_diff_base_for_click(&current_base, group_by, entry.section, entry.staging)
     }
 
     pub fn select_entry_by_path(
@@ -1613,7 +1668,10 @@ impl GitPanel {
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
 
+            let target_base = self.target_diff_base_for_entry(entry, cx);
+
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
+                && project_diff.read(cx).diff_base(cx) == &target_base
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo
@@ -1625,10 +1683,15 @@ impl GitPanel {
                 project_diff.update(cx, |project_diff, cx| project_diff.autoscroll(cx));
                 return None;
             };
-
             self.workspace
                 .update(cx, |workspace, cx| {
-                    ProjectDiff::deploy_at(workspace, Some(entry.clone()), window, cx);
+                    ProjectDiff::deploy_at(
+                        workspace,
+                        Some(entry.clone()),
+                        target_base,
+                        window,
+                        cx,
+                    );
                 })
                 .ok();
             self.focus_handle.focus(window, cx);
@@ -9275,6 +9338,283 @@ mod tests {
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.selected_entry, Some(unstaged_ix));
         });
+    }
+
+    #[test]
+    fn test_target_diff_base_branch_override_exits_merge_to_matching_side() {
+        let merge_base = DiffBase::Merge {
+            base_ref: "main".into(),
+        };
+
+        // Staging-grouped: Staged/Unstaged rows route to their side; Conflicts → Head.
+        assert_eq!(
+            target_diff_base_for_click(
+                &merge_base,
+                GitPanelGroupBy::Staging,
+                Section::Staged,
+                StageStatus::Staged,
+            ),
+            DiffBase::Staged,
+        );
+        assert_eq!(
+            target_diff_base_for_click(
+                &merge_base,
+                GitPanelGroupBy::Staging,
+                Section::Unstaged,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Unstaged,
+        );
+        assert_eq!(
+            target_diff_base_for_click(
+                &merge_base,
+                GitPanelGroupBy::Staging,
+                Section::Conflict,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Head,
+        );
+
+        // Status-grouped: every section falls back to Head.
+        for section in [Section::Conflict, Section::Tracked, Section::New] {
+            assert_eq!(
+                target_diff_base_for_click(
+                    &merge_base,
+                    GitPanelGroupBy::Status,
+                    section,
+                    StageStatus::Staged,
+                ),
+                DiffBase::Head,
+                "status-grouped, section {section:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn test_target_diff_base_staging_grouped_routes_to_section_side() {
+        // Current base = Head; staging-grouped row click picks the matching side.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Head,
+                GitPanelGroupBy::Staging,
+                Section::Staged,
+                StageStatus::Staged,
+            ),
+            DiffBase::Staged,
+        );
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Head,
+                GitPanelGroupBy::Staging,
+                Section::Unstaged,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Unstaged,
+        );
+
+        // Conflicts row preserves the current base (it has no staging side).
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Staged,
+                GitPanelGroupBy::Staging,
+                Section::Conflict,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Staged,
+        );
+    }
+
+    #[test]
+    fn test_target_diff_base_status_grouped_keeps_current_when_file_matches_filter() {
+        // Current = Head — file is always contained.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Head,
+                GitPanelGroupBy::Status,
+                Section::Tracked,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Head,
+        );
+
+        // Current = Staged + file has staged hunks → keep Staged.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Staged,
+                GitPanelGroupBy::Status,
+                Section::Tracked,
+                StageStatus::PartiallyStaged,
+            ),
+            DiffBase::Staged,
+        );
+
+        // Current = Unstaged + file has unstaged hunks → keep Unstaged.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Unstaged,
+                GitPanelGroupBy::Status,
+                Section::Tracked,
+                StageStatus::PartiallyStaged,
+            ),
+            DiffBase::Unstaged,
+        );
+    }
+
+    async fn assert_row_click_opens_diff_under_base(
+        cx: &mut TestAppContext,
+        select_row: impl FnOnce(usize, usize) -> usize,
+        expected_base: DiffBase,
+    ) {
+        let (panel, _partial_path, staged_ix, unstaged_ix, mut visual_cx) =
+            build_partial_file_panel(cx).await;
+        let cx = &mut visual_cx;
+        let workspace = panel
+            .read_with(cx, |panel, _| panel.workspace.clone())
+            .upgrade()
+            .expect("workspace should be live");
+
+        let row_ix = select_row(staged_ix, unstaged_ix);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(row_ix);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let diff = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after open_diff")
+        });
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            expected_base,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_section_row_opens_diff_under_staged_base(
+        cx: &mut TestAppContext,
+    ) {
+        assert_row_click_opens_diff_under_base(cx, |staged, _| staged, DiffBase::Staged).await;
+    }
+
+    #[gpui::test]
+    async fn test_clicking_unstaged_section_row_opens_diff_under_unstaged_base(
+        cx: &mut TestAppContext,
+    ) {
+        assert_row_click_opens_diff_under_base(cx, |_, unstaged| unstaged, DiffBase::Unstaged).await;
+    }
+
+    #[gpui::test]
+    async fn test_clicking_unstaged_row_after_staged_view_creates_separate_view(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, _partial_path, staged_ix, unstaged_ix, mut visual_cx) =
+            build_partial_file_panel(cx).await;
+        let cx = &mut visual_cx;
+        let workspace = panel
+            .read_with(cx, |panel, _| panel.workspace.clone())
+            .upgrade()
+            .expect("workspace should be live");
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+        let staged_view = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after Staged-row click")
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+        let unstaged_view = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after Unstaged-row click")
+        });
+
+        assert_ne!(staged_view.entity_id(), unstaged_view.entity_id());
+        assert_eq!(
+            staged_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged,
+        );
+        assert_eq!(
+            unstaged_view.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Unstaged,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_clicking_staged_row_while_branch_diff_open_exits_to_staged_base(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, _partial_path, staged_ix, _unstaged_ix, mut visual_cx) =
+            build_partial_file_panel(cx).await;
+        let cx = &mut visual_cx;
+        let workspace = panel
+            .read_with(cx, |panel, _| panel.workspace.clone())
+            .upgrade()
+            .expect("workspace should be live");
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(
+                workspace,
+                None,
+                DiffBase::Merge {
+                    base_ref: "main".into(),
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.open_diff(&menu::Confirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        let diff = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_item_as::<ProjectDiff>(cx)
+                .expect("ProjectDiff should be active after open_diff")
+        });
+        assert_eq!(
+            diff.read_with(cx, |diff, cx| diff.diff_base(cx).clone()),
+            DiffBase::Staged,
+        );
+    }
+
+    #[test]
+    fn test_target_diff_base_status_grouped_falls_back_to_head_when_file_not_in_filter() {
+        // Current = Staged but file is fully unstaged → fall back to Head.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Staged,
+                GitPanelGroupBy::Status,
+                Section::Tracked,
+                StageStatus::Unstaged,
+            ),
+            DiffBase::Head,
+        );
+
+        // Current = Unstaged but file is fully staged → fall back to Head.
+        assert_eq!(
+            target_diff_base_for_click(
+                &DiffBase::Unstaged,
+                GitPanelGroupBy::Status,
+                Section::Tracked,
+                StageStatus::Staged,
+            ),
+            DiffBase::Head,
+        );
     }
 
     #[test]
