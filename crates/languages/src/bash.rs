@@ -141,7 +141,7 @@ impl LspInstaller for BashLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: std::path::PathBuf,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<lsp::LanguageServerBinary>> + use<> {
@@ -152,13 +152,9 @@ impl LspInstaller for BashLspAdapter {
             let server_path = container_dir
                 .join("node_modules")
                 .join(Self::NODE_MODULE_RELATIVE_SERVER_PATH);
-            let latest_version = latest_version.to_string();
 
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::PACKAGE_NAME, latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::PACKAGE_NAME])
+                .await?;
 
             let env = delegate.shell_env().await;
             Ok(LanguageServerBinary {

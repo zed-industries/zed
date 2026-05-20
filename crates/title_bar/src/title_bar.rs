@@ -25,7 +25,6 @@ use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
 
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, Context, Element, Entity, Focusable,
@@ -455,22 +454,7 @@ impl TitleBar {
             titlebar
         });
 
-        // The banner label stays static ("Introducing: Skills") regardless
-        // of whether the user had Rules to migrate; the explainer modal
-        // is where the migration-specific summary surfaces. Keeping the
-        // label static avoids the rebuild-on-migration-completion plumbing
-        // we'd otherwise need to dodge the title-bar-vs-migration race.
-        let banner = Some(cx.new(|cx| {
-            OnboardingBanner::new(
-                "Skills Migration Announcement",
-                IconName::Sparkle,
-                "Skills",
-                Some("Introducing:".into()),
-                zed_actions::agent::OpenRulesToSkillsMigrationInfo.boxed_clone(),
-                cx,
-            )
-            .visible_when(|cx| cx.has_flag::<SkillsFeatureFlag>())
-        }));
+        let banner = None;
 
         let mut this = Self {
             platform_titlebar,
@@ -641,13 +625,8 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-            .map(|trusted_worktrees| {
-                trusted_worktrees
-                    .read(cx)
-                    .has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx)
-            })
-            .unwrap_or(false);
+        let has_restricted_worktrees =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
         if !has_restricted_worktrees {
             return None;
         }

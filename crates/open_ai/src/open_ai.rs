@@ -622,9 +622,9 @@ pub struct FunctionChunk {
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
