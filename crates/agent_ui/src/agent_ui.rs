@@ -609,15 +609,6 @@ pub fn init(
     })
     .detach();
 
-    // The `skills` flag can flip mid-session (e.g. server-side rollout or
-    // staff toggle). `on_flags_ready` only fires once flags first arrive,
-    // so without this the command palette would keep showing the stale
-    // Rules/Skills entries until some other trigger re-ran the filter.
-    cx.observe_flag::<SkillsFeatureFlag, _>(|_, cx| {
-        update_command_palette_filter(cx);
-    })
-    .detach();
-
     // Once the `skills` feature flag has resolved, kick off the one-time
     // migration of non-Default Rules to global Skills. Idempotent and
     // self-gated on the flag, so it's safe to call on every flag-ready
@@ -664,10 +655,9 @@ fn update_command_palette_filter(cx: &mut App) {
         .provider;
 
     // The Skills feature flag is loaded asynchronously, so this value may
-    // be `false` before flags resolve. `update_command_palette_filter` is
-    // re-run from `cx.on_flags_ready` once flags first arrive, and from
-    // `cx.observe_flag::<SkillsFeatureFlag>` whenever the flag value later
-    // transitions (see `init`).
+    // be `false` before flags resolve. `update_command_palette_filter`
+    // gets re-run from `cx.on_flags_ready` (see `init`), which means the
+    // filter is reapplied with the correct value once flags arrive.
     let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
 
     CommandPaletteFilter::update_global(cx, |filter, _| {

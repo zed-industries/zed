@@ -38,7 +38,7 @@ use crate::terminal_thread_metadata_store::{TerminalThreadMetadata, TerminalThre
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
-    InlineAssistant, LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
+    LoadThreadFromClipboard, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
     ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
     ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
@@ -61,7 +61,7 @@ use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension::ExtensionEvents;
 use extension_host::ExtensionStore;
-use feature_flags::{FeatureFlagAppExt as _, SkillsFeatureFlag};
+
 use fs::Fs;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -72,8 +72,7 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
-use prompt_store::{PromptStore, UserPromptId};
-use rules_library::{RulesLibrary, open_rules_library};
+use prompt_store::PromptStore;
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 use skill_creator::open_skill_creator;
@@ -2934,31 +2933,18 @@ impl AgentPanel {
 
     fn deploy_rules_library(
         &mut self,
-        action: &OpenRulesLibrary,
+        _action: &OpenRulesLibrary,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // When the Skills feature flag is on, the legacy Rules action is
-        // rerouted to the skill creator so the existing keyboard
-        // shortcut (still bound to `OpenRulesLibrary` in the default
-        // keymaps) and any persisted user keymap entries keep working.
-        // The options-menu "Skills" entry already dispatches
+        // The legacy Rules action is rerouted to the skill creator so the
+        // existing keyboard shortcut (still bound to `OpenRulesLibrary` in
+        // the default keymaps) and any persisted user keymap entries keep
+        // working. The options-menu "Skills" entry already dispatches
         // `OpenSkillCreator` directly, so this reroute only serves the
         // key-press path and is intended to disappear once the keymaps
-        // migrate to `OpenSkillCreator` in the post-flag cleanup.
-        if cx.has_flag::<SkillsFeatureFlag>() {
-            self.deploy_skill_creator(&OpenSkillCreator, window, cx);
-            return;
-        }
-        open_rules_library(
-            self.language_registry.clone(),
-            Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
-            action
-                .prompt_to_select
-                .map(|uuid| UserPromptId(uuid).into()),
-            cx,
-        )
-        .detach_and_log_err(cx);
+        // migrate to `OpenSkillCreator`.
+        self.deploy_skill_creator(&OpenSkillCreator, window, cx);
     }
 
     fn deploy_skill_creator(
@@ -4702,12 +4688,6 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
-                    // When the Skills feature flag is on, relabel the legacy Rules menu entry.
-                    // The flag is read from a global store populated asynchronously, and
-                    // this menu builder runs on every open, so the latest resolved value is
-                    // reflected when the user clicks the ellipsis.
-                    let skills_enabled = cx.has_flag::<SkillsFeatureFlag>();
-
                     Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
                         menu = menu.context(menu_action_context.clone());
 
@@ -4744,30 +4724,25 @@ impl AgentPanel {
                                 .action("Add Custom Server…", Box::new(AddContextServer))
                                 .separator();
 
-                            menu = if skills_enabled {
-                                // Clicking "Skills" dispatches `OpenSkillCreator`
-                                // directly so that observers, command-palette
-                                // filters, and telemetry see the correct
-                                // action firing. The display action stays as
-                                // `OpenRulesLibrary` purely for keystroke
-                                // lookup — the default keymaps still bind
-                                // `cmd-alt-l` / `ctrl-alt-l` / `shift-alt-l`
-                                // to `OpenRulesLibrary`, and
-                                // `deploy_rules_library` reroutes those key
-                                // presses to the skill creator. When the
-                                // flag is removed and the keymaps migrate to
-                                // `OpenSkillCreator`, this can collapse
-                                // back to `menu.action(...)`.
-                                menu.entry(
-                                    "Skills",
-                                    Some(Box::new(OpenRulesLibrary::default())),
-                                    |window, cx| {
-                                        window.dispatch_action(Box::new(OpenSkillCreator), cx);
-                                    },
-                                )
-                            } else {
-                                menu.action("Rules", Box::new(OpenRulesLibrary::default()))
-                            };
+                            // Clicking "Skills" dispatches `OpenSkillCreator`
+                            // directly so that observers, command-palette
+                            // filters, and telemetry see the correct action
+                            // firing. The display action stays as
+                            // `OpenRulesLibrary` purely for keystroke lookup —
+                            // the default keymaps still bind `cmd-alt-l` /
+                            // `ctrl-alt-l` / `shift-alt-l` to
+                            // `OpenRulesLibrary`, and `deploy_rules_library`
+                            // reroutes those key presses to the skill
+                            // creator. Once the keymaps migrate to
+                            // `OpenSkillCreator`, this can collapse back to
+                            // `menu.action(...)`.
+                            menu = menu.entry(
+                                "Skills",
+                                Some(Box::new(OpenRulesLibrary::default())),
+                                |window, cx| {
+                                    window.dispatch_action(Box::new(OpenSkillCreator), cx);
+                                },
+                            );
 
                             menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
@@ -5643,57 +5618,6 @@ impl Render for AgentPanel {
             }
             _ => content.into_any(),
         }
-    }
-}
-
-struct PromptLibraryInlineAssist {
-    workspace: WeakEntity<Workspace>,
-}
-
-impl PromptLibraryInlineAssist {
-    pub fn new(workspace: WeakEntity<Workspace>) -> Self {
-        Self { workspace }
-    }
-}
-
-impl rules_library::InlineAssistDelegate for PromptLibraryInlineAssist {
-    fn assist(
-        &self,
-        prompt_editor: &Entity<Editor>,
-        initial_prompt: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<RulesLibrary>,
-    ) {
-        InlineAssistant::update_global(cx, |assistant, cx| {
-            let Some(workspace) = self.workspace.upgrade() else {
-                return;
-            };
-            let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
-                return;
-            };
-            let project = workspace.read(cx).project().downgrade();
-            let panel = panel.read(cx);
-            let thread_store = panel.thread_store().clone();
-            assistant.assist(
-                prompt_editor,
-                self.workspace.clone(),
-                project,
-                thread_store,
-                None,
-                initial_prompt,
-                window,
-                cx,
-            );
-        })
-    }
-
-    fn focus_agent_panel(
-        &self,
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) -> bool {
-        workspace.focus_panel::<AgentPanel>(window, cx).is_some()
     }
 }
 
@@ -7876,7 +7800,6 @@ mod tests {
     async fn test_skills_menu_entry_shows_rules_shortcut(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
-            cx.update_flags(true, vec!["skills".to_string()]);
             let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
                 "keymaps/default-macos.json",
                 cx,
@@ -7919,7 +7842,7 @@ mod tests {
 
         assert!(
             cx.debug_bounds("MENU_ITEM-Skills").is_some(),
-            "Skills menu item should be visible when the skills flag is enabled"
+            "Skills menu item should be visible"
         );
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
