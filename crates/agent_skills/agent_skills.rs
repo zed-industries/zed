@@ -2,6 +2,7 @@ use anyhow::{Context as _, Result};
 use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
+use gpui::{Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -156,6 +157,23 @@ impl SkillSource {
         }
     }
 }
+
+/// App-wide index of loaded skills, published by NativeAgent and read
+/// by any UI that needs to display the skill list (e.g. Settings UI).
+#[derive(Default)]
+pub struct SkillIndex {
+    pub global_skills: Vec<Skill>,
+    pub project_skills: Vec<ProjectSkillGroup>,
+}
+
+#[derive(Clone)]
+pub struct ProjectSkillGroup {
+    pub worktree_id: SkillScopeId,
+    pub worktree_root_name: SharedString,
+    pub skills: Vec<Skill>,
+}
+
+impl Global for SkillIndex {}
 
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -31,8 +31,9 @@ use acp_thread::{
 };
 use agent_client_protocol::schema as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, Skill, SkillLoadError, SkillScopeId, SkillSource, SkillSummary,
-    builtin_skills, global_skills_dir, load_skills_from_directory, project_skills_relative_path,
+    MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, Skill, SkillIndex, SkillLoadError,
+    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
+    load_skills_from_directory, project_skills_relative_path,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -367,6 +368,10 @@ impl NativeAgent {
             )];
             if let Some(prompt_store) = prompt_store.as_ref() {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
+            }
+
+            if !cx.has_global::<SkillIndex>() {
+                cx.set_global(SkillIndex::default());
             }
 
             Self {
@@ -796,6 +801,7 @@ impl NativeAgent {
                 // the available commands) can change without affecting the
                 // skill error list.
                 this.update_available_commands_for_project(project_id, cx);
+                this.publish_skill_index(cx);
             })?;
         }
 
@@ -1213,6 +1219,50 @@ impl NativeAgent {
         }
     }
 
+    fn publish_skill_index(&self, cx: &mut Context<Self>) {
+        let mut global_skills = Vec::new();
+        let mut project_groups: Vec<ProjectSkillGroup> = Vec::new();
+        let mut seen_global = false;
+
+        for state in self.projects.values() {
+            for skill in state.skills.iter() {
+                match &skill.source {
+                    SkillSource::BuiltIn => {}
+                    SkillSource::Global => {
+                        if !seen_global {
+                            global_skills.push(skill.clone());
+                        }
+                    }
+                    SkillSource::ProjectLocal {
+                        worktree_id,
+                        worktree_root_name,
+                    } => {
+                        if let Some(group) = project_groups
+                            .iter_mut()
+                            .find(|g| g.worktree_id == *worktree_id)
+                        {
+                            group.skills.push(skill.clone());
+                        } else {
+                            project_groups.push(ProjectSkillGroup {
+                                worktree_id: *worktree_id,
+                                worktree_root_name: SharedString::from(worktree_root_name.clone()),
+                                skills: vec![skill.clone()],
+                            });
+                        }
+                    }
+                }
+            }
+            if !global_skills.is_empty() {
+                seen_global = true;
+            }
+        }
+
+        cx.set_global(SkillIndex {
+            global_skills,
+            project_skills: project_groups,
+        });
+    }
+
     fn update_available_commands_for_project(&self, project_id: EntityId, cx: &mut Context<Self>) {
         let available_commands =
             Self::build_available_commands_for_project(self.projects.get(&project_id), cx);
@@ -1450,6 +1500,7 @@ impl NativeAgent {
         let has_remaining = self.sessions.values().any(|s| s.project_id == project_id);
         if !has_remaining {
             self.projects.remove(&project_id);
+            self.publish_skill_index(cx);
         }
 
         session.pending_save
