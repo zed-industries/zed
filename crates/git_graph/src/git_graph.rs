@@ -64,6 +64,8 @@ const LEFT_PADDING: Pixels = px(12.0);
 const LINE_WIDTH: Pixels = px(1.5);
 const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
+const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
+const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -117,7 +119,9 @@ impl Focusable for CommitTagPicker {
 
 impl Render for CommitTagPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(18.)).child(self.picker.clone())
+        v_flex()
+            .w(COMMIT_TAG_LIST_WIDTH_IN_REMS)
+            .child(self.picker.clone())
     }
 }
 
@@ -2120,14 +2124,6 @@ impl GitGraph {
         };
         let sha = commit.data.sha;
         let sha_short = sha.display_short();
-        let tag_names = commit.data.tag_names();
-        let copy_tag_label = "Copy Tag";
-        let copy_tag_label: SharedString = match tag_names.as_slice() {
-            [] => copy_tag_label.into(),
-            [tag_name] => format!("{copy_tag_label}: {tag_name}").into(),
-            _ => format!("{copy_tag_label}…").into(),
-        };
-        let copy_tag_disabled = tag_names.is_empty();
         let git_tasks = self
             .git_task_context(sha, cx)
             .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
@@ -2153,16 +2149,68 @@ impl GitGraph {
                         this.copy_commit_sha(index, cx);
                     }),
                 )
-                .item(
-                    ContextMenuEntry::new(copy_tag_label)
-                        .action(CopyCommitTag.boxed_clone())
-                        .disabled(copy_tag_disabled)
-                        .handler(window.handler_for(&git_graph, move |this, window, cx| {
-                            this.copy_commit_tag(index, window, cx);
-                        })),
-                )
-                .when(!git_tasks.is_empty(), |mut menu| {
-                    menu = menu.separator().header("Custom Git Commands");
+                .map(|menu| {
+                    let tag_names = commit
+                        .data
+                        .tag_names()
+                        .into_iter()
+                        .map(|tag_name| SharedString::from(tag_name.to_string()))
+                        .collect::<Vec<_>>();
+                    let copy_tag_label = "Copy Tag";
+
+                    match tag_names.as_slice() {
+                        [] => menu.item(
+                            ContextMenuEntry::new(copy_tag_label)
+                                .action(CopyCommitTag.boxed_clone())
+                                .disabled(true),
+                        ),
+                        [tag_name] => {
+                            let tag_name = tag_name.clone();
+                            let label = format!("{copy_tag_label}: {tag_name}");
+                            menu.entry(
+                                label,
+                                Some(CopyCommitTag.boxed_clone()),
+                                move |_window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        tag_name.to_string(),
+                                    ));
+                                },
+                            )
+                        }
+                        _ => menu.submenu(copy_tag_label, move |menu, _window, _cx| {
+                            let mut menu = menu.fixed_width(COMMIT_TAG_LIST_WIDTH_IN_REMS.into());
+
+                            for tag_name in tag_names.clone() {
+                                let tag_name_to_copy = tag_name.clone();
+
+                                menu = menu.entry(tag_name, None, move |_window, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        tag_name_to_copy.to_string(),
+                                    ));
+                                });
+                            }
+                            menu
+                        }),
+                    }
+                })
+                .map(|mut menu| {
+                    menu = menu.separator().header("Custom Commands");
+
+                    if git_tasks.is_empty() {
+                        return menu.item(
+                            ContextMenuEntry::new("Learn More")
+                                .icon(IconName::ArrowUpRight)
+                                .icon_color(Color::Muted)
+                                .icon_position(IconPosition::End)
+                                .handler(|_window, cx| {
+                                    let docs_url = release_channel::docs_url(
+                                        CUSTOM_GIT_COMMANDS_DOCS_SLUG,
+                                        cx,
+                                    );
+                                    cx.open_url(&docs_url);
+                                }),
+                        );
+                    }
 
                     for (task_source_kind, resolved_task) in git_tasks {
                         let label = resolved_task.display_label().to_string();
@@ -3978,6 +4026,134 @@ mod persistence {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl GitGraph {
+    pub fn search_for_test(&mut self, query: SharedString, cx: &mut Context<Self>) {
+        self.search(query, cx);
+    }
+
+    pub fn search_matches_for_test(&self) -> Vec<Oid> {
+        self.search_state.matches.iter().copied().collect()
+    }
+
+    pub fn initial_commit_data_for_test(&self) -> Vec<Arc<InitialGraphCommitData>> {
+        self.graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.data.clone())
+            .collect()
+    }
+}
+
+/// Generates a random commit DAG suitable for testing git graph rendering.
+///
+/// The commits are ordered newest-first (like git log output), so:
+/// - Index 0 = most recent commit (HEAD)
+/// - Last index = oldest commit (root, has no parents)
+/// - Parents of commit at index I must have index > I
+///
+/// When `adversarial` is true, generates complex topologies with many branches
+/// and octopus merges. Otherwise generates more realistic linear histories
+/// with occasional branches.
+#[cfg(any(test, feature = "test-support"))]
+pub fn generate_random_commit_dag(
+    rng: &mut rand::rngs::StdRng,
+    num_commits: usize,
+    adversarial: bool,
+) -> Vec<Arc<InitialGraphCommitData>> {
+    use rand::Rng as _;
+
+    if num_commits == 0 {
+        return Vec::new();
+    }
+
+    let mut commits: Vec<Arc<InitialGraphCommitData>> = Vec::with_capacity(num_commits);
+    let oids: Vec<Oid> = (0..num_commits).map(|_| Oid::random(rng)).collect();
+
+    for i in 0..num_commits {
+        let sha = oids[i];
+
+        let parents = if i == num_commits - 1 {
+            smallvec![]
+        } else {
+            generate_parents_from_oids(rng, &oids, i, num_commits, adversarial)
+        };
+
+        let ref_names = if i == 0 {
+            vec!["HEAD".into(), "main".into()]
+        } else if adversarial && rng.random_bool(0.1) {
+            vec![format!("branch-{i}").into()]
+        } else {
+            Vec::new()
+        };
+
+        commits.push(Arc::new(InitialGraphCommitData {
+            sha,
+            parents,
+            ref_names,
+        }));
+    }
+
+    commits
+}
+
+#[cfg(any(test, feature = "test-support"))]
+fn generate_parents_from_oids(
+    rng: &mut rand::rngs::StdRng,
+    oids: &[Oid],
+    current_idx: usize,
+    num_commits: usize,
+    adversarial: bool,
+) -> SmallVec<[Oid; 1]> {
+    use rand::{Rng as _, seq::SliceRandom as _};
+
+    let remaining = num_commits - current_idx - 1;
+    if remaining == 0 {
+        return smallvec![];
+    }
+
+    if adversarial {
+        let merge_chance = 0.4;
+        let octopus_chance = 0.15;
+
+        if remaining >= 3 && rng.random_bool(octopus_chance) {
+            let num_parents = rng.random_range(3..=remaining.min(5));
+            let mut parent_indices: Vec<usize> = (current_idx + 1..num_commits).collect();
+            parent_indices.shuffle(rng);
+            parent_indices
+                .into_iter()
+                .take(num_parents)
+                .map(|idx| oids[idx])
+                .collect()
+        } else if remaining >= 2 && rng.random_bool(merge_chance) {
+            let mut parent_indices: Vec<usize> = (current_idx + 1..num_commits).collect();
+            parent_indices.shuffle(rng);
+            parent_indices
+                .into_iter()
+                .take(2)
+                .map(|idx| oids[idx])
+                .collect()
+        } else {
+            let parent_idx = rng.random_range(current_idx + 1..num_commits);
+            smallvec![oids[parent_idx]]
+        }
+    } else {
+        let merge_chance = 0.15;
+        let skip_chance = 0.1;
+
+        if remaining >= 2 && rng.random_bool(merge_chance) {
+            let first_parent = current_idx + 1;
+            let second_parent = rng.random_range(current_idx + 2..num_commits);
+            smallvec![oids[first_parent], oids[second_parent]]
+        } else if rng.random_bool(skip_chance) && remaining >= 2 {
+            let skip = rng.random_range(1..remaining.min(3));
+            smallvec![oids[current_idx + 1 + skip]]
+        } else {
+            smallvec![oids[current_idx + 1]]
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4006,109 +4182,6 @@ mod tests {
             project_panel::init(cx);
             init(cx);
         });
-    }
-
-    /// Generates a random commit DAG suitable for testing git graph rendering.
-    ///
-    /// The commits are ordered newest-first (like git log output), so:
-    /// - Index 0 = most recent commit (HEAD)
-    /// - Last index = oldest commit (root, has no parents)
-    /// - Parents of commit at index I must have index > I
-    ///
-    /// When `adversarial` is true, generates complex topologies with many branches
-    /// and octopus merges. Otherwise generates more realistic linear histories
-    /// with occasional branches.
-    fn generate_random_commit_dag(
-        rng: &mut StdRng,
-        num_commits: usize,
-        adversarial: bool,
-    ) -> Vec<Arc<InitialGraphCommitData>> {
-        if num_commits == 0 {
-            return Vec::new();
-        }
-
-        let mut commits: Vec<Arc<InitialGraphCommitData>> = Vec::with_capacity(num_commits);
-        let oids: Vec<Oid> = (0..num_commits).map(|_| Oid::random(rng)).collect();
-
-        for i in 0..num_commits {
-            let sha = oids[i];
-
-            let parents = if i == num_commits - 1 {
-                smallvec![]
-            } else {
-                generate_parents_from_oids(rng, &oids, i, num_commits, adversarial)
-            };
-
-            let ref_names = if i == 0 {
-                vec!["HEAD".into(), "main".into()]
-            } else if adversarial && rng.random_bool(0.1) {
-                vec![format!("branch-{}", i).into()]
-            } else {
-                Vec::new()
-            };
-
-            commits.push(Arc::new(InitialGraphCommitData {
-                sha,
-                parents,
-                ref_names,
-            }));
-        }
-
-        commits
-    }
-
-    fn generate_parents_from_oids(
-        rng: &mut StdRng,
-        oids: &[Oid],
-        current_idx: usize,
-        num_commits: usize,
-        adversarial: bool,
-    ) -> SmallVec<[Oid; 1]> {
-        let remaining = num_commits - current_idx - 1;
-        if remaining == 0 {
-            return smallvec![];
-        }
-
-        if adversarial {
-            let merge_chance = 0.4;
-            let octopus_chance = 0.15;
-
-            if remaining >= 3 && rng.random_bool(octopus_chance) {
-                let num_parents = rng.random_range(3..=remaining.min(5));
-                let mut parent_indices: Vec<usize> = (current_idx + 1..num_commits).collect();
-                parent_indices.shuffle(rng);
-                parent_indices
-                    .into_iter()
-                    .take(num_parents)
-                    .map(|idx| oids[idx])
-                    .collect()
-            } else if remaining >= 2 && rng.random_bool(merge_chance) {
-                let mut parent_indices: Vec<usize> = (current_idx + 1..num_commits).collect();
-                parent_indices.shuffle(rng);
-                parent_indices
-                    .into_iter()
-                    .take(2)
-                    .map(|idx| oids[idx])
-                    .collect()
-            } else {
-                let parent_idx = rng.random_range(current_idx + 1..num_commits);
-                smallvec![oids[parent_idx]]
-            }
-        } else {
-            let merge_chance = 0.15;
-            let skip_chance = 0.1;
-
-            if remaining >= 2 && rng.random_bool(merge_chance) {
-                let first_parent = current_idx + 1;
-                let second_parent = rng.random_range(current_idx + 2..num_commits);
-                smallvec![oids[first_parent], oids[second_parent]]
-            } else if rng.random_bool(skip_chance) && remaining >= 2 {
-                let skip = rng.random_range(1..remaining.min(3));
-                smallvec![oids[current_idx + 1 + skip]]
-            } else {
-                smallvec![oids[current_idx + 1]]
-            }
-        }
     }
 
     fn build_oid_to_row_map(graph: &GraphData) -> HashMap<Oid, usize> {

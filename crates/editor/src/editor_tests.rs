@@ -6899,6 +6899,61 @@ async fn test_convert_to_base64(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_manipulate_text_handles_cross_excerpt_edit_that_applies_differently(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let buffer_1 = cx.new(|cx| {
+        let mut buffer = Buffer::local("ab", cx);
+        // The selected multibuffer range starts in this excerpt, but edits to
+        // it are skipped because the underlying buffer is read-only.
+        buffer.set_capability(language::Capability::ReadOnly, cx);
+        buffer
+    });
+    let buffer_2 = cx.new(|cx| Buffer::local("cd", cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            [Point::new(0, 0)..Point::new(0, 2)],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2.clone(),
+            [Point::new(0, 0)..Point::new(0, 2)],
+            0,
+            cx,
+        );
+        multibuffer
+    });
+
+    cx.add_window(|window, cx| {
+        let mut editor = build_editor(multibuffer, window, cx);
+        let len = editor.buffer().read(cx).len(cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(0)..len])
+        });
+
+        // No-op transformations should not be sent through `MultiBuffer::edit`.
+        editor.manipulate_text(window, cx, |text| text.to_string());
+        assert_eq!(buffer_1.read(cx).text(), "ab");
+        assert_eq!(buffer_2.read(cx).text(), "cd");
+
+        // A real replacement can apply differently than requested; selection
+        // remapping should follow the actual edit instead of predicted offsets.
+        editor.manipulate_text(window, cx, |_| "replacement".to_string());
+        assert_eq!(buffer_1.read(cx).text(), "ab");
+        assert_eq!(buffer_2.read(cx).text(), "");
+
+        editor
+    });
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22227,7 +22282,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut TestAppContext)
                         .entries
                         .borrow()
                         .iter()
-                        .map(|mat| mat.string.clone())
+                        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                         .collect::<Vec<String>>(),
                     items
                         .iter()
@@ -22379,7 +22434,10 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut TestA
 
 fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     let entries = menu.entries.borrow();
-    entries.iter().map(|mat| mat.string.clone()).collect()
+    entries
+        .iter()
+        .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
+        .collect()
 }
 
 #[gpui::test]
@@ -31298,7 +31356,8 @@ pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorL
             let entries = menu.entries.borrow();
             let entries = entries
                 .iter()
-                .map(|entry| entry.string.as_str())
+                .filter_map(|entry| entry.as_match())
+                .map(|m| m.string.as_str())
                 .collect::<Vec<_>>();
             assert_eq!(entries, expected);
         } else {
@@ -31385,7 +31444,7 @@ async fn test_mixed_completions_with_multi_word_snippet(cx: &mut TestAppContext)
                 let entries = context_menu.entries.borrow();
                 entries
                     .iter()
-                    .map(|entry| entry.string.clone())
+                    .filter_map(|entry| entry.as_match().map(|m| m.string.clone()))
                     .collect_vec()
             }
             _ => vec![],

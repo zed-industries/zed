@@ -8,6 +8,7 @@ members = [
     "crates/agent",
     "crates/agent_servers",
     "crates/agent_settings",
+    "crates/agent_skills",
     "crates/agent_ui",
     "crates/ai_onboarding",
     "crates/anthropic",
@@ -139,6 +140,7 @@ members = [
     "crates/net",
     "crates/node_runtime",
     "crates/notifications",
+    "crates/oauth_callback_server",
     "crates/ollama",
     "crates/onboarding",
     "crates/opencode",
@@ -170,6 +172,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
+    "crates/skill_creator",
     "crates/scheduler",
     "crates/schema_generator",
     "crates/search",
@@ -267,11 +270,12 @@ edition = "2024"
 acp_tools = { path = "crates/acp_tools" }
 acp_thread = { path = "crates/acp_thread" }
 action_log = { path = "crates/action_log" }
-agent = { path = "crates/agent" }
 activity_indicator = { path = "crates/activity_indicator" }
-agent_ui = { path = "crates/agent_ui" }
-agent_settings = { path = "crates/agent_settings" }
+agent = { path = "crates/agent" }
 agent_servers = { path = "crates/agent_servers" }
+agent_settings = { path = "crates/agent_settings" }
+agent_skills = { path = "crates/agent_skills" }
+agent_ui = { path = "crates/agent_ui" }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -397,6 +401,7 @@ nc = { path = "crates/nc" }
 net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
+oauth_callback_server = { path = "crates/oauth_callback_server" }
 ollama = { path = "crates/ollama" }
 onboarding = { path = "crates/onboarding" }
 opencode = { path = "crates/opencode" }
@@ -428,6 +433,7 @@ rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
+skill_creator = { path = "crates/skill_creator" }
 scheduler = { path = "crates/scheduler" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
@@ -496,7 +502,7 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
-agent-client-protocol = { version = "=0.11.1", features = ["unstable"] }
+agent-client-protocol = { version = "=0.12.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
 any_vec = "0.14"
@@ -549,6 +555,7 @@ circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive", "wrap_help"] }
 cocoa = "=0.26.0"
 cocoa-foundation = "=0.2.0"
+const_format = "0.2"
 convert_case = "0.8.0"
 core-foundation = "=0.10.0"
 core-foundation-sys = "0.8.6"
@@ -682,6 +689,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pollster = "0.4.0"
 pulldown-cmark = { version = "0.13.0", default-features = false }
+quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
@@ -710,6 +718,7 @@ schemars = { version = "1.0", features = ["indexmap2"] }
 semver = { version = "1.0", features = ["serde"] }
 serde = { version = "1.0.221", features = ["derive", "rc"] }
 serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
+serde_yaml_ng = "0.10"
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
@@ -755,7 +764,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { version = "0.26.8", features = ["wasm"] }
+tree-sitter = { version = "0.26.9", features = ["wasm"] }
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
 tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
@@ -805,7 +814,7 @@ which = "6.0.0"
 wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", branch = "v29" }
+wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88" }
 windows-core = "0.61"
 yaml-rust2 = "0.8"
 yawc = "0.2.5"
@@ -885,13 +894,22 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 split-debuginfo = "unpacked"
 incremental = true
 codegen-units = 16
+debug = "limited"
 
 # mirror configuration for crates compiled for the build platform
 # (without this cargo will compile ~400 crates twice)
 [profile.dev.build-override]
 codegen-units = 16
 split-debuginfo = "unpacked"
-debug = true
+debug = "limited"
+
+# "debug" is a reserved profile name.
+[profile.dbg]
+inherits = "dev"
+debug = "full"
+
+[profile.dbg.build-override]
+debug = "full"
 
 [profile.dev.package]
 # proc-macros start
