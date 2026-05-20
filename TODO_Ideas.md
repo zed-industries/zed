@@ -14,6 +14,7 @@ Enable it with the new `mouse_wheel_zoom` setting.
 - https://github.com/zed-industries/zed/pull/50777 (editor: Go to previous and next symbol actions)
 - Added scroll-to-top and scroll-to-bottom keybindings for markdown preview (gg /G in Vim mode,cmd-up /cmd-down on macOS,ctrl-home /ctrl-end on Linux/Windows). ([#50460](https://github.com/zed-industries/zed/pull/50460) ; thanks [dremnik](https://github.com/dremnik) )
 - WHAT HAPPENS IF IT IS OFF? IS IT WRAPPED? Added project_panel.scrollbar.horizontal_scroll setting to toggle horizontal scrolling in the project panel. ([#51143](https://github.com/zed-industries/zed/pull/51143) ; thanks [k4yt3x](https://github.com/k4yt3x) )
+- Terminal Threads are live in Zed v1.3.5! (<https://bsky.app/profile/zed.dev/post/3mmcfhciv3f2p>)
 
 
 try out Sweep AI edit predictions since they have 1k free each month
