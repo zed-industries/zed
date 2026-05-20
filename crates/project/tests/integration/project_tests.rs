@@ -10596,16 +10596,28 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -10634,11 +10646,18 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
@@ -10647,11 +10666,21 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -10689,6 +10718,11 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
                 diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
+                diff_stat_staged: None,
+                diff_stat_unstaged: Some(DiffStat {
                     added: 0,
                     deleted: 1,
                 }),
@@ -10757,6 +10791,8 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                 }
                 .into(),
                 diff_stat: None,
+                diff_stat_staged: None,
+                diff_stat_unstaged: None,
             }]
         )
     });
@@ -10963,6 +10999,11 @@ async fn test_repository_pending_ops_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                diff_stat_staged: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                diff_stat_unstaged: None,
             }]
         );
     });
@@ -11073,6 +11114,11 @@ async fn test_repository_pending_ops_long_running_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                diff_stat_staged: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                diff_stat_unstaged: None,
             }]
         );
     });
@@ -11198,11 +11244,15 @@ async fn test_repository_pending_ops_stage_all(
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: None,
                 },
             ]
         );

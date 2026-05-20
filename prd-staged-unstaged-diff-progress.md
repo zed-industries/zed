@@ -31,7 +31,7 @@ Initial build landed; six followups remain.
       (`e1a59f5944 feat: add staging affordances and fix stale selections`)
 - [x] A1 — fix `+`/`-` hover regression (see below)
 - [x] A2 — section-header `+`/`-` buttons in staging-grouped mode
-- [ ] A3 — per-section diff stats
+- [x] A3 — per-section diff stats
 - [ ] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
 - [ ] A5 — click → filter switch coupling
 - [ ] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
@@ -88,48 +88,58 @@ User stories: 17, 18 (revised). PRD: M5 "Section-header level", appendix A2.
 
 **Dependency:** A1.
 
-### A3 — Per-section diff stats (M4)
+### A3 — Per-section diff stats (M4) — DONE
 
 User story: 33. PRD: M4 "Per-section diff stats", appendix A3.
 
-Three stats per file must be plumbed end-to-end: `git diff` → `git` crate →
+Three stats per file plumbed end-to-end: `git diff` → `git` crate →
 `project::StatusEntry` (in-process) → proto wire → renderer.
 
-- [ ] **Repository layer** — extend `diff_stat` in
-      `crates/git/src/repository.rs:967-970` and the real impl at `:2127` to
-      cover three queries (combined `HEAD`, staged `--cached HEAD`, unstaged
-      no-`--cached`). Either add two sibling methods or add a
-      `DiffStatKind { Combined, Staged, Unstaged }` selector argument.
-- [ ] **`project::StatusEntry`** (`crates/project/src/git_store.rs:220-225`)
-      — add `diff_stat_staged: Option<DiffStat>` and `diff_stat_unstaged:
-      Option<DiffStat>` alongside the existing `diff_stat`.
-- [ ] **Proto** (`crates/proto/proto/git.proto:319-326`) — add four
-      optional fields: `diff_stat_staged_added` (6), `diff_stat_staged_deleted`
-      (7), `diff_stat_unstaged_added` (8), `diff_stat_unstaged_deleted` (9).
-      Optional + new field numbers keep the wire backwards-compatible with
-      older collab versions; missing values deserialize to `None`.
-- [ ] **`StatusEntry::to_proto` and `TryFrom<proto::StatusEntry>`**
-      (`git_store.rs:228-268`) — serialize/deserialize all three stats.
-      Treat missing remote staged/unstaged values as "unknown" (same
-      handling as today for the combined stat).
-- [ ] **Repository update diffing** — the dirty-detection path that compares
-      old vs new entries to decide which to push downstream must compare
-      the two new stat fields as well, otherwise stat changes won't trigger
-      a panel refresh.
-- [ ] **`git_ui::GitStatusEntry`** (`crates/git_ui/src/git_panel.rs:617-624`)
-      — mirror the three fields.
-- [ ] **`entry_for_section`** (`git_panel.rs:755-765`) — assign the
-      section-matching stat to the duplicated entry's display field (or
-      have the renderer read the matching field by `Section` directly).
-- [ ] Refresh all three stats in the same status refresh debounce; no
-      mode-toggle flicker.
-- [ ] **Test (A3 / story 33).** Build a fixture with a partially-staged
-      file whose staged-side and unstaged-side numstats **intentionally
-      differ** (e.g. staged `+3 −0`, unstaged `+1 −2`). Assert the Staged
-      row's rendered `DiffStat == (3, 0)` and the Unstaged row's
-      `DiffStat == (1, 2)`. Do not assert mere inequality of the two
-      rendered values — legitimate coincidence (`+1 −0` on both sides)
-      must not flake the test.
+- [x] **Repository layer** — `git::repository::DiffStatKind { Combined,
+      Staged, Unstaged }` enum added; `Repository::diff_stat` takes a
+      `kind` selector. `RealGitRepository` switches git args
+      (`HEAD` / `--cached HEAD` / no extra arg). `FakeGitRepository`
+      switches the content-pair being compared. The fake also drops
+      untracked files from the Unstaged collection so it matches real
+      `git diff --numstat`.
+- [x] **`project::StatusEntry`** — added `diff_stat_staged: Option<DiffStat>`
+      and `diff_stat_unstaged: Option<DiffStat>` alongside `diff_stat`.
+- [x] **Proto** — added four optional fields to `proto::StatusEntry`:
+      `diff_stat_staged_added` (6), `diff_stat_staged_deleted` (7),
+      `diff_stat_unstaged_added` (8), `diff_stat_unstaged_deleted` (9).
+      Backwards-compatible: older peers send `None` and we deserialize to
+      `None`. Covered by
+      `test_status_entry_missing_side_specific_stats_from_older_peers_deserialize_to_none`.
+- [x] **`StatusEntry::to_proto` / `TryFrom<proto::StatusEntry>`** —
+      round-trip all three stats. Covered by
+      `test_status_entry_round_trips_three_diff_stats_via_proto`.
+- [x] **Repository update diffing** — `build_update`'s equality check and
+      the incremental refresh's cursor seek both compare all three stats,
+      so a stat change on either side dirties the entry.
+- [x] **`git_ui::GitStatusEntry`** — mirrors the three fields; source
+      sites (status refresh, single-staged-entry fallback, file-header
+      lookup) all thread the new values through.
+- [x] **`entry_for_section`** — overrides `diff_stat` with the
+      section-matching stat under `Section::Staged` / `Section::Unstaged`;
+      Tracked / New / Conflict keep the combined stat unchanged. Renderer
+      stays trivial. Covered by
+      `test_entry_for_section_uses_side_specific_diff_stat_for_partial_file`.
+- [x] All three numstats are computed concurrently per refresh
+      (`try_join4` incremental path, `try_join5` full path), so a panel
+      mode toggle doesn't trigger a fresh git invocation and there's no
+      flicker.
+- [x] **Test (A3 / story 33).** Added
+      `test_partially_staged_file_row_diff_stats_match_section`: a
+      fixture with HEAD `""`, index `"a\nb\nc\n"`, worktree
+      `"a\nb\nc\nd\n"` yields three distinct numstats — combined
+      `(+4, −0)`, staged `(+3, −0)`, unstaged `(+4, −3)`. The test
+      asserts the Staged row's rendered `DiffStat == (3, 0)` and the
+      Unstaged row's `DiffStat == (4, 3)`, each compared against its
+      single-sided source so the previous bug (combined reused on both
+      rows) would visibly fail.
+- [x] FakeGitRepository semantic coverage: new
+      `test_diff_stat_kind_returns_side_specific_numstats` asserts the
+      three kinds produce the expected pairs from the same fixture.
 
 ### A4 — Selection identity for partially-staged files (M4)
 

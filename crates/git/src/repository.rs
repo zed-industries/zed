@@ -967,6 +967,7 @@ pub trait GitRepository: Send + Sync {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
+        kind: DiffStatKind,
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
@@ -1043,6 +1044,17 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+/// Selects which side of the index a numstat-style diff should describe.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffStatKind {
+    /// `git diff --numstat HEAD` — combined HEAD→worktree.
+    Combined,
+    /// `git diff --numstat --cached HEAD` — HEAD→index.
+    Staged,
+    /// `git diff --numstat` — index→worktree.
+    Unstaged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2127,6 +2139,7 @@ impl GitRepository for RealGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
+        kind: DiffStatKind,
     ) -> BoxFuture<'_, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
         let git_binary = self.git_binary_in_worktree();
@@ -2134,12 +2147,16 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match kind {
+                    DiffStatKind::Combined => args.push("HEAD".into()),
+                    DiffStatKind::Staged => {
+                        args.push("--cached".into());
+                        args.push("HEAD".into());
+                    }
+                    DiffStatKind::Unstaged => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(

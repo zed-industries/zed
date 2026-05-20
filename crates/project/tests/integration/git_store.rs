@@ -866,6 +866,8 @@ mod branch_diff_resolver_tests {
                 repo_path: repo_path(path),
                 status,
                 diff_stat: None,
+                diff_stat_staged: None,
+                diff_stat_unstaged: None,
             })
             .collect()
     }

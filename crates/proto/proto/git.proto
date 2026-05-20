@@ -321,8 +321,15 @@ message StatusEntry {
   // Can be removed once collab's min version is >=0.171.0.
   GitStatus simple_status = 2;
   GitFileStatus status = 3;
+  // Combined HEAD→worktree numstat (today's stat).
   optional uint32 diff_stat_added = 4;
   optional uint32 diff_stat_deleted = 5;
+  // Staged-only numstat: `git diff --numstat --cached HEAD`.
+  optional uint32 diff_stat_staged_added = 6;
+  optional uint32 diff_stat_staged_deleted = 7;
+  // Unstaged-only numstat: `git diff --numstat`.
+  optional uint32 diff_stat_unstaged_added = 8;
+  optional uint32 diff_stat_unstaged_deleted = 9;
 }
 
 message StashEntry {

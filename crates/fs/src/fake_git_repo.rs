@@ -1127,6 +1127,7 @@ impl GitRepository for FakeGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
+        kind: git::repository::DiffStatKind,
     ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
@@ -1173,22 +1174,42 @@ impl GitRepository for FakeGitRepository {
 
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
-            let all_paths: HashSet<&RepoPath> = state
-                .head_contents
-                .keys()
-                .chain(
-                    worktree_files
-                        .keys()
-                        .filter(|p| state.index_contents.contains_key(*p)),
-                )
-                .collect();
+            // Real `git diff --numstat` excludes untracked files (those absent from
+            // the index), so the Combined and Unstaged collections restrict the
+            // worktree side to paths also present in the index.
+            let all_paths: HashSet<&RepoPath> = match kind {
+                git::repository::DiffStatKind::Combined => state
+                    .head_contents
+                    .keys()
+                    .chain(
+                        worktree_files
+                            .keys()
+                            .filter(|p| state.index_contents.contains_key(*p)),
+                    )
+                    .collect(),
+                git::repository::DiffStatKind::Staged => state
+                    .head_contents
+                    .keys()
+                    .chain(state.index_contents.keys())
+                    .collect(),
+                git::repository::DiffStatKind::Unstaged => state.index_contents.keys().collect(),
+            };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {
                     continue;
                 }
-                let head = state.head_contents.get(path);
-                let worktree = worktree_files.get(path);
-                match (head, worktree) {
+                let (old, new) = match kind {
+                    git::repository::DiffStatKind::Combined => {
+                        (state.head_contents.get(path), worktree_files.get(path))
+                    }
+                    git::repository::DiffStatKind::Staged => {
+                        (state.head_contents.get(path), state.index_contents.get(path))
+                    }
+                    git::repository::DiffStatKind::Unstaged => {
+                        (state.index_contents.get(path), worktree_files.get(path))
+                    }
+                };
+                match (old, new) {
                     (Some(old), Some(new)) if old != new => {
                         entries.push((
                             path.clone(),

@@ -591,6 +591,14 @@ pub struct GitDiffStat {
     pub entries: Arc<[(RepoPath, DiffStat)]>,
 }
 
+impl Default for GitDiffStat {
+    fn default() -> Self {
+        Self {
+            entries: Arc::new([]),
+        }
+    }
+}
+
 /// Parses the output of `git diff --numstat` where output looks like:
 ///
 /// ```text

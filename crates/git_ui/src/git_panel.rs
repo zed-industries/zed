@@ -624,6 +624,8 @@ pub struct GitStatusEntry {
     pub(crate) status: FileStatus,
     pub(crate) staging: StageStatus,
     pub(crate) diff_stat: Option<DiffStat>,
+    pub(crate) diff_stat_staged: Option<DiffStat>,
+    pub(crate) diff_stat_unstaged: Option<DiffStat>,
 }
 
 impl GitStatusEntry {
@@ -763,6 +765,19 @@ fn entry_for_section(
     entry.section = section;
     if let Some(staging) = staging {
         entry.staging = staging;
+    }
+    match section {
+        Section::Staged => {
+            if let Some(side_stat) = entry.diff_stat_staged {
+                entry.diff_stat = Some(side_stat);
+            }
+        }
+        Section::Unstaged => {
+            if let Some(side_stat) = entry.diff_stat_unstaged {
+                entry.diff_stat = Some(side_stat);
+            }
+        }
+        Section::Conflict | Section::Tracked | Section::New => {}
     }
     entry
 }
@@ -3993,6 +4008,8 @@ impl GitPanel {
                 status: entry.status,
                 staging,
                 diff_stat: entry.diff_stat,
+                diff_stat_staged: entry.diff_stat_staged,
+                diff_stat_unstaged: entry.diff_stat_unstaged,
             };
 
             if staging.has_staged() {
@@ -4028,6 +4045,8 @@ impl GitPanel {
                             status: status.status,
                             staging: StageStatus::Staged,
                             diff_stat: status.diff_stat,
+                            diff_stat_staged: status.diff_stat_staged,
+                            diff_stat_unstaged: status.diff_stat_unstaged,
                         });
             }
         }
@@ -5906,6 +5925,8 @@ impl GitPanel {
             status: source_status.status,
             staging: source_status.status.staging(),
             diff_stat: source_status.diff_stat,
+            diff_stat_staged: source_status.diff_stat_staged,
+            diff_stat_unstaged: source_status.diff_stat_unstaged,
         });
 
         let toggle_state = repo
@@ -8140,6 +8161,11 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
@@ -8147,6 +8173,11 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
                         added: 1,
                         deleted: 1,
                     }),
@@ -8175,6 +8206,11 @@ mod tests {
                         added: 1,
                         deleted: 1,
                     }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 }),
                 GitListEntry::Status(GitStatusEntry {
                     repo_path: repo_path("crates/util/util.rs"),
@@ -8182,6 +8218,11 @@ mod tests {
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                     diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
+                    diff_stat_staged: None,
+                    diff_stat_unstaged: Some(DiffStat {
                         added: 1,
                         deleted: 1,
                     }),
@@ -8982,6 +9023,120 @@ mod tests {
                 ToggleState::Unselected
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_partially_staged_file_row_diff_stats_match_section(
+        cx: &mut TestAppContext,
+    ) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        // Worktree contents: 4 lines.
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "partial.rs": "a\nb\nc\nd\n",
+                }
+            }),
+        )
+        .await;
+
+        // HEAD has 0 lines; the index has 3 lines staged; the worktree has 4
+        // lines. With the FakeGitRepository's whole-file numstat, that gives:
+        //
+        //   staged-only   (HEAD → index)      = (added: 3, deleted: 0)
+        //   unstaged-only (index → worktree)  = (added: 4, deleted: 3)
+        //   combined      (HEAD → worktree)   = (added: 4, deleted: 0)
+        //
+        // The staged-only and unstaged-only numbers are intentionally
+        // distinct so a regression that displays the combined numstat under
+        // both rows would visibly fail.
+        fs.set_head_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("partial.rs", String::new())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("partial.rs", "a\nb\nc\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .expect("workspace should exist");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .as_local()
+                .expect("worktree should be local")
+                .scan_complete()
+        })
+        .await;
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        let staged_row = entries
+            .iter()
+            .find_map(|entry| match entry {
+                Status(status) if status.section == Section::Staged => Some(status.clone()),
+                _ => None,
+            })
+            .expect("the Staged section should contain partial.rs");
+        let unstaged_row = entries
+            .iter()
+            .find_map(|entry| match entry {
+                Status(status) if status.section == Section::Unstaged => Some(status.clone()),
+                _ => None,
+            })
+            .expect("the Unstaged section should contain partial.rs");
+
+        assert_eq!(
+            staged_row.diff_stat,
+            Some(DiffStat {
+                added: 3,
+                deleted: 0,
+            }),
+            "the Staged row must display the staged-only numstat \
+             (HEAD→index = +3 −0), not the combined HEAD→worktree numstat",
+        );
+        assert_eq!(
+            unstaged_row.diff_stat,
+            Some(DiffStat {
+                added: 4,
+                deleted: 3,
+            }),
+            "the Unstaged row must display the unstaged-only numstat \
+             (index→worktree = +4 −3), not the combined HEAD→worktree numstat",
+        );
     }
 
     #[test]
@@ -10310,7 +10465,66 @@ mod tests {
             status,
             staging: status.staging(),
             diff_stat: None,
+            diff_stat_staged: None,
+            diff_stat_unstaged: None,
         }
+    }
+
+    #[test]
+    fn test_entry_for_section_uses_side_specific_diff_stat_for_partial_file() {
+        let combined = DiffStat {
+            added: 4,
+            deleted: 2,
+        };
+        let staged_only = DiffStat {
+            added: 3,
+            deleted: 0,
+        };
+        let unstaged_only = DiffStat {
+            added: 1,
+            deleted: 2,
+        };
+
+        let partial = GitStatusEntry {
+            repo_path: repo_path("partial.rs"),
+            section: Section::Tracked,
+            status: FileStatus::Tracked(git::status::TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            }),
+            staging: StageStatus::PartiallyStaged,
+            diff_stat: Some(combined),
+            diff_stat_staged: Some(staged_only),
+            diff_stat_unstaged: Some(unstaged_only),
+        };
+
+        let staged_row = entry_for_section(
+            partial.clone(),
+            Section::Staged,
+            Some(StageStatus::Staged),
+        );
+        let unstaged_row = entry_for_section(
+            partial.clone(),
+            Section::Unstaged,
+            Some(StageStatus::Unstaged),
+        );
+        let tracked_row = entry_for_section(partial, Section::Tracked, None);
+
+        assert_eq!(
+            staged_row.diff_stat,
+            Some(staged_only),
+            "the Staged section row must display the staged-only numstat",
+        );
+        assert_eq!(
+            unstaged_row.diff_stat,
+            Some(unstaged_only),
+            "the Unstaged section row must display the unstaged-only numstat",
+        );
+        assert_eq!(
+            tracked_row.diff_stat,
+            Some(combined),
+            "non-staging sections must keep the combined numstat",
+        );
     }
 
     #[test]

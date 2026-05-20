@@ -737,6 +737,13 @@ fn db_status_to_proto(
         }),
         diff_stat_added: entry.lines_added.map(|v| v as u32),
         diff_stat_deleted: entry.lines_deleted.map(|v| v as u32),
+        // Per-side numstats aren't yet persisted in the collab DB. Older
+        // peers always send None for these; newer peers will fall back to
+        // None until the schema migration ships.
+        diff_stat_staged_added: None,
+        diff_stat_staged_deleted: None,
+        diff_stat_unstaged_added: None,
+        diff_stat_unstaged_deleted: None,
     })
 }
 

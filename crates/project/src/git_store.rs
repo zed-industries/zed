@@ -222,6 +222,8 @@ pub struct StatusEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
     pub diff_stat: Option<DiffStat>,
+    pub diff_stat_staged: Option<DiffStat>,
+    pub diff_stat_unstaged: Option<DiffStat>,
 }
 
 impl StatusEntry {
@@ -245,6 +247,10 @@ impl StatusEntry {
             status: Some(status_to_proto(self.status)),
             diff_stat_added: self.diff_stat.map(|ds| ds.added),
             diff_stat_deleted: self.diff_stat.map(|ds| ds.deleted),
+            diff_stat_staged_added: self.diff_stat_staged.map(|ds| ds.added),
+            diff_stat_staged_deleted: self.diff_stat_staged.map(|ds| ds.deleted),
+            diff_stat_unstaged_added: self.diff_stat_unstaged.map(|ds| ds.added),
+            diff_stat_unstaged_deleted: self.diff_stat_unstaged.map(|ds| ds.deleted),
         }
     }
 }
@@ -253,16 +259,25 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
+        fn pair(added: Option<u32>, deleted: Option<u32>) -> Option<DiffStat> {
+            added
+                .zip(deleted)
+                .map(|(added, deleted)| DiffStat { added, deleted })
+        }
         let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
-        let diff_stat = match (value.diff_stat_added, value.diff_stat_deleted) {
-            (Some(added), Some(deleted)) => Some(DiffStat { added, deleted }),
-            _ => None,
-        };
         Ok(Self {
             repo_path,
             status,
-            diff_stat,
+            diff_stat: pair(value.diff_stat_added, value.diff_stat_deleted),
+            diff_stat_staged: pair(
+                value.diff_stat_staged_added,
+                value.diff_stat_staged_deleted,
+            ),
+            diff_stat_unstaged: pair(
+                value.diff_stat_unstaged_added,
+                value.diff_stat_unstaged_deleted,
+            ),
         })
     }
 }
@@ -4397,6 +4412,8 @@ impl RepositorySnapshot {
                         Ordering::Equal => {
                             if new_entry.status != old_entry.status
                                 || new_entry.diff_stat != old_entry.diff_stat
+                                || new_entry.diff_stat_staged != old_entry.diff_stat_staged
+                                || new_entry.diff_stat_unstaged != old_entry.diff_stat_unstaged
                             {
                                 updated_statuses.push(new_entry.to_proto());
                             }
@@ -8252,20 +8269,26 @@ impl Repository {
                         let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
 
                         let status_task = backend.status(&changed_paths_vec);
-                        let diff_stat_future = if has_head {
-                            backend.diff_stat(&changed_paths_vec)
-                        } else {
-                            future::ready(Ok(status::GitDiffStat {
-                                entries: Arc::default(),
-                            }))
-                            .boxed()
-                        };
+                        let (diff_stat_future, diff_stat_staged_future, diff_stat_unstaged_future) =
+                            diff_stat_all_sides(&backend, &changed_paths_vec, has_head);
 
-                        let (statuses, diff_stats) =
-                            futures::future::try_join(status_task, diff_stat_future).await?;
+                        let (statuses, diff_stats, diff_stats_staged, diff_stats_unstaged) =
+                            futures::future::try_join4(
+                                status_task,
+                                diff_stat_future,
+                                diff_stat_staged_future,
+                                diff_stat_unstaged_future,
+                            )
+                            .await?;
 
                         let diff_stats: HashMap<RepoPath, DiffStat> =
                             HashMap::from_iter(diff_stats.entries.into_iter().cloned());
+                        let diff_stats_staged: HashMap<RepoPath, DiffStat> = HashMap::from_iter(
+                            diff_stats_staged.entries.into_iter().cloned(),
+                        );
+                        let diff_stats_unstaged: HashMap<RepoPath, DiffStat> = HashMap::from_iter(
+                            diff_stats_unstaged.entries.into_iter().cloned(),
+                        );
 
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
@@ -8273,11 +8296,18 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             let current_diff_stat = diff_stats.get(repo_path).copied();
+                            let current_diff_stat_staged =
+                                diff_stats_staged.get(repo_path).copied();
+                            let current_diff_stat_unstaged =
+                                diff_stats_unstaged.get(repo_path).copied();
 
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
-                                    entry.status == *status && entry.diff_stat == current_diff_stat
+                                    entry.status == *status
+                                        && entry.diff_stat == current_diff_stat
+                                        && entry.diff_stat_staged == current_diff_stat_staged
+                                        && entry.diff_stat_unstaged == current_diff_stat_unstaged
                                 })
                             {
                                 continue;
@@ -8287,6 +8317,8 @@ impl Repository {
                                 repo_path: repo_path.clone(),
                                 status: *status,
                                 diff_stat: current_diff_stat,
+                                diff_stat_staged: current_diff_stat_staged,
+                                diff_stat_unstaged: current_diff_stat_unstaged,
                             }));
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
@@ -9016,6 +9048,170 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_diff_stat_kind_returns_side_specific_numstats(cx: &mut TestAppContext) {
+        use ::fs::Fs as _;
+        use ::git::repository::DiffStatKind;
+        use serde_json::json;
+        use util::path;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        // Worktree contents: "a\nb\nc\nd\n" (the file the user sees).
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "partial.rs": "a\nb\nc\nd\n",
+            }),
+        )
+        .await;
+
+        // HEAD: empty file. Index: "a\nb\nc\n" (3 lines staged on top of HEAD).
+        // Diffs are computed by counting whole-file lines in the fake (see
+        // FakeGitRepository::diff_stat). With HEAD = "" and index = 3 lines,
+        // the staged-only numstat is (added=3, deleted=0). With index = 3
+        // lines and worktree = 4 lines, the unstaged-only numstat is
+        // (added=4, deleted=3). The combined HEAD→worktree numstat is
+        // (added=4, deleted=0).
+        fs.set_head_for_repo(
+            path!("/root/.git").as_ref(),
+            &[("partial.rs", "".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/root/.git").as_ref(),
+            &[("partial.rs", "a\nb\nc\n".into())],
+        );
+
+        let backend = fs
+            .open_repo(path!("/root/.git").as_ref(), None)
+            .expect("open fake repo");
+
+        let combined = backend
+            .diff_stat(&[], DiffStatKind::Combined)
+            .await
+            .expect("combined diff_stat")
+            .entries
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
+        let staged = backend
+            .diff_stat(&[], DiffStatKind::Staged)
+            .await
+            .expect("staged diff_stat")
+            .entries
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
+        let unstaged = backend
+            .diff_stat(&[], DiffStatKind::Unstaged)
+            .await
+            .expect("unstaged diff_stat")
+            .entries
+            .iter()
+            .cloned()
+            .collect::<HashMap<_, _>>();
+
+        let partial = RepoPath::from_proto("partial.rs").unwrap();
+        assert_eq!(
+            combined.get(&partial),
+            Some(&DiffStat {
+                added: 4,
+                deleted: 0
+            }),
+            "combined kind must diff HEAD→worktree",
+        );
+        assert_eq!(
+            staged.get(&partial),
+            Some(&DiffStat {
+                added: 3,
+                deleted: 0
+            }),
+            "staged kind must diff HEAD→index",
+        );
+        assert_eq!(
+            unstaged.get(&partial),
+            Some(&DiffStat {
+                added: 4,
+                deleted: 3
+            }),
+            "unstaged kind must diff index→worktree",
+        );
+    }
+
+    #[test]
+    fn test_status_entry_round_trips_three_diff_stats_via_proto() {
+        use util::{paths::PathStyle, rel_path::RelPath};
+
+        let repo_path = RepoPath::from_rel_path(
+            &RelPath::new("partial.rs".as_ref(), PathStyle::local()).unwrap(),
+        );
+        let combined = DiffStat {
+            added: 4,
+            deleted: 2,
+        };
+        let staged_only = DiffStat {
+            added: 3,
+            deleted: 0,
+        };
+        let unstaged_only = DiffStat {
+            added: 1,
+            deleted: 2,
+        };
+        let entry = StatusEntry {
+            repo_path,
+            status: FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Modified,
+            }),
+            diff_stat: Some(combined),
+            diff_stat_staged: Some(staged_only),
+            diff_stat_unstaged: Some(unstaged_only),
+        };
+
+        let round_tripped = StatusEntry::try_from(entry.to_proto()).expect("round-trip");
+        assert_eq!(round_tripped.diff_stat, Some(combined));
+        assert_eq!(round_tripped.diff_stat_staged, Some(staged_only));
+        assert_eq!(round_tripped.diff_stat_unstaged, Some(unstaged_only));
+    }
+
+    #[test]
+    fn test_status_entry_missing_side_specific_stats_from_older_peers_deserialize_to_none() {
+        use util::{paths::PathStyle, rel_path::RelPath};
+
+        let repo_path = RepoPath::from_rel_path(
+            &RelPath::new("legacy.rs".as_ref(), PathStyle::local()).unwrap(),
+        );
+        let combined = DiffStat {
+            added: 5,
+            deleted: 1,
+        };
+        let entry = StatusEntry {
+            repo_path,
+            status: FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Unmodified,
+                worktree_status: StatusCode::Modified,
+            }),
+            diff_stat: Some(combined),
+            diff_stat_staged: None,
+            diff_stat_unstaged: None,
+        };
+
+        // Simulate an older peer that does not yet emit the new fields by
+        // serializing and clearing them from the wire payload.
+        let mut wire = entry.to_proto();
+        wire.diff_stat_staged_added = None;
+        wire.diff_stat_staged_deleted = None;
+        wire.diff_stat_unstaged_added = None;
+        wire.diff_stat_unstaged_deleted = None;
+
+        let round_tripped = StatusEntry::try_from(wire).expect("round-trip");
+        assert_eq!(round_tripped.diff_stat, Some(combined));
+        assert_eq!(round_tripped.diff_stat_staged, None);
+        assert_eq!(round_tripped.diff_stat_unstaged, None);
+    }
+
     #[test]
     fn test_new_worktree_path_uses_posix_style_for_remote_paths() {
         let work_dir = Path::new("/home/user/dev/lsp-tests");
@@ -9348,6 +9544,30 @@ mod tests {
     }
 }
 
+/// Returns the three per-side numstat futures (combined / staged / unstaged)
+/// used everywhere the panel needs per-section diff stats. When the repo has
+/// no HEAD, every side resolves to an empty `GitDiffStat`.
+fn diff_stat_all_sides<'a>(
+    backend: &'a Arc<dyn GitRepository>,
+    paths: &'a [RepoPath],
+    has_head: bool,
+) -> (
+    BoxFuture<'a, Result<status::GitDiffStat>>,
+    BoxFuture<'a, Result<status::GitDiffStat>>,
+    BoxFuture<'a, Result<status::GitDiffStat>>,
+) {
+    if has_head {
+        (
+            backend.diff_stat(paths, git::repository::DiffStatKind::Combined),
+            backend.diff_stat(paths, git::repository::DiffStatKind::Staged),
+            backend.diff_stat(paths, git::repository::DiffStatKind::Unstaged),
+        )
+    } else {
+        let empty = || future::ready(Ok(status::GitDiffStat::default())).boxed();
+        (empty(), empty(), empty())
+    }
+}
+
 /// This snapshot computes the repository state on the foreground thread while
 /// running the git commands on the background thread. We update branch, head,
 /// remotes, and worktrees first so the UI can react sooner, then compute file
@@ -9445,25 +9665,20 @@ async fn compute_snapshot(
         this.snapshot.clone()
     });
 
-    let (statuses, diff_stats, stash_entries) = cx
+    let (statuses, diff_stats, diff_stats_staged, diff_stats_unstaged, stash_entries) = cx
         .background_spawn({
             let backend = backend.clone();
             let snapshot = snapshot.clone();
             async move {
-                let diff_stat_future: BoxFuture<'_, Result<status::GitDiffStat>> =
-                    if snapshot.head_commit.is_some() {
-                        backend.diff_stat(&[])
-                    } else {
-                        future::ready(Ok(status::GitDiffStat {
-                            entries: Arc::default(),
-                        }))
-                        .boxed()
-                    };
-                futures::future::try_join3(
+                let (diff_stat_future, diff_stat_staged_future, diff_stat_unstaged_future) =
+                    diff_stat_all_sides(&backend, &[], snapshot.head_commit.is_some());
+                futures::future::try_join5(
                     backend.status(&[RepoPath::from_rel_path(
                         &RelPath::new(".".as_ref(), PathStyle::local()).unwrap(),
                     )]),
                     diff_stat_future,
+                    diff_stat_staged_future,
+                    diff_stat_unstaged_future,
                     backend.stash_entries(),
                 )
                 .await
@@ -9473,6 +9688,16 @@ async fn compute_snapshot(
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
+    let diff_stat_staged_map: HashMap<&RepoPath, DiffStat> = diff_stats_staged
+        .entries
+        .iter()
+        .map(|(p, s)| (p, *s))
+        .collect();
+    let diff_stat_unstaged_map: HashMap<&RepoPath, DiffStat> = diff_stats_unstaged
+        .entries
+        .iter()
+        .map(|(p, s)| (p, *s))
+        .collect();
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
         statuses.entries.iter().map(|(repo_path, status)| {
@@ -9483,6 +9708,8 @@ async fn compute_snapshot(
                 repo_path: repo_path.clone(),
                 status: *status,
                 diff_stat: diff_stat_map.get(repo_path).copied(),
+                diff_stat_staged: diff_stat_staged_map.get(repo_path).copied(),
+                diff_stat_unstaged: diff_stat_unstaged_map.get(repo_path).copied(),
             }
         }),
         (),
