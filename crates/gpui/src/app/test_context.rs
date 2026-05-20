@@ -738,6 +738,16 @@ impl VisualTestContext {
         self.cx.test_window(self.window).0.lock().title.clone()
     }
 
+    /// Read the file drag paths off the window (set by `Window::start_file_drag`)
+    pub fn file_drag_paths(&mut self) -> Option<crate::ExternalPaths> {
+        self.cx
+            .test_window(self.window)
+            .0
+            .lock()
+            .file_drag_paths
+            .clone()
+    }
+
     /// Read the document path off the window (set by `Window#set_document_path`)
     pub fn document_path(&mut self) -> Option<std::path::PathBuf> {
         self.cx
@@ -1096,5 +1106,33 @@ impl AnyWindowHandle {
     ) -> Entity<V> {
         self.update(cx, |_, window, cx| cx.new(|cx| build_view(window, cx)))
             .unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Context, ExternalPaths, IntoElement, Render, TestAppContext, Window, div};
+    use std::path::PathBuf;
+
+    struct TestView;
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui::test]
+    fn start_file_drag_records_paths_in_test_window(cx: &mut TestAppContext) {
+        let window = cx.open_window(Default::default(), |_, _| TestView);
+        let mut cx = VisualTestContext::from_window(crate::AnyWindowHandle::from(window), cx);
+        let paths = ExternalPaths(vec![PathBuf::from("/tmp/example.txt")].into());
+
+        cx.update(|window, _| {
+            window.start_file_drag(paths.clone());
+        });
+
+        assert_eq!(cx.file_drag_paths(), Some(paths));
     }
 }

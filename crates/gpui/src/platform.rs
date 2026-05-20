@@ -30,11 +30,12 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, ExternalPaths, Font, FontId,
+    FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
+    LineLayout, Pixels, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
+    SvgRenderer, SystemWindowTab, Task, ThreadTaskTimings, Window, WindowControlArea, hash, point,
+    px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -591,6 +592,22 @@ impl Tiling {
     }
 }
 
+/// A handle for a file drag operation initiated from a window.
+///
+/// Returned by [`PlatformWindow::start_file_drag`] and [`Window::start_file_drag`].
+/// On unsupported platforms it is a no-op handle that does nothing.
+#[derive(Clone, Debug, Default)]
+pub struct FileDragSession {
+    _private: (),
+}
+
+impl FileDragSession {
+    /// Create a no-op session handle for unsupported platforms.
+    pub fn noop() -> Self {
+        Self::default()
+    }
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 #[expect(missing_docs)]
 pub struct RequestFrameOptions {
@@ -697,6 +714,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    fn start_file_drag(&self, _paths: ExternalPaths) -> FileDragSession {
+        FileDragSession::noop()
+    }
 
     fn play_system_bell(&self) {}
 
