@@ -96,6 +96,15 @@ impl<'a> CommitAvatar<'a> {
     }
 
     pub fn avatar(&'a self, window: &mut Window, cx: &mut App) -> Option<Avatar> {
+        // Bail early if the email isn't available yet. Without it,
+        // the GitHub provider skips the fast CDN path and falls back
+        // to an unauthenticated per-commit API call that is slow and
+        // rate-limited. Worse, a failed lookup gets permanently
+        // cached under the key (sha, host) — so even when the email
+        // arrives on a later render, the cached None shadows the
+        // fast path forever.
+        self.author_email.as_ref()?;
+
         let remote = self
             .remote
             .filter(|remote| remote.host_supports_avatars())?;

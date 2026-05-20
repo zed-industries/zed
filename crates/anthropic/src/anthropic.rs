@@ -147,7 +147,7 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = entry.id == "claude-opus-4-6";
+        let supports_speed = matches!(entry.id.as_str(), "claude-opus-4-6" | "claude-opus-4-7");
 
         Self {
             display_name: entry.display_name,

@@ -1,6 +1,8 @@
 use anyhow::{Context as _, Result};
+use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
+use gpui::{Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -12,6 +14,18 @@ pub const AGENTS_DIR_NAME: &str = ".agents";
 
 /// Second segment of the skills directory path: `skills`.
 pub const SKILLS_DIR_NAME: &str = "skills";
+
+/// User-facing display form of the global skills directory path — i.e.
+/// what a human should see in messages and prompts, with the platform's
+/// native path separator and home-directory shorthand.
+///
+/// Windows doesn't recognize `~` as the home directory, so the env-var
+/// form is used there instead.
+#[cfg(target_os = "windows")]
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str =
+    concatcp!("%USERPROFILE%\\", AGENTS_DIR_NAME, "\\", SKILLS_DIR_NAME);
+#[cfg(not(target_os = "windows"))]
+pub const GLOBAL_SKILLS_DIR_DISPLAY: &str = concatcp!("~/", AGENTS_DIR_NAME, "/", SKILLS_DIR_NAME);
 
 /// Opaque identifier for the project scope a skill was loaded from.
 ///
@@ -51,11 +65,19 @@ pub struct Skill {
     /// `skill` tool refuses to load it. The user can still invoke it as a
     /// slash command.
     pub disable_model_invocation: bool,
+    /// For built-in skills whose content is compiled into the binary,
+    /// this holds the full SKILL.md body so the skill tool can serve it
+    /// without a filesystem read.
+    pub embedded_body: Option<&'static str>,
 }
 
 /// Indicates where a skill was loaded from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkillSource {
+    /// Compiled into the Zed binary. These are always available and have
+    /// the lowest override priority (global and project-local skills can
+    /// shadow them).
+    BuiltIn,
     /// From ~/.agents/skills/
     Global,
     /// From {project}/.agents/skills/
@@ -66,6 +88,23 @@ pub enum SkillSource {
 }
 
 impl SkillSource {
+    /// Precedence for resolving same-named skills. Higher values shadow
+    /// lower ones: `ProjectLocal` > `Global` > `BuiltIn`. Two sources
+    /// returning equal precedence (e.g. two project-local skills from
+    /// different worktrees) leave the winner up to the caller, which by
+    /// convention keeps the first one in iteration order.
+    ///
+    /// Adding a new `SkillSource` variant should be a one-line change
+    /// here — every consumer routes through this method so the hierarchy
+    /// stays in sync.
+    pub fn precedence(&self) -> u8 {
+        match self {
+            Self::BuiltIn => 0,
+            Self::Global => 1,
+            Self::ProjectLocal { .. } => 2,
+        }
+    }
+
     /// Scope prefix used in the `/<prefix>:<name>` slash-command
     /// syntax that the autocomplete popup inserts. Global skills use
     /// an empty prefix (so the inserted text is `/:<name>`), and
@@ -78,9 +117,21 @@ impl SkillSource {
     /// invoked as `/:<name>`, and the worktree's skill is invoked as
     /// `/global:<name>`. The two grammars never collide on the
     /// inserted text.
+    /// Human-readable label for this source, used in the UI to
+    /// distinguish skills from different origins.
+    pub fn display_label(&self) -> &str {
+        match self {
+            Self::BuiltIn => "built-in",
+            Self::Global => "global",
+            Self::ProjectLocal {
+                worktree_root_name, ..
+            } => worktree_root_name.as_ref(),
+        }
+    }
+
     pub fn scope_prefix(&self) -> &str {
         match self {
-            Self::Global => "",
+            Self::BuiltIn | Self::Global => "",
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => worktree_root_name.as_ref(),
@@ -99,13 +150,30 @@ impl SkillSource {
     /// strictness only affects users typing by memory.
     pub fn matches_scope(&self, scope: &str) -> bool {
         match self {
-            Self::Global => scope.is_empty(),
+            Self::BuiltIn | Self::Global => scope.is_empty(),
             Self::ProjectLocal {
                 worktree_root_name, ..
             } => !scope.is_empty() && worktree_root_name.as_ref() == scope,
         }
     }
 }
+
+/// App-wide index of loaded skills, published by NativeAgent and read
+/// by any UI that needs to display the skill list (e.g. Settings UI).
+#[derive(Default)]
+pub struct SkillIndex {
+    pub global_skills: Vec<Skill>,
+    pub project_skills: Vec<ProjectSkillGroup>,
+}
+
+#[derive(Clone)]
+pub struct ProjectSkillGroup {
+    pub worktree_id: SkillScopeId,
+    pub worktree_root_name: SharedString,
+    pub skills: Vec<Skill>,
+}
+
+impl Global for SkillIndex {}
 
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,8 +251,8 @@ pub fn parse_skill_frontmatter(
 
     let (metadata, _body) = extract_frontmatter(content)?;
 
-    validate_name(&metadata.name)?;
-    validate_description(&metadata.description)?;
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
 
     let directory_path = skill_file_path
         .parent()
@@ -198,6 +266,7 @@ pub fn parse_skill_frontmatter(
         directory_path,
         skill_file_path: skill_file_path.to_path_buf(),
         disable_model_invocation: metadata.disable_model_invocation,
+        embedded_body: None,
     })
 }
 
@@ -273,34 +342,130 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
         .context("Invalid YAML frontmatter"))
 }
 
-fn validate_name(name: &str) -> Result<()> {
+/// Maximum length for a valid skill name. Mirrors the upper bound enforced
+/// by [`validate_name`].
+pub const MAX_SKILL_NAME_LEN: usize = 64;
+
+/// Maximum length (in bytes) for a valid skill description. Mirrors the
+/// upper bound enforced by [`validate_description`].
+///
+/// Byte-based rather than char-based because that's what `.len()` returns
+/// and what every caller currently measures; the UI also surfaces this
+/// limit as a byte count so the editor's counter matches the validator.
+pub const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
+
+/// Convert an arbitrary human-readable string into a valid skill name, or
+/// return `None` if no valid name can be produced (e.g. the input contains
+/// no ASCII alphanumeric characters at all).
+///
+/// The transformation:
+///
+/// 1. Replaces each `&` with the word `and` (with separators on either
+///    side), so titles like "rock & roll" or "AT&T" round-trip something
+///    meaningful (`rock-and-roll`, `at-and-t`) rather than dropping the
+///    `&` and silently mashing the neighbours together.
+/// 2. ASCII-lowercases every ASCII letter.
+/// 3. Replaces each space with `-`. Existing `-` characters are kept.
+/// 4. **Drops** every other non-alphanumeric character entirely (NOT
+///    replaced with a dash). So `foo!bar` slugifies to `foobar`, not
+///    `foo-bar` — only word boundaries the user actually wrote (spaces)
+///    become dashes.
+/// 5. Collapses runs of `-` into a single `-`.
+/// 6. Trims leading and trailing `-`.
+/// 7. Truncates to [`MAX_SKILL_NAME_LEN`] bytes (then re-trims trailing `-`
+///    in case the truncation landed on one).
+///
+/// The result, if `Some`, always satisfies [`validate_name`].
+pub fn slugify_skill_name(input: &str) -> Option<String> {
+    // Substitute `&` with `-and-` BEFORE the per-character pass; the
+    // existing dash-collapsing and edge-trimming logic then handles the
+    // boundary cases (`foo & bar`, `&foo`, `foo&`, `&&`, etc.) for free.
+    let input = input.replace('&', "-and-");
+    let mut slug = String::with_capacity(input.len());
+    let mut last_was_dash = true; // suppress a leading `-`
+    for ch in input.chars() {
+        let mapped = if ch.is_ascii_alphanumeric() {
+            Some(ch.to_ascii_lowercase())
+        } else if ch == ' ' || ch == '-' {
+            Some('-')
+        } else {
+            // Drop the character entirely — and importantly, do NOT touch
+            // `last_was_dash`. That way `foo!bar` stays one run of
+            // alphanumerics (`foobar`) rather than getting a fake
+            // separator inserted (`foo-bar`).
+            None
+        };
+        let Some(c) = mapped else { continue };
+        if c == '-' {
+            if last_was_dash {
+                continue;
+            }
+            last_was_dash = true;
+        } else {
+            last_was_dash = false;
+        }
+        slug.push(c);
+    }
+    if slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.len() > MAX_SKILL_NAME_LEN {
+        slug.truncate(MAX_SKILL_NAME_LEN);
+        while slug.ends_with('-') {
+            slug.pop();
+        }
+    }
+    if slug.is_empty() { None } else { Some(slug) }
+}
+
+/// Validate a skill name against the rules enforced by both the loader
+/// and the create-skill UI.
+///
+/// Rules:
+/// * non-empty
+/// * at most [`MAX_SKILL_NAME_LEN`] bytes
+/// * ASCII lowercase letters, digits, and hyphens only
+/// * must not start or end with a hyphen — [`slugify_skill_name`]
+///   already guarantees this for its output, so requiring it in the
+///   validator keeps hand-written `SKILL.md` files consistent with
+///   slugifier output
+///
+/// Error messages are returned as `&'static str` (interpolated at
+/// compile time via `formatcp!`) so that UI surfaces can store them in
+/// `Option<&'static str>` fields without allocating, and loader callers
+/// can convert them to `anyhow::Error` via `anyhow::Error::msg`.
+pub fn validate_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty() {
-        anyhow::bail!("Skill name cannot be empty");
+        return Err("Skill name cannot be empty");
     }
-
-    if name.len() > 64 {
-        anyhow::bail!("Skill name must be at most 64 characters");
+    if name.len() > MAX_SKILL_NAME_LEN {
+        return Err(formatcp!(
+            "Skill name must be at most {MAX_SKILL_NAME_LEN} characters"
+        ));
     }
-
+    if name.starts_with('-') || name.ends_with('-') {
+        return Err("Skill name must not start or end with a hyphen");
+    }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        anyhow::bail!("Skill name must contain only lowercase letters, numbers, and hyphens");
+        return Err("Skill name must contain only lowercase letters, numbers, and hyphens");
     }
-
     Ok(())
 }
 
-fn validate_description(description: &str) -> Result<()> {
-    if description.is_empty() {
-        anyhow::bail!("Skill description cannot be empty");
+/// Validate a skill description against the rules enforced by both the
+/// loader and the create-skill UI.
+pub fn validate_description(description: &str) -> Result<(), &'static str> {
+    if description.trim().is_empty() {
+        return Err("Skill description cannot be empty");
     }
-
-    if description.len() > 1024 {
-        anyhow::bail!("Skill description must be at most 1024 characters");
+    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+        return Err(formatcp!(
+            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} bytes"
+        ));
     }
-
     Ok(())
 }
 
@@ -519,6 +684,53 @@ pub async fn read_skill_body(
     Ok(body.trim().to_string())
 }
 
+/// Content of the built-in `create-skill` SKILL.md, embedded at compile time.
+const CREATE_SKILL_CONTENT: &str = include_str!("builtin/create-skill/SKILL.md");
+
+/// Returns the set of skills that are compiled into the Zed binary.
+pub fn builtin_skills() -> Vec<Skill> {
+    let mut skills = Vec::new();
+    if let Ok(skill) = parse_builtin_skill("create-skill", CREATE_SKILL_CONTENT) {
+        skills.push(skill);
+    }
+    skills
+}
+
+/// Parse a built-in skill from its embedded SKILL.md content. The skill
+/// gets a synthetic `<built-in>` path since it doesn't live on disk.
+fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
+    let (metadata, body) = extract_frontmatter(content)?;
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    let synthetic_dir = PathBuf::from(format!("<built-in>/{}", name));
+    let synthetic_path = synthetic_dir.join(SKILL_FILE_NAME);
+
+    Ok(Skill {
+        name: metadata.name,
+        description: metadata.description,
+        source: SkillSource::BuiltIn,
+        directory_path: synthetic_dir,
+        skill_file_path: synthetic_path,
+        disable_model_invocation: metadata.disable_model_invocation,
+        embedded_body: Some(body.trim()),
+    })
+}
+
+/// All built-in skills as `(name, raw_content)` pairs. Used by
+/// `builtin_skill_content` to serve the full SKILL.md without disk I/O.
+const BUILTIN_SKILL_ENTRIES: &[(&str, &str)] = &[("create-skill", CREATE_SKILL_CONTENT)];
+
+/// Look up the full embedded content of a built-in skill by its
+/// synthetic file path. Returns `None` if the path doesn't match any
+/// built-in skill.
+pub fn builtin_skill_content(skill_file_path: &Path) -> Option<&'static str> {
+    BUILTIN_SKILL_ENTRIES.iter().find_map(|(name, content)| {
+        let expected = PathBuf::from(format!("<built-in>/{}", name)).join(SKILL_FILE_NAME);
+        (expected == skill_file_path).then_some(*content)
+    })
+}
+
 /// Returns the global skills directory: `~/.agents/skills`.
 ///
 /// Other agents (e.g. Claude Code) already write skill files into this
@@ -581,6 +793,34 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_skill_source_precedence_is_total_and_ordered() {
+        // Pin the hierarchy: project-local > global > built-in. Every
+        // override and conflict-resolution site routes through this,
+        // so the rest of the codebase relies on it being correct.
+        let built_in = SkillSource::BuiltIn.precedence();
+        let global = SkillSource::Global.precedence();
+        let project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(1),
+            worktree_root_name: "my-project".into(),
+        }
+        .precedence();
+
+        assert!(built_in < global, "global must shadow built-in");
+        assert!(global < project, "project-local must shadow global");
+
+        // Two project-local skills from different worktrees tie. The
+        // "first wins" convention is enforced by the callers, but the
+        // precedence itself must be equal so neither silently shadows
+        // the other.
+        let other_project = SkillSource::ProjectLocal {
+            worktree_id: SkillScopeId(2),
+            worktree_root_name: "other-project".into(),
+        }
+        .precedence();
+        assert_eq!(project, other_project);
+    }
 
     #[test]
     fn test_parse_valid_skill() {
@@ -792,12 +1032,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 64 characters")
-        );
+        let expected = format!("at most {MAX_SKILL_NAME_LEN} characters");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]
@@ -825,6 +1061,236 @@ Content.
     }
 
     #[test]
+    fn test_slugify_basic() {
+        assert_eq!(
+            slugify_skill_name("My Cool Skill").as_deref(),
+            Some("my-cool-skill")
+        );
+    }
+
+    #[test]
+    fn test_slugify_strips_invalid_chars() {
+        // Punctuation is dropped; spaces between words still produce dashes.
+        // `Hello,` → `hello`, then `␣` → `-`, then `World!` → `world`, etc.
+        assert_eq!(
+            slugify_skill_name("Hello, World! (v2)").as_deref(),
+            Some("hello-world-v2")
+        );
+    }
+
+    #[test]
+    fn test_slugify_drops_punctuation_in_middle_no_spaces() {
+        // Punctuation between alphanumerics is dropped entirely — it does
+        // NOT become a dash. Only user-written spaces become dashes.
+        assert_eq!(slugify_skill_name("foo!bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("foo?bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("foo%bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("100%sure").as_deref(), Some("100sure"));
+        assert_eq!(
+            slugify_skill_name("what's that").as_deref(),
+            Some("whats-that")
+        );
+        // `&` is special-cased to become `and` — see
+        // `test_slugify_ampersand_becomes_and` for the full coverage.
+        assert_eq!(
+            slugify_skill_name("don't&won't").as_deref(),
+            Some("dont-and-wont")
+        );
+    }
+
+    #[test]
+    fn test_slugify_ampersand_becomes_and() {
+        // No spaces around `&`.
+        assert_eq!(
+            slugify_skill_name("foo&bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        assert_eq!(
+            slugify_skill_name("rock&roll").as_deref(),
+            Some("rock-and-roll")
+        );
+        // Spaces around `&`: collapses to a single dash on each side.
+        assert_eq!(
+            slugify_skill_name("foo & bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        // Asymmetric spacing.
+        assert_eq!(
+            slugify_skill_name("foo& bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        assert_eq!(
+            slugify_skill_name("foo &bar").as_deref(),
+            Some("foo-and-bar")
+        );
+        // Leading/trailing `&`: the substituted spaces become leading/
+        // trailing dashes which then get trimmed.
+        assert_eq!(slugify_skill_name("&foo").as_deref(), Some("and-foo"));
+        assert_eq!(slugify_skill_name("foo&").as_deref(), Some("foo-and"));
+        // `&` alone slugifies to the word `and`, not to `None`.
+        assert_eq!(slugify_skill_name("&").as_deref(), Some("and"));
+        assert_eq!(slugify_skill_name(" & ").as_deref(), Some("and"));
+        // Multiple `&`s with various spacing all collapse properly.
+        assert_eq!(slugify_skill_name("&&").as_deref(), Some("and-and"));
+        assert_eq!(
+            slugify_skill_name("foo & & bar").as_deref(),
+            Some("foo-and-and-bar")
+        );
+        // Mixed with other punctuation (other punctuation is still dropped).
+        assert_eq!(slugify_skill_name("AT&T").as_deref(), Some("at-and-t"));
+        assert_eq!(slugify_skill_name("Q&A!").as_deref(), Some("q-and-a"));
+    }
+
+    #[test]
+    fn test_slugify_punctuation_surrounded_by_spaces() {
+        // `foo ! bar` → `foo-bar`: the two spaces would each produce a
+        // dash, but consecutive dashes are collapsed.
+        assert_eq!(slugify_skill_name("foo ! bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo ? bar").as_deref(), Some("foo-bar"));
+        assert_eq!(
+            slugify_skill_name("100 % sure").as_deref(),
+            Some("100-sure")
+        );
+        assert_eq!(
+            slugify_skill_name("foo @ bar @ baz").as_deref(),
+            Some("foo-bar-baz")
+        );
+    }
+
+    #[test]
+    fn test_slugify_punctuation_adjacent_to_space() {
+        // `foo! bar` and `foo !bar` both produce `foo-bar` — the
+        // punctuation contributes nothing, the single space contributes
+        // the dash.
+        assert_eq!(slugify_skill_name("foo! bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo !bar").as_deref(), Some("foo-bar"));
+        assert_eq!(slugify_skill_name("foo? bar").as_deref(), Some("foo-bar"));
+    }
+
+    #[test]
+    fn test_slugify_leading_and_trailing_punctuation() {
+        // Punctuation at the edges is dropped; there's no leading/trailing
+        // dash to trim because the punctuation never became a dash in the
+        // first place.
+        assert_eq!(slugify_skill_name("!foo").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("foo!").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("!!!foo!!!").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("?foo?").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("...foo...").as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn test_slugify_only_punctuation_returns_none() {
+        assert_eq!(slugify_skill_name("!!!"), None);
+        assert_eq!(slugify_skill_name("?@$"), None);
+        assert_eq!(slugify_skill_name("()[]{}"), None);
+        assert_eq!(slugify_skill_name(".,;:"), None);
+    }
+
+    #[test]
+    fn test_slugify_mixed_punctuation_spaces_and_dashes() {
+        // A messy realistic input: combination of punctuation, spaces,
+        // existing dashes, and casing.
+        assert_eq!(
+            slugify_skill_name("  -- Hello, World!! -- ").as_deref(),
+            Some("hello-world")
+        );
+        assert_eq!(
+            slugify_skill_name("C++ vs. Rust?").as_deref(),
+            Some("c-vs-rust")
+        );
+        assert_eq!(
+            slugify_skill_name("v1.2.3-beta").as_deref(),
+            Some("v123-beta")
+        );
+    }
+
+    #[test]
+    fn test_slugify_underscores_are_dropped() {
+        // Underscores aren't a valid skill-name character and aren't
+        // separators — only spaces become dashes — so underscores get
+        // dropped entirely.
+        assert_eq!(slugify_skill_name("foo_bar").as_deref(), Some("foobar"));
+        assert_eq!(slugify_skill_name("FOO_BAR").as_deref(), Some("foobar"));
+        assert_eq!(
+            slugify_skill_name("snake_case style").as_deref(),
+            Some("snakecase-style")
+        );
+    }
+
+    #[test]
+    fn test_slugify_collapses_consecutive_dashes() {
+        assert_eq!(
+            slugify_skill_name("foo   ---  bar").as_deref(),
+            Some("foo-bar")
+        );
+    }
+
+    #[test]
+    fn test_slugify_trims_leading_and_trailing_dashes() {
+        assert_eq!(slugify_skill_name("---foo---").as_deref(), Some("foo"));
+        assert_eq!(slugify_skill_name("  foo  ").as_deref(), Some("foo"));
+    }
+
+    #[test]
+    fn test_slugify_lowercases() {
+        assert_eq!(slugify_skill_name("FOO BAR").as_deref(), Some("foo-bar"));
+        assert_eq!(
+            slugify_skill_name("MyCoolSkill").as_deref(),
+            Some("mycoolskill")
+        );
+    }
+
+    #[test]
+    fn test_slugify_strips_non_ascii_letters() {
+        // Non-ASCII chars are replaced with `-`, then collapsed.
+        assert_eq!(slugify_skill_name("abc\u{00e9}").as_deref(), Some("abc"));
+        assert_eq!(slugify_skill_name("\u{4e2d}\u{6587}"), None);
+    }
+
+    #[test]
+    fn test_slugify_returns_none_for_empty_or_unmappable() {
+        assert_eq!(slugify_skill_name(""), None);
+        assert_eq!(slugify_skill_name("   "), None);
+        assert_eq!(slugify_skill_name("!!!"), None);
+        assert_eq!(slugify_skill_name("---"), None);
+    }
+
+    #[test]
+    fn test_slugify_truncates_long_inputs() {
+        let input = "a".repeat(200);
+        let slug = slugify_skill_name(&input).expect("should slugify");
+        assert_eq!(slug.len(), MAX_SKILL_NAME_LEN);
+        assert!(slug.chars().all(|c| c == 'a'));
+    }
+
+    #[test]
+    fn test_slugify_truncation_does_not_leave_trailing_dash() {
+        // The 64th byte lands on a `-`, which we must strip post-truncation.
+        let mut input = "a".repeat(63);
+        input.push_str(" extra");
+        let slug = slugify_skill_name(&input).expect("should slugify");
+        assert!(!slug.ends_with('-'));
+        assert!(slug.len() <= MAX_SKILL_NAME_LEN);
+    }
+
+    #[test]
+    fn test_slugify_output_passes_validate_name() {
+        for input in [
+            "My Cool Skill",
+            "Hello, World!",
+            "---foo---",
+            "123 abc",
+            "a".repeat(200).as_str(),
+        ] {
+            let slug = slugify_skill_name(input).expect("should slugify");
+            validate_name(&slug).unwrap_or_else(|err| {
+                panic!("slug {slug:?} from {input:?} failed validation: {err}")
+            });
+        }
+    }
+
+    #[test]
     fn test_parse_description_too_long() {
         let long_desc = "a".repeat(1025);
         let content = format!(
@@ -843,12 +1309,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 1024 characters")
-        );
+        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]
@@ -1221,6 +1683,7 @@ description: A skill with no body content
             directory_path: PathBuf::from("/skills/test-skill"),
             skill_file_path: PathBuf::from("/skills/test-skill/SKILL.md"),
             disable_model_invocation: false,
+            embedded_body: None,
         };
 
         let summary = SkillSummary::from(&skill);
@@ -1447,5 +1910,90 @@ description: A skill with no body content
         assert!(is_agents_skills_path(Path::new(
             "project/.AGENTS/SKILLS/foo"
         )));
+    }
+
+    #[test]
+    fn validate_name_accepts_valid_names() {
+        assert!(validate_name("draft-pr").is_ok());
+        assert!(validate_name("a").is_ok());
+        assert!(validate_name("skill1").is_ok());
+        assert!(validate_name(&"a".repeat(MAX_SKILL_NAME_LEN)).is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_empty() {
+        assert!(validate_name("").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_uppercase() {
+        assert!(validate_name("Draft-PR").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_leading_and_trailing_hyphens() {
+        assert!(validate_name("-draft").is_err());
+        assert!(validate_name("draft-").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_invalid_chars() {
+        assert!(validate_name("draft_pr").is_err());
+        assert!(validate_name("draft pr").is_err());
+        assert!(validate_name("draft.pr").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_too_long() {
+        assert!(validate_name(&"a".repeat(MAX_SKILL_NAME_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn validate_description_accepts_valid() {
+        assert!(validate_description("A useful skill").is_ok());
+    }
+
+    #[test]
+    fn validate_description_rejects_empty_and_whitespace_only() {
+        assert!(validate_description("").is_err());
+        assert!(validate_description("   ").is_err());
+        assert!(validate_description("\t\n ").is_err());
+    }
+
+    #[test]
+    fn validate_description_rejects_too_long() {
+        assert!(validate_description(&"a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn validate_description_length_is_measured_in_bytes() {
+        // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
+        // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
+        // rejected by a byte-based validator (and accepted by a char-based
+        // one). This regression-tests the byte semantics that the loader
+        // and UI both rely on.
+        let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
+        let description = "é".repeat(chars);
+        assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);
+        assert!(description.len() > MAX_SKILL_DESCRIPTION_LEN);
+        assert!(validate_description(&description).is_err());
+    }
+
+    #[test]
+    fn slugify_output_always_passes_validate_name() {
+        for input in [
+            "foo",
+            "Foo Bar",
+            "rock & roll",
+            "---weird---",
+            "a".repeat(200).as_str(),
+        ] {
+            if let Some(slug) = slugify_skill_name(input) {
+                assert!(
+                    validate_name(&slug).is_ok(),
+                    "slug {slug:?} from {input:?} failed validate_name"
+                );
+            }
+        }
     }
 }
