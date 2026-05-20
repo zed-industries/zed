@@ -33,7 +33,7 @@ use gpui::{
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
     WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
-    list, point, pulsating_between,
+    list, point, px, pulsating_between,
 };
 use language::Buffer;
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -1450,6 +1450,10 @@ impl ConversationView {
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
+                let is_user_message = matches!(
+                    thread.read(cx).entries().get(index),
+                    Some(AgentThreadEntry::UserMessage(_))
+                );
                 if let Some(active) = self.thread_view(&session_id) {
                     let entry_view_state = active.read(cx).entry_view_state.clone();
                     let list_state = active.read(cx).list_state.clone();
@@ -1462,6 +1466,16 @@ impl ConversationView {
                                 .and_then(|entry| entry.focus_handle(cx))],
                         );
                     });
+                    // Anchor the user's prompt at the top of the viewport so they
+                    // don't have to scroll up to re-read what they just sent as the
+                    // assistant streams below it. `scroll_to` disengages tail-follow
+                    // until the user scrolls back to the bottom.
+                    if is_user_message {
+                        list_state.scroll_to(ListOffset {
+                            item_ix: index,
+                            offset_in_item: px(0.),
+                        });
+                    }
                     active.update(cx, |active, cx| {
                         active.sync_editor_mode_for_empty_state(cx);
                     });
@@ -2793,8 +2807,8 @@ impl ConversationView {
                             dismiss_if_visible(this, window, cx);
                         }
                         AgentPanelEvent::EntryChanged
-                        | AgentPanelEvent::TerminalClosed { .. }
-                        | AgentPanelEvent::ThreadInteracted { .. } => {}
+                        | AgentPanelEvent::ThreadInteracted { .. }
+                        | AgentPanelEvent::TerminalClosed { .. } => {}
                     },
                 ));
             }
@@ -5847,9 +5861,19 @@ pub(crate) mod tests {
             let active = active.read(cx);
 
             assert_eq!(active.thread.read(cx).status(), ThreadStatus::Generating);
+            // After sending (or re-sending) a user message, the chat anchors
+            // the most recent user prompt to the top of the viewport — which
+            // disengages tail-follow until the user scrolls back to the bottom.
+            // The stale-stop fix this test guards against shouldn't undo that
+            // anchor by re-engaging follow or scrolling to the end.
             assert!(
-                active.list_state.is_following_tail(),
-                "stale stop events from the cancelled turn must not disable follow-tail for the new turn"
+                !active.list_state.is_following_tail(),
+                "tail-follow should remain disengaged after the anchor-to-top scroll triggered by the user's new turn"
+            );
+            let scroll_top = active.list_state.logical_scroll_top();
+            assert_eq!(
+                scroll_top.item_ix, 0,
+                "scroll position should remain anchored at the user prompt (index 0), not snapped to the end by the stale stop"
             );
         });
     }

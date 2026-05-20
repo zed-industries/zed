@@ -299,6 +299,10 @@ pub struct ThreadView {
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
+    /// User-message entries the user has explicitly expanded past the default
+    /// height cap that prevents long prompts from filling the viewport once
+    /// they are anchored at the top of the chat pane.
+    expanded_user_messages: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -574,6 +578,7 @@ impl ThreadView {
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
+            expanded_user_messages: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -631,6 +636,10 @@ impl ThreadView {
                             });
                         }
                         this.schedule_save(cx);
+                        // Re-render so the pinned-user-message header can
+                        // appear/disappear as the in-list copy scrolls in
+                        // and out of view.
+                        cx.notify();
                     });
                 });
             });
@@ -4592,6 +4601,16 @@ impl ThreadView {
                     self.agent_id.clone()
                 };
 
+                // Cap the visible height of long, non-editing user messages so an
+                // anchored prompt doesn't fill the entire viewport. The threshold
+                // is sized generously past `max_h_64` (~14 lines) so the clamp
+                // and "Show more" toggle only surface for prompts that would
+                // actually overflow.
+                let is_expanded = self.expanded_user_messages.contains(&entry_ix);
+                let message_text = message.content.to_markdown(cx);
+                let likely_overflows = message_text.chars().count() > 800;
+                let is_constrained = likely_overflows && !is_expanded && !editor_focus;
+
                 v_flex()
                     .id(("user_message", entry_ix))
                     .map(|this| {
@@ -4656,8 +4675,44 @@ impl ThreadView {
                                         })
                                     })
                                     .text_xs()
-                                    .child(editor.clone().into_any_element())
+                                    .map(|this| {
+                                        if is_constrained {
+                                            this.child(
+                                                div()
+                                                    .max_h_64()
+                                                    .overflow_hidden()
+                                                    .child(editor.clone().into_any_element()),
+                                            )
+                                        } else {
+                                            this.child(editor.clone().into_any_element())
+                                        }
+                                    })
                             )
+                            .when(likely_overflows && !editor_focus, |this| {
+                                this.child(
+                                    div().absolute().top_1().right_1().child(
+                                        IconButton::new(
+                                            ("expand_user_message", entry_ix),
+                                            if is_expanded {
+                                                IconName::ChevronUp
+                                            } else {
+                                                IconName::ChevronDown
+                                            },
+                                        )
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .style(ButtonStyle::Transparent)
+                                        .tooltip(Tooltip::text(if is_expanded {
+                                            "Collapse"
+                                        } else {
+                                            "Expand"
+                                        }))
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_user_message_expansion(entry_ix, cx);
+                                        })),
+                                    ),
+                                )
+                            })
                             .when(editor_focus, |this| {
                                 let base_container = h_flex()
                                     .absolute()
@@ -4944,6 +4999,123 @@ impl ThreadView {
         } else {
             primary
         }
+    }
+
+    /// Pinned/fixed copy of the latest user message above the scrollable chat
+    /// list, styled to match the in-list user-message bubble. Only shown when
+    /// the in-list copy has scrolled above the viewport (i.e. the user has
+    /// scrolled down past it). Hidden when the in-list copy is still visible,
+    /// and when it's below the viewport (user has scrolled up past it).
+    ///
+    /// Renders from the message's `Markdown` entity (when present) rather than
+    /// cloning the in-list `MessageEditor` — rendering the same entity in two
+    /// places isn't supported.
+    fn render_pinned_user_message(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let scroll_top = self.list_state.logical_scroll_top();
+        let (entry_ix, markdown, fallback_text, likely_overflows, is_expanded, is_constrained) =
+            self.thread
+                .read(cx)
+                .entries()
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::UserMessage(msg) => Some((ix, msg)),
+                    _ => None,
+                })
+                .filter(|(entry_ix, _)| {
+                    scroll_top.item_ix > *entry_ix
+                        || (scroll_top.item_ix == *entry_ix
+                            && scroll_top.offset_in_item > px(0.))
+                })
+                .map(|(entry_ix, message)| {
+                    let markdown = message.content.markdown().cloned();
+                    let fallback_text = message.content.to_markdown(cx).to_string();
+                    let chars = fallback_text.chars().count();
+                    let likely_overflows = chars > 800;
+                    let is_expanded = self.expanded_user_messages.contains(&entry_ix);
+                    let is_constrained = likely_overflows && !is_expanded;
+                    (
+                        entry_ix,
+                        markdown,
+                        fallback_text,
+                        likely_overflows,
+                        is_expanded,
+                        is_constrained,
+                    )
+                })?;
+
+        let style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_buffer_font(cx);
+        let body: AnyElement = if let Some(markdown) = markdown {
+            self.render_markdown(markdown, style, cx).into_any_element()
+        } else {
+            div().child(fallback_text).into_any_element()
+        };
+
+        Some(
+            v_flex()
+                .pt_2()
+                .pb_3()
+                .px_2()
+                .w_full()
+                .child(
+                    div()
+                        .relative()
+                        .child(
+                            div()
+                                .py_3()
+                                .px_2()
+                                .rounded_md()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .shadow_md()
+                                .text_xs()
+                                .map(|this| {
+                                    // Pinned bubble truncates earlier than the
+                                    // in-list copy — it's a glanceable reminder
+                                    // of what was sent, not the full prompt.
+                                    if is_constrained {
+                                        this.child(
+                                            div().max_h_32().overflow_hidden().child(body),
+                                        )
+                                    } else {
+                                        this.child(body)
+                                    }
+                                }),
+                        )
+                        .when(likely_overflows, |this| {
+                            this.child(
+                                div().absolute().top_1().right_1().child(
+                                    IconButton::new(
+                                        ("expand_pinned_user_message", entry_ix),
+                                        if is_expanded {
+                                            IconName::ChevronUp
+                                        } else {
+                                            IconName::ChevronDown
+                                        },
+                                    )
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .style(ButtonStyle::Transparent)
+                                    .tooltip(Tooltip::text(if is_expanded {
+                                        "Collapse"
+                                    } else {
+                                        "Expand"
+                                    }))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.toggle_user_message_expansion(entry_ix, cx);
+                                    })),
+                                ),
+                            )
+                        }),
+                )
+                .into_any_element(),
+        )
     }
 
     fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
@@ -5612,6 +5784,13 @@ impl ThreadView {
             }
         }
 
+        cx.notify();
+    }
+
+    fn toggle_user_message_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
+        if !self.expanded_user_messages.insert(entry_ix) {
+            self.expanded_user_messages.remove(&entry_ix);
+        }
         cx.notify();
     }
 
@@ -9089,6 +9268,9 @@ impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
+        // Computed up-front so we can position it absolutely inside the
+        // conversation wrapper below without taking layout space from the list.
+        let pinned_user_message = self.render_pinned_user_message(window, cx);
 
         let conversation = v_flex()
             .when(self.resumed_without_history, |this| {
@@ -9104,6 +9286,25 @@ impl Render for ThreadView {
                 } else {
                     this.into_any()
                 }
+            });
+
+        // Float the pinned user-message bubble over the chat list rather than
+        // pushing the list down. The list keeps its full height; the pinned
+        // bubble overlays the top edge. Only claim flex_1/size_full when we
+        // actually have messages — otherwise the empty state's full-height
+        // message editor needs that space.
+        let conversation_with_pinned = v_flex()
+            .when(has_messages, |this| this.relative().flex_1().size_full())
+            .child(conversation)
+            .when_some(pinned_user_message, |this, pinned| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .child(pinned),
+                )
             });
 
         v_flex()
@@ -9279,7 +9480,7 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
-            .child(conversation)
+            .child(conversation_with_pinned)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_skill_loading_errors(cx))
             .children(self.render_activity_bar(window, cx))
