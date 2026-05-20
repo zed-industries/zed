@@ -7,7 +7,7 @@ description: Configure AI behavior in Zed with .rules files, .cursorrules, CLAUD
 
 Rules are prompts that can be inserted either automatically at the beginning of each [Agent Panel](./agent-panel.md) interaction, through `.rules` files available in your project's file tree, or on-demand, through @-mentioning, via the Rules Library.
 
-> **Note:** Starting in Zed v1.4.0, on-demand rules (and the rules library) have been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
+> **Note:** Starting in Zed v1.4.0, on-demand rules (and the rules library) have been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions. Learn more about [the rules -> skills migration](#migrating-to-skills).
 
 ## `.rules` files
 
@@ -32,7 +32,7 @@ It's a full editor with syntax highlighting and all standard keybindings.
 
 You can also use the inline assistant right in the rules editor, allowing you to get quick LLM support for writing rules.
 
-> **Note:** Starting in Zed v1.4.0, the rules library has been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions.
+> **Note:** Starting in Zed v1.4.0, the rules library has been replaced by [Skills](./skills.md). Skills are the recommended way to package reusable agent instructions. Learn more about [the rules -> skills migration](#migrating-to-skills).
 
 ### Opening the Rules Library
 
@@ -70,7 +70,7 @@ All rules in the Rules Library can be set as a default rule, which means they’
 
 You can set any rule as the default by clicking the paper clip icon button in the top-right of the rule editor in the Rules Library.
 
-## Migrating to Skills
+## Migrating to Skills {#migrating-to-skills}
 
 When you update to Zed v1.4.0, your existing Rules are migrated to Skills automatically:
 
