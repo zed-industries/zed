@@ -501,6 +501,9 @@ actions!(
         ExpandAllDiffHunks,
         /// Collapses all diff hunks in the editor.
         CollapseAllDiffHunks,
+        /// Toggles all diff hunks in the editor. Collapses all hunks if any are
+        /// currently expanded, otherwise expands all hunks.
+        ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds the next match in the search.

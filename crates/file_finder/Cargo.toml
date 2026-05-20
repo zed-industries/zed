@@ -23,6 +23,7 @@ futures.workspace = true
 fuzzy.workspace = true
 fuzzy_nucleo.workspace = true
 gpui.workspace = true
+language.workspace = true
 menu.workspace = true
 open_path_prompt.workspace = true
 picker.workspace = true

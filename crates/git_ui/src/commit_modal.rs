@@ -1,9 +1,10 @@
 use crate::branch_picker::{self, BranchList};
-use crate::git_panel::{GitPanel, commit_message_editor, panel_editor_style};
+use crate::git_panel::{
+    GitPanel, commit_message_editor, commit_title_exceeds_limit, panel_editor_style,
+};
 use crate::git_panel_settings::GitPanelSettings;
 use git::repository::CommitOptions;
 use git::{Amend, Commit, GenerateCommitMessage, Signoff};
-use panel::panel_button;
 use project::DisableAiSettings;
 use settings::Settings;
 use ui::{
@@ -366,17 +367,17 @@ impl CommitModal {
             .map(|b| b.name().to_owned())
             .unwrap_or_else(|| "<no branch>".to_owned());
 
-        let branch_picker_button = panel_button(branch)
+        let branch_picker_button = Button::new("branch_picker_button", branch)
             .start_icon(
                 Icon::new(IconName::GitBranch)
                     .size(IconSize::Small)
                     .color(Color::Placeholder),
             )
+            .style(ButtonStyle::Transparent)
             .color(Color::Muted)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
-            }))
-            .style(ButtonStyle::Transparent);
+            }));
 
         let branch_picker = PopoverMenu::new("popover-button")
             .menu(move |window, cx| {
@@ -549,7 +550,7 @@ impl Render for CommitModal {
                 .text(cx)
                 .lines()
                 .next()
-                .is_some_and(|title| title.len() > max_title_length)
+                .is_some_and(|title| commit_title_exceeds_limit(title, max_title_length))
         } else {
             false
         };

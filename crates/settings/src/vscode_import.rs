@@ -315,6 +315,7 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            completion_menu_item_kind: None,
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
@@ -977,6 +978,7 @@ impl VsCodeSettings {
             agent_ui_font_size: None,
             agent_buffer_font_size: None,
             markdown_preview_font_family: None,
+            markdown_preview_code_font_family: None,
             markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
@@ -1033,7 +1035,7 @@ impl VsCodeSettings {
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
-            use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
+            use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {

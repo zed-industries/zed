@@ -296,17 +296,47 @@ async fn copy_extension_resources(
     Ok(())
 }
 
-fn validate_extension_features(provides: &BTreeSet<ExtensionProvides>) -> Result<()> {
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum ExtensionFeatureError {
+    #[error("extension does not provide any features")]
+    NoFeatures,
+    #[error("extension must not provide other features along with themes")]
+    ThemesMixedWithOtherFeatures,
+    #[error("extension must not provide other features along with icon themes")]
+    IconThemesMixedWithOtherFeatures,
+    #[error(
+        "Slash commands have been deprecated and \
+        the slash command API will be removed in a future release. {}",
+        if *.sole_feature {
+            "Slash command extensions will no longer be accepted at this time."
+        } else {
+            "Please remove any slash-command related code from your extension."
+        }
+    )]
+    SlashCommandsDeprecated { sole_feature: bool },
+}
+
+fn validate_extension_features(
+    provides: &BTreeSet<ExtensionProvides>,
+) -> Result<(), ExtensionFeatureError> {
     if provides.is_empty() {
-        bail!("extension does not provide any features");
+        return Err(ExtensionFeatureError::NoFeatures);
     }
 
-    if provides.contains(&ExtensionProvides::Themes) && provides.len() != 1 {
-        bail!("extension must not provide other features along with themes");
+    let provides_single_feature = provides.len() == 1;
+
+    if provides.contains(&ExtensionProvides::Themes) && !provides_single_feature {
+        return Err(ExtensionFeatureError::ThemesMixedWithOtherFeatures);
     }
 
-    if provides.contains(&ExtensionProvides::IconThemes) && provides.len() != 1 {
-        bail!("extension must not provide other features along with icon themes");
+    if provides.contains(&ExtensionProvides::IconThemes) && !provides_single_feature {
+        return Err(ExtensionFeatureError::IconThemesMixedWithOtherFeatures);
+    }
+
+    if provides.contains(&ExtensionProvides::SlashCommands) {
+        return Err(ExtensionFeatureError::SlashCommandsDeprecated {
+            sole_feature: provides_single_feature,
+        });
     }
 
     Ok(())
@@ -469,4 +499,89 @@ async fn test_snippets(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use cloud_api_types::ExtensionProvides;
+
+    use super::*;
+
+    #[test]
+    fn test_validate_empty_features() {
+        let provides = BTreeSet::new();
+        assert_eq!(
+            validate_extension_features(&provides),
+            Err(ExtensionFeatureError::NoFeatures),
+        );
+    }
+
+    #[test]
+    fn test_validate_single_language_feature() {
+        let provides = BTreeSet::from([ExtensionProvides::Languages]);
+        assert_eq!(validate_extension_features(&provides), Ok(()));
+    }
+
+    #[test]
+    fn test_validate_single_themes_feature() {
+        let provides = BTreeSet::from([ExtensionProvides::Themes]);
+        assert_eq!(validate_extension_features(&provides), Ok(()));
+    }
+
+    #[test]
+    fn test_validate_themes_with_other_features() {
+        let provides = BTreeSet::from([ExtensionProvides::Themes, ExtensionProvides::Languages]);
+        assert_eq!(
+            validate_extension_features(&provides),
+            Err(ExtensionFeatureError::ThemesMixedWithOtherFeatures),
+        );
+    }
+
+    #[test]
+    fn test_validate_single_icon_themes_feature() {
+        let provides = BTreeSet::from([ExtensionProvides::IconThemes]);
+        assert_eq!(validate_extension_features(&provides), Ok(()));
+    }
+
+    #[test]
+    fn test_validate_icon_themes_with_other_features() {
+        let provides = BTreeSet::from([ExtensionProvides::IconThemes, ExtensionProvides::Grammars]);
+        assert_eq!(
+            validate_extension_features(&provides),
+            Err(ExtensionFeatureError::IconThemesMixedWithOtherFeatures),
+        );
+    }
+
+    #[test]
+    fn test_validate_slash_commands_only() {
+        let provides = BTreeSet::from([ExtensionProvides::SlashCommands]);
+        assert_eq!(
+            validate_extension_features(&provides),
+            Err(ExtensionFeatureError::SlashCommandsDeprecated { sole_feature: true }),
+        );
+    }
+
+    #[test]
+    fn test_validate_slash_commands_with_other_features() {
+        let provides = BTreeSet::from([
+            ExtensionProvides::SlashCommands,
+            ExtensionProvides::Languages,
+        ]);
+        assert_eq!(
+            validate_extension_features(&provides),
+            Err(ExtensionFeatureError::SlashCommandsDeprecated {
+                sole_feature: false
+            }),
+        );
+    }
+
+    #[test]
+    fn test_validate_multiple_non_theme_features() {
+        let provides = BTreeSet::from([
+            ExtensionProvides::Languages,
+            ExtensionProvides::Grammars,
+            ExtensionProvides::LanguageServers,
+        ]);
+        assert_eq!(validate_extension_features(&provides), Ok(()));
+    }
 }

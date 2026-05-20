@@ -448,6 +448,34 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  miri_scheduler:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::miri_scheduler::install_miri
+      run: rustup toolchain install nightly --profile minimal --component miri --component rust-src
+    - name: run_tests::miri_scheduler::run_scheduler_tests_under_miri
+      run: cargo +nightly -q miri test -p scheduler
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+    timeout-minutes: 60
   doctests:
     needs:
     - orchestrate
@@ -640,6 +668,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
       CC: clang
       CXX: clang++
     steps:
@@ -804,6 +833,7 @@ jobs:
     - run_tests_windows
     - run_tests_linux
     - run_tests_mac
+    - miri_scheduler
     - doctests
     - check_workspace_binaries
     - build_visual_tests_binary
@@ -835,6 +865,7 @@ jobs:
         check_result "run_tests_windows" "$RESULT_RUN_TESTS_WINDOWS"
         check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
+        check_result "miri_scheduler" "$RESULT_MIRI_SCHEDULER"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
         check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
@@ -856,6 +887,7 @@ jobs:
         RESULT_RUN_TESTS_WINDOWS: ${{ needs.run_tests_windows.result }}
         RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
+        RESULT_MIRI_SCHEDULER: ${{ needs.miri_scheduler.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
         RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
