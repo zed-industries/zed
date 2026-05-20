@@ -2137,6 +2137,7 @@ impl Terminal {
         }
     }
 
+    /// Normalizes the command name of the foreground process, if one is known.
     pub fn foreground_process_command_name(&self) -> Option<String> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info
@@ -2495,26 +2496,6 @@ fn normalize_path_command_name(command: &str) -> Option<String> {
         }
     }
 
-    if matches!(
-        command.as_str(),
-        "bash"
-            | "cmd"
-            | "csh"
-            | "dash"
-            | "elvish"
-            | "fish"
-            | "ksh"
-            | "nu"
-            | "powershell"
-            | "pwsh"
-            | "sh"
-            | "tcsh"
-            | "xonsh"
-            | "zsh"
-    ) {
-        return None;
-    }
-
     if command.is_empty()
         || !command.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
@@ -2680,9 +2661,9 @@ mod tests {
         );
         assert_eq!(normalize_path_command_name(".hidden-agent"), None);
         assert_eq!(normalize_path_command_name("agent with spaces"), None);
-        assert_eq!(normalize_path_command_name("zsh"), None);
+        assert_eq!(normalize_path_command_name("zsh"), Some("zsh".into()));
         assert_eq!(normalize_path_command_name("-zsh"), None);
-        assert_eq!(normalize_path_command_name("pwsh.exe"), None);
+        assert_eq!(normalize_path_command_name("pwsh.exe"), Some("pwsh".into()));
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -2853,14 +2834,14 @@ mod tests {
 
     #[cfg(unix)]
     #[gpui::test]
-    async fn test_foreground_process_command_name_tracks_path_command(cx: &mut TestAppContext) {
+    async fn test_foreground_process_command_tracks_path_command(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let (terminal, completion_rx) =
             build_test_terminal_with_arguments(cx, "sleep".to_string(), vec!["1".to_string()])
                 .await;
 
-        assert_foreground_process_command_name_eventually(&terminal, "sleep", cx).await;
+        assert_foreground_process_command_eventually(&terminal, "sleep", cx).await;
 
         assert!(
             completion_rx.recv().await.is_ok(),
@@ -3472,7 +3453,7 @@ mod tests {
         panic!("Expected terminal content to contain {expected:?}, got: {content}");
     }
 
-    async fn assert_foreground_process_command_name_eventually(
+    async fn assert_foreground_process_command_eventually(
         terminal: &Entity<Terminal>,
         expected: &str,
         cx: &mut TestAppContext,
@@ -3495,10 +3476,10 @@ mod tests {
         }
         let process_info = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
             TerminalType::Pty { info, .. } => format!(
-                "pid={:?}, fallback_pid={:?}, current={:?}",
+                "pid={:?}, fallback_pid={:?}, has_current_info={}",
                 info.pid(),
                 info.pid_getter().fallback_pid(),
-                info.current.read().clone()
+                info.current.read().is_some()
             ),
             TerminalType::DisplayOnly => "display-only".to_string(),
         });

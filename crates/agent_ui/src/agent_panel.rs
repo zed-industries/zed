@@ -95,11 +95,35 @@ const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
+const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
+    "agy",
+    "aider",
+    "amp",
+    "claude",
+    "codex",
+    "copilot",
+    "crush",
+    "cursor-agent",
+    "devin",
+    "droid",
+    "gemini",
+    "goose",
+    "openhands",
+    "opencode",
+    "pi",
+    "qwen",
+];
+
+fn is_known_terminal_agent_command(command: &str) -> bool {
+    KNOWN_TERMINAL_AGENT_COMMANDS.contains(&command)
+}
 
 fn terminal_program_to_report(
     last_observed_program: &mut Option<String>,
     current_program: Option<String>,
 ) -> Option<String> {
+    let current_program =
+        current_program.filter(|program| is_known_terminal_agent_command(program));
     let program_to_report =
         if current_program.is_some() && current_program != *last_observed_program {
             current_program.clone()
@@ -6191,7 +6215,16 @@ mod tests {
     use std::time::Instant;
 
     #[test]
-    fn test_terminal_program_reports_process_transitions() {
+    fn test_is_known_terminal_agent_command() {
+        assert!(is_known_terminal_agent_command("claude"));
+        assert!(is_known_terminal_agent_command("codex"));
+        assert!(is_known_terminal_agent_command("cursor-agent"));
+        assert!(!is_known_terminal_agent_command("cargo"));
+        assert!(!is_known_terminal_agent_command("internal-agent"));
+    }
+
+    #[test]
+    fn test_terminal_program_reports_known_agent_transitions() {
         let mut last_observed_program = None;
 
         assert_eq!(
@@ -6203,16 +6236,20 @@ mod tests {
             None
         );
         assert_eq!(
-            terminal_program_to_report(&mut last_observed_program, Some("claude".to_string())),
-            Some("claude".to_string())
+            terminal_program_to_report(&mut last_observed_program, Some("zsh".to_string())),
+            None
+        );
+        assert_eq!(
+            terminal_program_to_report(&mut last_observed_program, Some("codex".to_string())),
+            Some("codex".to_string())
         );
         assert_eq!(
             terminal_program_to_report(&mut last_observed_program, None),
             None
         );
         assert_eq!(
-            terminal_program_to_report(&mut last_observed_program, Some("claude".to_string())),
-            Some("claude".to_string())
+            terminal_program_to_report(&mut last_observed_program, Some("codex".to_string())),
+            Some("codex".to_string())
         );
     }
 
