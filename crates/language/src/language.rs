@@ -853,7 +853,6 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
-    pub(crate) runnable_resolver: Option<Arc<dyn RunnableResolver>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
     pub(crate) manifest_name: Option<ManifestName>,
 }
@@ -877,7 +876,6 @@ impl Language {
             config,
             grammar: ts_language.map(|ts_language| Arc::new(Grammar::new(ts_language))),
             context_provider: None,
-            runnable_resolver: None,
             toolchain: None,
             manifest_name: None,
         }
@@ -885,11 +883,6 @@ impl Language {
 
     pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
-        self
-    }
-
-    pub fn with_runnable_resolver(mut self, resolver: Option<Arc<dyn RunnableResolver>>) -> Self {
-        self.runnable_resolver = resolver;
         self
     }
 
@@ -1026,10 +1019,6 @@ impl Language {
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
-    }
-
-    pub fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
-        self.runnable_resolver.clone()
     }
 
     pub fn toolchain_lister(&self) -> Option<Arc<dyn ToolchainLister>> {

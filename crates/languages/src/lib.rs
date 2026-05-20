@@ -167,7 +167,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
             semantic_token_rules: Some(python::semantic_token_rules()),
-            ..Default::default()
         },
         LanguageInfo {
             name: "rust",
@@ -226,7 +225,6 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             registration.name,
             registration.adapters,
             registration.context,
-            registration.runnable_resolver,
             registration.toolchain,
             registration.manifest_name,
             registration.semantic_token_rules,
@@ -333,7 +331,6 @@ struct LanguageInfo {
     name: &'static str,
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
-    runnable_resolver: Option<Arc<dyn RunnableResolver>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
     semantic_token_rules: Option<SemanticTokenRules>,
@@ -344,7 +341,6 @@ fn register_language(
     name: &'static str,
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
-    runnable_resolver: Option<Arc<dyn RunnableResolver>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
     manifest_name: Option<ManifestName>,
     semantic_token_rules: Option<SemanticTokenRules>,
@@ -370,7 +366,6 @@ fn register_language(
                 config: config.clone(),
                 queries: grammars::load_queries(name),
                 context_provider: context.clone(),
-                runnable_resolver: runnable_resolver.clone(),
                 toolchain_provider: toolchain.clone(),
                 manifest_name: manifest_name.clone(),
             })

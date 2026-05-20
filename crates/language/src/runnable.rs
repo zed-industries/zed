@@ -259,7 +259,10 @@ fn runnable_ranges_from_grouped_matches(
         })
         .collect();
 
-    let Some(resolver) = language.runnable_resolver() else {
+    let Some(resolver) = language
+        .context_provider()
+        .and_then(|provider| provider.runnable_resolver())
+    else {
         return SmallVec::new();
     };
     let mut runnable_ranges = SmallVec::with_capacity(groups.len());
@@ -362,10 +365,22 @@ fn runnable_range_from_captures(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffer, Language, LanguageConfig, LanguageMatcher, LanguageQueries};
+    use crate::{
+        Buffer, ContextProvider, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+    };
     use gpui::{AppContext as _, TestAppContext};
     use indoc::indoc;
     use std::{borrow::Cow, sync::Arc};
+
+    struct TestContextProvider {
+        resolver: Arc<dyn RunnableResolver>,
+    }
+
+    impl ContextProvider for TestContextProvider {
+        fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
+            Some(self.resolver.clone())
+        }
+    }
 
     fn make_language(
         runnables_query: &'static str,
@@ -387,7 +402,9 @@ mod tests {
             ..Default::default()
         })
         .expect("parse runnables query");
-        Arc::new(language.with_runnable_resolver(resolver))
+        let context_provider = resolver
+            .map(|resolver| Arc::new(TestContextProvider { resolver }) as Arc<dyn ContextProvider>);
+        Arc::new(language.with_context_provider(context_provider))
     }
 
     fn collect_runnables(

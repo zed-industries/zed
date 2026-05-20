@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use crate::{Buffer, LanguageToolchainStore, Location};
+use crate::{Buffer, LanguageToolchainStore, Location, RunnableResolver};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -34,6 +34,13 @@ pub trait ContextProvider: Send + Sync {
 
     /// A language server name, that can return tasks using LSP (ext) for this language.
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
+        None
+    }
+
+    /// A resolver for runnable queries that group captures with `@_run_item`.
+    /// For each group, the resolver picks which `@run` range and extra captures
+    /// to surface. Without a resolver, grouped matches emit no runnables.
+    fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
         None
     }
 }
