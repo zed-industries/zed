@@ -8,7 +8,7 @@ use dap::adapters::DebugAdapterName;
 use db::kvp::KeyValueStore;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
-    Subscription, Task, WeakEntity, list,
+    Subscription, Task, TaskExt, WeakEntity, list,
 };
 use util::{
     debug_panic,

@@ -6,7 +6,9 @@ use crate::{
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
-    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    property::{
+        EndOfLine, FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs,
+    },
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers, SharedString};
@@ -14,10 +16,10 @@ use itertools::{Either, Itertools};
 use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens};
 
 pub use settings::{
-    AutoIndentMode, CompletionSettingsContent, EditPredictionPromptFormat, EditPredictionProvider,
-    EditPredictionsMode, FormatOnSave, Formatter, FormatterList, InlayHintKind,
-    LanguageSettingsContent, LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
-    WordsCompletionMode,
+    AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
+    EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
+    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -82,6 +84,9 @@ pub struct LanguageSettings {
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
+    /// How line endings are initialized for new files and normalized during
+    /// format and save.
+    pub line_ending: LineEndingSetting,
     /// How to perform a buffer format.
     pub formatter: settings::FormatterList,
     /// Zed's Prettier integration settings.
@@ -473,6 +478,11 @@ pub struct EditPredictionSettings {
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
     pub examples_dir: Option<Arc<Path>>,
+    /// Controls whether training data collection is enabled.
+    ///
+    /// `Default` means the value stored in the legacy KV store is used as a fallback,
+    /// preserving existing users' choices without a migration.
+    pub allow_data_collection: EditPredictionDataCollectionChoice,
 }
 
 impl EditPredictionSettings {
@@ -528,6 +538,46 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum EditPredictionPromptFormat {
+    #[default]
+    Infer,
+    Zeta(ZetaVersion),
+    CodeLlama,
+    StarCoder,
+    DeepseekCoder,
+    Qwen,
+    CodeGemma,
+    Codestral,
+    Glm,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum ZetaVersion {
+    Zeta1,
+    Zeta2,
+    #[default] // NOTE: make latest version default when adding
+    Zeta2_1,
+}
+
+impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
+    fn from(value: EditPredictionPromptFormatContent) -> Self {
+        match value {
+            EditPredictionPromptFormatContent::Infer => Self::Infer,
+            EditPredictionPromptFormatContent::Zeta => Self::Zeta(ZetaVersion::Zeta1),
+            EditPredictionPromptFormatContent::Zeta2 => Self::Zeta(ZetaVersion::Zeta2),
+            EditPredictionPromptFormatContent::Zeta2_1 => Self::Zeta(ZetaVersion::Zeta2_1),
+            EditPredictionPromptFormatContent::CodeLlama => Self::CodeLlama,
+            EditPredictionPromptFormatContent::StarCoder => Self::StarCoder,
+            EditPredictionPromptFormatContent::DeepseekCoder => Self::DeepseekCoder,
+            EditPredictionPromptFormatContent::Qwen => Self::Qwen,
+            EditPredictionPromptFormatContent::CodeGemma => Self::CodeGemma,
+            EditPredictionPromptFormatContent::Codestral => Self::Codestral,
+            EditPredictionPromptFormatContent::Glm => Self::Glm,
+        }
+    }
 }
 
 impl AllLanguageSettings {
@@ -637,6 +687,11 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
             TrimTrailingWs::Value(b) => b,
         })
         .ok();
+    let line_ending = cfg.get::<EndOfLine>().ok().and_then(|v| match v {
+        EndOfLine::Lf => Some(LineEndingSetting::EnforceLf),
+        EndOfLine::CrLf => Some(LineEndingSetting::EnforceCrlf),
+        EndOfLine::Cr => None,
+    });
 
     settings
         .preferred_line_length
@@ -649,6 +704,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
     settings
         .ensure_final_newline_on_save
         .merge_from_option(ensure_final_newline_on_save.as_ref());
+    settings.line_ending.merge_from_option(line_ending.as_ref());
 }
 
 impl settings::Settings for AllLanguageSettings {
@@ -682,6 +738,7 @@ impl settings::Settings for AllLanguageSettings {
                     .remove_trailing_whitespace_on_save
                     .unwrap(),
                 ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
+                line_ending: settings.line_ending.unwrap(),
                 formatter: settings.formatter.unwrap(),
                 prettier: PrettierSettings {
                     allowed: prettier.allowed.unwrap(),
@@ -799,7 +856,7 @@ impl settings::Settings for AllLanguageSettings {
                 model: model.0,
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
-                prompt_format: ollama.prompt_format.unwrap(),
+                prompt_format: ollama.prompt_format.unwrap().into(),
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
         let openai_compatible_settings = openai_compatible_settings
@@ -814,7 +871,7 @@ impl settings::Settings for AllLanguageSettings {
                 model,
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
                 api_url: api_url.into(),
-                prompt_format: openai_compatible_settings.prompt_format.unwrap(),
+                prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
             });
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -855,6 +912,7 @@ impl settings::Settings for AllLanguageSettings {
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
                 examples_dir: edit_predictions.examples_dir,
+                allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,
             languages,

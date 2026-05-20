@@ -201,9 +201,11 @@ impl LineWrapper {
                     "{truncation_affix}{}",
                     &line[line.ceil_char_boundary(truncate_ix + 1)..]
                 )),
-                TruncateFrom::End => {
-                    SharedString::from(format!("{}{truncation_affix}", &line[..truncate_ix]))
-                }
+                TruncateFrom::End => SharedString::from(format!(
+                    "{}{truncation_affix}",
+                    line[..truncate_ix]
+                        .trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+                )),
             };
             let mut runs = runs.to_vec();
             update_runs_after_truncation(&result, truncation_affix, &mut runs, truncate_from);
@@ -241,8 +243,9 @@ impl LineWrapper {
 
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`/`won’t`, '@mention`, `#hashtag`, `100%`, `3.1415`,
-        // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
+        // `2^3`, `a~b`, `a=1`, `Self::new`, etc. Trailing punctuation like `,`, `.`, `:`, `;`
+        // is included so it stays attached to the preceding word when wrapping.
+        matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -837,6 +840,7 @@ mod tests {
         assert_word("$variable");
         assert_word("a=1");
         assert_word("Self::is_word_char");
+        assert_word("on;");
         assert_word("more⋯");
         assert_word("won’t");
         assert_word("‘twas");

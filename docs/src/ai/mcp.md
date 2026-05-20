@@ -26,7 +26,7 @@ Check out the [MCP Server Extensions](../extensions/mcp-extensions.md) page to l
 Many MCP servers are available as extensions. Find them via:
 
 1. [the Zed website](https://zed.dev/extensions?filter=context-servers)
-2. in the app, open the Command Palette and run the `zed: extensions` action
+2. in the app, open the Command Palette and run the {#action zed::Extensions} action
 3. in the app, go to the Agent Panel's top-right menu and look for the "View Server Extensions" menu item
 
 Popular servers available as an extension include:
@@ -64,7 +64,7 @@ You can connect them by adding their commands directly to your settings file ([h
 }
 ```
 
-Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
+Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the {#action agent::OpenSettings} action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
 
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
@@ -110,7 +110,6 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
         "list_directory": false,
         "diagnostics": false,
         "read_file": false,
-        "open": false,
         "move_path": false,
         "grep": false,
         "edit_file": false,
@@ -157,10 +156,9 @@ Learn more about [how tool permissions work](./tool-permissions.md), how to furt
 
 ### External Agents
 
-Note that for [external agents](./external-agents.md) connected through the [Agent Client Protocol](https://agentclientprotocol.com/), access to MCP servers installed from Zed may vary depending on the ACP agent implementation.
+MCP servers configured in Zed are forwarded to [external agents](./external-agents.md) via the [Agent Client Protocol](https://agentclientprotocol.com/). External agents can also access MCP servers from their own native configuration files.
 
-Regarding the built-in ones, Claude Agent and Codex both support it, and Gemini CLI does not yet.
-In the meantime, learn how to add MCP server support to Gemini CLI through [their documentation](https://github.com/google-gemini/gemini-cli?tab=readme-ov-file#using-mcp-servers).
+For details on what configuration is shared between Zed and external agents, see [Configuration Boundaries](./external-agents.md#configuration-boundaries).
 
 ### Error Handling
 

@@ -1,6 +1,6 @@
 use acp_thread::AgentSessionListRequest;
 use agent::ThreadStore;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use chrono::Utc;
 use collections::HashSet;
 use db::kvp::Dismissable;
@@ -9,9 +9,10 @@ use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent,
-    Render, SharedString, Task, WeakEntity, Window,
+    Render, SharedString, Task, TaskExt, WeakEntity, Window,
 };
-use notifications::status_toast::{StatusToast, ToastIcon};
+use itertools::Itertools as _;
+use notifications::status_toast::StatusToast;
 use project::{AgentId, AgentRegistryStore, AgentServerStore};
 use release_channel::ReleaseChannel;
 use remote::RemoteConnectionOptions;
@@ -138,6 +139,7 @@ impl ThreadImportModal {
                     icon_path,
                 }
             })
+            .sorted_unstable_by_key(|entry| entry.display_name.to_lowercase())
             .collect::<Vec<_>>();
 
         Self {
@@ -275,8 +277,12 @@ impl ThreadImportModal {
     fn show_imported_threads_toast(&self, imported_count: usize, cx: &mut App) {
         let status_toast = if imported_count == 0 {
             StatusToast::new("No threads found to import.", cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Info).color(Color::Muted))
-                    .dismiss_button(true)
+                this.icon(
+                    Icon::new(IconName::Info)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .dismiss_button(true)
             })
         } else {
             let message = if imported_count == 1 {
@@ -285,8 +291,12 @@ impl ThreadImportModal {
                 format!("Imported {imported_count} threads.")
             };
             StatusToast::new(message, cx, |this, _cx| {
-                this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                    .dismiss_button(true)
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                )
+                .dismiss_button(true)
             })
         };
 
@@ -383,7 +393,7 @@ impl Render for ThreadImportModal {
                             .headline("Import External Agent Threads")
                             .description(
                                 "Import threads from agents like Claude Agent, Codex, and more, whether started in Zed or another client. \
-                                Choose which agents to include, and their threads will appear in your archive."
+                                Choose which agents to include, and their threads will appear in your thread history."
                             )
                             .show_dismiss_button(true),
 
@@ -493,9 +503,10 @@ fn find_threads_to_import(
         }
     }
 
-    let mut session_list_tasks = Vec::new();
     cx.spawn(async move |cx| {
         let results = futures::future::join_all(wait_for_connection_tasks).await;
+
+        let mut page_tasks = Vec::new();
         for (agent_id, remote_connection, result) in results {
             let Some(state) = result.log_err() else {
                 continue;
@@ -503,33 +514,50 @@ fn find_threads_to_import(
             let Some(list) = cx.update(|cx| state.connection.session_list(cx)) else {
                 continue;
             };
-            let task = cx.update(|cx| {
-                list.list_sessions(AgentSessionListRequest::default(), cx)
-                    .map({
-                        let remote_connection = remote_connection.clone();
-                        move |response| (agent_id, remote_connection, response)
-                    })
-            });
-            session_list_tasks.push(task);
+            page_tasks.push(cx.spawn({
+                let list = list.clone();
+                async move |cx| collect_all_sessions(agent_id, remote_connection, list, cx).await
+            }));
         }
 
-        let mut sessions_by_agent = Vec::new();
-        let results = futures::future::join_all(session_list_tasks).await;
-        for (agent_id, remote_connection, result) in results {
-            let Some(response) = result.log_err() else {
-                continue;
-            };
-            sessions_by_agent.push(SessionByAgent {
-                agent_id,
-                remote_connection,
-                sessions: response.sessions,
-            });
-        }
+        let sessions_by_agent = futures::future::join_all(page_tasks)
+            .await
+            .into_iter()
+            .filter_map(|result| result.log_err())
+            .collect();
 
         Ok(collect_importable_threads(
             sessions_by_agent,
             existing_sessions,
         ))
+    })
+}
+
+async fn collect_all_sessions(
+    agent_id: AgentId,
+    remote_connection: Option<RemoteConnectionOptions>,
+    list: std::rc::Rc<dyn acp_thread::AgentSessionList>,
+    cx: &mut gpui::AsyncApp,
+) -> anyhow::Result<SessionByAgent> {
+    let mut sessions = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let request = AgentSessionListRequest {
+            cursor: cursor.clone(),
+            ..Default::default()
+        };
+        let task = cx.update(|cx| list.list_sessions(request, cx));
+        let response = task.await?;
+        sessions.extend(response.sessions);
+        match response.next_cursor {
+            Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+            _ => break,
+        }
+    }
+    Ok(SessionByAgent {
+        agent_id,
+        remote_connection,
+        sessions,
     })
 }
 
@@ -562,8 +590,10 @@ fn collect_importable_threads(
                 session_id: Some(session.session_id),
                 agent_id: agent_id.clone(),
                 title: session.title,
+                title_override: None,
                 updated_at: session.updated_at.unwrap_or_else(|| Utc::now()),
                 created_at: session.created_at,
+                interacted_at: None,
                 worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                 remote_connection: remote_connection.clone(),
                 archived: true,
@@ -660,7 +690,7 @@ fn show_cross_channel_import_toast(
 ) {
     let status_toast = if imported_count == 0 {
         StatusToast::new("No new threads found to import.", cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Info).color(Color::Muted))
+            this.icon(Icon::new(IconName::Info).color(Color::Muted))
                 .dismiss_button(true)
         })
     } else {
@@ -670,7 +700,7 @@ fn show_cross_channel_import_toast(
             format!("Imported {imported_count} threads from other channels.")
         };
         StatusToast::new(message, cx, |this, _cx| {
-            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+            this.icon(Icon::new(IconName::Check).color(Color::Success))
                 .dismiss_button(true)
         })
     };
@@ -954,6 +984,18 @@ mod tests {
         cx.run_until_parked();
     }
 
+    /// Returns two release channels that are not the current one and not Dev.
+    /// This ensures tests work regardless of which release channel branch
+    /// they run on.
+    fn foreign_channels(cx: &TestAppContext) -> (ReleaseChannel, ReleaseChannel) {
+        let current = cx.update(|cx| ReleaseChannel::global(cx));
+        let mut channels = ReleaseChannel::ALL
+            .iter()
+            .copied()
+            .filter(|ch| *ch != current && *ch != ReleaseChannel::Dev);
+        (channels.next().unwrap(), channels.next().unwrap())
+    }
+
     #[gpui::test]
     async fn test_import_threads_from_other_channels(cx: &mut TestAppContext) {
         init_test(cx);
@@ -961,26 +1003,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let database_dir = dir.path().to_path_buf();
 
-        // Set up a "preview" database with two threads.
-        let preview_db = create_channel_db(dir.path(), ReleaseChannel::Preview);
-        insert_thread(
-            &preview_db,
-            "Preview Thread 1",
-            "2025-01-15T10:00:00Z",
-            false,
-        );
-        insert_thread(
-            &preview_db,
-            "Preview Thread 2",
-            "2025-01-15T11:00:00Z",
-            true,
-        );
-        drop(preview_db);
+        let (channel_a, channel_b) = foreign_channels(cx);
 
-        // Set up a "nightly" database with one thread.
-        let nightly_db = create_channel_db(dir.path(), ReleaseChannel::Nightly);
-        insert_thread(&nightly_db, "Nightly Thread", "2025-01-15T12:00:00Z", false);
-        drop(nightly_db);
+        // Set up databases for two foreign channels.
+        let db_a = create_channel_db(dir.path(), channel_a);
+        insert_thread(&db_a, "Thread A1", "2025-01-15T10:00:00Z", false);
+        insert_thread(&db_a, "Thread A2", "2025-01-15T11:00:00Z", true);
+        drop(db_a);
+
+        let db_b = create_channel_db(dir.path(), channel_b);
+        insert_thread(&db_b, "Thread B1", "2025-01-15T12:00:00Z", false);
+        drop(db_b);
 
         // Create a workspace and run the import.
         let fs = fs::FakeFs::new(cx.executor());
@@ -1007,22 +1040,22 @@ mod tests {
                 .collect();
 
             assert_eq!(titles.len(), 3);
-            assert!(titles.contains("Preview Thread 1"));
-            assert!(titles.contains("Preview Thread 2"));
-            assert!(titles.contains("Nightly Thread"));
+            assert!(titles.contains("Thread A1"));
+            assert!(titles.contains("Thread A2"));
+            assert!(titles.contains("Thread B1"));
 
             // Verify archived state is preserved.
-            let preview_2 = store
+            let thread_a2 = store
                 .entries()
-                .find(|m| m.display_title().as_ref() == "Preview Thread 2")
+                .find(|m| m.display_title().as_ref() == "Thread A2")
                 .unwrap();
-            assert!(preview_2.archived);
+            assert!(thread_a2.archived);
 
-            let nightly = store
+            let thread_b1 = store
                 .entries()
-                .find(|m| m.display_title().as_ref() == "Nightly Thread")
+                .find(|m| m.display_title().as_ref() == "Thread B1")
                 .unwrap();
-            assert!(!nightly.archived);
+            assert!(!thread_b1.archived);
         });
     }
 
@@ -1033,16 +1066,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let database_dir = dir.path().to_path_buf();
 
-        // Set up a "preview" database with threads.
-        let preview_db = create_channel_db(dir.path(), ReleaseChannel::Preview);
-        insert_thread(&preview_db, "Thread A", "2025-01-15T10:00:00Z", false);
-        insert_thread(&preview_db, "Thread B", "2025-01-15T11:00:00Z", false);
-        drop(preview_db);
+        let (channel_a, _) = foreign_channels(cx);
+
+        // Set up a database for a foreign channel.
+        let db_a = create_channel_db(dir.path(), channel_a);
+        insert_thread(&db_a, "Thread A", "2025-01-15T10:00:00Z", false);
+        insert_thread(&db_a, "Thread B", "2025-01-15T11:00:00Z", false);
+        drop(db_a);
 
         // Read the threads so we can pre-populate one into the store.
-        let preview_threads =
-            read_threads_from_channel(dir.path(), ReleaseChannel::Preview).unwrap();
-        let thread_a = preview_threads
+        let foreign_threads = read_threads_from_channel(dir.path(), channel_a).unwrap();
+        let thread_a = foreign_threads
             .iter()
             .find(|t| t.display_title().as_ref() == "Thread A")
             .unwrap()

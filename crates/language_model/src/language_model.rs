@@ -121,12 +121,6 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    fn count_tokens(
-        &self,
-        request: LanguageModelRequest,
-        cx: &App,
-    ) -> BoxFuture<'static, Result<u64>>;
-
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -236,10 +230,6 @@ pub trait LanguageModel: Send + Sync {
             )))
         }
         .boxed()
-    }
-
-    fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        None
     }
 
     #[cfg(any(test, feature = "test-support"))]

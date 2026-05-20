@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, AppContext as _, SerializedThreadTaskTimings};
+use gpui::{App, AppContext as _, SerializedThreadTaskTimings, TaskExt};
 use http_client::{self, AsyncBody, HttpClient, Request};
 use log::info;
 use project::Project;
@@ -266,6 +266,10 @@ async fn upload_minidump(
     minidump: Vec<u8>,
     metadata: &crashes::CrashInfo,
 ) -> Result<()> {
+    if metadata.init.commit_sha == "no sha" {
+        log::warn!("No commit sha set, skipping minidump upload");
+        return Ok(());
+    }
     let mut form = Form::new()
         .part(
             "upload_file_minidump",
