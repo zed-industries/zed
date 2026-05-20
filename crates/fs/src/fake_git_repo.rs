@@ -71,6 +71,7 @@ pub struct FakeGitRepositoryState {
     pub remotes: HashMap<String, String>,
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
+    pub simulated_branches_error: Option<String>,
     pub simulated_graph_error: Option<String>,
     pub branches_requiring_force_delete: HashSet<String>,
     pub worktrees_requiring_force_delete: HashSet<PathBuf>,
@@ -92,6 +93,7 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
             simulated_create_worktree_error: Default::default(),
+            simulated_branches_error: Default::default(),
             simulated_graph_error: None,
             branches_requiring_force_delete: Default::default(),
             worktrees_requiring_force_delete: Default::default(),
@@ -495,6 +497,10 @@ impl GitRepository for FakeGitRepository {
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         self.with_state_async(false, move |state| {
+            if let Some(message) = state.simulated_branches_error.as_ref() {
+                anyhow::bail!("{message}");
+            }
+
             let current_branch = &state.current_branch_name;
             let mut branches = state
                 .branches

@@ -1796,7 +1796,7 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let fields = [
+                let rich_branch_fields = [
                     "%(HEAD)",
                     "%(objectname)",
                     "%(parent)",
@@ -1808,24 +1808,23 @@ impl GitRepository for RealGitRepository {
                     "%(contents:subject)",
                 ]
                 .join("%00");
-                let args = vec![
-                    "for-each-ref",
-                    "refs/heads/**/*",
-                    "refs/remotes/**/*",
-                    "--format",
-                    &fields,
-                ];
-                let output = git.build_command(&args).output().await?;
-
-                anyhow::ensure!(
-                    output.status.success(),
-                    "Failed to git git branches:\n{}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-
-                let input = String::from_utf8_lossy(&output.stdout);
-
-                let mut branches = parse_branch_input(&input)?;
+                let rich_branch_input =
+                    git_for_each_ref_with_format(&git, &rich_branch_fields).await;
+                let mut branches = match rich_branch_input {
+                    Ok(input) => parse_branch_input(&input)?,
+                    Err(error) => {
+                        log::warn!(
+                            "failed to get git branches with commit metadata; falling back to ref names: {error:#}"
+                        );
+                        let fallback_branch_fields =
+                            ["%(HEAD)", "%(objectname)", "%(refname)"].join("%00");
+                        let fallback_branch_input =
+                            git_for_each_ref_with_format(&git, &fallback_branch_fields)
+                                .await
+                                .context("failed to get git branches by ref name")?;
+                        parse_branch_ref_input(&fallback_branch_input)
+                    }
+                };
                 if branches.is_empty() {
                     let args = vec!["symbolic-ref", "--quiet", "HEAD"];
 
@@ -3587,6 +3586,18 @@ impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
     }
 }
 
+async fn git_for_each_ref_with_format(git: &GitBinary, format: &str) -> Result<String> {
+    git.run_raw(&[
+        "for-each-ref",
+        "refs/heads/**/*",
+        "refs/remotes/**/*",
+        "--format",
+        format,
+    ])
+    .await
+    .context("failed to get git branches")
+}
+
 fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     let mut branches = Vec::new();
     for line in input.split('\n') {
@@ -3645,6 +3656,35 @@ fn parse_branch_input(input: &str) -> Result<Vec<Branch>> {
     }
 
     Ok(branches)
+}
+
+fn parse_branch_ref_input(input: &str) -> Vec<Branch> {
+    let mut branches = Vec::new();
+    for line in input.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+
+        let mut fields = line.split('\x00');
+        let Some(head) = fields.next() else {
+            continue;
+        };
+        if fields.next().is_none() {
+            continue;
+        }
+        let Some(ref_name) = fields.next().map(|field| field.to_string().into()) else {
+            continue;
+        };
+
+        branches.push(Branch {
+            is_head: head == "*",
+            ref_name,
+            upstream: None,
+            most_recent_commit: None,
+        });
+    }
+
+    branches
 }
 
 fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
@@ -4018,6 +4058,73 @@ mod tests {
         //         .ok(),
         //     None
         // );
+    }
+
+    #[gpui::test]
+    async fn test_branches_fall_back_when_commit_metadata_cannot_be_read(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(repo_dir.path()).unwrap();
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.path().join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        smol::fs::write(
+            repo_dir.path().join(".git").join("refs/heads/broken"),
+            "0a103ede22f159c792dc6405e0c8304d9bd4dc29\n",
+        )
+        .await
+        .unwrap();
+
+        let rich_branch_fields = [
+            "%(HEAD)",
+            "%(objectname)",
+            "%(parent)",
+            "%(refname)",
+            "%(upstream)",
+            "%(upstream:track)",
+            "%(committerdate:unix)",
+            "%(authorname)",
+            "%(contents:subject)",
+        ]
+        .join("%00");
+        git_for_each_ref_with_format(&repo.git_binary(), &rich_branch_fields)
+            .await
+            .expect_err("rich branch metadata should fail on the broken ref");
+
+        let branches = repo.branches().await.unwrap();
+        assert!(branches.iter().any(|branch| branch.is_head));
+
+        let broken_branch = branches
+            .iter()
+            .find(|branch| branch.ref_name.as_ref() == "refs/heads/broken")
+            .expect("fallback branch list should include the broken ref");
+        assert!(!broken_branch.is_head);
+        assert_eq!(broken_branch.upstream, None);
+        assert_eq!(broken_branch.most_recent_commit, None);
     }
 
     #[gpui::test]

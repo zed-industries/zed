@@ -8999,6 +8999,61 @@ mod tests {
         Ok(())
     }
 
+    #[gpui::test]
+    async fn test_compute_snapshot_applies_statuses_when_branches_fail(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "tracked.txt": "modified",
+            }),
+        )
+        .await;
+        let tracked_path = RepoPath::from_rel_path(
+            &RelPath::new("tracked.txt".as_ref(), PathStyle::local()).unwrap(),
+        );
+        fs.with_git_state(Path::new("/project/.git"), false, |state| {
+            state.simulated_branches_error = Some("failed to enumerate branches".into());
+            state
+                .head_contents
+                .insert(tracked_path.clone(), "clean".into());
+            state
+                .index_contents
+                .insert(tracked_path.clone(), "clean".into());
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        repository.read_with(cx, |repository, _| {
+            let status = repository
+                .snapshot
+                .status_for_path(&tracked_path)
+                .expect("status should still be applied when branch enumeration fails");
+            assert_eq!(
+                status.status,
+                FileStatus::Tracked(TrackedStatus {
+                    index_status: StatusCode::Unmodified,
+                    worktree_status: StatusCode::Modified,
+                })
+            );
+            assert!(repository.snapshot.branch.is_none());
+            assert!(repository.snapshot.branch_list.is_empty());
+        });
+    }
+
     #[gpui::property_test(config = ProptestConfig {
         cases: 20,
         ..Default::default()
@@ -9178,7 +9233,7 @@ async fn compute_snapshot(
     let head_commit_future = {
         let backend = backend.clone();
         async move {
-            Ok(match backend.head_sha().await {
+            Ok::<_, anyhow::Error>(match backend.head_sha().await {
                 Some(head_sha) => backend.show(head_sha).await.log_err(),
                 None => None,
             })
@@ -9188,17 +9243,35 @@ async fn compute_snapshot(
         .background_spawn({
             let backend = backend.clone();
             async move {
-                futures::future::try_join3(
-                    backend.branches(),
-                    head_commit_future,
-                    backend.worktrees(),
+                Ok::<_, anyhow::Error>(
+                    futures::future::join3(
+                        backend.branches(),
+                        head_commit_future,
+                        backend.worktrees(),
+                    )
+                    .await,
                 )
-                .await
             }
         })
         .await?;
-    let branch = branches.iter().find(|branch| branch.is_head).cloned();
-    let branch_list: Arc<[Branch]> = branches.into();
+    let head_commit = head_commit?;
+    let all_worktrees = all_worktrees?;
+    let (branch, branch_list): (Option<Branch>, Arc<[Branch]>) = match branches {
+        Ok(branches) => (
+            branches.iter().find(|branch| branch.is_head).cloned(),
+            branches.into(),
+        ),
+        Err(err) => {
+            log::warn!(
+                "failed to enumerate git branches for {}; reusing previous branch snapshot: {err:#}",
+                work_directory_abs_path.display()
+            );
+            (
+                prev_snapshot.branch.clone(),
+                prev_snapshot.branch_list.clone(),
+            )
+        }
+    };
 
     let linked_worktrees: Arc<[GitWorktree]> = all_worktrees
         .into_iter()
