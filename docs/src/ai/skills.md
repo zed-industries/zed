@@ -9,16 +9,6 @@ Skills are reusable instruction packages that give the agent specialized knowled
 
 A skill is a folder containing a `SKILL.md` file with metadata and instructions. The agent sees a catalog of all installed skills and can load one on demand, or you can invoke any skill directly from the message editor with a slash command.
 
-## Finding Skills {#finding-skills}
-
-[skills.sh](https://skills.sh) is a community registry of open-source skills. You'll find skills for popular frameworks, tools, workflows, and more:
-
-- [`find-skills`](https://skills.sh/vercel-labs/skills/find-skills): discover and install skills from the open ecosystem
-- [`frontend-design`](https://skills.sh/anthropics/skills/frontend-design): production-grade frontend interfaces with design polish
-- [`vercel-react-best-practices`](https://skills.sh/vercel-labs/agent-skills/vercel-react-best-practices): React and Next.js performance patterns across 8 categories
-- [`web-design-guidelines`](https://skills.sh/vercel-labs/agent-skills/web-design-guidelines): audit UI code for design, accessibility, and UX compliance
-- [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
-
 ## Adding Skills {#adding-skills}
 
 ### Create Your Own {#create-your-own}
@@ -29,7 +19,13 @@ See [Skill format](#skill-format) below for the folder structure and `SKILL.md` 
 
 ### From the skills.sh Registry {#from-the-registry}
 
-To install a skill from the [skills.sh](https://skills.sh) registry mentioned above, copy or clone its folder into your global or project-local skills folder.
+[skills.sh](https://skills.sh) is a community registry of open-source skills. You'll find skills for popular frameworks, tools, workflows, and more:
+
+- [`find-skills`](https://skills.sh/vercel-labs/skills/find-skills): discover and install skills from the open ecosystem
+- [`frontend-design`](https://skills.sh/anthropics/skills/frontend-design): production-grade frontend interfaces with design polish
+- [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
+
+To install a skill from it, copy or clone its folder into your global or project-local skills folder.
 
 For example, to install the `frontend-design` skill from GitHub globally:
 
