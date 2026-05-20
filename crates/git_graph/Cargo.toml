@@ -26,6 +26,7 @@ async-channel.workspace = true
 collections.workspace = true
 db.workspace = true
 editor.workspace = true
+fuzzy_nucleo.workspace = true
 git.workspace = true
 git_ui.workspace = true
 gpui.workspace = true

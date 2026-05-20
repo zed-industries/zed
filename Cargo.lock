@@ -7367,6 +7367,7 @@ dependencies = [
  "db",
  "editor",
  "fs",
+ "fuzzy_nucleo",
  "git",
  "git_ui",
  "gpui",

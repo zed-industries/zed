@@ -22,6 +22,7 @@ pub struct Chip {
     height: Option<Pixels>,
     truncate: bool,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    end_slot: Option<AnyElement>,
 }
 
 impl Chip {
@@ -38,7 +39,14 @@ impl Chip {
             height: None,
             truncate: false,
             tooltip: None,
+            end_slot: None,
         }
+    }
+
+    /// Sets an element to display after the label (e.g. a remove button).
+    pub fn end_slot(mut self, element: impl IntoElement) -> Self {
+        self.end_slot = Some(element.into_any_element());
+        self
     }
 
     /// Sets the color of the label.
@@ -128,6 +136,7 @@ impl RenderOnce for Chip {
                     .buffer_font(cx)
                     .truncate(),
             )
+            .when_some(self.end_slot, |this, end_slot| this.child(end_slot))
             .id(self.label.clone())
             .when_some(self.tooltip, |this, tooltip| this.tooltip(tooltip))
     }

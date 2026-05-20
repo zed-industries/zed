@@ -1,4 +1,4 @@
-use collections::{BTreeMap, HashMap, IndexSet};
+use collections::{BTreeMap, BTreeSet, HashMap, HashSet, IndexSet};
 use editor::Editor;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
@@ -46,7 +46,7 @@ use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
-    DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
+    DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing, PopoverMenu,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, render_redistributable_columns_resize_handles, render_table_header,
@@ -190,6 +190,174 @@ impl PickerDelegate for CommitTagPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(Label::new(self.tag_names.get(ix)?.clone())),
+        )
+    }
+}
+
+struct BranchAddPicker {
+    picker: Entity<Picker<BranchAddPickerDelegate>>,
+}
+
+#[derive(Clone)]
+struct BranchAddMatch {
+    candidate_id: usize,
+    positions: Vec<usize>,
+}
+
+impl BranchAddPicker {
+    fn new(
+        git_graph: WeakEntity<GitGraph>,
+        candidates: Vec<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let matches = (0..candidates.len())
+            .map(|candidate_id| BranchAddMatch {
+                candidate_id,
+                positions: Vec::new(),
+            })
+            .collect();
+        let delegate = BranchAddPickerDelegate {
+            picker: cx.entity().downgrade(),
+            git_graph,
+            candidates,
+            matches,
+            selected_index: 0,
+        };
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        Self { picker }
+    }
+}
+
+impl EventEmitter<DismissEvent> for BranchAddPicker {}
+impl ModalView for BranchAddPicker {}
+
+impl Focusable for BranchAddPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for BranchAddPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().w(rems(22.)).child(self.picker.clone())
+    }
+}
+
+struct BranchAddPickerDelegate {
+    picker: WeakEntity<BranchAddPicker>,
+    git_graph: WeakEntity<GitGraph>,
+    candidates: Vec<SharedString>,
+    matches: Vec<BranchAddMatch>,
+    selected_index: usize,
+}
+
+impl PickerDelegate for BranchAddPickerDelegate {
+    type ListItem = ListItem;
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Add branch to view…".into()
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let candidates: Vec<fuzzy_nucleo::StringMatchCandidate> = self
+            .candidates
+            .iter()
+            .enumerate()
+            .map(|(ix, name)| fuzzy_nucleo::StringMatchCandidate::new(ix, name))
+            .collect();
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |picker, cx| {
+            let new_matches: Vec<BranchAddMatch> = if query.is_empty() {
+                candidates
+                    .iter()
+                    .map(|candidate| BranchAddMatch {
+                        candidate_id: candidate.id,
+                        positions: Vec::new(),
+                    })
+                    .collect()
+            } else {
+                fuzzy_nucleo::match_strings_async(
+                    &candidates,
+                    &query,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
+                    10_000,
+                    &Default::default(),
+                    executor,
+                )
+                .await
+                .into_iter()
+                .map(|m| BranchAddMatch {
+                    candidate_id: m.candidate_id,
+                    positions: m.positions,
+                })
+                .collect()
+            };
+            picker
+                .update(cx, |picker, _| {
+                    let delegate = &mut picker.delegate;
+                    delegate.matches = new_matches;
+                    delegate.selected_index = 0;
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if let Some(m) = self.matches.get(self.selected_index)
+            && let Some(branch) = self.candidates.get(m.candidate_id).cloned()
+        {
+            self.git_graph
+                .update(cx, |this, cx| this.add_branch_to_filter(branch, cx))
+                .ok();
+        }
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_this, cx| cx.emit(DismissEvent))
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let m = self.matches.get(ix)?;
+        let name = self.candidates.get(m.candidate_id)?.clone();
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(HighlightedLabel::new(name.to_string(), m.positions.clone())),
         )
     }
 }
@@ -852,6 +1020,48 @@ impl GraphData {
     }
 }
 
+/// Computes the set of commit OIDs reachable from any tip commit whose
+/// `ref_names` intersect `filter`, walking parent edges within the loaded
+/// commit list. Commits whose tips have not yet streamed in contribute
+/// nothing — they show up once their tip arrives.
+fn reachable_oids(
+    commits: &[Arc<InitialGraphCommitData>],
+    filter: &BTreeSet<SharedString>,
+) -> HashSet<Oid> {
+    let mut reachable: HashSet<Oid> = HashSet::default();
+    if filter.is_empty() {
+        return reachable;
+    }
+    let mut by_sha: HashMap<Oid, &Arc<InitialGraphCommitData>> = HashMap::default();
+    by_sha.reserve(commits.len());
+    for commit in commits {
+        by_sha.insert(commit.sha, commit);
+    }
+    let mut queue: Vec<Oid> = Vec::new();
+    for commit in commits {
+        let is_tip = commit.ref_names.iter().any(|name| {
+            GitGraph::extract_branch_name(name)
+                .is_some_and(|branch| filter.contains(branch))
+        });
+        if is_tip {
+            queue.push(commit.sha);
+        }
+    }
+    while let Some(oid) = queue.pop() {
+        if !reachable.insert(oid) {
+            continue;
+        }
+        if let Some(commit) = by_sha.get(&oid) {
+            for parent in &commit.parents {
+                if !reachable.contains(parent) {
+                    queue.push(*parent);
+                }
+            }
+        }
+    }
+    reachable
+}
+
 pub fn init(cx: &mut App) {
     workspace::register_serializable_item::<GitGraph>(cx);
 
@@ -1121,14 +1331,117 @@ pub struct GitGraph {
     repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
     pending_select_sha: Option<Oid>,
+    /// Unfiltered source of truth for streamed commits. The displayed
+    /// `graph_data` is derived from this (possibly filtered by `branch_filter`).
+    full_commits: Vec<Arc<InitialGraphCommitData>>,
+    /// Local + remote branch ref names observed in `full_commits`. Used to
+    /// populate the branch-filter popover.
+    available_branches: BTreeSet<SharedString>,
+    /// When `Some`, only commits reachable from any selected branch tip are
+    /// shown. `None` means no filter (show everything in `full_commits`).
+    branch_filter: Option<BTreeSet<SharedString>>,
 }
 
 impl GitGraph {
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
         self.graph_data.clear();
+        self.full_commits.clear();
+        self.available_branches.clear();
         self.search_state.matches.clear();
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
+        self.context_menu = None;
+        cx.emit(ItemEvent::Edit);
+        cx.notify();
+    }
+
+    /// Extract a branch name from a single entry of `git log %D` decoration.
+    /// Returns `None` for entries that are not branches we can filter on
+    /// (bare `HEAD`, tags, stash, other internal refs).
+    fn extract_branch_name(ref_name: &str) -> Option<&str> {
+        if let Some(rest) = ref_name.strip_prefix("HEAD -> ") {
+            return Some(rest);
+        }
+        if ref_name == "HEAD"
+            || ref_name.starts_with("tag: ")
+            || ref_name.starts_with("refs/")
+        {
+            return None;
+        }
+        Some(ref_name)
+    }
+
+    /// Append a newly streamed batch of commits to the unfiltered source of
+    /// truth and to the displayed `graph_data`. When a branch filter is
+    /// active the displayed graph is rebuilt from scratch to keep lane
+    /// assignment consistent with the visible subset.
+    fn accept_new_commits(&mut self, new_commits: &[Arc<InitialGraphCommitData>]) {
+        if new_commits.is_empty() {
+            return;
+        }
+        for commit in new_commits {
+            for ref_name in &commit.ref_names {
+                if let Some(branch) = Self::extract_branch_name(ref_name) {
+                    self.available_branches
+                        .insert(SharedString::from(branch.to_string()));
+                }
+            }
+        }
+        self.full_commits.extend(new_commits.iter().cloned());
+
+        if self.branch_filter.is_none() {
+            self.graph_data.add_commits(new_commits);
+        } else {
+            self.rebuild_displayed_graph();
+        }
+    }
+
+    fn rebuild_displayed_graph(&mut self) {
+        self.graph_data.clear();
+        match &self.branch_filter {
+            None => {
+                let commits = self.full_commits.clone();
+                self.graph_data.add_commits(&commits);
+            }
+            Some(filter) => {
+                let reachable = reachable_oids(&self.full_commits, filter);
+                let filtered: Vec<Arc<InitialGraphCommitData>> = self
+                    .full_commits
+                    .iter()
+                    .filter(|c| reachable.contains(&c.sha))
+                    .cloned()
+                    .collect();
+                self.graph_data.add_commits(&filtered);
+            }
+        }
+    }
+
+    fn set_branch_filter(
+        &mut self,
+        filter: Option<BTreeSet<SharedString>>,
+        cx: &mut Context<Self>,
+    ) {
+        if filter == self.branch_filter {
+            return;
+        }
+        let prior_selected_oid = self
+            .selected_entry_idx
+            .and_then(|idx| self.graph_data.commits.get(idx).map(|c| c.data.sha));
+
+        self.branch_filter = filter;
+        self.rebuild_displayed_graph();
+
+        self.search_state.matches.clear();
+        self.search_state.selected_index = None;
+        self.search_state.state.next_state();
+
+        self.selected_entry_idx = prior_selected_oid.and_then(|oid| {
+            self.graph_data
+                .commits
+                .iter()
+                .position(|c| c.data.sha == oid)
+        });
+        self.hovered_entry_idx = None;
         self.context_menu = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
@@ -1341,6 +1654,9 @@ impl GitGraph {
             repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
             pending_select_sha: None,
+            full_commits: Vec::new(),
+            available_branches: BTreeSet::default(),
+            branch_filter: None,
         };
 
         this.fetch_initial_graph_data(cx);
@@ -1388,7 +1704,7 @@ impl GitGraph {
                                     old_count..*commit_count,
                                     cx,
                                 );
-                                self.graph_data.add_commits(commits);
+                                self.accept_new_commits(commits);
 
                                 let pending_sha_index = self.pending_select_sha.and_then(|oid| {
                                     repository.get_graph_data(source.clone(), *order).and_then(
@@ -1438,7 +1754,7 @@ impl GitGraph {
                 let commits = repository
                     .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
                     .commits;
-                self.graph_data.add_commits(commits);
+                self.accept_new_commits(commits);
             });
         }
     }
@@ -2286,6 +2602,157 @@ impl GitGraph {
         })
     }
 
+    fn head_branch_name(&self, cx: &App) -> Option<SharedString> {
+        self.get_repository(cx).and_then(|repo| {
+            repo.read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        })
+    }
+
+    fn is_filter_only_current_branch(&self, cx: &App) -> bool {
+        let Some(head) = self.head_branch_name(cx) else {
+            return false;
+        };
+        match &self.branch_filter {
+            Some(set) => set.len() == 1 && set.contains(&head),
+            None => false,
+        }
+    }
+
+    fn toggle_current_branch_only(&mut self, cx: &mut Context<Self>) {
+        let Some(head) = self.head_branch_name(cx) else {
+            return;
+        };
+        if self.is_filter_only_current_branch(cx) {
+            self.set_branch_filter(None, cx);
+        } else {
+            let mut set = BTreeSet::default();
+            set.insert(head);
+            self.set_branch_filter(Some(set), cx);
+        }
+    }
+
+    fn add_branch_to_filter(&mut self, branch: SharedString, cx: &mut Context<Self>) {
+        let new_filter = match &self.branch_filter {
+            Some(set) => {
+                let mut set = set.clone();
+                set.insert(branch);
+                Some(set)
+            }
+            None => {
+                let mut set = BTreeSet::default();
+                set.insert(branch);
+                Some(set)
+            }
+        };
+        self.set_branch_filter(new_filter, cx);
+    }
+
+    fn remove_branch_from_filter(&mut self, branch: &SharedString, cx: &mut Context<Self>) {
+        let Some(set) = &self.branch_filter else {
+            return;
+        };
+        let mut set = set.clone();
+        set.remove(branch);
+        let new_filter = if set.is_empty() { None } else { Some(set) };
+        self.set_branch_filter(new_filter, cx);
+    }
+
+    fn render_current_branch_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let head = self.head_branch_name(cx);
+        let active = self.is_filter_only_current_branch(cx);
+        let enabled = head.is_some();
+        IconButton::new("git-graph-current-branch-toggle", IconName::GitBranch)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .toggle_state(active)
+            .selected_icon_color(Color::Accent)
+            .tooltip(Tooltip::text(if active {
+                "Showing only current branch"
+            } else {
+                "Show only current branch"
+            }))
+            .disabled(!enabled)
+            .on_click(cx.listener(|this, _, _window, cx| {
+                this.toggle_current_branch_only(cx);
+            }))
+    }
+
+    fn render_filter_chips_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let filter = self.branch_filter.as_ref()?;
+        if filter.is_empty() {
+            return None;
+        }
+        let color = cx.theme().colors();
+
+        let chips = filter.iter().cloned().enumerate().map(|(idx, branch)| {
+            let branch_for_tooltip = branch.clone();
+            let branch_for_remove = branch.clone();
+            Chip::new(branch)
+                .label_size(LabelSize::Small)
+                .truncate()
+                .end_slot(
+                    IconButton::new(
+                        ElementId::NamedInteger("git-graph-chip-remove".into(), idx as u64),
+                        IconName::Close,
+                    )
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text(format!("Remove {branch_for_tooltip}")))
+                    .on_click(cx.listener(move |this, _, _window, cx| {
+                        this.remove_branch_from_filter(&branch_for_remove, cx);
+                    })),
+                )
+        });
+
+        Some(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .px_1p5()
+                .py_1()
+                .border_b_1()
+                .border_color(color.border_variant)
+                .flex_wrap()
+                .children(chips)
+                .child(self.render_add_branch_button(cx))
+                .into_any_element(),
+        )
+    }
+
+    fn render_add_branch_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let git_graph = cx.entity().downgrade();
+        let candidates: Vec<SharedString> = self
+            .available_branches
+            .iter()
+            .filter(|name| {
+                self.branch_filter
+                    .as_ref()
+                    .map_or(true, |set| !set.contains(*name))
+            })
+            .cloned()
+            .collect();
+        let has_candidates = !candidates.is_empty();
+
+        PopoverMenu::new("git-graph-add-branch")
+            .trigger(
+                IconButton::new("git-graph-add-branch-trigger", IconName::Plus)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Add Branch to View"))
+                    .disabled(!has_candidates),
+            )
+            .menu(move |window, cx| {
+                let git_graph = git_graph.clone();
+                let candidates = candidates.clone();
+                Some(cx.new(|cx| BranchAddPicker::new(git_graph, candidates, window, cx)))
+            })
+            .anchor(Anchor::TopLeft)
+    }
+
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
         let query_focus_handle = self
@@ -2337,6 +2804,7 @@ impl GitGraph {
                 h_flex()
                     .min_w_64()
                     .gap_1()
+                    .child(self.render_current_branch_toggle(cx))
                     .child({
                         let focus_handle = self.focus_handle.clone();
                         IconButton::new("git-graph-search-prev", IconName::ChevronLeft)
@@ -3272,7 +3740,7 @@ impl Render for GitGraph {
                             0..usize::MAX,
                             cx,
                         );
-                        self.graph_data.add_commits(&commits);
+                        self.accept_new_commits(commits);
                         (commits.len(), is_loading)
                     })
                 } else {
@@ -3587,6 +4055,7 @@ impl Render for GitGraph {
                 v_flex()
                     .size_full()
                     .child(self.render_search_bar(cx))
+                    .when_some(self.render_filter_chips_row(cx), |this, row| this.child(row))
                     .child(div().flex_1().child(content)),
             )
             .children(self.context_menu.as_ref().map(|context_menu| {
