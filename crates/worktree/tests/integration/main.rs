@@ -3320,6 +3320,11 @@ async fn test_invisible_worktree_does_not_track_ancestor_git_repository(
         .await;
     cx.run_until_parked();
 
+    assert!(
+        fs.watched_paths().is_empty(),
+        "invisible worktrees should not hold filesystem watchers"
+    );
+
     worktree.read_with(cx, |worktree, _| {
         let local_worktree = worktree.as_local().unwrap();
         assert!(local_worktree.repositories().is_empty());
@@ -3522,8 +3527,9 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
     let dot_git = project_dir.join(DOT_GIT);
 
-    // Case 1: Events for .git AND .git/index.lock should NOT emit UpdatedGitRepositories
-    // (index.lock is in the skipped files list)
+    // Case 1: Events for .git AND .git/index.lock should emit UpdatedGitRepositories.
+    // index.lock itself is skipped, but the .git directory event can be the only signal
+    // that repository metadata changed on some platforms.
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
@@ -3534,12 +3540,12 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
         let got_git_update = drain_git_repo_updates(&mut events);
         assert!(
-            !got_git_update,
-            "should NOT emit UpdatedGitRepositories when .git batch only contains index.lock"
+            got_git_update,
+            "should emit UpdatedGitRepositories when .git changes with an index.lock event"
         );
     }
 
-    // Case 2: Event for just .git (bare directory event) should NOT emit UpdatedGitRepositories
+    // Case 2: Event for just .git (bare directory event) should emit UpdatedGitRepositories.
     {
         let mut events = cx.events(&worktree);
         fs.pause_events();
@@ -3549,8 +3555,8 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
 
         let got_git_update = drain_git_repo_updates(&mut events);
         assert!(
-            !got_git_update,
-            "should NOT emit UpdatedGitRepositories for a bare .git directory event"
+            got_git_update,
+            "should emit UpdatedGitRepositories for a bare .git directory event"
         );
     }
 

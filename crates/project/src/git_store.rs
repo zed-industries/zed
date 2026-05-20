@@ -1499,18 +1499,19 @@ impl GitStore {
                     return;
                 };
                 log::debug!("received worktree update for repositories: {changed_repos:?}");
+                let updates_tx = downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone());
                 self.update_repositories_from_worktree(
                     *worktree_id,
                     project_environment.clone(),
                     next_repository_id.clone(),
-                    downstream
-                        .as_ref()
-                        .map(|downstream| downstream.updates_tx.clone()),
+                    updates_tx.clone(),
                     changed_repos.clone(),
                     fs.clone(),
                     cx,
                 );
-                self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
+                self.local_worktree_git_repos_changed(worktree, changed_repos, updates_tx, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_entity_id, worktree_id) => {
                 let repos_without_worktree: Vec<RepositoryId> = self
@@ -1888,9 +1889,12 @@ impl GitStore {
         &mut self,
         worktree: Entity<Worktree>,
         changed_repos: &UpdatedGitRepositoriesSet,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        log::debug!("local worktree repos changed");
+        log::debug!(
+            "local worktree repos changed; refreshing diff bases and scheduling status scan"
+        );
         debug_assert!(worktree.read(cx).is_local());
 
         for repository in self.repositories.values() {
@@ -1901,6 +1905,7 @@ impl GitStore {
                         || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
+                    repository.schedule_scan(updates_tx.clone(), cx);
                 }
             });
         }
@@ -4852,6 +4857,21 @@ impl Repository {
         result_rx
     }
 
+    fn log_result_job<R>(
+        result_rx: oneshot::Receiver<Result<R>>,
+        description: &'static str,
+        cx: &mut Context<Self>,
+    ) where
+        R: Send + 'static,
+    {
+        cx.spawn(async move |_, _| match result_rx.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => log::error!("{description} failed: {err:#}"),
+            Err(err) => log::debug!("{description} was canceled before completion: {err}"),
+        })
+        .detach();
+    }
+
     pub fn set_as_active_repository(&self, cx: &mut Context<Self>) {
         let Some(git_store) = self.git_store.upgrade() else {
             return;
@@ -7764,7 +7784,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) {
         let this = cx.weak_entity();
-        let _ = self.send_keyed_job(
+        let result_rx = self.send_keyed_job(
             "schedule_scan",
             Some(GitJobKey::ReloadGitState),
             None,
@@ -7789,6 +7809,7 @@ impl Repository {
                 Ok(())
             },
         );
+        Self::log_result_job(result_rx, "scheduled git status scan", cx);
     }
 
     fn spawn_local_git_worker(
@@ -8010,7 +8031,7 @@ impl Repository {
         }
 
         let this = cx.weak_entity();
-        let _ = self.send_keyed_job(
+        let result_rx = self.send_keyed_job(
             "paths_changed",
             Some(GitJobKey::RefreshStatuses),
             None,
@@ -8111,6 +8132,7 @@ impl Repository {
                 })
             },
         );
+        Self::log_result_job(result_rx, "git path status refresh", cx);
     }
 
     /// currently running git command and when it started

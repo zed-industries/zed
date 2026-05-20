@@ -229,6 +229,57 @@ Error: Running Zed as root or via sudo is unsupported.
     }
 }
 
+#[cfg(target_os = "macos")]
+pub fn try_raise_fd_limit() -> Result<()> {
+    const MACOS_MAX_NOFILE: libc::rlim_t = 10_240;
+
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    let result = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) };
+    if result != 0 {
+        return Err(anyhow::anyhow!(
+            "getrlimit(RLIMIT_NOFILE) failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    let mut limit = unsafe { limit.assume_init() };
+    let previous_soft_limit = limit.rlim_cur;
+    let hard_limit = limit.rlim_max;
+    let target_soft_limit = if hard_limit == libc::RLIM_INFINITY {
+        MACOS_MAX_NOFILE
+    } else {
+        hard_limit.min(MACOS_MAX_NOFILE)
+    };
+
+    if previous_soft_limit >= target_soft_limit {
+        log::info!(
+            "macOS file descriptor limit unchanged soft={} hard={} target={}",
+            previous_soft_limit,
+            hard_limit,
+            target_soft_limit
+        );
+        return Ok(());
+    }
+
+    limit.rlim_cur = target_soft_limit;
+    let result = unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) };
+    if result != 0 {
+        return Err(anyhow::anyhow!(
+            "setrlimit(RLIMIT_NOFILE, {}) failed: {}",
+            target_soft_limit,
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    log::info!(
+        "raised macOS file descriptor limit soft={} -> {} hard={}",
+        previous_soft_limit,
+        target_soft_limit,
+        hard_limit
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
