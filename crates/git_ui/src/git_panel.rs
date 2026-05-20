@@ -330,6 +330,40 @@ struct GitPanelEntryKey {
     repo_path: RepoPath,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum StagingAffordance {
+    Checkbox {
+        toggle_state: ToggleState,
+    },
+    Action {
+        stage: bool,
+        icon: IconName,
+        tooltip: &'static str,
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum StagingAffordanceTarget {
+    File,
+    Folder,
+}
+
+impl StagingAffordanceTarget {
+    fn stage_tooltip(self) -> &'static str {
+        match self {
+            Self::File => "Stage File",
+            Self::Folder => "Stage Folder",
+        }
+    }
+
+    fn unstage_tooltip(self) -> &'static str {
+        match self {
+            Self::File => "Unstage File",
+            Self::Folder => "Unstage Folder",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct GitHeaderEntry {
     header: Section,
@@ -2006,6 +2040,61 @@ impl GitPanel {
         }
 
         Self::stage_status_for_source_entry(entry, repo)
+    }
+
+    fn staging_affordance_for_entry(
+        entry: &GitStatusEntry,
+        group_by: GitPanelGroupBy,
+        toggle_state: ToggleState,
+    ) -> StagingAffordance {
+        Self::staging_affordance_for_section(
+            entry.section,
+            group_by,
+            toggle_state,
+            StagingAffordanceTarget::File,
+        )
+    }
+
+    fn staging_affordance_for_directory(
+        entry: &GitTreeDirEntry,
+        group_by: GitPanelGroupBy,
+        toggle_state: ToggleState,
+    ) -> StagingAffordance {
+        Self::staging_affordance_for_section(
+            entry.key.section,
+            group_by,
+            toggle_state,
+            StagingAffordanceTarget::Folder,
+        )
+    }
+
+    fn staging_affordance_for_section(
+        section: Section,
+        group_by: GitPanelGroupBy,
+        toggle_state: ToggleState,
+        target: StagingAffordanceTarget,
+    ) -> StagingAffordance {
+        if group_by == GitPanelGroupBy::Staging {
+            match section {
+                Section::Staged => {
+                    return StagingAffordance::Action {
+                        stage: false,
+                        icon: IconName::Dash,
+                        tooltip: target.unstage_tooltip(),
+                    };
+                }
+                Section::Unstaged => {
+                    return StagingAffordance::Action {
+                        stage: true,
+                        icon: IconName::Plus,
+                        tooltip: target.stage_tooltip(),
+                    };
+                }
+                Section::Conflict | Section::Tracked | Section::New => {}
+            }
+        }
+
+        StagingAffordance::Checkbox { toggle_state }
     }
 
     fn stage_status_for_source_entry(entry: &GitStatusEntry, repo: &Repository) -> StageStatus {
@@ -6240,10 +6329,17 @@ impl GitPanel {
         };
 
         let id: ElementId = ElementId::Name(format!("entry_{}_{}", display_name, ix).into());
-        let checkbox_wrapper_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox_wrapper", display_name, ix).into());
-        let checkbox_id: ElementId =
-            ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
+        let stage_control_group: SharedString =
+            format!("entry_{}_{}_stage_control", display_name, ix).into();
+        let stage_control_wrapper_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_stage_control_wrapper", display_name, ix).into());
+        let stage_control_id: ElementId =
+            ElementId::Name(format!("entry_{}_{}_stage_control", display_name, ix).into());
+        let stage_control_debug_selector = format!(
+            "git-panel-stage-control-{:?}-{}",
+            entry.section,
+            entry.repo_path.as_std_path().display()
+        );
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
         let mut is_staged: ToggleState = match stage_status {
@@ -6255,6 +6351,8 @@ impl GitPanel {
             is_staged = ToggleState::Selected;
         }
 
+        let staging_affordance =
+            Self::staging_affordance_for_entry(entry, settings.group_by, is_staged);
         let handle = cx.weak_entity();
 
         let selected_bg_alpha = 0.08;
@@ -6328,6 +6426,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
+            .group(stage_control_group.clone())
             .h(self.list_item_height())
             .w_full()
             .pl_3()
@@ -6354,28 +6453,31 @@ impl GitPanel {
             })
             .child(
                 div()
-                    .id(checkbox_wrapper_id)
+                    .id(stage_control_wrapper_id)
+                    .debug_selector(move || stage_control_debug_selector)
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, is_staged)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click_ext({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, click, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
-                                        }
-                                        if click.modifiers().shift {
-                                            this.stage_bulk(ix, cx);
-                                        } else {
-                                            let list_entry =
-                                                if GitPanelSettings::get_global(cx).tree_view {
+                    .child(match staging_affordance {
+                        StagingAffordance::Checkbox { toggle_state } => {
+                            Checkbox::new(stage_control_id, toggle_state)
+                                .disabled(!has_write_access)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .on_click_ext({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, click, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access {
+                                                return;
+                                            }
+                                            if click.modifiers().shift {
+                                                this.stage_bulk(ix, cx);
+                                            } else {
+                                                let list_entry = if GitPanelSettings::get_global(cx)
+                                                    .tree_view
+                                                {
                                                     GitListEntry::TreeStatus(GitTreeStatusEntry {
                                                         entry: entry.clone(),
                                                         depth,
@@ -6383,23 +6485,55 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(&list_entry, window, cx);
+                                                this.toggle_staged_for_entry(
+                                                    &list_entry,
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    let action = match stage_status {
+                                        StageStatus::Staged => "Unstage",
+                                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
+                                            "Stage"
+                                        }
+                                    };
+                                    let tooltip_name = action.to_string();
+
+                                    Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
+                                })
+                                .into_any_element()
+                        }
+                        StagingAffordance::Action {
+                            stage,
+                            icon,
+                            tooltip,
+                        } => Self::render_staging_action_button(
+                            stage_control_id,
+                            stage_control_group,
+                            icon,
+                            tooltip,
+                            has_write_access,
+                            {
+                                let entry = entry.clone();
+                                let this = cx.weak_entity();
+                                move |_, _, cx| {
+                                    this.update(cx, |this, cx| {
+                                        if has_write_access {
+                                            this.change_file_stage(stage, vec![entry.clone()], cx);
                                         }
                                         cx.stop_propagation();
                                     })
-                                    .ok();
+                                    .log_err();
                                 }
-                            })
-                            .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
-                                let tooltip_name = action.to_string();
-
-                                Tooltip::for_action(tooltip_name, &ToggleStaged, cx)
-                            }),
-                    ),
+                            },
+                        ),
+                    }),
             )
             .on_click({
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
@@ -6446,10 +6580,17 @@ impl GitPanel {
         let label_color = Color::Muted;
 
         let id: ElementId = ElementId::Name(format!("dir_{}_{}", entry.name, ix).into());
-        let checkbox_id: ElementId =
-            ElementId::Name(format!("dir_checkbox_{}_{}", entry.name, ix).into());
-        let checkbox_wrapper_id: ElementId =
-            ElementId::Name(format!("dir_checkbox_wrapper_{}_{}", entry.name, ix).into());
+        let stage_control_group: SharedString =
+            format!("dir_{}_{}_stage_control", entry.name, ix).into();
+        let stage_control_id: ElementId =
+            ElementId::Name(format!("dir_stage_control_{}_{}", entry.name, ix).into());
+        let stage_control_wrapper_id: ElementId =
+            ElementId::Name(format!("dir_stage_control_wrapper_{}_{}", entry.name, ix).into());
+        let stage_control_debug_selector = format!(
+            "git-panel-stage-control-{:?}-{}",
+            entry.key.section,
+            entry.key.path.as_std_path().display()
+        );
 
         let selected_bg_alpha = 0.08;
         let state_opacity_step = 0.04;
@@ -6505,6 +6646,8 @@ impl GitPanel {
             StageStatus::Unstaged => ToggleState::Unselected,
             StageStatus::PartiallyStaged => ToggleState::Indeterminate,
         };
+        let staging_affordance =
+            Self::staging_affordance_for_directory(entry, settings.group_by, toggle_state);
 
         let name_row = h_flex()
             .min_w_0()
@@ -6527,6 +6670,7 @@ impl GitPanel {
 
         h_flex()
             .id(id)
+            .group(stage_control_group.clone())
             .h(self.list_item_height())
             .min_w_0()
             .w_full()
@@ -6545,41 +6689,79 @@ impl GitPanel {
             .child(name_row)
             .child(
                 div()
-                    .id(checkbox_wrapper_id)
+                    .id(stage_control_wrapper_id)
+                    .debug_selector(move || stage_control_debug_selector)
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
-                    .child(
-                        Checkbox::new(checkbox_id, toggle_state)
-                            .disabled(!has_write_access)
-                            .fill()
-                            .elevation(ElevationIndex::Surface)
-                            .on_click({
+                    .child(match staging_affordance {
+                        StagingAffordance::Checkbox { toggle_state } => {
+                            Checkbox::new(stage_control_id, toggle_state)
+                                .disabled(!has_write_access)
+                                .fill()
+                                .elevation(ElevationIndex::Surface)
+                                .on_click({
+                                    let entry = entry.clone();
+                                    let this = cx.weak_entity();
+                                    move |_, window, cx| {
+                                        this.update(cx, |this, cx| {
+                                            if !has_write_access {
+                                                return;
+                                            }
+                                            this.toggle_staged_for_entry(
+                                                &GitListEntry::Directory(entry.clone()),
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        })
+                                        .ok();
+                                    }
+                                })
+                                .tooltip(move |_window, cx| {
+                                    let action = match stage_status {
+                                        StageStatus::Staged => "Unstage",
+                                        StageStatus::Unstaged | StageStatus::PartiallyStaged => {
+                                            "Stage"
+                                        }
+                                    };
+                                    Tooltip::simple(format!("{action} folder"), cx)
+                                })
+                                .into_any_element()
+                        }
+                        StagingAffordance::Action {
+                            stage,
+                            icon,
+                            tooltip,
+                        } => Self::render_staging_action_button(
+                            stage_control_id,
+                            stage_control_group,
+                            icon,
+                            tooltip,
+                            has_write_access,
+                            {
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
-                                move |_, window, cx| {
+                                move |_, _, cx| {
                                     this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
+                                        if has_write_access {
+                                            let entries = this
+                                                .view_mode
+                                                .tree_state()
+                                                .and_then(|state| {
+                                                    state.directory_descendants.get(&entry.key)
+                                                })
+                                                .cloned()
+                                                .unwrap_or_default();
+                                            this.change_file_stage(stage, entries, cx);
                                         }
-                                        this.toggle_staged_for_entry(
-                                            &GitListEntry::Directory(entry.clone()),
-                                            window,
-                                            cx,
-                                        );
                                         cx.stop_propagation();
                                     })
-                                    .ok();
+                                    .log_err();
                                 }
-                            })
-                            .tooltip(move |_window, cx| {
-                                let action = match stage_status {
-                                    StageStatus::Staged => "Unstage",
-                                    StageStatus::Unstaged | StageStatus::PartiallyStaged => "Stage",
-                                };
-                                Tooltip::simple(format!("{action} folder"), cx)
-                            }),
-                    ),
+                            },
+                        ),
+                    }),
             )
             .on_click({
                 let key = entry.key.clone();
@@ -6588,6 +6770,27 @@ impl GitPanel {
                     this.toggle_directory(&key, window, cx);
                 })
             })
+            .into_any_element()
+    }
+
+    fn render_staging_action_button(
+        id: ElementId,
+        group: SharedString,
+        icon: IconName,
+        tooltip: &'static str,
+        has_write_access: bool,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> AnyElement {
+        IconButton::new(id, icon)
+            .shape(ui::IconButtonShape::Square)
+            .size(ButtonSize::None)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .style(ButtonStyle::Subtle)
+            .disabled(!has_write_access)
+            .visible_on_hover(group)
+            .on_click(on_click)
+            .tooltip(move |_window, cx| Tooltip::simple(tooltip, cx))
             .into_any_element()
     }
 
@@ -7734,6 +7937,51 @@ mod tests {
         });
     }
 
+    async fn refresh_git_panel_entries(
+        project: &Entity<Project>,
+        panel: &Entity<GitPanel>,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.run_until_parked();
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .as_local()
+                .expect("worktree should be local")
+                .scan_complete()
+        })
+        .await;
+        cx.run_until_parked();
+
+        let handle = cx.update_window_entity(panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+        cx.run_until_parked();
+    }
+
+    fn render_workspace(cx: &mut VisualTestContext) {
+        cx.simulate_resize(size(px(900.), px(700.)));
+        cx.run_until_parked();
+    }
+
+    fn hover_staging_control(row_selector: &'static str, cx: &mut VisualTestContext) {
+        let bounds = cx
+            .debug_bounds(row_selector)
+            .expect("staging control should be rendered");
+        cx.simulate_mouse_move(
+            point(bounds.left() - px(100.), bounds.center().y),
+            None,
+            gpui::Modifiers::none(),
+        );
+        render_workspace(cx);
+    }
+
     #[test]
     fn test_format_git_error_toast_message_prefers_raw_rpc_message() {
         let rpc_error = RpcError::from_proto(
@@ -8693,6 +8941,266 @@ mod tests {
             assert_eq!(
                 panel.header_state(Section::Unstaged),
                 ToggleState::Unselected
+            );
+        });
+    }
+
+    #[test]
+    fn test_staging_group_uses_explicit_plus_minus_affordances() {
+        let staged_entry = entry_for_section(
+            git_status_entry("partial.rs", StatusCode::Modified.index()),
+            Section::Staged,
+            Some(StageStatus::Staged),
+        );
+        let unstaged_entry = entry_for_section(
+            git_status_entry("partial.rs", StatusCode::Modified.worktree()),
+            Section::Unstaged,
+            Some(StageStatus::Unstaged),
+        );
+        let tracked_entry = entry_for_section(
+            git_status_entry("partial.rs", StatusCode::Modified.worktree()),
+            Section::Tracked,
+            Some(StageStatus::Unstaged),
+        );
+
+        assert_eq!(
+            GitPanel::staging_affordance_for_entry(
+                &staged_entry,
+                GitPanelGroupBy::Staging,
+                ToggleState::Selected,
+            ),
+            StagingAffordance::Action {
+                stage: false,
+                icon: IconName::Dash,
+                tooltip: "Unstage File",
+            }
+        );
+        assert_eq!(
+            GitPanel::staging_affordance_for_entry(
+                &unstaged_entry,
+                GitPanelGroupBy::Staging,
+                ToggleState::Unselected,
+            ),
+            StagingAffordance::Action {
+                stage: true,
+                icon: IconName::Plus,
+                tooltip: "Stage File",
+            }
+        );
+        assert_eq!(
+            GitPanel::staging_affordance_for_entry(
+                &tracked_entry,
+                GitPanelGroupBy::Status,
+                ToggleState::Unselected,
+            ),
+            StagingAffordance::Checkbox {
+                toggle_state: ToggleState::Unselected,
+            }
+        );
+        assert_eq!(
+            GitPanel::staging_affordance_for_section(
+                Section::Unstaged,
+                GitPanelGroupBy::Staging,
+                ToggleState::Unselected,
+                StagingAffordanceTarget::Folder,
+            ),
+            StagingAffordance::Action {
+                stage: true,
+                icon: IconName::Plus,
+                tooltip: "Stage Folder",
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staging_group_hover_reveals_plus_minus_affordance_buttons(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(language_model::init);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "staged.rs": "staged",
+                    "unstaged.rs": "unstaged",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should exist");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.open_panel::<GitPanel>(window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, cx).await;
+        panel.read_with(cx, |panel, cx| {
+            assert!(panel.has_write_access(cx));
+        });
+        render_workspace(cx);
+
+        hover_staging_control("git-panel-stage-control-Unstaged-unstaged.rs", cx);
+        assert!(
+            cx.debug_bounds("ICON-Plus").is_some(),
+            "hovering an unstaged row should reveal the stage button"
+        );
+
+        hover_staging_control("git-panel-stage-control-Staged-staged.rs", cx);
+        assert!(
+            cx.debug_bounds("ICON-Dash").is_some(),
+            "hovering a staged row should reveal the unstage button"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staging_group_affordance_actions_stage_and_unstage_files(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "staged.rs": "staged",
+                    "unstaged.rs": "unstaged",
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[
+                ("staged.rs", StatusCode::Modified.index()),
+                ("unstaged.rs", StatusCode::Modified.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace should exist");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        refresh_git_panel_entries(&project, &panel, cx).await;
+
+        let unstaged_entry = panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .get(
+                    panel
+                        .entry_by_key(&GitPanelEntryKey {
+                            section: Section::Unstaged,
+                            repo_path: repo_path("unstaged.rs"),
+                        })
+                        .expect("unstaged file should have an unstaged row"),
+                )
+                .and_then(|entry| entry.status_entry())
+                .cloned()
+                .expect("unstaged row should be a status entry")
+        });
+        panel.update(cx, |panel, cx| {
+            panel.change_file_stage(true, vec![unstaged_entry], cx);
+        });
+        refresh_git_panel_entries(&project, &panel, cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Staged,
+                        repo_path: repo_path("unstaged.rs"),
+                    })
+                    .is_some()
+            );
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Unstaged,
+                        repo_path: repo_path("unstaged.rs"),
+                    })
+                    .is_none()
+            );
+        });
+
+        let staged_entry = panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .get(
+                    panel
+                        .entry_by_key(&GitPanelEntryKey {
+                            section: Section::Staged,
+                            repo_path: repo_path("staged.rs"),
+                        })
+                        .expect("staged file should have a staged row"),
+                )
+                .and_then(|entry| entry.status_entry())
+                .cloned()
+                .expect("staged row should be a status entry")
+        });
+        panel.update(cx, |panel, cx| {
+            panel.change_file_stage(false, vec![staged_entry], cx);
+        });
+        refresh_git_panel_entries(&project, &panel, cx).await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Staged,
+                        repo_path: repo_path("staged.rs"),
+                    })
+                    .is_none()
+            );
+            assert!(
+                panel
+                    .entry_by_key(&GitPanelEntryKey {
+                        section: Section::Unstaged,
+                        repo_path: repo_path("staged.rs"),
+                    })
+                    .is_some()
             );
         });
     }

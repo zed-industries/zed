@@ -9339,6 +9339,20 @@ impl Editor {
                     display_map.unfold_buffers(removed_buffer_ids.iter().copied(), cx);
                 });
 
+                // Prune any selections anchored in the just-removed buffers so
+                // that later `change_with` calls (e.g. fold, arrow keys, sync'd
+                // panes) don't trip the `can_resolve` debug assertion on stale
+                // anchors.
+                let display_snapshot = self.display_snapshot(cx);
+                let (selections_changed, _) =
+                    self.selections.change_with(&display_snapshot, |selections| {
+                        selections.drop_stale_selections();
+                    });
+                if selections_changed {
+                    cx.emit(EditorEvent::SelectionsChanged { local: true });
+                    cx.notify();
+                }
+
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
                 cx.emit(EditorEvent::BuffersRemoved {
                     removed_buffer_ids: removed_buffer_ids.clone(),

@@ -656,15 +656,23 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             self.disjoint
                 .iter()
                 .filter(|selection| {
-                    if let Some((selection_buffer_anchor, _)) =
-                        self.snapshot.anchor_to_buffer_anchor(selection.start)
+                    // Anchors left behind when excerpts were removed would fail
+                    // the `can_resolve` debug assertion in `change_with` below.
+                    if !self.snapshot.can_resolve(&selection.start)
+                        || !self.snapshot.can_resolve(&selection.end)
                     {
-                        let should_remove = selection_buffer_anchor.buffer_id == buffer_id;
-                        changed |= should_remove;
-                        !should_remove
-                    } else {
-                        true
+                        changed = true;
+                        return false;
                     }
+                    let Some((selection_buffer_anchor, _)) =
+                        self.snapshot.anchor_to_buffer_anchor(selection.start)
+                    else {
+                        changed = true;
+                        return false;
+                    };
+                    let should_remove = selection_buffer_anchor.buffer_id == buffer_id;
+                    changed |= should_remove;
+                    !should_remove
                 })
                 .cloned()
                 .collect()
@@ -689,6 +697,57 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         }
 
         self.selections_changed |= changed;
+    }
+
+    /// Drops disjoint and pending selections whose anchors can no longer be
+    /// resolved in the current multibuffer snapshot. Use this when buffers
+    /// leave the multibuffer (e.g. via `BuffersRemoved`) so that subsequent
+    /// `change_with` calls don't trip the `can_resolve` debug assertion. If
+    /// nothing resolvable remains, installs a single fallback selection at
+    /// the start of the multibuffer.
+    pub fn drop_stale_selections(&mut self) {
+        let any_disjoint_stale = self.disjoint.iter().any(|selection| {
+            !self.snapshot.can_resolve(&selection.start)
+                || !self.snapshot.can_resolve(&selection.end)
+        });
+        let pending_is_stale = self.collection.pending.as_ref().is_some_and(|pending| {
+            !self.snapshot.can_resolve(&pending.selection.start)
+                || !self.snapshot.can_resolve(&pending.selection.end)
+        });
+        if !any_disjoint_stale && !pending_is_stale {
+            return;
+        }
+
+        if pending_is_stale {
+            self.collection.pending = None;
+        }
+
+        if any_disjoint_stale {
+            self.collection.disjoint = self
+                .disjoint
+                .iter()
+                .filter(|selection| {
+                    self.snapshot.can_resolve(&selection.start)
+                        && self.snapshot.can_resolve(&selection.end)
+                })
+                .cloned()
+                .collect();
+        }
+
+        if self.collection.disjoint.is_empty() && self.collection.pending.is_none() {
+            // `change_with` asserts that at least one selection is present,
+            // so install a fallback at the start of the multibuffer.
+            let anchor = self.snapshot.anchor_before(MultiBufferOffset(0));
+            self.collection.disjoint = Arc::from([Selection {
+                id: post_inc(&mut self.collection.next_selection_id),
+                start: anchor,
+                end: anchor,
+                reversed: false,
+                goal: SelectionGoal::None,
+            }]);
+        }
+
+        self.selections_changed = true;
     }
 
     pub fn clear_pending(&mut self) {

@@ -27222,6 +27222,329 @@ async fn test_folded_buffers_cleared_on_excerpts_removed(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_fold_buffer_with_stale_selection_does_not_panic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "aaaa\nbbbb\ncccc",
+            "file_b.txt": "1111\n2222\n3333",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_b.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        let range_a = Point::new(0, 0)..Point::new(2, 4);
+        let range_b = Point::new(0, 0)..Point::new(2, 4);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(0), buffer_a.clone(), [range_a], 0, cx);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(1), buffer_b.clone(), [range_b], 0, cx);
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer.clone(),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    // Place a selection inside buffer_b so the selection anchor lives in PathKeyIndex(1).
+    editor.update_in(cx, |editor, window, cx| {
+        let buffer_b_entity = editor
+            .buffer()
+            .read(cx)
+            .buffer(buffer_b.read(cx).remote_id())
+            .unwrap();
+        let selection_anchor = editor.buffer().update(cx, |multibuffer, cx| {
+            multibuffer
+                .buffer_point_to_anchor(&buffer_b_entity, Point::new(1, 0), cx)
+                .expect("buffer point should map to a multibuffer anchor")
+        });
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([selection_anchor..selection_anchor])
+        });
+    });
+
+    // Removing buffer_b's excerpts leaves the selection pointing into a buffer that
+    // is no longer part of the multibuffer.
+    multi_buffer.update(cx, |multi_buffer, cx| {
+        multi_buffer.remove_excerpts(PathKey::sorted(1), cx)
+    });
+
+    // Folding the remaining buffer used to panic in
+    // `selections_collection::SelectionsCollection::change_with` because
+    // `remove_selections_from_buffer` kept the stale selection and the
+    // following debug assertion couldn't resolve its anchor.
+    editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_a.read(cx).remote_id(), cx);
+    });
+}
+
+#[gpui::test]
+async fn test_stale_selections_cleared_on_buffers_removed(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "aaaa\nbbbb\ncccc",
+            "file_b.txt": "1111\n2222\n3333",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_b.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        let range_a = Point::new(0, 0)..Point::new(2, 4);
+        let range_b = Point::new(0, 0)..Point::new(2, 4);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(0), buffer_a.clone(), [range_a], 0, cx);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(1), buffer_b.clone(), [range_b], 0, cx);
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer.clone(),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+
+    // Place the only selection inside buffer_b so the whole `disjoint` set is
+    // about to become stale when buffer_b leaves the multibuffer.
+    editor.update_in(cx, |editor, window, cx| {
+        let buffer_b_entity = editor.buffer().read(cx).buffer(buffer_b_id).unwrap();
+        let selection_anchor = editor.buffer().update(cx, |multibuffer, cx| {
+            multibuffer
+                .buffer_point_to_anchor(&buffer_b_entity, Point::new(1, 0), cx)
+                .expect("buffer point should map to a multibuffer anchor")
+        });
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([selection_anchor..selection_anchor])
+        });
+    });
+
+    editor.update(cx, |editor, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let disjoint = editor.selections.disjoint_anchors();
+        assert_eq!(disjoint.len(), 1);
+        let (start_text_anchor, _) = buffer_snapshot
+            .anchor_to_buffer_anchor(disjoint[0].start)
+            .expect("anchor should still resolve before removal");
+        assert_eq!(start_text_anchor.buffer_id, buffer_b_id, "sanity check");
+    });
+
+    // Removing buffer_b's excerpts should prune the stale selection
+    // immediately, without waiting for a follow-up operation like a fold.
+    multi_buffer.update(cx, |multi_buffer, cx| {
+        multi_buffer.remove_excerpts(PathKey::sorted(1), cx)
+    });
+
+    editor.update(cx, |editor, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let disjoint = editor.selections.disjoint_anchors();
+        assert_eq!(
+            disjoint.len(),
+            1,
+            "expected exactly one fallback selection after the only buffer with selections was removed"
+        );
+        assert!(
+            display_snapshot.can_resolve(&disjoint[0].start),
+            "fallback selection start must be resolvable"
+        );
+        assert!(
+            display_snapshot.can_resolve(&disjoint[0].end),
+            "fallback selection end must be resolvable"
+        );
+        for selection in disjoint.iter() {
+            if let Some((text_anchor, _)) = buffer_snapshot.anchor_to_buffer_anchor(selection.start)
+            {
+                assert_ne!(
+                    text_anchor.buffer_id, buffer_b_id,
+                    "no selection should still point into the removed buffer",
+                );
+            }
+        }
+    });
+
+    // Subsequent `change_selections` calls go through `change_with`, which
+    // runs the same debug assertion that used to crash. Confirm a no-op
+    // mutation succeeds against the pruned state.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            let anchors = s.disjoint_anchors().to_vec();
+            s.select_anchors(anchors);
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_stale_selection_with_partial_overlap_cleared_on_buffers_removed(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "file_a.txt": "aaaa\nbbbb\ncccc",
+            "file_b.txt": "1111\n2222\n3333",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let worktree = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx).collect::<Vec<_>>();
+        assert_eq!(worktrees.len(), 1);
+        worktrees.pop().unwrap()
+    });
+    let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+
+    let buffer_a = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_b = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file_b.txt")), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        let range_a = Point::new(0, 0)..Point::new(2, 4);
+        let range_b = Point::new(0, 0)..Point::new(2, 4);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(0), buffer_a.clone(), [range_a], 0, cx);
+        multi_buffer.set_excerpts_for_path(PathKey::sorted(1), buffer_b.clone(), [range_b], 0, cx);
+        multi_buffer
+    });
+
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer.clone(),
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+
+    let buffer_a_id = buffer_a.read_with(cx, |buffer, _| buffer.remote_id());
+    let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+
+    // Two cursors: one inside buffer_a (will survive removal), one inside
+    // buffer_b (must be pruned). The kept selection is enough to satisfy the
+    // "at least one selection" invariant without falling back to anchor_before(0).
+    editor.update_in(cx, |editor, window, cx| {
+        let buffer_a_entity = editor.buffer().read(cx).buffer(buffer_a_id).unwrap();
+        let buffer_b_entity = editor.buffer().read(cx).buffer(buffer_b_id).unwrap();
+        let (anchor_in_a, anchor_in_b) = editor.buffer().update(cx, |multibuffer, cx| {
+            (
+                multibuffer
+                    .buffer_point_to_anchor(&buffer_a_entity, Point::new(0, 0), cx)
+                    .expect("buffer_a point should map to a multibuffer anchor"),
+                multibuffer
+                    .buffer_point_to_anchor(&buffer_b_entity, Point::new(1, 0), cx)
+                    .expect("buffer_b point should map to a multibuffer anchor"),
+            )
+        });
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([
+                anchor_in_a..anchor_in_a,
+                anchor_in_b..anchor_in_b,
+            ])
+        });
+    });
+
+    editor.read_with(cx, |editor, _| {
+        assert_eq!(editor.selections.disjoint_anchors().len(), 2);
+    });
+
+    multi_buffer.update(cx, |multi_buffer, cx| {
+        multi_buffer.remove_excerpts(PathKey::sorted(1), cx)
+    });
+
+    editor.update(cx, |editor, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let disjoint = editor.selections.disjoint_anchors();
+        assert_eq!(disjoint.len(), 1, "stale selection should have been pruned");
+        let (text_anchor, _) = buffer_snapshot
+            .anchor_to_buffer_anchor(disjoint[0].start)
+            .expect("surviving selection must resolve");
+        assert_eq!(text_anchor.buffer_id, buffer_a_id);
+        assert!(display_snapshot.can_resolve(&disjoint[0].start));
+        assert!(display_snapshot.can_resolve(&disjoint[0].end));
+    });
+}
+
+#[gpui::test]
 async fn test_folding_buffers_with_one_excerpt(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
