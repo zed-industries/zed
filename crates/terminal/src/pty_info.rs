@@ -192,8 +192,9 @@ impl PtyProcessInfo {
         }
         let this = self.clone();
         let has_changed = cx.background_executor().spawn(async move {
+            let previous = this.current.read().clone();
             let current = this.load();
-            let has_changed = match (this.current.read().as_ref(), current.as_ref()) {
+            let has_changed = match (previous.as_ref(), current.as_ref()) {
                 (None, None) => false,
                 (Some(prev), Some(now)) => prev.cwd != now.cwd || prev.name != now.name,
                 _ => true,
