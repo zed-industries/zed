@@ -37,5 +37,8 @@ windows.workspace = true
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 
+[package.metadata.cargo-machete]
+ignored = ["log"]
+
 [features]
 default = []
