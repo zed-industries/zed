@@ -8,6 +8,7 @@ use crate::{
     progress::{ExampleProgress, Step},
 };
 use anyhow::Context as _;
+use edit_prediction_context::limit_retrieved_context_to_bytes;
 use edit_prediction_metrics::{
     ActualPredictionCursor, Excerpt, PredictionReversalContext, PredictionScoringInput,
 };
@@ -17,6 +18,8 @@ use std::io::BufWriter;
 use std::path::Path;
 use std::sync::Arc;
 
+pub const EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT: usize = 4000;
+
 pub async fn run_scoring(
     example: &mut Example,
     args: &PredictArgs,
@@ -24,6 +27,7 @@ pub async fn run_scoring(
     example_progress: &ExampleProgress,
     cx: AsyncApp,
     allow_missing_predictions: bool,
+    retrieved_context_byte_limit: Option<usize>,
 ) -> anyhow::Result<()> {
     if !(allow_missing_predictions && args.provider.is_none() && example.predictions.is_empty()) {
         run_prediction(example, args, app_state, example_progress, cx).await?;
@@ -63,7 +67,7 @@ pub async fn run_scoring(
     .with_context(|| format!("Expected patch did not apply for {}", example.spec.name))?;
 
     let cursor_path = example.spec.cursor_path.as_ref();
-    let context = context_excerpts(example, prompt_inputs);
+    let context = context_excerpts(example, prompt_inputs, retrieved_context_byte_limit);
 
     progress.set_substatus("computing metrics");
     let mut scores = vec![];
@@ -127,6 +131,7 @@ pub async fn run_scoring(
 pub fn run_context_coverage_scoring(
     example: &mut Example,
     example_progress: &ExampleProgress,
+    retrieved_context_byte_limit: Option<usize>,
 ) -> anyhow::Result<()> {
     let progress = example_progress.start(Step::Score);
 
@@ -135,7 +140,7 @@ pub fn run_context_coverage_scoring(
         .prompt_inputs
         .as_ref()
         .context("prompt_inputs is required for context coverage scoring")?;
-    let context = context_excerpts(example, prompt_inputs);
+    let context = context_excerpts(example, prompt_inputs, retrieved_context_byte_limit);
 
     let editable_context_coverage = example
         .spec
@@ -160,6 +165,7 @@ pub fn run_context_coverage_scoring(
 fn context_excerpts(
     _example: &Example,
     prompt_inputs: &zeta_prompt::ZetaPromptInput,
+    retrieved_context_byte_limit: Option<usize>,
 ) -> Vec<Excerpt> {
     let mut context = Vec::new();
 
@@ -174,7 +180,12 @@ fn context_excerpts(
     }
 
     if let Some(related_files) = &prompt_inputs.related_files {
-        for related_file in related_files {
+        let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
+            limit_retrieved_context_to_bytes(related_files, max_bytes)
+        } else {
+            related_files.clone()
+        };
+        for related_file in &related_files {
             for excerpt in &related_file.excerpts {
                 // First component is a project name which is not present in expected patch, skip it
                 let path = related_file
@@ -196,23 +207,38 @@ fn context_excerpts(
     context
 }
 
-fn retrieved_context_tokens(example: &Example) -> Option<f64> {
-    let prompt_inputs = example.prompt_inputs.as_ref()?;
-    let context_chars = context_excerpts(example, prompt_inputs)
-        .iter()
-        .map(|excerpt| excerpt.content.len())
-        .sum::<usize>();
-    Some(context_chars as f64 / 3.0)
+fn retrieved_context_bytes(
+    example: &Example,
+    retrieved_context_byte_limit: Option<usize>,
+) -> Option<usize> {
+    let related_files = example.prompt_inputs.as_ref()?.related_files.as_ref()?;
+    let related_files = if let Some(max_bytes) = retrieved_context_byte_limit {
+        limit_retrieved_context_to_bytes(related_files, max_bytes)
+    } else {
+        related_files.clone()
+    };
+    Some(
+        related_files
+            .iter()
+            .flat_map(|file| file.excerpts.iter())
+            .map(|excerpt| excerpt.text.len())
+            .sum::<usize>(),
+    )
 }
 
-pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
+pub fn print_report(
+    examples: &[Example],
+    verbose: bool,
+    context_only: bool,
+    retrieved_context_byte_limit: Option<usize>,
+) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     use crate::metrics::ClassificationMetrics;
 
     const LINE_WIDTH: usize = 101;
 
     if context_only {
-        print_context_coverage_report(examples, verbose);
+        print_context_coverage_report(examples, verbose, retrieved_context_byte_limit);
         return;
     }
 
@@ -264,16 +290,16 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
-    let mut retrieved_context_tokens_sum = 0.0;
-    let mut retrieved_context_tokens_count = 0;
+    let mut retrieved_context_bytes_sum = 0.0;
+    let mut retrieved_context_bytes_count = 0;
 
     let mut printed_lines: usize = 0;
     let mut skipped_lines: usize = 0;
 
     for example in examples {
-        if let Some(tokens) = retrieved_context_tokens(example) {
-            retrieved_context_tokens_sum += tokens;
-            retrieved_context_tokens_count += 1;
+        if let Some(bytes) = retrieved_context_bytes(example, retrieved_context_byte_limit) {
+            retrieved_context_bytes_sum += bytes as f64;
+            retrieved_context_bytes_count += 1;
         }
 
         for (score_idx, score) in example.score.iter().enumerate() {
@@ -547,11 +573,11 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
                 recall_rate_count
             );
         }
-        if retrieved_context_tokens_count > 0 {
+        if retrieved_context_bytes_count > 0 {
             println!(
-                "Retrieved context size: {:.0} tokens avg ({} examples, chars / 3)",
-                retrieved_context_tokens_sum / retrieved_context_tokens_count as f64,
-                retrieved_context_tokens_count
+                "Retrieved context size: {:.0} bytes avg ({} examples)",
+                retrieved_context_bytes_sum / retrieved_context_bytes_count as f64,
+                retrieved_context_bytes_count
             );
         }
         if editable_context_coverage_count > 0 {
@@ -633,7 +659,11 @@ pub fn print_report(examples: &[Example], verbose: bool, context_only: bool) {
     println!("\n");
 }
 
-fn print_context_coverage_report(examples: &[Example], verbose: bool) {
+fn print_context_coverage_report(
+    examples: &[Example],
+    verbose: bool,
+    retrieved_context_byte_limit: Option<usize>,
+) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     const LINE_WIDTH: usize = 120;
 
@@ -668,15 +698,15 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
     let mut file_recall_sum = 0.0;
     let mut file_f1_sum = 0.0;
     let mut total_scores = 0;
-    let mut retrieved_context_tokens_sum = 0.0;
-    let mut retrieved_context_tokens_count = 0;
+    let mut retrieved_context_bytes_sum = 0.0;
+    let mut retrieved_context_bytes_count = 0;
     let mut printed_lines = 0;
     let mut skipped_lines = 0;
 
     for example in examples {
-        if let Some(tokens) = retrieved_context_tokens(example) {
-            retrieved_context_tokens_sum += tokens;
-            retrieved_context_tokens_count += 1;
+        if let Some(bytes) = retrieved_context_bytes(example, retrieved_context_byte_limit) {
+            retrieved_context_bytes_sum += bytes as f64;
+            retrieved_context_bytes_count += 1;
         }
 
         for score in &example.score {
@@ -759,11 +789,11 @@ fn print_context_coverage_report(examples: &[Example], verbose: bool) {
             "Evaluated editable context coverage for {} examples",
             total_scores
         );
-        if retrieved_context_tokens_count > 0 {
+        if retrieved_context_bytes_count > 0 {
             println!(
-                "Retrieved context size: {:.0} tokens avg ({} examples, chars / 3)",
-                retrieved_context_tokens_sum / retrieved_context_tokens_count as f64,
-                retrieved_context_tokens_count
+                "Retrieved context size: {:.0} bytes avg ({} examples)",
+                retrieved_context_bytes_sum / retrieved_context_bytes_count as f64,
+                retrieved_context_bytes_count
             );
         }
     }

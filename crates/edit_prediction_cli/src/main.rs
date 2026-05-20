@@ -1273,6 +1273,7 @@ fn main() {
                                                 &example_progress,
                                                 cx.clone(),
                                                 false,
+                                                None,
                                             )
                                             .await?;
                                         }
@@ -1281,6 +1282,7 @@ fn main() {
                                                 score::run_context_coverage_scoring(
                                                     example,
                                                     &example_progress,
+                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
                                                 )?;
                                             } else {
                                                 run_scoring(
@@ -1290,6 +1292,7 @@ fn main() {
                                                     &example_progress,
                                                     cx.clone(),
                                                     true,
+                                                    Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
                                                 )
                                                 .await?;
                                             }
@@ -1444,7 +1447,12 @@ fn main() {
                 match &command {
                     Command::Eval(args) => {
                         let examples = finished_examples.lock().unwrap();
-                        score::print_report(&examples, args.verbose, args.context_only);
+                        score::print_report(
+                            &examples,
+                            args.verbose,
+                            args.context_only,
+                            Some(score::EVAL_RETRIEVED_CONTEXT_BYTE_LIMIT),
+                        );
                         if let Some(summary_path) = &args.summary_json {
                             score::write_summary_json(&examples, summary_path)?;
                         }

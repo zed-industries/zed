@@ -79,6 +79,127 @@ pub async fn collect_editable_context(
     }))
 }
 
+pub fn limit_retrieved_context_to_bytes(
+    related_files: &[RelatedFile],
+    max_bytes: usize,
+) -> Vec<RelatedFile> {
+    struct ExcerptCandidate {
+        file_index: usize,
+        excerpt_index: usize,
+        order: usize,
+    }
+
+    let mut candidates = related_files
+        .iter()
+        .enumerate()
+        .flat_map(|(file_index, file)| {
+            file.excerpts
+                .iter()
+                .enumerate()
+                .map(move |(excerpt_index, excerpt)| ExcerptCandidate {
+                    file_index,
+                    excerpt_index,
+                    order: excerpt.order,
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|candidate| {
+        (
+            candidate.order,
+            candidate.file_index,
+            candidate.excerpt_index,
+        )
+    });
+
+    let mut selected_excerpts = related_files
+        .iter()
+        .map(|file| vec![false; file.excerpts.len()])
+        .collect::<Vec<_>>();
+    let mut covered_ranges_by_file = vec![Vec::<Range<u32>>::new(); related_files.len()];
+    let mut selected_bytes: usize = 0;
+
+    for candidate in candidates {
+        let file = &related_files[candidate.file_index];
+        let excerpt = &file.excerpts[candidate.excerpt_index];
+        let added_bytes =
+            uncovered_excerpt_bytes(excerpt, &covered_ranges_by_file[candidate.file_index]);
+        if added_bytes == 0 || selected_bytes.saturating_add(added_bytes) > max_bytes {
+            continue;
+        }
+
+        selected_bytes += added_bytes;
+        selected_excerpts[candidate.file_index][candidate.excerpt_index] = true;
+        push_covered_range(
+            &mut covered_ranges_by_file[candidate.file_index],
+            excerpt.row_range.clone(),
+        );
+    }
+
+    related_files
+        .iter()
+        .enumerate()
+        .filter_map(|(file_index, file)| {
+            let excerpts = file
+                .excerpts
+                .iter()
+                .enumerate()
+                .filter_map(|(excerpt_index, excerpt)| {
+                    selected_excerpts[file_index][excerpt_index].then(|| excerpt.clone())
+                })
+                .collect::<Vec<_>>();
+            if excerpts.is_empty() {
+                return None;
+            }
+
+            Some(RelatedFile {
+                path: file.path.clone(),
+                max_row: file.max_row,
+                excerpts,
+                in_open_source_repo: file.in_open_source_repo,
+            })
+        })
+        .collect()
+}
+
+fn uncovered_excerpt_bytes(excerpt: &RelatedExcerpt, covered_ranges: &[Range<u32>]) -> usize {
+    let mut bytes = 0;
+    let mut row = excerpt.row_range.start;
+
+    for line in excerpt.text.split_inclusive('\n') {
+        if row >= excerpt.row_range.end {
+            break;
+        }
+        if !covered_ranges
+            .iter()
+            .any(|covered_range| covered_range.contains(&row))
+        {
+            bytes += line.len();
+        }
+        row += 1;
+    }
+
+    bytes
+}
+
+fn push_covered_range(covered_ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
+    covered_ranges.push(range);
+    covered_ranges.sort_by_key(|range| (range.start, range.end));
+
+    let mut merged_ranges: Vec<Range<u32>> = Vec::new();
+    for range in covered_ranges.drain(..) {
+        if let Some(last_range) = merged_ranges.last_mut()
+            && range.start <= last_range.end
+        {
+            last_range.end = last_range.end.max(range.end);
+            continue;
+        }
+
+        merged_ranges.push(range);
+    }
+
+    *covered_ranges = merged_ranges;
+}
+
 fn collect_current_cursor_context(
     ranges_by_buffer: &mut RangesByBuffer,
     active_buffer: Entity<Buffer>,

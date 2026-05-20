@@ -27,7 +27,9 @@ mod editable_context;
 mod fake_definition_lsp;
 mod git_log_context;
 
-pub use editable_context::{EditHistoryContextEntry, collect_editable_context};
+pub use editable_context::{
+    EditHistoryContextEntry, collect_editable_context, limit_retrieved_context_to_bytes,
+};
 
 pub use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
