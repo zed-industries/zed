@@ -439,6 +439,91 @@ impl WrappedLine {
     }
 }
 
+struct DecorationRunLookup<'a> {
+    runs: &'a [DecorationRun],
+    run_ends: SmallVec<[usize; 32]>,
+}
+
+impl<'a> DecorationRunLookup<'a> {
+    fn new(runs: &'a [DecorationRun]) -> Self {
+        let mut offset = 0;
+        let mut run_ends = SmallVec::with_capacity(runs.len());
+
+        for run in runs {
+            offset += run.len as usize;
+            run_ends.push(offset);
+        }
+
+        Self { runs, run_ends }
+    }
+
+    fn run_for_index(&self, index: usize) -> Option<&'a DecorationRun> {
+        let run_ix = self.run_ends.partition_point(|end| *end <= index);
+        self.runs.get(run_ix)
+    }
+}
+
+fn resolved_underline(run: &DecorationRun) -> Option<UnderlineStyle> {
+    run.underline.map(|underline| UnderlineStyle {
+        color: Some(underline.color.unwrap_or(run.color)),
+        thickness: underline.thickness,
+        wavy: underline.wavy,
+    })
+}
+
+fn resolved_strikethrough(run: &DecorationRun) -> Option<StrikethroughStyle> {
+    run.strikethrough.map(|strikethrough| StrikethroughStyle {
+        color: Some(strikethrough.color.unwrap_or(run.color)),
+        thickness: strikethrough.thickness,
+    })
+}
+
+fn paint_underline_span(
+    window: &mut Window,
+    mut origin: Point<Pixels>,
+    end_x: Pixels,
+    style: &UnderlineStyle,
+    max_glyph_width: Pixels,
+) {
+    if end_x == origin.x {
+        origin.x -= max_glyph_width.half();
+    };
+    window.paint_underline(origin, end_x - origin.x, style);
+}
+
+fn paint_strikethrough_span(
+    window: &mut Window,
+    mut origin: Point<Pixels>,
+    end_x: Pixels,
+    style: &StrikethroughStyle,
+    max_glyph_width: Pixels,
+) {
+    if end_x == origin.x {
+        origin.x -= max_glyph_width.half();
+    };
+    window.paint_strikethrough(origin, end_x - origin.x, style);
+}
+
+fn paint_background_span(
+    window: &mut Window,
+    mut origin: Point<Pixels>,
+    end_x: Pixels,
+    line_height: Pixels,
+    color: Hsla,
+    max_glyph_width: Pixels,
+) {
+    if end_x == origin.x {
+        origin.x -= max_glyph_width.half();
+    }
+    window.paint_quad(fill(
+        Bounds {
+            origin,
+            size: size(end_x - origin.x, line_height),
+        },
+        color,
+    ));
+}
+
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -460,10 +545,8 @@ fn paint_line(
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
-        let mut decoration_runs = decoration_runs.iter();
+        let decoration_lookup = DecorationRunLookup::new(decoration_runs);
         let mut wraps = wrap_boundaries.iter().peekable();
-        let mut run_end = 0;
-        let mut color = black();
         let mut current_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
         let mut current_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
         let text_system = cx.text_system().clone();
@@ -492,39 +575,25 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
-                    if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
-                        if glyph_origin.x == underline_origin.x {
-                            underline_origin.x -= max_glyph_size.width.half();
-                        };
-                        window.paint_underline(
-                            *underline_origin,
-                            glyph_origin.x - underline_origin.x,
-                            underline_style,
+                    if let Some((underline_origin, underline_style)) = current_underline.take() {
+                        paint_underline_span(
+                            window,
+                            underline_origin,
+                            glyph_origin.x,
+                            &underline_style,
+                            max_glyph_size.width,
                         );
-                        if glyph.index < run_end {
-                            underline_origin.x = origin.x;
-                            underline_origin.y += line_height;
-                        } else {
-                            current_underline = None;
-                        }
                     }
                     if let Some((strikethrough_origin, strikethrough_style)) =
-                        current_strikethrough.as_mut()
+                        current_strikethrough.take()
                     {
-                        if glyph_origin.x == strikethrough_origin.x {
-                            strikethrough_origin.x -= max_glyph_size.width.half();
-                        };
-                        window.paint_strikethrough(
-                            *strikethrough_origin,
-                            glyph_origin.x - strikethrough_origin.x,
-                            strikethrough_style,
+                        paint_strikethrough_span(
+                            window,
+                            strikethrough_origin,
+                            glyph_origin.x,
+                            &strikethrough_style,
+                            max_glyph_size.width,
                         );
-                        if glyph.index < run_end {
-                            strikethrough_origin.x = origin.x;
-                            strikethrough_origin.y += line_height;
-                        } else {
-                            current_strikethrough = None;
-                        }
                     }
 
                     glyph_origin.x = aligned_origin_x(
@@ -539,89 +608,62 @@ fn paint_line(
                 }
                 prev_glyph_position = glyph.position;
 
-                let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
-                let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
-                if glyph.index >= run_end {
-                    let mut style_run = decoration_runs.next();
+                let decoration = decoration_lookup.run_for_index(glyph.index);
+                let color = decoration.map_or_else(black, |run| run.color);
+                let underline = decoration.and_then(resolved_underline);
+                let strikethrough = decoration.and_then(resolved_strikethrough);
 
-                    // ignore style runs that apply to a partial glyph
-                    while let Some(run) = style_run {
-                        if glyph.index < run_end + (run.len as usize) {
-                            break;
-                        }
-                        run_end += run.len as usize;
-                        style_run = decoration_runs.next();
-                    }
-
-                    if let Some(style_run) = style_run {
-                        if let Some((_, underline_style)) = &mut current_underline
-                            && style_run.underline.as_ref() != Some(underline_style)
-                        {
-                            finished_underline = current_underline.take();
-                        }
-                        if let Some(run_underline) = style_run.underline.as_ref() {
-                            current_underline.get_or_insert((
-                                point(
-                                    glyph_origin.x,
-                                    glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
-                                ),
-                                UnderlineStyle {
-                                    color: Some(run_underline.color.unwrap_or(style_run.color)),
-                                    thickness: run_underline.thickness,
-                                    wavy: run_underline.wavy,
-                                },
-                            ));
-                        }
-                        if let Some((_, strikethrough_style)) = &mut current_strikethrough
-                            && style_run.strikethrough.as_ref() != Some(strikethrough_style)
-                        {
-                            finished_strikethrough = current_strikethrough.take();
-                        }
-                        if let Some(run_strikethrough) = style_run.strikethrough.as_ref() {
-                            current_strikethrough.get_or_insert((
-                                point(
-                                    glyph_origin.x,
-                                    glyph_origin.y
-                                        + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
-                                ),
-                                StrikethroughStyle {
-                                    color: Some(run_strikethrough.color.unwrap_or(style_run.color)),
-                                    thickness: run_strikethrough.thickness,
-                                },
-                            ));
-                        }
-
-                        run_end += style_run.len as usize;
-                        color = style_run.color;
-                    } else {
-                        run_end = layout.len;
-                        finished_underline = current_underline.take();
-                        finished_strikethrough = current_strikethrough.take();
-                    }
-                }
-
-                if let Some((mut underline_origin, underline_style)) = finished_underline {
-                    if underline_origin.x == glyph_origin.x {
-                        underline_origin.x -= max_glyph_size.width.half();
-                    };
-                    window.paint_underline(
-                        underline_origin,
-                        glyph_origin.x - underline_origin.x,
-                        &underline_style,
-                    );
-                }
-
-                if let Some((mut strikethrough_origin, strikethrough_style)) =
-                    finished_strikethrough
+                if current_underline
+                    .as_ref()
+                    .is_some_and(|(_, style)| Some(*style) != underline)
+                    && let Some((underline_origin, underline_style)) = current_underline.take()
                 {
-                    if strikethrough_origin.x == glyph_origin.x {
-                        strikethrough_origin.x -= max_glyph_size.width.half();
-                    };
-                    window.paint_strikethrough(
-                        strikethrough_origin,
-                        glyph_origin.x - strikethrough_origin.x,
-                        &strikethrough_style,
+                    paint_underline_span(
+                        window,
+                        underline_origin,
+                        glyph_origin.x,
+                        &underline_style,
+                        max_glyph_size.width,
                     );
+                }
+
+                if current_underline.is_none()
+                    && let Some(underline) = underline
+                {
+                    current_underline = Some((
+                        point(
+                            glyph_origin.x,
+                            glyph_origin.y + baseline_offset.y + (layout.descent * 0.618),
+                        ),
+                        underline,
+                    ));
+                }
+
+                if current_strikethrough
+                    .as_ref()
+                    .is_some_and(|(_, style)| Some(*style) != strikethrough)
+                    && let Some((strikethrough_origin, strikethrough_style)) =
+                        current_strikethrough.take()
+                {
+                    paint_strikethrough_span(
+                        window,
+                        strikethrough_origin,
+                        glyph_origin.x,
+                        &strikethrough_style,
+                        max_glyph_size.width,
+                    );
+                }
+
+                if current_strikethrough.is_none()
+                    && let Some(strikethrough) = strikethrough
+                {
+                    current_strikethrough = Some((
+                        point(
+                            glyph_origin.x,
+                            glyph_origin.y + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
+                        ),
+                        strikethrough,
+                    ));
                 }
 
                 let max_glyph_bounds = Bounds {
@@ -659,25 +701,23 @@ fn paint_line(
             last_line_end_x -= glyph.position.x;
         }
 
-        if let Some((mut underline_start, underline_style)) = current_underline.take() {
-            if last_line_end_x == underline_start.x {
-                underline_start.x -= max_glyph_size.width.half()
-            };
-            window.paint_underline(
+        if let Some((underline_start, underline_style)) = current_underline.take() {
+            paint_underline_span(
+                window,
                 underline_start,
-                last_line_end_x - underline_start.x,
+                last_line_end_x,
                 &underline_style,
+                max_glyph_size.width,
             );
         }
 
-        if let Some((mut strikethrough_start, strikethrough_style)) = current_strikethrough.take() {
-            if last_line_end_x == strikethrough_start.x {
-                strikethrough_start.x -= max_glyph_size.width.half()
-            };
-            window.paint_strikethrough(
+        if let Some((strikethrough_start, strikethrough_style)) = current_strikethrough.take() {
+            paint_strikethrough_span(
+                window,
                 strikethrough_start,
-                last_line_end_x - strikethrough_start.x,
+                last_line_end_x,
                 &strikethrough_style,
+                max_glyph_size.width,
             );
         }
 
@@ -704,9 +744,8 @@ fn paint_line_background(
         ),
     );
     window.paint_layer(line_bounds, |window| {
-        let mut decoration_runs = decoration_runs.iter();
+        let decoration_lookup = DecorationRunLookup::new(decoration_runs);
         let mut wraps = wrap_boundaries.iter().peekable();
-        let mut run_end = 0;
         let mut current_background: Option<(Point<Pixels>, Hsla)> = None;
         let text_system = cx.text_system().clone();
         let mut glyph_origin = point(
@@ -730,24 +769,15 @@ fn paint_line_background(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
-                    if let Some((background_origin, background_color)) = current_background.as_mut()
-                    {
-                        if glyph_origin.x == background_origin.x {
-                            background_origin.x -= max_glyph_size.width.half()
-                        }
-                        window.paint_quad(fill(
-                            Bounds {
-                                origin: *background_origin,
-                                size: size(glyph_origin.x - background_origin.x, line_height),
-                            },
-                            *background_color,
-                        ));
-                        if glyph.index < run_end {
-                            background_origin.x = origin.x;
-                            background_origin.y += line_height;
-                        } else {
-                            current_background = None;
-                        }
+                    if let Some((background_origin, background_color)) = current_background.take() {
+                        paint_background_span(
+                            window,
+                            background_origin,
+                            glyph_origin.x,
+                            line_height,
+                            background_color,
+                            max_glyph_size.width,
+                        );
                     }
 
                     glyph_origin.x = aligned_origin_x(
@@ -762,50 +792,29 @@ fn paint_line_background(
                 }
                 prev_glyph_position = glyph.position;
 
-                let mut finished_background: Option<(Point<Pixels>, Hsla)> = None;
-                if glyph.index >= run_end {
-                    let mut style_run = decoration_runs.next();
+                let background = decoration_lookup
+                    .run_for_index(glyph.index)
+                    .and_then(|run| run.background_color);
 
-                    // ignore style runs that apply to a partial glyph
-                    while let Some(run) = style_run {
-                        if glyph.index < run_end + (run.len as usize) {
-                            break;
-                        }
-                        run_end += run.len as usize;
-                        style_run = decoration_runs.next();
-                    }
-
-                    if let Some(style_run) = style_run {
-                        if let Some((_, background_color)) = &mut current_background
-                            && style_run.background_color.as_ref() != Some(background_color)
-                        {
-                            finished_background = current_background.take();
-                        }
-                        if let Some(run_background) = style_run.background_color {
-                            current_background.get_or_insert((
-                                point(glyph_origin.x, glyph_origin.y),
-                                run_background,
-                            ));
-                        }
-                        run_end += style_run.len as usize;
-                    } else {
-                        run_end = layout.len;
-                        finished_background = current_background.take();
-                    }
+                if current_background
+                    .as_ref()
+                    .is_some_and(|(_, color)| Some(*color) != background)
+                    && let Some((background_origin, background_color)) = current_background.take()
+                {
+                    paint_background_span(
+                        window,
+                        background_origin,
+                        glyph_origin.x,
+                        line_height,
+                        background_color,
+                        max_glyph_size.width,
+                    );
                 }
 
-                if let Some((mut background_origin, background_color)) = finished_background {
-                    let mut width = glyph_origin.x - background_origin.x;
-                    if background_origin.x == glyph_origin.x {
-                        background_origin.x -= max_glyph_size.width.half();
-                    };
-                    window.paint_quad(fill(
-                        Bounds {
-                            origin: background_origin,
-                            size: size(width, line_height),
-                        },
-                        background_color,
-                    ));
+                if current_background.is_none()
+                    && let Some(background) = background
+                {
+                    current_background = Some((point(glyph_origin.x, glyph_origin.y), background));
                 }
             }
         }
@@ -817,17 +826,15 @@ fn paint_line_background(
             last_line_end_x -= glyph.position.x;
         }
 
-        if let Some((mut background_origin, background_color)) = current_background.take() {
-            if last_line_end_x == background_origin.x {
-                background_origin.x -= max_glyph_size.width.half()
-            };
-            window.paint_quad(fill(
-                Bounds {
-                    origin: background_origin,
-                    size: size(last_line_end_x - background_origin.x, line_height),
-                },
+        if let Some((background_origin, background_color)) = current_background.take() {
+            paint_background_span(
+                window,
+                background_origin,
+                last_line_end_x,
+                line_height,
                 background_color,
-            ));
+                max_glyph_size.width,
+            );
         }
 
         Ok(())
@@ -919,6 +926,76 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_decoration_lookup_handles_visual_rtl_glyph_order() {
+        let red = Hsla {
+            h: 0.0,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let green = Hsla {
+            h: 0.3,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let blue = Hsla {
+            h: 0.6,
+            s: 1.0,
+            l: 0.5,
+            a: 1.0,
+        };
+        let inherited_underline = UnderlineStyle {
+            color: None,
+            thickness: px(1.0),
+            wavy: false,
+        };
+        let blue_strikethrough = StrikethroughStyle {
+            color: Some(blue),
+            thickness: px(2.0),
+        };
+        let runs = [
+            DecorationRun {
+                len: "א".len() as u32,
+                color: red,
+                background_color: Some(red),
+                underline: Some(inherited_underline),
+                strikethrough: None,
+            },
+            DecorationRun {
+                len: "ב".len() as u32,
+                color: green,
+                background_color: Some(green),
+                underline: None,
+                strikethrough: None,
+            },
+            DecorationRun {
+                len: "ג".len() as u32,
+                color: blue,
+                background_color: Some(blue),
+                underline: None,
+                strikethrough: Some(blue_strikethrough),
+            },
+        ];
+        let lookup = DecorationRunLookup::new(&runs);
+
+        let colors_in_visual_order =
+            [4, 2, 0].map(|index| lookup.run_for_index(index).unwrap().color);
+        assert_eq!(colors_in_visual_order, [blue, green, red]);
+        assert!(lookup.run_for_index("אבג".len()).is_none());
+
+        let alef_decoration = lookup.run_for_index(0).unwrap();
+        assert_eq!(
+            resolved_underline(alef_decoration).unwrap().color,
+            Some(red)
+        );
+        assert_eq!(
+            resolved_strikethrough(lookup.run_for_index(4).unwrap()),
+            Some(blue_strikethrough)
+        );
     }
 
     #[test]
