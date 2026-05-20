@@ -1094,29 +1094,34 @@ fn resolve_path(
                 .parent()
                 .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
 
-            let parent_project_path = project.find_project_path(&parent_path, cx);
-
-            let parent_entry = parent_project_path
-                .as_ref()
-                .and_then(|path| project.entry_for_path(path, cx))
-                .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
-
-            if !parent_entry.is_dir() {
-                return Err("Can't create file: parent is not a directory".to_string());
-            }
-
             let file_name = path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
                 .and_then(|file_name| RelPath::unix(file_name).ok())
                 .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
 
-            let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: parent.path.join(file_name),
-                ..parent
-            });
+            let project_path = project
+                .find_project_path(&parent_path, cx)
+                .map(|parent| ProjectPath {
+                    path: parent.path.join(file_name),
+                    ..parent
+                })
+                .or_else(|| project.find_project_path(&path, cx))
+                .ok_or_else(|| "Can't create file".to_string())?;
 
-            new_file_path.ok_or_else(|| "Can't create file".to_string())
+            if project_path.path.ancestors().any(|ancestor| {
+                let path = ProjectPath {
+                    path: ancestor.into(),
+                    ..project_path.clone()
+                };
+                project
+                    .entry_for_path(&path, cx)
+                    .is_some_and(|entry| !entry.is_dir())
+            }) {
+                return Err("Can't create file: parent is not a directory".to_string());
+            }
+
+            Ok(project_path)
         }
     }
 }

@@ -301,6 +301,36 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_write_create_file_with_missing_parent_directories(
+        cx: &mut TestAppContext,
+    ) {
+        let (write_tool, _project, _action_log, fs, _thread) = setup_test(cx, json!({})).await;
+        let result = cx
+            .update(|cx| {
+                write_tool.clone().run(
+                    ToolInput::resolved(WriteFileToolInput {
+                        path: "root/foo/bar/new_file.txt".into(),
+                        content: "Hello, World!".into(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let EditSessionOutput::Success { new_text, .. } = result.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "Hello, World!");
+        assert_eq!(
+            fs.load(path!("/root/foo/bar/new_file.txt").as_ref())
+                .await
+                .unwrap(),
+            "Hello, World!"
+        );
+    }
+
+    #[gpui::test]
     async fn test_streaming_write_overwrite_file(cx: &mut TestAppContext) {
         let (write_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "old content"})).await;
@@ -449,10 +479,7 @@ mod tests {
         );
 
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
-        assert_eq!(
-            result.await.unwrap_err(),
-            "Can't create file: parent directory doesn't exist"
-        );
+        assert_resolved_path_eq(result.await, rel_path("dir/nonexistent_dir/new.txt"));
     }
 
     #[gpui::test]
