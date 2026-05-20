@@ -321,7 +321,6 @@ enum ReservedSpace {
     None,
     Thumb,
     Track,
-    OverlayTrack,
     StableTrack,
 }
 
@@ -331,7 +330,7 @@ impl ReservedSpace {
     }
 
     fn needs_scroll_track(&self) -> bool {
-        matches!(self, Self::Track | Self::OverlayTrack | Self::StableTrack)
+        matches!(self, Self::Thumb | Self::Track | Self::StableTrack)
     }
 
     fn needs_space_reserved(&self, max_offset: Pixels) -> bool {
@@ -471,11 +470,6 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
     pub fn with_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
         self.visibility = along.apply_to(self.visibility, ReservedSpace::Track);
         self.track_color = Some(background_color);
-        self
-    }
-
-    pub fn with_overlay_track_along(mut self, along: ScrollAxes) -> Self {
-        self.visibility = along.apply_to(self.visibility, ReservedSpace::OverlayTrack);
         self
     }
 
