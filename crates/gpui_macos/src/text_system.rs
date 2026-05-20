@@ -340,15 +340,23 @@ impl MacTextSystemState {
                         .is_some())
             } {
                 log::error!(
-                    "Failed to read traits for font {:?}",
-                    font.postscript_name().unwrap()
+                    "Failed to read traits for font {:?} (PostScript name {:?})",
+                    font.full_name(),
+                    font.postscript_name(),
                 );
                 continue;
             }
 
+            let Some(postscript_name) = font.postscript_name() else {
+                log::warn!(
+                    "font {:?} in family {:?} has no PostScript name; skipping",
+                    font.full_name(),
+                    name,
+                );
+                continue;
+            };
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
-            let postscript_name = font.postscript_name().unwrap();
             self.font_ids_by_postscript_name
                 .insert(postscript_name.clone(), font_id);
             self.postscript_names_by_font_id
