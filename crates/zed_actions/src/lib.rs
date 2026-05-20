@@ -75,6 +75,8 @@ actions!(
         OpenOnboarding,
         /// Shows the auto-update notification for testing.
         ShowUpdateNotification,
+        /// Visits the Zed status page.
+        VisitStatusPage
     ]
 );
 
