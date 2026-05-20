@@ -38,9 +38,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use acp_thread::{
-    AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall, ToolCallContent,
-};
+use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk, ToolCall};
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla, KeyContext,
@@ -407,6 +405,22 @@ impl ThreadSearchBar {
         self.options.toggle(SearchOptions::REGEX);
         self.update_matches(window, cx);
     }
+
+    /// Handler for `search::FocusSearch` (bound to Cmd/Ctrl+F inside the bar's
+    /// context). Mirrors `BufferSearchBar`'s behavior: focus the query input
+    /// and select all its text so the next keystroke replaces the query.
+    fn focus_search(
+        &mut self,
+        _: &search::FocusSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let focus_handle = self.query_editor.focus_handle(cx);
+        focus_handle.focus(window, cx);
+        self.query_editor.update(cx, |editor, cx| {
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+        });
+    }
 }
 
 impl Render for ThreadSearchBar {
@@ -422,17 +436,25 @@ impl Render for ThreadSearchBar {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AcpThreadSearchBar");
 
-        let has_matches = !self.matches.is_empty();
         let counter_text = self.active_match_text(cx).unwrap_or_default();
         let counter_color = if has_matches {
             Color::Default
-        } else if self.query_editor.read(cx).text(cx).is_empty() {
+        } else if query_empty {
             Color::Muted
         } else {
             Color::Error
         };
 
         h_flex()
+            // Tie this element to the query editor's focus handle so the
+            // `AcpThreadSearchBar` key context lands in the editor's
+            // dispatch chain. Without this, Esc / Enter / etc. typed into
+            // the query input fall through to ancestor handlers (the
+            // workspace's `BufferSearchBar` dismiss, or `menu::Cancel`
+            // which would cancel agent generation). `BufferSearchBar`
+            // gets the same effect via its `ToolbarItemView::contribute_context`,
+            // which is not available outside the workspace toolbar.
+            .track_focus(&focus_handle)
             .key_context(key_context)
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::select_next_match))
@@ -440,6 +462,7 @@ impl Render for ThreadSearchBar {
             .on_action(cx.listener(Self::toggle_case_sensitive))
             .on_action(cx.listener(Self::toggle_whole_word))
             .on_action(cx.listener(Self::toggle_regex))
+            .on_action(cx.listener(Self::focus_search))
             .w_full()
             .gap_2()
             .px_2()
@@ -619,14 +642,16 @@ fn collect_markdowns(entry: &AgentThreadEntry) -> Vec<Entity<Markdown>> {
 }
 
 fn collect_tool_call_markdowns(tool_call: &ToolCall, out: &mut Vec<Entity<Markdown>>) {
+    // Only search the tool-call label, not its rendered content. Content
+    // (e.g. command output, file contents inlined by a tool) is hidden
+    // behind an expand toggle by default; matching inside collapsed blocks
+    // produces high match counts with no visible highlights, which is
+    // user-hostile. The label is always visible, so this keeps
+    // "what I see is what is searched" coherent. Users who want to grep
+    // expanded tool output can use a normal buffer search on the text
+    // after expanding the block.
     out.push(tool_call.label.clone());
-    for content in &tool_call.content {
-        if let ToolCallContent::ContentBlock(block) = content
-            && let Some(md) = block.markdown()
-        {
-            out.push(md.clone());
-        }
-    }
+    let _ = tool_call.content;
 }
 
 
