@@ -27,18 +27,7 @@ See [Skill format](#skill-format) below for the full format reference.
 - [`frontend-design`](https://skills.sh/anthropics/skills/frontend-design): production-grade frontend interfaces with design polish
 - [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
 
-To install a skill from it, copy or clone its folder into your global or project-local skills folder.
-
-For example, to install the `frontend-design` skill from GitHub globally:
-
-```sh
-cd ~/.agents/skills
-git clone --filter=blob:none --sparse https://github.com/anthropics/skills
-cd skills
-git sparse-checkout set frontend-design
-```
-
-For a project-local install, do the same inside your project's `.agents/skills/` folder.
+To install a skill, copy the skill's folder into `~/.agents/skills/` for global use, or into your project's `.agents/skills/` folder for project-local use.
 
 ## Managing Skills {#managing-skills}
 
