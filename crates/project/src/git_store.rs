@@ -9144,7 +9144,7 @@ async fn compute_snapshot(
     backend: Arc<dyn GitRepository>,
     cx: &mut AsyncApp,
 ) -> Result<RepositorySnapshot> {
-    log::debug!("starting compute snaphshot");
+    log::debug!("starting compute snapshot");
 
     let (id, work_directory_abs_path, prev_snapshot) = this.update(cx, |this, _| {
         this.paths_needing_status_update.clear();
