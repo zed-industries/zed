@@ -85,7 +85,7 @@ impl Diff {
         })
     }
 
-    pub fn new(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
+    pub fn auto(buffer: Entity<Buffer>, cx: &mut Context<Self>) -> Self {
         let subscription = cx.observe(&buffer, |this, _, cx| {
             if let Diff::Pending(diff) = this {
                 diff.auto_update(cx);
@@ -681,7 +681,7 @@ mod tests {
     #[gpui::test]
     async fn test_pending_diff(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("hello!", cx));
-        let _diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let _diff = cx.new(|cx| Diff::auto(buffer.clone(), cx));
         buffer.update(cx, |buffer, cx| {
             buffer.set_text("HELLO!", cx);
         });

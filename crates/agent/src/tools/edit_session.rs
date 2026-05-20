@@ -705,7 +705,10 @@ impl EditSession {
         let file_changed_since_last_read =
             ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
 
-        let diff = cx.new(|cx| Diff::new(buffer.clone(), cx));
+        let diff = cx.new(|cx| match mode {
+            EditSessionMode::Write => Diff::auto(buffer.clone(), cx),
+            EditSessionMode::Edit => Diff::manual(buffer.clone(), cx),
+        });
         event_stream.update_diff(diff.clone());
         let finalize_diff_guard = util::defer(Box::new({
             let diff = diff.downgrade();
