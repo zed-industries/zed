@@ -6,8 +6,9 @@ use anyhow::{Context as _, Result};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    App, Bounds, Entity, FocusHandle, Focusable, Subscription, Task, TextStyle, Tiling,
-    TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point, size,
+    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
+    Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
+    WindowOptions, actions, point, size,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
@@ -37,10 +38,6 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 2;
 const SCOPE_FIELD_TAB_INDEX: isize = 3;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
 const BODY_FIELD_TAB_INDEX: isize = 5;
-
-const SKILL_CREATOR_WINDOW_WIDTH: f32 = 720.0;
-const SKILL_CREATOR_WINDOW_HEIGHT: f32 = 720.0;
-const SKILL_CREATOR_MIN_HEIGHT: f32 = 560.0;
 
 pub fn init(_cx: &mut App) {}
 
@@ -139,11 +136,7 @@ pub fn open_skill_creator(
 
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
-            let window_size = size(
-                px(SKILL_CREATOR_WINDOW_WIDTH),
-                px(SKILL_CREATOR_WINDOW_HEIGHT),
-            );
-            let bounds = Bounds::centered(None, window_size, cx);
+            let bounds = Bounds::centered(None, DEFAULT_ADDITIONAL_WINDOW_SIZE, cx);
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
@@ -163,10 +156,7 @@ pub fn open_skill_creator(
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(size(
-                        px(SKILL_CREATOR_WINDOW_WIDTH),
-                        px(SKILL_CREATOR_MIN_HEIGHT),
-                    )),
+                    window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
                     kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
@@ -544,12 +534,12 @@ impl SkillCreator {
         let sep = std::path::MAIN_SEPARATOR;
         let scope_hint: SharedString = match selected.as_ref() {
             Some(ScopeChoice::Global) => SharedString::from(format!(
-                "Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}. \
-                 Available across every Zed project."
+                "Available across every Zed project. \
+                Saved to {GLOBAL_SKILLS_DIR_DISPLAY}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
             )),
             Some(ScopeChoice::Project { root_name, .. }) => SharedString::from(format!(
-                "Saved to {root_name}{sep}{AGENTS_DIR_NAME}{sep}{SKILLS_DIR_NAME}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}. \
-                 Only available when this project is open."
+                "Only available when this project is open. \
+                Saved to {root_name}{sep}{AGENTS_DIR_NAME}{sep}{SKILLS_DIR_NAME}{sep}\u{2039}name\u{203A}{sep}{SKILL_FILE_NAME}."
             )),
             None => "Choose where this skill should live.".into(),
         };
@@ -585,7 +575,7 @@ impl SkillCreator {
         h_flex()
             .min_w_0()
             .w_full()
-            .gap_3()
+            .gap_6()
             .justify_between()
             .child(
                 v_flex()
@@ -708,6 +698,7 @@ impl SkillCreator {
                     .child(
                         Button::new("save-skill", main_action)
                             .style(ButtonStyle::Filled)
+                            .layer(ui::ElevationIndex::ModalSurface)
                             .disabled(!valid || saving)
                             .loading(saving)
                             .on_click(|_, window, cx| {
@@ -812,23 +803,32 @@ impl Render for SkillCreator {
                         .min_h_0()
                         .gap_4()
                         .p_4()
-                        .child(Label::new("Font-matter"))
-                        .child(self.name_editor.clone())
-                        .child(self.description_editor.clone())
+                        .child(
+                            v_flex()
+                                .gap_2()
+                                .child(Label::new("Font-matter"))
+                                .child(self.name_editor.clone())
+                                .child(self.description_editor.clone()),
+                        )
                         .child(self.render_optional_params(cx))
                         .child(Divider::horizontal())
                         .child(self.render_scope_field(window, cx))
                         .child(Divider::horizontal())
-                        .child(Label::new("Skill Content"))
-                        .child(self.render_body_field(window, cx)),
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .gap_2()
+                                .child(Label::new("Skill Content"))
+                                .child(self.render_body_field(window, cx)),
+                        ),
                 )
                 .child(
                     h_flex()
                         .w_full()
-                        .px_4()
-                        .py_2()
+                        .p_2p5()
                         .border_t_1()
-                        .border_color(theme.colors().border)
+                        .border_color(theme.colors().border_variant)
+                        .bg(theme.colors().panel_background)
                         .child(self.render_action_bar(cx)),
                 ),
             window,
