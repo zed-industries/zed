@@ -8,7 +8,7 @@ use fs::Fs;
 use gpui::{
     App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
     Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
-    WindowOptions, actions, point, size,
+    WindowOptions, actions, point,
 };
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
