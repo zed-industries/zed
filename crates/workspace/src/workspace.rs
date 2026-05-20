@@ -1,4 +1,5 @@
 pub mod active_file_name;
+pub mod custom_labels;
 pub mod dock;
 pub mod history_manager;
 pub mod invalid_item_view;

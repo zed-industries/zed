@@ -1,6 +1,7 @@
 use std::{num::NonZeroUsize, time::Duration};
 
 use crate::DockPosition;
+use crate::custom_labels::CustomLabels;
 use collections::HashMap;
 use serde::Deserialize;
 pub use settings::{
@@ -37,6 +38,7 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+    pub custom_labels: CustomLabels,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -122,6 +124,13 @@ impl Settings for WorkspaceSettings {
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
+            custom_labels: CustomLabels::from_patterns(
+                content
+                    .project
+                    .custom_labels
+                    .iter()
+                    .map(|(pattern, template)| (pattern.as_str(), template.as_str())),
+            ),
             focus_follows_mouse: FocusFollowsMouse {
                 enabled: workspace
                     .focus_follows_mouse

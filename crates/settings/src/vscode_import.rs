@@ -521,6 +521,15 @@ impl VsCodeSettings {
             load_direnv: None,
             git_hosting_providers: None,
             disable_ai: None,
+            custom_labels: self
+                .read_value("workbench.editor.customLabels.patterns")
+                .and_then(|v| v.as_object())
+                .map(|map| {
+                    map.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 

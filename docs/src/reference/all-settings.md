@@ -739,6 +739,34 @@ List of `string` values
 
 `boolean` values
 
+## Custom Labels
+
+- Description: Customize the labels displayed on editor tabs. Keys are glob patterns (matched against the file path relative to the worktree root) and values are label templates.
+- Setting: `custom_labels`
+- Default: `{}`
+
+**Template variables**
+
+- `${filename}`: file name without its extension.
+- `${extname}`: final extension of the file.
+- `${dirname}`: name of the file's immediate parent folder.
+- `${dirname(N)}`: name of the Nth ancestor folder. Positive `N` walks up from the file (`1` is the immediate parent, `2` is the grandparent, ...). Negative `N` counts from the worktree root (`-1` is the topmost folder, `-2` is its child, ...).
+
+Patterns are evaluated in declaration order; the first matching pattern wins. When a tab has a custom label, the parent directory hint that Zed normally appends for disambiguation is hidden.
+
+**Example**
+
+```json [settings]
+{
+  "custom_labels": {
+    "**/src/routes/**/+page.svelte": "${dirname} - page",
+    "**/src/routes/**/+layout.svelte": "${dirname} - layout",
+    "**/app/**/page.tsx": "${dirname} - page",
+    "**/mod.rs": "${dirname}/mod.rs"
+  }
+}
+```
+
 ## Cursor Shape
 
 - Description: Cursor shape for the default editor.
