@@ -8906,52 +8906,6 @@ impl LspStore {
         }
     }
 
-    pub(crate) fn is_lsp_uri_in_existing_non_single_file_worktree(
-        &mut self,
-        uri: lsp::Uri,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<bool>> {
-        let path_style = self.worktree_store.read(cx).path_style();
-        cx.spawn(async move |lsp_store, cx| {
-            let current_scheme = uri.scheme().to_owned();
-            let Ok(abs_path) = uri.to_file_path_ext(path_style) else {
-                return Ok(false);
-            };
-            let path = abs_path.clone();
-            let yarn_worktree = lsp_store
-                .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
-                    Some(local_lsp_store) => local_lsp_store.yarn.update(cx, |_, cx| {
-                        cx.spawn(async move |this, cx| {
-                            let task = this
-                                .update(cx, |this, cx| {
-                                    this.process_path(&path, &current_scheme, cx)
-                                })
-                                .ok()?;
-                            task.await
-                        })
-                    }),
-                    None => Task::ready(None),
-                })?
-                .await;
-            let worktree_root_target = if let Some((zip_root, _)) = yarn_worktree {
-                zip_root
-            } else {
-                Arc::<Path>::from(abs_path.as_path())
-            };
-
-            lsp_store.update(cx, |lsp_store, cx| {
-                Ok(lsp_store
-                    .worktree_store
-                    .read(cx)
-                    .find_worktree(&worktree_root_target, cx)
-                    .is_some_and(|(worktree, _)| {
-                        let worktree = worktree.read(cx);
-                        worktree.is_visible() && !worktree.is_single_file()
-                    }))
-            })?
-        })
-    }
-
     pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         abs_path: lsp::Uri,
@@ -9370,7 +9324,6 @@ impl LspStore {
                 )
                 .await?;
             }
-
             Request::GetDeclaration(get_declaration) => {
                 let position = get_declaration
                     .position
@@ -9403,7 +9356,6 @@ impl LspStore {
                 )
                 .await?;
             }
-
             Request::GetImplementation(get_implementation) => {
                 let position = get_implementation
                     .position

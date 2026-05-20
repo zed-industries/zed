@@ -607,7 +607,7 @@ fn process_definition(location: LocationLink, cx: &mut AsyncApp) -> Option<Cache
         }
 
         Some(CachedDefinition {
-            path: path.clone(),
+            path,
             buffer: buffer.clone(),
             anchor_range,
         })

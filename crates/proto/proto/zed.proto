@@ -484,8 +484,7 @@ message Envelope {
     SearchCommits search_commits = 449;
     SearchCommitsResponse search_commits_response = 450;
     GetInitialGraphData get_initial_graph_data = 451;
-    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
-    // current max: 456
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452; // current max
   }
 
   reserved 87 to 88;

@@ -1195,11 +1195,20 @@ pub async fn location_links_from_lsp(
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
         if workspace_only
-            && !lsp_store
-                .update(&mut cx, |this, cx| {
-                    this.is_lsp_uri_in_existing_non_single_file_worktree(target_uri.clone(), cx)
-                })
-                .await?
+            && !lsp_store.update(&mut cx, |this, cx| {
+                use util::paths::UrlExt as _;
+                let worktree_store = this.worktree_store().read(cx);
+                let path_style = worktree_store.path_style();
+                let Ok(abs_path) = target_uri.clone().to_file_path_ext(path_style) else {
+                    return false;
+                };
+                worktree_store
+                    .find_worktree(&abs_path, cx)
+                    .is_some_and(|(worktree, _)| {
+                        let worktree = worktree.read(cx);
+                        worktree.is_visible() && !worktree.is_single_file()
+                    })
+            })
         {
             continue;
         }

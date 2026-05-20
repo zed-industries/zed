@@ -37,7 +37,6 @@ message GetTypeDefinition {
 message GetTypeDefinitionResponse {
   repeated LocationLink links = 1;
 }
-
 message GetImplementation {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
@@ -75,7 +74,6 @@ message LocationLink {
   optional Location origin = 1;
   Location target = 2;
 }
-
 
 message DocumentHighlight {
   Kind kind = 1;
