@@ -1,3 +1,4 @@
+use gpui::{BackgroundExecutor, Task};
 use notify::{Event, EventKind};
 use parking_lot::Mutex;
 use std::{
@@ -19,29 +20,66 @@ pub enum WatcherMode {
 }
 
 pub struct FsWatcher {
+    executor: BackgroundExecutor,
     tx: async_channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-    registrations: Mutex<BTreeMap<Arc<std::path::Path>, WatcherRegistrationId>>,
+    registrations: Arc<Mutex<BTreeMap<Arc<std::path::Path>, FsWatcherRegistration>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<std::path::Path>, Task<()>>>>,
+}
+
+#[derive(Clone, Copy)]
+struct FsWatcherRegistration {
+    id: WatcherRegistrationId,
     mode: WatcherMode,
 }
 
 impl FsWatcher {
     pub fn new(
+        executor: BackgroundExecutor,
         tx: async_channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
-        mode: WatcherMode,
     ) -> Self {
         Self {
+            executor,
             tx,
             pending_path_events,
             registrations: Default::default(),
-            mode,
+            pending_registrations: Default::default(),
         }
+    }
+
+    fn add_existing_path(&self, path: Arc<Path>) -> anyhow::Result<()> {
+        let registration_path = path.clone();
+        let registration =
+            register_existing_path(path, self.tx.clone(), self.pending_path_events.clone())?;
+        self.registrations
+            .lock()
+            .insert(registration_path, registration);
+        Ok(())
+    }
+
+    fn add_pending_path(&self, path: Arc<Path>) {
+        let mut pending_registrations = self.pending_registrations.lock();
+        if pending_registrations.contains_key(path.as_ref()) {
+            return;
+        }
+
+        let task = self.executor.spawn(poll_path_until_created(
+            self.executor.clone(),
+            path.clone(),
+            self.tx.clone(),
+            self.pending_path_events.clone(),
+            self.registrations.clone(),
+            self.pending_registrations.clone(),
+        ));
+        pending_registrations.insert(path, task);
     }
 }
 
 impl Drop for FsWatcher {
     fn drop(&mut self) {
+        self.pending_registrations.lock().clear();
+
         let mut registrations = BTreeMap::new();
         {
             let old = &mut self.registrations.lock();
@@ -50,7 +88,7 @@ impl Drop for FsWatcher {
 
         let global_watcher = global_watcher();
         for (_, registration) in registrations {
-            global_watcher.remove(registration);
+            global_watcher.remove(registration.id);
         }
     }
 }
@@ -58,56 +96,284 @@ impl Drop for FsWatcher {
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("watcher add: {path:?}");
-        let tx = self.tx.clone();
-        let pending_path_events = self.pending_path_events.clone();
 
-        if (self.mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
-            && let Some((watched_path, _)) = self
-                .registrations
-                .lock()
-                .range::<std::path::Path, _>((
-                    std::ops::Bound::Unbounded,
-                    std::ops::Bound::Included(path),
-                ))
-                .next_back()
-            && path.starts_with(watched_path.as_ref())
-        {
-            log::trace!(
-                "path to watch is covered by existing registration: {path:?}, {watched_path:?}"
-            );
+        let (path_is_covered_by_recursive_registration, path_is_already_watched) = {
+            let registrations = self.registrations.lock();
+            (
+                path.ancestors().skip(1).any(|ancestor| {
+                    registrations.get(ancestor).is_some_and(|registration| {
+                        registration.mode == WatcherMode::Poll
+                            || cfg!(any(target_os = "windows", target_os = "macos"))
+                    })
+                }),
+                registrations.contains_key(path),
+            )
+        };
+
+        if path_is_covered_by_recursive_registration {
+            log::trace!("path to watch is covered by existing registration: {path:?}");
             return Ok(());
         }
 
-        if self.registrations.lock().contains_key(path) {
+        if path_is_already_watched {
             log::trace!("path to watch is already watched: {path:?}");
             return Ok(());
         }
 
-        let root_path = SanitizedPath::new_arc(path);
+        if self.pending_registrations.lock().contains_key(path) {
+            log::trace!("path to watch is already pending: {path:?}");
+            return Ok(());
+        }
+
         let path: Arc<std::path::Path> = path.into();
+        if std::fs::symlink_metadata(path.as_ref()).is_err() {
+            self.add_pending_path(path);
+            return Ok(());
+        }
 
-        let registration_path = path.clone();
-        let registration_id =
-            global_watcher().add(path.clone(), self.mode, move |event: &notify::Event| {
-                log::trace!("watcher received event: {event:?}");
-                push_notify_event(&tx, &pending_path_events, &root_path, path.as_ref(), event);
-            })?;
-
-        self.registrations
-            .lock()
-            .insert(registration_path, registration_id);
-
-        Ok(())
+        self.add_existing_path(path)
     }
 
     fn remove(&self, path: &std::path::Path) -> anyhow::Result<()> {
         log::trace!("remove watched path: {path:?}");
+        self.pending_registrations.lock().remove(path);
+
         let Some(registration) = self.registrations.lock().remove(path) else {
             return Ok(());
         };
 
-        global_watcher().remove(registration);
+        global_watcher().remove(registration.id);
         Ok(())
+    }
+}
+
+/// Detect whether a path requires polling instead of native file watching.
+///
+/// Returns `true` for filesystem types where inotify/FSEvents/ReadDirectoryChanges
+/// silently fail to deliver events: 9P (WSL drvfs), NFS, CIFS/SMB, FUSE (sshfs), etc.
+///
+/// Can be overridden with the `ZED_FILE_WATCHER_MODE` environment variable:
+/// - `native` — always use native OS watcher
+/// - `poll` — always use polling
+/// - `auto` (default) — auto-detect based on filesystem type
+pub fn requires_poll_watcher(path: &Path) -> bool {
+    match std::env::var("ZED_FILE_WATCHER_MODE")
+        .as_deref()
+        .unwrap_or("auto")
+    {
+        "native" => return false,
+        "poll" => return true,
+        _ => {}
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        return detect_requires_poll_watcher_linux(path);
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        false
+    }
+}
+
+fn register_existing_path(
+    path: Arc<Path>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+) -> anyhow::Result<FsWatcherRegistration> {
+    let mode = if requires_poll_watcher(path.as_ref()) {
+        log::info!(
+            "Using poll watcher ({}ms interval) for {}",
+            poll_interval().as_millis(),
+            path.display()
+        );
+        telemetry::event!("fs_watcher_poll", path = path.display().to_string());
+        WatcherMode::Poll
+    } else {
+        WatcherMode::Native
+    };
+    let root_path = SanitizedPath::new_arc(path.as_ref());
+    let path_for_callback = path.clone();
+    let registration_id = global_watcher().add(path, mode, move |event: &notify::Event| {
+        log::trace!("watcher received event: {event:?}");
+        push_notify_event(
+            &tx,
+            &pending_path_events,
+            &root_path,
+            path_for_callback.as_ref(),
+            event,
+        );
+    })?;
+    Ok(FsWatcherRegistration {
+        id: registration_id,
+        mode,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn detect_requires_poll_watcher_linux(path: &Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = match CString::new(path.as_os_str().as_bytes()) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+
+    let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return false;
+    }
+
+    const V9FS_MAGIC: u64 = 0x0102_1997;
+    const NFS_SUPER_MAGIC: u64 = 0x0000_6969;
+    const CIFS_MAGIC: u64 = 0xFF53_4D42;
+    const SMB_SUPER_MAGIC: u64 = 0x0000_517B;
+    const SMB2_MAGIC: u64 = 0xFE53_4D42;
+    const FUSE_SUPER_MAGIC: u64 = 0x6573_5546;
+
+    let fs_type = (stat.f_type as u64) & 0xFFFF_FFFF;
+    if fs_type == FUSE_SUPER_MAGIC && is_virtiofs(path) {
+        return false;
+    }
+
+    if fs_type == V9FS_MAGIC
+        || fs_type == NFS_SUPER_MAGIC
+        || fs_type == CIFS_MAGIC
+        || fs_type == SMB_SUPER_MAGIC
+        || fs_type == SMB2_MAGIC
+        || fs_type == FUSE_SUPER_MAGIC
+    {
+        log::info!(
+            "Detected network/virtual filesystem (type 0x{:x}) at {}, using poll watcher",
+            fs_type,
+            path.display()
+        );
+        return true;
+    }
+
+    if is_wsl_drvfs_path(path) {
+        log::info!(
+            "Detected WSL drvfs mount at {}, using poll watcher",
+            path.display()
+        );
+        return true;
+    }
+
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn is_virtiofs(path: &Path) -> bool {
+    let Ok(mountinfo) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+
+    let mut best_mount = None;
+    for line in mountinfo.lines() {
+        let fields = line.split(' ').collect::<Vec<_>>();
+        let Some(separator) = fields.iter().position(|field| *field == "-") else {
+            continue;
+        };
+        let (Some(mount_point), Some(fs_type)) = (fields.get(4), fields.get(separator + 1)) else {
+            continue;
+        };
+
+        let mount_point = mount_point
+            .replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\");
+        if path.starts_with(&mount_point)
+            && best_mount.is_none_or(|(length, _)| mount_point.len() > length)
+        {
+            best_mount = Some((mount_point.len(), *fs_type));
+        }
+    }
+
+    best_mount.is_some_and(|(_, fs_type)| fs_type == "virtiofs" || fs_type == "fuse.virtiofs")
+}
+
+#[cfg(target_os = "linux")]
+fn is_wsl_drvfs_path(path: &Path) -> bool {
+    if std::env::var_os("WSL_DISTRO_NAME").is_none() {
+        if let Ok(version) = std::fs::read_to_string("/proc/version") {
+            let version = version.to_lowercase();
+            if !version.contains("microsoft") && !version.contains("wsl") {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    if !path.starts_with("/mnt/") || path.len() < 6 {
+        return false;
+    }
+    let after_mnt = &path[5..];
+    after_mnt.starts_with(|c: char| c.is_ascii_alphabetic())
+        && (after_mnt.len() == 1 || after_mnt.as_bytes()[1] == b'/')
+}
+
+async fn poll_path_until_created(
+    executor: BackgroundExecutor,
+    path: Arc<Path>,
+    tx: async_channel::Sender<()>,
+    pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
+    registrations: Arc<Mutex<BTreeMap<Arc<Path>, FsWatcherRegistration>>>,
+    pending_registrations: Arc<Mutex<HashMap<Arc<Path>, Task<()>>>>,
+) {
+    loop {
+        executor.timer(poll_interval()).await;
+
+        if !pending_registrations.lock().contains_key(path.as_ref()) {
+            return;
+        }
+
+        if smol::fs::symlink_metadata(path.as_ref()).await.is_err() {
+            continue;
+        }
+
+        if registrations.lock().contains_key(path.as_ref()) {
+            pending_registrations.lock().remove(path.as_ref());
+            return;
+        }
+
+        match register_existing_path(path.clone(), tx.clone(), pending_path_events.clone()) {
+            Ok(registration) => {
+                {
+                    let mut pending_registrations = pending_registrations.lock();
+                    if pending_registrations.remove(path.as_ref()).is_none() {
+                        global_watcher().remove(registration.id);
+                        return;
+                    }
+                    registrations.lock().insert(path.clone(), registration);
+                }
+                enqueue_path_events(
+                    &tx,
+                    &pending_path_events,
+                    vec![
+                        PathEvent {
+                            path: path.to_path_buf(),
+                            kind: Some(PathEventKind::Created),
+                        },
+                        PathEvent {
+                            path: path.to_path_buf(),
+                            kind: Some(PathEventKind::Rescan),
+                        },
+                    ],
+                );
+                return;
+            }
+            Err(error) => {
+                log::warn!("failed to watch newly-created path {path:?}: {error}; retrying");
+            }
+        }
     }
 }
 
@@ -164,7 +430,7 @@ fn push_notify_event(
             kind: Some(PathEventKind::Rescan),
         });
     }
-
+    log::trace!("path_events: {:?}", path_events);
     enqueue_path_events(tx, pending_path_events, path_events);
 }
 
@@ -417,9 +683,10 @@ fn path_already_covered(
     mode: WatcherMode,
 ) -> bool {
     (mode == WatcherMode::Poll || cfg!(any(target_os = "windows", target_os = "macos")))
-        && path_registrations
-            .keys()
-            .any(|existing| path.starts_with(existing.as_ref()) && path != existing.as_ref())
+        && path
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| path_registrations.contains_key(ancestor))
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
