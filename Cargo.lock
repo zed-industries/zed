@@ -8840,6 +8840,7 @@ dependencies = [
  "gpui",
  "language",
  "log",
+ "menu",
  "project",
  "serde",
  "settings",
