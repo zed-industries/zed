@@ -36,7 +36,7 @@ Initial build landed; six followups remain.
 - [x] A3 — per-section diff stats
 - [x] A4 — `select_entry_by_path` sticky + filter-aware + `preferred_section`
 - [x] A5 — click → filter switch coupling
-- [ ] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
+- [x] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
 - [ ] A7 — section-header body click opens matching per-base `ProjectDiff`
 
 ## Followups (detailed checklists)
@@ -292,34 +292,66 @@ open-diff API.
 **Dependency:** A4 (the click handler is the same place that passes
 `preferred_section` to `select_entry_by_path`).
 
-### A6 — "Sort by" submenu replaces "Group by" toggle (M4)
+### A6 — "Sort by" submenu replaces "Group by" toggle (M4) — DONE
 
 User story: 16 (revised). PRD: M4 "Menu surfacing", appendix A6.
 
-- [ ] Define `SortBy { Status, Path, Staging }` enum (action arg)
-- [ ] Add parameterized action `git_panel::SetSortBy { mode: SortBy }` with a
-      handler that maps to `(group_by, sort_by_path)`:
+- [x] Defined `SortBy { Status, Path, Staging }` enum.
+- [x] Added parameterized action `git_panel::SetSortBy { mode: SortBy }`
+      with a handler that maps to `(group_by, sort_by_path)`:
       - `Status → (Status, false)`
       - `Path → (Status, true)`
-      - `Staging → (Staging, *)` (leave sort_by_path as-is)
-- [ ] Remove the `ToggleGroupBy` action declaration and its handler
-- [ ] Remove the `ToggleSortByPath` action declaration and its handler
-      (or keep the action as an alias that dispatches `SetSortBy` —
-      decide during implementation)
-- [ ] Update the panel kebab menu (`git_panel_context_menu`,
-      `crates/git_ui/src/git_panel.rs:187-258`):
-      - Remove the standalone "Group by …" entry
-      - Replace the "Sort by …" toggle with a submenu containing three
-        radio items dispatching `SetSortBy(Status|Path|Staging)`
-      - Show the active option inline on the parent (e.g.
-        `Sort by: Status ▸`)
-      - Disable "By Path" with a tooltip when Tree View is active
-- [ ] Remove the standalone keybindings (if any) for `ToggleGroupBy` and
-      `ToggleSortByPath`
-- [ ] Update `settings_ui/src/page_data.rs` references to the actions
-- [ ] Test: dispatching each `SetSortBy(mode)` updates both settings as
-      expected; menu rendering shows the active radio + disables Path in
-      tree mode
+      - `Staging → (Staging, *)` (sort_by_path left as-is)
+- [x] Removed the `ToggleGroupBy` action declaration, handler, and
+      `on_action` wiring. Chose to drop entirely rather than alias — no
+      default keybinding referenced it, and aliasing would have required
+      a translation that can't preserve the toggle semantics anyway.
+- [x] Removed the `ToggleSortByPath` action declaration, handler, and
+      `on_action` wiring (same rationale).
+- [x] Updated the panel kebab menu (`git_panel_context_menu`,
+      `crates/git_ui/src/git_panel.rs`):
+      - Removed the standalone "Group by …" and "Sort by …" toggle entries.
+      - Added a `.submenu(sort_by_submenu_label(group_by, sort_by_path),
+        …)` whose builder pushes three `ContextMenuEntry`s (By Status / By
+        Path / By Staging) each `.toggleable(IconPosition::Start, …)` with
+        the active radio set from `current_sort_by(group_by,
+        sort_by_path)` and dispatching `SetSortBy { mode }`.
+      - Parent label renders the active option inline (e.g. `Sort by:
+        Status`).
+      - "By Path" is `.disabled(true)` when `tree_view` is on. No tooltip
+        is attached — `ContextMenuEntry` does not currently expose a
+        tooltip API and `documentation_aside` would be visually heavy
+        for a one-line hint. The greyed-out item next to the active Tree
+        View toggle is self-explanatory. Revisit if the team wants the
+        explanatory hint.
+- [x] No legacy keybindings to remove — searched
+      `assets/keymaps/default-*.json` and neither `git_panel::ToggleGroupBy`
+      nor `git_panel::ToggleSortByPath` is bound.
+- [x] No `settings_ui/src/page_data.rs` changes needed — that file
+      references the underlying settings fields (`git_panel.sort_by_path`,
+      `git_panel.group_by`) via `SettingField`, not the action names. The
+      action removal is invisible to the settings page.
+- [x] Tests in `crates/git_ui/src/git_panel.rs`:
+      - `test_set_sort_by_status_writes_status_grouping_and_clears_path_sort`
+      - `test_set_sort_by_path_writes_status_grouping_and_enables_path_sort`
+      - `test_set_sort_by_staging_preserves_existing_sort_by_path`
+        (verifies the `Staging → (Staging, *)` "leave sort_by_path
+        as-is" requirement by going through the file-backed write path
+        twice — `SetSortBy(Path)` then `SetSortBy(Staging)` — and
+        asserting `sort_by_path == true` survives).
+      - `test_current_sort_by_maps_settings_to_radio_state` (pure
+        helper covering all four `(group_by, sort_by_path)` quadrants,
+        including the "Staging dominates sort_by_path" rule).
+      - `test_sort_by_submenu_label_reflects_current_sort_mode` (pure
+        helper covering the inline `Sort by: <mode>` parent-label
+        format for all four quadrants).
+      Menu render assertion against the live `ContextMenu` items is
+      not done — `ContextMenu::items` is private to the `ui` crate and
+      adding a public accessor felt disproportionate. The pure-helper
+      tests cover the "active option" and "Path-disabled-in-tree-mode"
+      logic that drives rendering, and the existing
+      `test_toggle_group_by_updates_git_panel_setting` was deleted
+      (the three SetSortBy tests subsume its coverage).
 
 ### A7 — Section-header body click opens matching per-base ProjectDiff (M5)
 

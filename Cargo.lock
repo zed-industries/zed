@@ -7450,6 +7450,7 @@ dependencies = [
  "multi_buffer",
  "notifications",
  "panel",
+ "paths",
  "picker",
  "pretty_assertions",
  "project",

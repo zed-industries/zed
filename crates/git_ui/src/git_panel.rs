@@ -76,9 +76,9 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, KeyBinding,
-    PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
-    TintColor, Tooltip, WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
+    IndentGuideColors, KeyBinding, PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes,
+    Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -114,10 +114,6 @@ actions!(
         LastEntry,
         /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
-        /// Toggles sorting entries by path vs status.
-        ToggleSortByPath,
-        /// Toggles grouping entries by status vs staging state.
-        ToggleGroupBy,
         /// Toggles showing entries in tree vs flat view.
         ToggleTreeView,
         /// Expands the selected entry to show its children.
@@ -152,6 +148,31 @@ actions!(
 #[action(namespace = git_graph)]
 pub struct OpenAtCommit {
     pub sha: String,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SortBy {
+    Status,
+    Path,
+    Staging,
+}
+
+/// Sets how entries are sorted/grouped in the git panel.
+#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = git_panel)]
+pub struct SetSortBy {
+    pub mode: SortBy,
+}
+
+fn current_sort_by(group_by: GitPanelGroupBy, sort_by_path: bool) -> SortBy {
+    match group_by {
+        GitPanelGroupBy::Staging => SortBy::Staging,
+        GitPanelGroupBy::Status if sort_by_path => SortBy::Path,
+        GitPanelGroupBy::Status => SortBy::Status,
+    }
 }
 
 fn prompt<T>(
@@ -235,27 +256,55 @@ fn git_panel_context_menu(
                 Some(Box::new(ToggleTreeView)),
                 move |window, cx| window.dispatch_action(Box::new(ToggleTreeView), cx),
             )
-            .entry(
-                if state.group_by == GitPanelGroupBy::Staging {
-                    "Group by Status"
-                } else {
-                    "Group by Staging"
+            .submenu(
+                sort_by_submenu_label(state.group_by, state.sort_by_path),
+                {
+                    let group_by = state.group_by;
+                    let sort_by_path = state.sort_by_path;
+                    let tree_view = state.tree_view;
+                    move |menu, _, _| {
+                        let current = current_sort_by(group_by, sort_by_path);
+                        menu.item(sort_by_menu_entry("By Status", SortBy::Status, current, false))
+                            .item(sort_by_menu_entry(
+                                "By Path",
+                                SortBy::Path,
+                                current,
+                                tree_view,
+                            ))
+                            .item(sort_by_menu_entry(
+                                "By Staging",
+                                SortBy::Staging,
+                                current,
+                                false,
+                            ))
+                    }
                 },
-                Some(Box::new(ToggleGroupBy)),
-                move |window, cx| window.dispatch_action(Box::new(ToggleGroupBy), cx),
             )
-            .when(!state.tree_view, |this| {
-                this.entry(
-                    if state.sort_by_path {
-                        "Sort by Status"
-                    } else {
-                        "Sort by Path"
-                    },
-                    Some(Box::new(ToggleSortByPath)),
-                    move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
-                )
-            })
     })
+}
+
+fn sort_by_submenu_label(group_by: GitPanelGroupBy, sort_by_path: bool) -> SharedString {
+    let name = match current_sort_by(group_by, sort_by_path) {
+        SortBy::Status => "Status",
+        SortBy::Path => "Path",
+        SortBy::Staging => "Staging",
+    };
+    format!("Sort by: {name}").into()
+}
+
+fn sort_by_menu_entry(
+    label: &'static str,
+    mode: SortBy,
+    current: SortBy,
+    disabled: bool,
+) -> ContextMenuEntry {
+    let action = Box::new(SetSortBy { mode });
+    let dispatched = action.boxed_clone();
+    ContextMenuEntry::new(label)
+        .toggleable(IconPosition::Start, current == mode)
+        .action(action)
+        .handler(move |window, cx| window.dispatch_action(dispatched.boxed_clone(), cx))
+        .disabled(disabled)
 }
 
 const GIT_PANEL_KEY: &str = "GitPanel";
@@ -3805,40 +3854,36 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn toggle_sort_by_path(
-        &mut self,
-        _: &ToggleSortByPath,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let current_setting = GitPanelSettings::get_global(cx).sort_by_path;
-        if let Some(workspace) = self.workspace.upgrade() {
-            let workspace = workspace.read(cx);
-            let fs = workspace.app_state().fs.clone();
-            cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.update_settings_file(fs, move |settings, _cx| {
-                    settings.git_panel.get_or_insert_default().sort_by_path =
-                        Some(!current_setting);
-                });
-            });
+    fn set_sort_by(&mut self, action: &SetSortBy, _: &mut Window, cx: &mut Context<Self>) {
+        let settings = GitPanelSettings::get_global(cx);
+        if current_sort_by(settings.group_by, settings.sort_by_path) == action.mode {
+            return;
         }
-    }
-
-    fn toggle_group_by(&mut self, _: &ToggleGroupBy, _: &mut Window, cx: &mut Context<Self>) {
-        let current_setting = GitPanelSettings::get_global(cx).group_by;
-        let next_setting = match current_setting {
-            GitPanelGroupBy::Status => GitPanelGroupBy::Staging,
-            GitPanelGroupBy::Staging => GitPanelGroupBy::Status,
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
         };
-        if let Some(workspace) = self.workspace.upgrade() {
-            let workspace = workspace.read(cx);
-            let fs = workspace.app_state().fs.clone();
-            cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.update_settings_file(fs, move |settings, _cx| {
-                    settings.git_panel.get_or_insert_default().group_by = Some(next_setting);
-                });
+        let fs = workspace.read(cx).app_state().fs.clone();
+        let mode = action.mode;
+        cx.update_global::<SettingsStore, _>(|store, _cx| {
+            store.update_settings_file(fs, move |settings, _cx| {
+                let git_panel = settings.git_panel.get_or_insert_default();
+                match mode {
+                    SortBy::Status => {
+                        git_panel.group_by = Some(GitPanelGroupBy::Status);
+                        git_panel.sort_by_path = Some(false);
+                    }
+                    SortBy::Path => {
+                        git_panel.group_by = Some(GitPanelGroupBy::Status);
+                        git_panel.sort_by_path = Some(true);
+                    }
+                    SortBy::Staging => {
+                        git_panel.group_by = Some(GitPanelGroupBy::Staging);
+                        // Leave sort_by_path as-is; staging-grouped mode is
+                        // independent of the flat sort.
+                    }
+                }
             });
-        }
+        });
     }
 
     fn toggle_tree_view(&mut self, _: &ToggleTreeView, _: &mut Window, cx: &mut Context<Self>) {
@@ -7202,8 +7247,7 @@ impl Render for GitPanel {
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
-            .on_action(cx.listener(Self::toggle_sort_by_path))
-            .on_action(cx.listener(Self::toggle_group_by))
+            .on_action(cx.listener(Self::set_sort_by))
             .on_action(cx.listener(Self::toggle_tree_view))
             .on_action(cx.listener(Self::activate_changes_tab))
             .on_action(cx.listener(Self::activate_history_tab))
@@ -10325,7 +10369,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_group_by_updates_git_panel_setting(cx: &mut TestAppContext) {
+    async fn test_set_sort_by_status_writes_status_grouping_and_clears_path_sort(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
@@ -10347,32 +10393,259 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
         let panel = workspace.update_in(cx, GitPanel::new);
 
-        panel.update_in(cx, |panel, window, cx| {
-            assert_eq!(
-                GitPanelSettings::get_global(cx).group_by,
-                GitPanelGroupBy::Status
-            );
-
-            panel.toggle_group_by(&ToggleGroupBy, window, cx);
+        // Force a non-default starting state so the action has visible effect.
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.group_by = Some(GitPanelGroupBy::Staging);
+                    git_panel.sort_by_path = Some(true);
+                })
+            });
         });
-        cx.run_until_parked();
 
         panel.update_in(cx, |panel, window, cx| {
-            assert_eq!(
-                GitPanelSettings::get_global(cx).group_by,
-                GitPanelGroupBy::Staging
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Status,
+                },
+                window,
+                cx,
             );
-
-            panel.toggle_group_by(&ToggleGroupBy, window, cx);
         });
         cx.run_until_parked();
 
         panel.update(cx, |_, cx| {
-            assert_eq!(
-                GitPanelSettings::get_global(cx).group_by,
-                GitPanelGroupBy::Status
+            let settings = GitPanelSettings::get_global(cx);
+            assert_eq!(settings.group_by, GitPanelGroupBy::Status);
+            assert!(!settings.sort_by_path);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_sort_by_path_writes_status_grouping_and_enables_path_sort(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        // Start from staging-grouped + sort-by-status, so the action has
+        // to flip both fields, not just one.
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.group_by = Some(GitPanelGroupBy::Staging);
+                    git_panel.sort_by_path = Some(false);
+                })
+            });
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Path,
+                },
+                window,
+                cx,
             );
         });
+        cx.run_until_parked();
+
+        panel.update(cx, |_, cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert_eq!(settings.group_by, GitPanelGroupBy::Status);
+            assert!(settings.sort_by_path);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_sort_by_staging_preserves_existing_sort_by_path(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        // First land on "Path" (Status + sort_by_path=true) by going through
+        // the same file-backed write path the production action uses, then
+        // flip to "Staging". The PRD requires sort_by_path to be left as-is
+        // so the user's flat-sort preference is not silently discarded.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Path,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.update(cx, |_, cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert_eq!(settings.group_by, GitPanelGroupBy::Status);
+            assert!(settings.sort_by_path);
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Staging,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        panel.update(cx, |_, cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert_eq!(settings.group_by, GitPanelGroupBy::Staging);
+            assert!(settings.sort_by_path);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_sort_by_is_a_noop_when_already_at_target_mode(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        // Land on (Status, sort_by_path=true) = Path mode through the same
+        // file-backed path the production action uses.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Path,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // Re-applying Path while already on Path must not rewrite the
+        // settings file, because the resulting (group_by, sort_by_path)
+        // pair is identical and we'd otherwise fire settings observers
+        // on every click of the active radio.
+        let settings_path = ::paths::settings_file().as_path();
+        let writes_before = fs.write_count_for_path(settings_path);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.set_sort_by(
+                &SetSortBy {
+                    mode: SortBy::Path,
+                },
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let writes_after = fs.write_count_for_path(settings_path);
+        assert_eq!(
+            writes_before, writes_after,
+            "re-selecting the already-active sort mode must not rewrite the settings file"
+        );
+    }
+
+    #[test]
+    fn test_sort_by_submenu_label_reflects_current_sort_mode() {
+        assert_eq!(
+            sort_by_submenu_label(GitPanelGroupBy::Status, false).as_ref(),
+            "Sort by: Status"
+        );
+        assert_eq!(
+            sort_by_submenu_label(GitPanelGroupBy::Status, true).as_ref(),
+            "Sort by: Path"
+        );
+        assert_eq!(
+            sort_by_submenu_label(GitPanelGroupBy::Staging, false).as_ref(),
+            "Sort by: Staging"
+        );
+        // Staging-grouped + sort_by_path=true still surfaces as "Staging" —
+        // the grouping mode dominates the inline indicator.
+        assert_eq!(
+            sort_by_submenu_label(GitPanelGroupBy::Staging, true).as_ref(),
+            "Sort by: Staging"
+        );
+    }
+
+    #[test]
+    fn test_current_sort_by_maps_settings_to_radio_state() {
+        // Status-grouped, path sort off → "Status" radio.
+        assert_eq!(
+            current_sort_by(GitPanelGroupBy::Status, false),
+            SortBy::Status
+        );
+        // Status-grouped, path sort on → "Path" radio.
+        assert_eq!(current_sort_by(GitPanelGroupBy::Status, true), SortBy::Path);
+        // Staging-grouped, path sort off → "Staging" radio.
+        assert_eq!(
+            current_sort_by(GitPanelGroupBy::Staging, false),
+            SortBy::Staging
+        );
+        // Staging-grouped, path sort on → still "Staging". The flat sort
+        // preference is preserved but staging-grouped mode dominates.
+        assert_eq!(
+            current_sort_by(GitPanelGroupBy::Staging, true),
+            SortBy::Staging
+        );
     }
 
     #[gpui::test]
