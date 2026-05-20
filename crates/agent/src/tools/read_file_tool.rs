@@ -614,6 +614,131 @@ mod test {
         );
     }
 
+    // The outline returned for a large file is not valid source for the file's
+    // language, so the UI-side markdown wrapping must omit the path tag.
+    // Otherwise the markdown renderer routes the fenced block through
+    // `CodeBlockKind::FencedSrc`, resolves the file's language, and runs
+    // tree-sitter against pseudo-code outline text on every paint.
+    #[gpui::test]
+    async fn test_outline_response_uses_untagged_code_block(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "large_file.rs": (0..1000).map(|i| format!("struct Test{} {{\n    a: u32,\n    b: usize,\n}}", i)).collect::<Vec<_>>().join("\n")
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(language::rust_lang());
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, mut rx) = ToolCallEventStream::test();
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/large_file.rs".into(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.clone()
+                    .run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await
+            .unwrap();
+
+        // Sanity-check: the file is large enough to trigger the outline branch.
+        assert!(
+            result
+                .to_str()
+                .unwrap()
+                .starts_with("SUCCESS: File outline retrieved."),
+            "expected outline response, got: {:?}",
+            result.to_str().unwrap()
+        );
+
+        // The first update carries the location; the second carries the
+        // markdown content destined for the tool-call UI.
+        let _location_update = rx.expect_update_fields().await;
+        let content_update = rx.expect_update_fields().await;
+        let content_blocks = content_update.content.expect("expected content update");
+        let acp::ToolCallContent::Content(content) = content_blocks
+            .first()
+            .expect("expected at least one content block")
+        else {
+            panic!("expected ContentBlock, got {:?}", content_blocks.first());
+        };
+        let acp::ContentBlock::Text(text) = &content.content else {
+            panic!("expected text content block, got {:?}", content.content);
+        };
+
+        assert!(
+            text.text.starts_with("```\n"),
+            "outline response must use an untagged fenced code block; got first line: {:?}",
+            text.text.lines().next()
+        );
+        assert!(
+            !text.text.starts_with("```root/"),
+            "outline response must not include the file path as a code block tag"
+        );
+    }
+
+    // The full-file (non-outline) response should still tag the code block
+    // with the file path so the markdown renderer can resolve the file's
+    // language for syntax highlighting.
+    #[gpui::test]
+    async fn test_full_file_response_keeps_path_tag(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "small_file.rs": "fn main() {}"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, mut rx) = ToolCallEventStream::test();
+
+        cx.update(|cx| {
+            let input = ReadFileToolInput {
+                path: "root/small_file.rs".into(),
+                start_line: None,
+                end_line: None,
+            };
+            tool.clone()
+                .run(ToolInput::resolved(input), event_stream, cx)
+        })
+        .await
+        .unwrap();
+
+        let _location_update = rx.expect_update_fields().await;
+        let content_update = rx.expect_update_fields().await;
+        let content_blocks = content_update.content.expect("expected content update");
+        let acp::ToolCallContent::Content(content) = content_blocks
+            .first()
+            .expect("expected at least one content block")
+        else {
+            panic!("expected ContentBlock, got {:?}", content_blocks.first());
+        };
+        let acp::ContentBlock::Text(text) = &content.content else {
+            panic!("expected text content block, got {:?}", content.content);
+        };
+
+        assert!(
+            text.text.starts_with("```root/small_file.rs\n"),
+            "full-file response must tag the code block with the file path; got first line: {:?}",
+            text.text.lines().next()
+        );
+    }
+
     // When a worktree is named "foo" and contains a subdirectory also named "foo",
     // read_file({"path": "foo/test.txt"}) should return the file at the worktree
     // root (as the tool schema promises), not the one inside the foo/ subdirectory.
