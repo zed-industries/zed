@@ -471,6 +471,8 @@ pub enum Model {
     Gemini3Flash,
     #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
     Gemini31Pro,
+    #[serde(rename = "gemini-3.5-flash")]
+    Gemini35Flash,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -495,6 +497,7 @@ impl Model {
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
+            Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Custom { name, .. } => name,
         }
     }
@@ -506,6 +509,7 @@ impl Model {
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
+            Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Custom { name, .. } => name,
         }
     }
@@ -518,6 +522,7 @@ impl Model {
             Self::Gemini31FlashLite => "Gemini 3.1 Flash Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Gemini31Pro => "Gemini 3.1 Pro",
+            Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -531,6 +536,7 @@ impl Model {
             | Self::Gemini25Pro
             | Self::Gemini31FlashLite
             | Self::Gemini3Flash
+            | Self::Gemini35Flash
             | Self::Gemini31Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -543,6 +549,7 @@ impl Model {
             | Model::Gemini25Pro
             | Model::Gemini31FlashLite
             | Model::Gemini3Flash
+            | Model::Gemini35Flash
             | Model::Gemini31Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
@@ -566,6 +573,7 @@ impl Model {
                 }
             }
             Self::Gemini3Flash => GoogleModelMode::Default,
+            Self::Gemini35Flash => GoogleModelMode::Default,
             Self::Gemini31FlashLite => GoogleModelMode::Default,
             Self::Gemini31Pro => GoogleModelMode::Thinking {
                 budget_tokens: None,
