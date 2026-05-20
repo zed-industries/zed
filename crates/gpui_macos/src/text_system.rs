@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
@@ -282,6 +282,7 @@ impl MacTextSystemState {
         let name = gpui::font_name_with_fallbacks(name, ".AppleSystemUIFont");
 
         let mut font_ids = SmallVec::new();
+        let mut postscript_names_seen = HashSet::default();
         let family = self
             .memory_source
             .select_family_by_name(name)
@@ -355,6 +356,21 @@ impl MacTextSystemState {
                 );
                 continue;
             };
+            // Dedup is scoped to this single `load_family` call (issue #55472).
+            // The same family can be reloaded later under a different `FontKey`
+            // (different features/fallbacks); a global check against
+            // `font_ids_by_postscript_name` would skip every already-registered
+            // font and leave the second call's `font_ids` empty.
+            if !postscript_names_seen.insert(postscript_name.clone()) {
+                log::warn!(
+                    "skipping duplicate font {:?} with PostScript name {:?} \
+                     in family {:?}",
+                    font.full_name(),
+                    postscript_name,
+                    name,
+                );
+                continue;
+            }
             let font_id = FontId(self.fonts.len());
             font_ids.push(font_id);
             self.font_ids_by_postscript_name
