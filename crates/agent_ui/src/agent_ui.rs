@@ -555,18 +555,6 @@ pub fn init(
         );
     })
     .detach();
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(
-            |workspace: &mut Workspace,
-             _: &zed_actions::agent::OpenRulesToSkillsMigrationInfo,
-             window: &mut Window,
-             cx: &mut Context<Workspace>| {
-                crate::ui::RulesToSkillsModal::toggle(workspace, window, cx);
-            },
-        );
-    })
-    .detach();
-
     cx.observe_new(ManageProfilesModal::register).detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
