@@ -215,7 +215,7 @@ impl Docker {
         command.args(&["pull", "--", image]);
 
         let output = command.output().await.map_err(|e| {
-            log::error!("Error pulling image: {e}");
+            log::warn!("Couldn't pull image. This may be expected if locally build. Error: {e}");
             DevContainerError::ResourceFetchFailed
         })?;
 
