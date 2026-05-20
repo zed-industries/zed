@@ -42,9 +42,12 @@ pub enum ExtensionProvides {
     Grammars,
     LanguageServers,
     ContextServers,
-    AgentServers,         // Deprecated
-    SlashCommands,        // Deprecated
-    IndexedDocsProviders, // Deprecated
+    /// Deprecated
+    AgentServers,
+    /// Deprecated
+    SlashCommands,
+    /// Deprecated
+    IndexedDocsProviders,
     Snippets,
     DebugAdapters,
 }
