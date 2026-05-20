@@ -27,18 +27,20 @@ See [Skill format](#skill-format) below for the full format reference.
 - [`frontend-design`](https://skills.sh/anthropics/skills/frontend-design): production-grade frontend interfaces with design polish
 - [`pdf`](https://skills.sh/anthropics/skills/pdf): PDF text extraction, merging, splitting, form filling, and OCR
 
-To install a skill from it, copy or clone its folder into your global or project-local skills folder.
+To install a skill, copy the skill's folder into `~/.agents/skills/` for global use, or into your project's `.agents/skills/` folder for project-local use.
 
-For example, to install the `frontend-design` skill from GitHub globally:
+## Managing Skills {#managing-skills}
 
-```sh
-cd ~/.agents/skills
-git clone --filter=blob:none --sparse https://github.com/anthropics/skills
-cd skills
-git sparse-checkout set frontend-design
-```
+Open the Settings Editor (`Cmd+,` on macOS, `Ctrl+,` on Linux/Windows) and navigate to **AI > Skills**, or go directly to [agent.skills](zed://settings/agent.skills).
 
-For a project-local install, do the same inside your project's `.agents/skills/` folder.
+The **User** tab shows your global skills. The **Project** tab shows skills for the current project.
+
+For each skill you can:
+
+- **Open** — opens the skill's `SKILL.md` file in the editor
+- **Delete** — removes the skill folder from disk
+
+If no skills are installed, the page shows a **Create a Skill** button that opens the Skill Creator.
 
 ## Managing Skills {#managing-skills}
 
