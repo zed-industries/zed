@@ -8,6 +8,7 @@ message GetDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
+  bool workspace_only = 5;
 }
 
 message GetDefinitionResponse {
@@ -30,6 +31,7 @@ message GetTypeDefinition {
   uint64 buffer_id = 2;
   Anchor position = 3;
   repeated VectorClockEntry version = 4;
+  bool workspace_only = 5;
 }
 
 message GetTypeDefinitionResponse {
