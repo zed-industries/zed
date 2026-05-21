@@ -936,8 +936,7 @@ impl HoverState {
     /// Diagnostic and text-symbol hovers anchor at the start of the hover range.
     /// For inlay-hint hovers, however, the buffer anchor alone always maps to the
     /// inlay's leading edge in display space, so the popover would pin to the start
-    /// of the inlay regardless of which character was hovered. Add the in-inlay
-    /// byte offset onto the inlay's start so the popover lands at the hovered position.
+    /// of the inlay regardless of which character was hovered.
     pub(crate) fn popover_anchor_display_point(
         &self,
         snapshot: &EditorSnapshot,
@@ -2235,7 +2234,7 @@ mod tests {
     /// `clip_point` skips through the lone source character with `Bias::Right`,
     /// so both hints fall inside the buffer-position window used to find a
     /// hovered hint. The hovered-offset filter must then disambiguate them by
-    /// the inlay text actually under the mouse.
+    /// checking which hint's inlay-offset range contains the mouse offset.
     #[gpui::test]
     async fn test_hover_inlay_picks_inlay_under_cursor(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
