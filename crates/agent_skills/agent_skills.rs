@@ -1,7 +1,8 @@
 use anyhow::{Context as _, Result};
-use const_format::concatcp;
+use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
+use gpui::{Global, SharedString};
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -157,6 +158,23 @@ impl SkillSource {
     }
 }
 
+/// App-wide index of loaded skills, published by NativeAgent and read
+/// by any UI that needs to display the skill list (e.g. Settings UI).
+#[derive(Default)]
+pub struct SkillIndex {
+    pub global_skills: Vec<Skill>,
+    pub project_skills: Vec<ProjectSkillGroup>,
+}
+
+#[derive(Clone)]
+pub struct ProjectSkillGroup {
+    pub worktree_id: SkillScopeId,
+    pub worktree_root_name: SharedString,
+    pub skills: Vec<Skill>,
+}
+
+impl Global for SkillIndex {}
+
 /// Just the frontmatter, used for parsing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillMetadata {
@@ -233,8 +251,8 @@ pub fn parse_skill_frontmatter(
 
     let (metadata, _body) = extract_frontmatter(content)?;
 
-    validate_name(&metadata.name)?;
-    validate_description(&metadata.description)?;
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
 
     let directory_path = skill_file_path
         .parent()
@@ -328,6 +346,14 @@ fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
 /// by [`validate_name`].
 pub const MAX_SKILL_NAME_LEN: usize = 64;
 
+/// Maximum length (in bytes) for a valid skill description. Mirrors the
+/// upper bound enforced by [`validate_description`].
+///
+/// Byte-based rather than char-based because that's what `.len()` returns
+/// and what every caller currently measures; the UI also surfaces this
+/// limit as a byte count so the editor's counter matches the validator.
+pub const MAX_SKILL_DESCRIPTION_LEN: usize = 1024;
+
 /// Convert an arbitrary human-readable string into a valid skill name, or
 /// return `None` if no valid name can be produced (e.g. the input contains
 /// no ASCII alphanumeric characters at all).
@@ -392,34 +418,54 @@ pub fn slugify_skill_name(input: &str) -> Option<String> {
     if slug.is_empty() { None } else { Some(slug) }
 }
 
-fn validate_name(name: &str) -> Result<()> {
+/// Validate a skill name against the rules enforced by both the loader
+/// and the create-skill UI.
+///
+/// Rules:
+/// * non-empty
+/// * at most [`MAX_SKILL_NAME_LEN`] bytes
+/// * ASCII lowercase letters, digits, and hyphens only
+/// * must not start or end with a hyphen — [`slugify_skill_name`]
+///   already guarantees this for its output, so requiring it in the
+///   validator keeps hand-written `SKILL.md` files consistent with
+///   slugifier output
+///
+/// Error messages are returned as `&'static str` (interpolated at
+/// compile time via `formatcp!`) so that UI surfaces can store them in
+/// `Option<&'static str>` fields without allocating, and loader callers
+/// can convert them to `anyhow::Error` via `anyhow::Error::msg`.
+pub fn validate_name(name: &str) -> Result<(), &'static str> {
     if name.is_empty() {
-        anyhow::bail!("Skill name cannot be empty");
+        return Err("Skill name cannot be empty");
     }
-
     if name.len() > MAX_SKILL_NAME_LEN {
-        anyhow::bail!("Skill name must be at most {MAX_SKILL_NAME_LEN} characters");
+        return Err(formatcp!(
+            "Skill name must be at most {MAX_SKILL_NAME_LEN} characters"
+        ));
     }
-
+    if name.starts_with('-') || name.ends_with('-') {
+        return Err("Skill name must not start or end with a hyphen");
+    }
     if !name
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        anyhow::bail!("Skill name must contain only lowercase letters, numbers, and hyphens");
+        return Err("Skill name must contain only lowercase letters, numbers, and hyphens");
     }
-
     Ok(())
 }
 
-fn validate_description(description: &str) -> Result<()> {
-    if description.is_empty() {
-        anyhow::bail!("Skill description cannot be empty");
+/// Validate a skill description against the rules enforced by both the
+/// loader and the create-skill UI.
+pub fn validate_description(description: &str) -> Result<(), &'static str> {
+    if description.trim().is_empty() {
+        return Err("Skill description cannot be empty");
     }
-
-    if description.len() > 1024 {
-        anyhow::bail!("Skill description must be at most 1024 characters");
+    if description.len() > MAX_SKILL_DESCRIPTION_LEN {
+        return Err(formatcp!(
+            "Skill description must be at most {MAX_SKILL_DESCRIPTION_LEN} bytes"
+        ));
     }
-
     Ok(())
 }
 
@@ -654,8 +700,8 @@ pub fn builtin_skills() -> Vec<Skill> {
 /// gets a synthetic `<built-in>` path since it doesn't live on disk.
 fn parse_builtin_skill(name: &str, content: &'static str) -> Result<Skill> {
     let (metadata, body) = extract_frontmatter(content)?;
-    validate_name(&metadata.name)?;
-    validate_description(&metadata.description)?;
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
 
     let synthetic_dir = PathBuf::from(format!("<built-in>/{}", name));
     let synthetic_path = synthetic_dir.join(SKILL_FILE_NAME);
@@ -986,12 +1032,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 64 characters")
-        );
+        let expected = format!("at most {MAX_SKILL_NAME_LEN} characters");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]
@@ -1267,12 +1309,8 @@ Content.
             SkillSource::Global,
         );
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("at most 1024 characters")
-        );
+        let expected = format!("at most {MAX_SKILL_DESCRIPTION_LEN} bytes");
+        assert!(result.unwrap_err().to_string().contains(&expected));
     }
 
     #[test]
@@ -1872,5 +1910,90 @@ description: A skill with no body content
         assert!(is_agents_skills_path(Path::new(
             "project/.AGENTS/SKILLS/foo"
         )));
+    }
+
+    #[test]
+    fn validate_name_accepts_valid_names() {
+        assert!(validate_name("draft-pr").is_ok());
+        assert!(validate_name("a").is_ok());
+        assert!(validate_name("skill1").is_ok());
+        assert!(validate_name(&"a".repeat(MAX_SKILL_NAME_LEN)).is_ok());
+    }
+
+    #[test]
+    fn validate_name_rejects_empty() {
+        assert!(validate_name("").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_uppercase() {
+        assert!(validate_name("Draft-PR").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_leading_and_trailing_hyphens() {
+        assert!(validate_name("-draft").is_err());
+        assert!(validate_name("draft-").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_invalid_chars() {
+        assert!(validate_name("draft_pr").is_err());
+        assert!(validate_name("draft pr").is_err());
+        assert!(validate_name("draft.pr").is_err());
+    }
+
+    #[test]
+    fn validate_name_rejects_too_long() {
+        assert!(validate_name(&"a".repeat(MAX_SKILL_NAME_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn validate_description_accepts_valid() {
+        assert!(validate_description("A useful skill").is_ok());
+    }
+
+    #[test]
+    fn validate_description_rejects_empty_and_whitespace_only() {
+        assert!(validate_description("").is_err());
+        assert!(validate_description("   ").is_err());
+        assert!(validate_description("\t\n ").is_err());
+    }
+
+    #[test]
+    fn validate_description_rejects_too_long() {
+        assert!(validate_description(&"a".repeat(MAX_SKILL_DESCRIPTION_LEN + 1)).is_err());
+    }
+
+    #[test]
+    fn validate_description_length_is_measured_in_bytes() {
+        // "é" is 2 bytes in UTF-8. A string of MAX/2 + 1 "é" characters has
+        // only ~MAX/2 + 1 chars but exceeds MAX bytes, so it must be
+        // rejected by a byte-based validator (and accepted by a char-based
+        // one). This regression-tests the byte semantics that the loader
+        // and UI both rely on.
+        let chars = MAX_SKILL_DESCRIPTION_LEN / 2 + 1;
+        let description = "é".repeat(chars);
+        assert!(description.chars().count() <= MAX_SKILL_DESCRIPTION_LEN);
+        assert!(description.len() > MAX_SKILL_DESCRIPTION_LEN);
+        assert!(validate_description(&description).is_err());
+    }
+
+    #[test]
+    fn slugify_output_always_passes_validate_name() {
+        for input in [
+            "foo",
+            "Foo Bar",
+            "rock & roll",
+            "---weird---",
+            "a".repeat(200).as_str(),
+        ] {
+            if let Some(slug) = slugify_skill_name(input) {
+                assert!(
+                    validate_name(&slug).is_ok(),
+                    "slug {slug:?} from {input:?} failed validate_name"
+                );
+            }
+        }
     }
 }

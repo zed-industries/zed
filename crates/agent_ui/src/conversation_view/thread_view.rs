@@ -12,6 +12,7 @@ use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCo
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
 
+use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::List;
@@ -600,8 +601,6 @@ pub struct ThreadView {
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
-    /// Errors emitted by the agent while loading SKILL.md files. Each one
-    /// renders as a clickable banner that opens the offending file.
     pub skill_loading_errors: Vec<SkillLoadingError>,
     /// Errors the user has explicitly dismissed. Each entry is matched against
     /// emitted errors by full equality; when an error no longer appears in the
@@ -4426,6 +4425,8 @@ impl ThreadView {
         let session_capabilities = self.session_capabilities.read();
         let supports_images = session_capabilities.supports_images();
         let supports_embedded_context = session_capabilities.supports_embedded_context();
+        let available_skills = session_capabilities.completion_skills();
+        drop(session_capabilities);
 
         let has_editor_selection = workspace
             .upgrade()
@@ -4449,7 +4450,6 @@ impl ThreadView {
 
         ContextMenu::build(window, cx, move |menu, _window, _cx| {
             menu.key_context("AddContextMenu")
-                .header("Context")
                 .item(
                     ContextMenuEntry::new("Files & Directories")
                         .icon(IconName::File)
@@ -4495,21 +4495,19 @@ impl ThreadView {
                             }
                         }),
                 )
-                .item(
-                    ContextMenuEntry::new("Skills")
-                        .icon(IconName::Sparkle)
-                        .icon_color(Color::Muted)
-                        .icon_size(IconSize::XSmall)
-                        .handler({
-                            let message_editor = message_editor.clone();
-                            move |window, cx| {
-                                message_editor.focus_handle(cx).focus(window, cx);
-                                message_editor.update(cx, |editor, cx| {
-                                    editor.insert_context_type("skill", window, cx);
-                                });
+                .when(!available_skills.is_empty(), |this| {
+                    this.submenu_with_colored_icon("Skills", IconName::Sparkle, Color::Muted, {
+                        let message_editor = message_editor.clone();
+                        let available_skills = available_skills.clone();
+                        move |mut menu, _window, _cx| {
+                            for skill in &available_skills {
+                                menu = menu
+                                    .item(Self::skill_menu_entry(skill, message_editor.clone()));
                             }
-                        }),
-                )
+                            menu
+                        }
+                    })
+                })
                 .item(
                     ContextMenuEntry::new("Image")
                         .icon(IconName::Image)
@@ -4556,6 +4554,25 @@ impl ThreadView {
                         }),
                 )
         })
+    }
+
+    fn skill_menu_entry(
+        skill: &AvailableSkill,
+        message_editor: Entity<crate::message_editor::MessageEditor>,
+    ) -> ContextMenuEntry {
+        let label = format!("{} ({})", skill.name, skill.source);
+        let skill = skill.clone();
+
+        ContextMenuEntry::new(label)
+            .icon(IconName::Sparkle)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::XSmall)
+            .handler(move |window, cx| {
+                message_editor.focus_handle(cx).focus(window, cx);
+                message_editor.update(cx, |editor, cx| {
+                    editor.insert_skill_crease(&skill, window, cx);
+                });
+            })
     }
 
     fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6260,6 +6277,7 @@ impl ThreadView {
             .render_markdown(command, style, cx)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::Hidden,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
         let copy_button = CopyButton::new("copy-command", command_text)

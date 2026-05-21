@@ -189,6 +189,7 @@ pub(crate) struct PerformRename {
 #[derive(Debug, Clone, Copy)]
 pub struct GetDefinitions {
     pub position: PointUtf16,
+    pub workspace_only: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -199,6 +200,7 @@ pub(crate) struct GetDeclarations {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct GetTypeDefinitions {
     pub position: PointUtf16,
+    pub workspace_only: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -689,7 +691,15 @@ impl LspCommand for GetDefinitions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(
+            message,
+            lsp_store,
+            buffer,
+            server_id,
+            self.workspace_only,
+            cx,
+        )
+        .await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDefinition {
@@ -700,6 +710,7 @@ impl LspCommand for GetDefinitions {
                 &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
+            workspace_only: self.workspace_only,
         }
     }
 
@@ -720,6 +731,7 @@ impl LspCommand for GetDefinitions {
             .await?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            workspace_only: message.workspace_only,
         })
     }
 
@@ -792,7 +804,7 @@ impl LspCommand for GetDeclarations {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(message, lsp_store, buffer, server_id, false, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDeclaration {
@@ -894,7 +906,7 @@ impl LspCommand for GetImplementations {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, lsp_store, buffer, server_id, cx).await
+        location_links_from_lsp(message, lsp_store, buffer, server_id, false, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetImplementation {
@@ -993,7 +1005,7 @@ impl LspCommand for GetTypeDefinitions {
         server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<Vec<LocationLink>> {
-        location_links_from_lsp(message, project, buffer, server_id, cx).await
+        location_links_from_lsp(message, project, buffer, server_id, self.workspace_only, cx).await
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetTypeDefinition {
@@ -1004,6 +1016,7 @@ impl LspCommand for GetTypeDefinitions {
                 &buffer.anchor_before(self.position),
             )),
             version: serialize_version(&buffer.version()),
+            workspace_only: self.workspace_only,
         }
     }
 
@@ -1024,6 +1037,7 @@ impl LspCommand for GetTypeDefinitions {
             .await?;
         Ok(Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+            workspace_only: message.workspace_only,
         })
     }
 
@@ -1148,6 +1162,7 @@ pub async fn location_links_from_lsp(
     lsp_store: Entity<LspStore>,
     buffer: Entity<Buffer>,
     server_id: LanguageServerId,
+    workspace_only: bool,
     mut cx: AsyncApp,
 ) -> Result<Vec<LocationLink>> {
     let message = match message {
@@ -1179,6 +1194,25 @@ pub async fn location_links_from_lsp(
     let (_, language_server) = language_server_for_buffer(&lsp_store, &buffer, server_id, &mut cx)?;
     let mut definitions = Vec::new();
     for (origin_range, target_uri, target_range) in unresolved_links {
+        if workspace_only
+            && !lsp_store.update(&mut cx, |this, cx| {
+                use util::paths::UrlExt as _;
+                let worktree_store = this.worktree_store().read(cx);
+                let path_style = worktree_store.path_style();
+                let Ok(abs_path) = target_uri.clone().to_file_path_ext(path_style) else {
+                    return false;
+                };
+                worktree_store
+                    .find_worktree(&abs_path, cx)
+                    .is_some_and(|(worktree, _)| {
+                        let worktree = worktree.read(cx);
+                        worktree.is_visible() && !worktree.is_single_file()
+                    })
+            })
+        {
+            continue;
+        }
+
         let target_buffer_handle = lsp_store
             .update(&mut cx, |this, cx| {
                 this.open_local_buffer_via_lsp(target_uri, language_server.server_id(), cx)

@@ -42,7 +42,8 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -662,7 +663,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -3002,19 +3006,26 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
         h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
+                std::iter::once(scope_name)
+                    .chain(std::iter::once(self.current_page().title.into()))
+                    .chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
                 "/".into(),
             )
             .map(|item| Label::new(item).color(Color::Muted)),

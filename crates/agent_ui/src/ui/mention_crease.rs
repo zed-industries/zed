@@ -7,6 +7,7 @@ use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
     pulsating_between,
 };
+use language::Buffer;
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
@@ -205,12 +206,15 @@ fn open_skill_file(
 ) {
     // Built-in skills have synthetic paths that don't exist on disk.
     // Open a read-only buffer with the embedded content instead.
+    //
+    // The buffer is intentionally not registered with the project's buffer
+    // store: it has no on-disk backing, isn't searchable, and `Project::
+    // create_local_buffer` panics for remote projects (SSH/collab), which
+    // would crash Zed if a user clicked a built-in skill mention while
+    // connected to a remote project.
     if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-        let project = workspace.project().clone();
-        let languages = project.read(cx).languages().clone();
-        let buffer = project.update(cx, |project, cx| {
-            project.create_local_buffer(content, None, false, cx)
-        });
+        let languages = workspace.project().read(cx).languages().clone();
+        let buffer = cx.new(|cx| Buffer::local(content, cx));
         // Set markdown highlighting asynchronously — the buffer
         // opens instantly and the highlighting appears once loaded.
         cx.spawn({

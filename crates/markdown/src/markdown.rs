@@ -334,6 +334,7 @@ pub struct Markdown {
     mermaid_state: MermaidState,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
+    wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<String>,
@@ -356,9 +357,17 @@ pub enum CopyButtonVisibility {
     VisibleOnHover,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
         copy_button_visibility: CopyButtonVisibility,
+        wrap_button_visibility: WrapButtonVisibility,
         border: bool,
     },
     Custom {
@@ -505,6 +514,7 @@ impl Markdown {
             mermaid_state: MermaidState::default(),
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
+            wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
@@ -526,6 +536,16 @@ impl Markdown {
             },
             cx,
         )
+    }
+
+    fn is_code_block_wrapped(&self, id: usize) -> bool {
+        self.wrapped_code_blocks.contains(&id)
+    }
+
+    fn toggle_code_block_wrap(&mut self, id: usize) {
+        if !self.wrapped_code_blocks.remove(&id) {
+            self.wrapped_code_blocks.insert(id);
+        }
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
@@ -1095,6 +1115,7 @@ impl MarkdownElement {
             style,
             code_block_renderer: CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: WrapButtonVisibility::Hidden,
                 border: false,
             },
             on_url_click: None,
@@ -1913,11 +1934,18 @@ impl Element for MarkdownElement {
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
                                         .map(|mut code_block| {
-                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                            if is_wrapped {
+                                                code_block.w_full()
+                                            } else if let Some(scroll_handle) =
+                                                scroll_handle.as_ref()
+                                            {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
@@ -2156,10 +2184,14 @@ impl Element for MarkdownElement {
 
                         if let CodeBlockRenderer::Default {
                             copy_button_visibility,
+                            wrap_button_visibility,
                             ..
                         } = &self.code_block_renderer
-                            && *copy_button_visibility != CopyButtonVisibility::Hidden
+                            && (*copy_button_visibility != CopyButtonVisibility::Hidden
+                                || *wrap_button_visibility != WrapButtonVisibility::Hidden)
                         {
+                            let copy_button_visibility = *copy_button_visibility;
+                            let wrap_button_visibility = *wrap_button_visibility;
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     &parsed_markdown.source()[range.clone()],
@@ -2168,28 +2200,48 @@ impl Element for MarkdownElement {
                                     ..content_range.end + range.start;
 
                                 let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .justify_end()
-                                        .when_else(
-                                            *copy_button_visibility
-                                                == CopyButtonVisibility::VisibleOnHover,
-                                            |this| {
-                                                this.top_0()
-                                                    .right_0()
-                                                    .visible_on_hover("code_block")
-                                            },
-                                            |this| this.top_1p5().right_1p5(),
-                                        )
-                                        .child(codeblock),
-                                )
+
+                                let any_hover = copy_button_visibility
+                                    == CopyButtonVisibility::VisibleOnHover
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::VisibleOnHover;
+                                let any_always = copy_button_visibility
+                                    == CopyButtonVisibility::AlwaysVisible
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::AlwaysVisible;
+                                let use_hover = any_hover && !any_always;
+
+                                let mut button_row = h_flex()
+                                    .gap_0p5()
+                                    .absolute()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .when_else(
+                                        use_hover,
+                                        |this| {
+                                            this.top_1().right_1().visible_on_hover("code_block")
+                                        },
+                                        |this| this.top_1p5().right_1p5(),
+                                    );
+
+                                if wrap_button_visibility != WrapButtonVisibility::Hidden {
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+                                    button_row = button_row.child(render_wrap_code_block_button(
+                                        range.start,
+                                        is_wrapped,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                if copy_button_visibility != CopyButtonVisibility::Hidden {
+                                    button_row = button_row.child(render_copy_code_block_button(
+                                        range.end,
+                                        code,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                el.child(button_row)
                             });
                         }
 
@@ -2438,6 +2490,29 @@ fn apply_heading_style(
     }
 
     heading
+}
+
+fn render_wrap_code_block_button(
+    id: usize,
+    is_wrapped: bool,
+    markdown: Entity<Markdown>,
+) -> impl IntoElement {
+    let (icon, tooltip) = if is_wrapped {
+        (IconName::TextUnwrap, "Unwrap Content")
+    } else {
+        (IconName::TextWrap, "Wrap Content")
+    };
+
+    IconButton::new(("wrap-code-block", id), icon)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text(tooltip))
+        .on_click(move |_event, _window, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.toggle_code_block_wrap(id);
+                cx.notify();
+            });
+        })
 }
 
 fn render_copy_code_block_button(
@@ -2809,33 +2884,36 @@ impl MarkdownElementBuilder {
         self.pending_line.text.push_str(text);
         self.current_source_index = source_range.end;
 
+        // Compute the base text style once
+        let text_style = self.text_style();
+
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
                     self.pending_line
                         .runs
-                        .push(self.text_style().to_run(range.start - offset));
+                        .push(text_style.to_run(range.start - offset));
                 }
 
-                let mut run_style = self.text_style();
+                let run_len = range.len();
                 if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
-                    run_style = run_style.highlight(highlight);
+                    self.pending_line
+                        .runs
+                        .push(text_style.clone().highlight(highlight).to_run(run_len));
+                } else {
+                    self.pending_line.runs.push(text_style.to_run(run_len));
                 }
-
-                self.pending_line.runs.push(run_style.to_run(range.len()));
                 offset = range.end;
             }
 
             if offset < text.len() {
                 self.pending_line
                     .runs
-                    .push(self.text_style().to_run(text.len() - offset));
+                    .push(text_style.to_run(text.len() - offset));
             }
         } else {
-            self.pending_line
-                .runs
-                .push(self.text_style().to_run(text.len()));
+            self.pending_line.runs.push(text_style.to_run(text.len()));
         }
     }
 
@@ -3456,6 +3534,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
