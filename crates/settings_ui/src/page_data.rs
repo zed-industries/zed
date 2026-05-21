@@ -2183,7 +2183,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn scrollbar_section() -> [SettingsPageItem; 10] {
+    fn scrollbar_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Scrollbar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2409,6 +2409,31 @@ fn editor_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+              title: "Active Scope Markers",
+              description: "Show tick-marks in the scrollbar at the opening and \
+                                closing brace of the scope the cursor is currently in.",
+              field: Box::new(SettingField {
+                  json_path: Some("scrollbar.active_scope_markers"),
+                  pick: |settings_content| {
+                      settings_content
+                          .editor
+                          .scrollbar
+                          .as_ref()?
+                          .active_scope_markers
+                          .as_ref()
+                  },
+                  write: |settings_content, value, _| {
+                      settings_content
+                          .editor
+                          .scrollbar
+                          .get_or_insert_default()
+                          .active_scope_markers = value;
+                  },
+              }),
+              metadata: None,
+              files: USER,
+          }),
         ]
     }
 
