@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Context;
-use collections::{BTreeMap, HashMap, IndexMap};
+use collections::{BTreeMap, HashMap};
 use gpui::Rgba;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 use util::serde::default_true;
 
 use crate::{
-    AllLanguageSettingsContent, DelayMs, ExtendingVec, ParseStatus, ProjectTerminalSettingsContent,
-    RootUserSettings, SaturatingBool, fallible_options,
+    AllLanguageSettingsContent, CustomLabelsContent, DelayMs, ExtendingVec, ParseStatus,
+    ProjectTerminalSettingsContent, RootUserSettings, SaturatingBool, fallible_options,
 };
 
 #[with_fallible_options]
@@ -101,12 +101,13 @@ pub struct ProjectSettingsContent {
     ///   (`-1` is the topmost folder, `-2` is its child, ...).
     ///
     /// Patterns are evaluated in declaration order and the first match wins.
-    /// Templates that reference a variable which cannot be resolved for a
-    /// given file are skipped.
+    /// When `custom_labels` is set in multiple scopes, project-local patterns
+    /// take precedence over global ones. Templates that reference a variable
+    /// which cannot be resolved for a given file are skipped.
     ///
     /// Default: {}
     #[serde(default)]
-    pub custom_labels: IndexMap<String, String>,
+    pub custom_labels: CustomLabelsContent,
 }
 
 #[with_fallible_options]

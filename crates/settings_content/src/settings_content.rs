@@ -1275,6 +1275,45 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
+/// A map of glob patterns to editor tab label templates (see
+/// [`ProjectSettingsContent::custom_labels`]).
+///
+/// Unlike a plain map, merging places entries from the more specific settings
+/// scope before entries from the less specific one. Custom labels are matched
+/// in iteration order with the first match winning, so this makes project-local
+/// patterns take precedence over global ones while each scope keeps its own
+/// declaration order.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CustomLabelsContent(pub IndexMap<String, String>);
+
+impl From<IndexMap<String, String>> for CustomLabelsContent {
+    fn from(map: IndexMap<String, String>) -> Self {
+        CustomLabelsContent(map)
+    }
+}
+
+impl FromIterator<(String, String)> for CustomLabelsContent {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(iter: I) -> Self {
+        CustomLabelsContent(iter.into_iter().collect())
+    }
+}
+
+impl merge_from::MergeFrom for CustomLabelsContent {
+    fn merge_from(&mut self, other: &Self) {
+        // `other` is the more specific scope (e.g. project-local settings
+        // merged onto global settings). Keep its entries first so they win
+        // first-match evaluation, then append entries only the less specific
+        // scope defines. Each scope retains its declaration order.
+        let mut merged = other.0.clone();
+        for (pattern, template) in &self.0 {
+            merged
+                .entry(pattern.clone())
+                .or_insert_with(|| template.clone());
+        }
+        self.0 = merged;
+    }
+}
+
 // A SaturatingBool in the settings can only ever be set to true,
 // later attempts to set it to false will be ignored.
 //
@@ -1327,5 +1366,48 @@ impl From<u64> for DelayMs {
 impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::merge_from::MergeFrom;
+
+    #[test]
+    fn custom_labels_merge_prefers_more_specific_scope() {
+        // `global` is the less specific scope, `local` the more specific one.
+        let global: CustomLabelsContent = [
+            ("**/*.svelte".to_string(), "global svelte".to_string()),
+            ("**/a.ts".to_string(), "global a".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let local: CustomLabelsContent = [
+            ("**/*.svelte".to_string(), "local svelte".to_string()),
+            ("**/b.ts".to_string(), "local b".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let mut merged = global;
+        merged.merge_from(&local);
+
+        let entries: Vec<(&str, &str)> = merged
+            .0
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        // Local entries come first (so they win first-match), in their own
+        // declaration order; the same key keeps the local value; entries only
+        // the global scope defines are appended afterwards.
+        assert_eq!(
+            entries,
+            vec![
+                ("**/*.svelte", "local svelte"),
+                ("**/b.ts", "local b"),
+                ("**/a.ts", "global a"),
+            ]
+        );
     }
 }

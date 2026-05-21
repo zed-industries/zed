@@ -128,6 +128,7 @@ impl Settings for WorkspaceSettings {
                 content
                     .project
                     .custom_labels
+                    .0
                     .iter()
                     .map(|(pattern, template)| (pattern.as_str(), template.as_str())),
             ),
