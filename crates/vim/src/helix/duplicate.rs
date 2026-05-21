@@ -1,6 +1,9 @@
 use std::ops::Range;
 
-use editor::{DisplayPoint, MultiBufferOffset, display_map::DisplaySnapshot};
+use editor::{
+    DisplayPoint, MultiBufferOffset, ToPoint,
+    display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint},
+};
 use gpui::Context;
 use language::PointUtf16;
 use multi_buffer::MultiBufferRow;
@@ -89,51 +92,47 @@ fn find_next_valid_duplicate_space(
         .column;
     let end_col_utf16 = buffer.point_to_point_utf16(origin.end.to_point(map)).column;
 
-    let mut candidate = origin;
+    let mut candidate_start_row = origin.start.to_point(map).row;
+    let mut candidate_end_row = origin.end.to_point(map).row;
+
     loop {
         match direction {
             Direction::Below => {
-                if candidate.end.row() >= map.max_point().row() {
+                if candidate_end_row >= map.max_row().0 {
                     return None;
                 }
-                *candidate.start.row_mut() += 1;
-                *candidate.end.row_mut() += 1;
+                candidate_start_row += 1;
+                candidate_end_row += 1;
             }
             Direction::Above => {
-                if candidate.start.row() == DisplayPoint::zero().row() {
+                if candidate_start_row == 0 {
                     return None;
                 }
-                *candidate.start.row_mut() = candidate.start.row().0.saturating_sub(1);
-                *candidate.end.row_mut() = candidate.end.row().0.saturating_sub(1);
+                candidate_start_row = candidate_start_row.saturating_sub(1);
+                candidate_end_row = candidate_end_row.saturating_sub(1);
             }
         }
 
-        let start_row = DisplayPoint::new(candidate.start.row(), 0)
-            .to_point(map)
-            .row;
-        let end_row = DisplayPoint::new(candidate.end.row(), 0).to_point(map).row;
-
-        if start_col_utf16 > buffer.line_len_utf16(MultiBufferRow(start_row))
-            || end_col_utf16 > buffer.line_len_utf16(MultiBufferRow(end_row))
+        if map.is_line_folded(MultiBufferRow(candidate_start_row))
+            || map.is_line_folded(MultiBufferRow(candidate_end_row))
         {
             continue;
         }
 
-        let start_col = buffer
-            .point_utf16_to_point(PointUtf16::new(start_row, start_col_utf16))
-            .column;
-        let end_col = buffer
-            .point_utf16_to_point(PointUtf16::new(end_row, end_col_utf16))
-            .column;
-
-        let candidate_start = DisplayPoint::new(candidate.start.row(), start_col);
-        let candidate_end = DisplayPoint::new(candidate.end.row(), end_col);
-
-        if map.clip_point(candidate_start, Bias::Left) == candidate_start
-            && map.clip_point(candidate_end, Bias::Right) == candidate_end
+        if start_col_utf16 > buffer.line_len_utf16(MultiBufferRow(candidate_start_row))
+            || end_col_utf16 > buffer.line_len_utf16(MultiBufferRow(candidate_end_row))
         {
-            return Some(candidate_start..candidate_end);
+            continue;
         }
+
+        let candidate_start = buffer
+            .point_utf16_to_point(PointUtf16::new(candidate_start_row, start_col_utf16))
+            .to_display_point(map);
+        let candidate_end = buffer
+            .point_utf16_to_point(PointUtf16::new(candidate_end_row, end_col_utf16))
+            .to_display_point(map);
+
+        return Some(candidate_start..candidate_end);
     }
 }
 
