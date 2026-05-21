@@ -3213,7 +3213,11 @@ struct ResolverSnapshot {
 }
 
 struct AgentCodeSpanWorktree {
-    abs_path: PathBuf,
+    // Held as `Arc<Path>` (the same handle `Worktree::abs_path()` returns)
+    // so that `absolutize` can mirror `worktree::Snapshot::absolutize`
+    // byte-for-byte. Going through `PathBuf` + `to_string_lossy` here would
+    // replace non-UTF-8 bytes with U+FFFD on Windows.
+    abs_path: Arc<Path>,
     path_style: PathStyle,
     files: HashSet<Arc<RelPath>>,
 }
@@ -3265,7 +3269,7 @@ impl AgentCodeSpanResolver {
             .read()
             .worktrees
             .iter()
-            .map(|worktree| worktree.abs_path.clone())
+            .map(|worktree| worktree.abs_path.to_path_buf())
             .collect()
     }
 
@@ -3317,14 +3321,15 @@ impl AgentCodeSpanResolver {
             }
 
             let abs_path = worktree.absolutize(relative_path.as_ref());
-            let mention = if let Some(row) = path_with_position.row {
-                let line = row.checked_sub(1)?;
-                MentionUri::Selection {
+            // `row` is 1-based; a leading `:0` shouldn't happen from
+            // well-behaved agents, but fall back to a plain file mention
+            // rather than silently failing to resolve the link.
+            let mention = match path_with_position.row.and_then(|row| row.checked_sub(1)) {
+                Some(line) => MentionUri::Selection {
                     abs_path: Some(abs_path),
                     line_range: line..=line,
-                }
-            } else {
-                MentionUri::File { abs_path }
+                },
+                None => MentionUri::File { abs_path },
             };
 
             return Some(mention.to_uri().to_string().into());
@@ -3386,7 +3391,7 @@ impl AgentCodeSpanResolver {
             }
 
             worktrees.push(AgentCodeSpanWorktree {
-                abs_path: worktree.abs_path().to_path_buf(),
+                abs_path: worktree.abs_path(),
                 path_style: worktree.path_style(),
                 files,
             });
@@ -3415,6 +3420,11 @@ impl AgentCodeSpanWorktree {
         }
     }
 
+    /// Mirrors `worktree::Snapshot::absolutize`: builds the absolute path as
+    /// a string with the worktree's own `PathStyle` separator (rather than
+    /// the local OS separator that `PathBuf::push` would use), so that
+    /// resolution stays correct for remote worktrees whose path style
+    /// differs from the host.
     fn absolutize(&self, relative_path: &RelPath) -> PathBuf {
         if relative_path.file_name().is_some() {
             let mut abs_path = self.abs_path.to_string_lossy().into_owned();
@@ -3426,7 +3436,7 @@ impl AgentCodeSpanWorktree {
             }
             PathBuf::from(abs_path)
         } else {
-            self.abs_path.clone()
+            self.abs_path.to_path_buf()
         }
     }
 }
@@ -3570,6 +3580,16 @@ pub(crate) mod tests {
             MentionUri::Selection {
                 abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
                 line_range: 9..=9,
+            }
+        );
+
+        let uri = resolver
+            .try_resolve("src/main.rs:0")
+            .expect("`:0` should fall back to a file mention instead of returning None");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::File {
+                abs_path: PathBuf::from(util::path!("/project/src/main.rs")),
             }
         );
 
