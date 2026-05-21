@@ -3179,11 +3179,16 @@ struct AgentCodeSpanResolverInner {
     /// Snapshot of worktree contents used for path resolution. Swapped
     /// wholesale on `refresh`; readers clone the `Arc` cheaply.
     snapshot: RwLock<Arc<ResolverSnapshot>>,
-    /// LRU-bounded memoized results keyed by the raw code span text. Cleared
-    /// on `refresh`. A `Mutex` rather than `RwLock` because `LruCache::get`
-    /// must mutate recency order; in practice all access is from the
-    /// foreground thread so contention is nil.
-    cache: Mutex<LruCache<Arc<str>, Option<SharedString>>>,
+    /// LRU-bounded memoized results keyed by the raw code span text. Only
+    /// successful resolutions are cached — unresolved lookups (regex
+    /// snippets, identifiers, prose that happens to contain `\`, etc.) are
+    /// deliberately not stored so they can't evict legitimately resolved
+    /// entries under capacity pressure.
+    ///
+    /// Cleared on `refresh`. A `Mutex` rather than `RwLock` because
+    /// `LruCache::get` must mutate recency order; in practice all access
+    /// is from the foreground thread so contention is nil.
+    cache: Mutex<LruCache<Arc<str>, SharedString>>,
 }
 
 struct ResolverSnapshot {
@@ -3232,15 +3237,17 @@ impl AgentCodeSpanResolver {
         // must take the lock mutably; in practice this is uncontested because
         // all callers run on the foreground thread.
         if let Some(cached) = self.inner.cache.lock().get(text).cloned() {
-            return cached;
+            return Some(cached);
         }
 
-        let resolved = self.resolve_uncached(text);
+        // Only cache successful resolutions — see the doc comment on `cache`
+        // for why negative results are deliberately not stored.
+        let resolved = self.resolve_uncached(text)?;
         self.inner
             .cache
             .lock()
             .push(Arc::from(text), resolved.clone());
-        resolved
+        Some(resolved)
     }
 
     fn resolve_uncached(&self, text: &str) -> Option<SharedString> {
