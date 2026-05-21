@@ -9240,7 +9240,7 @@ async fn compute_snapshot(
         let backend = backend.clone();
         async move {
             if snapshot.head_commit.is_some() {
-                backend.diff_stat(&[]).await.unwrap_or_default()
+                backend.diff_stat(&[]).await.log_err().unwrap_or_default()
             } else {
                 Default::default()
             }
