@@ -15,6 +15,7 @@ use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -113,6 +114,7 @@ pub fn open_skill_creator(
     workspace: Option<WeakEntity<Workspace>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    on_saved: Option<Rc<dyn Fn(&mut App)>>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<SkillCreator>>> {
     cx.spawn(async move |cx| {
@@ -161,7 +163,9 @@ pub fn open_skill_creator(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| SkillCreator::new(workspace, language_registry, fs, window, cx))
+                    cx.new(|cx| {
+                        SkillCreator::new(workspace, language_registry, fs, on_saved, window, cx)
+                    })
                 },
             )
         })
@@ -173,6 +177,7 @@ pub struct SkillCreator {
     title_bar: Option<Entity<PlatformTitleBar>>,
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
+    on_saved: Option<Rc<dyn Fn(&mut App)>>,
     name_editor: Entity<InputField>,
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
@@ -198,6 +203,7 @@ impl SkillCreator {
         workspace: Option<WeakEntity<Workspace>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        on_saved: Option<Rc<dyn Fn(&mut App)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -321,6 +327,7 @@ impl SkillCreator {
             },
             workspace,
             fs,
+            on_saved,
             name_editor,
             description_editor,
             body_editor,
@@ -468,6 +475,9 @@ impl SkillCreator {
                 this.save_task = None;
                 match result {
                     Ok(path) => {
+                        if let Some(on_saved) = &this.on_saved {
+                            on_saved(cx);
+                        }
                         if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.show_toast(
