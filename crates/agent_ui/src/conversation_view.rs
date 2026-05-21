@@ -3238,6 +3238,13 @@ impl AgentCodeSpanResolver {
     }
 
     fn try_resolve(&self, text: &str) -> Option<SharedString> {
+        // Reject obviously-not-a-path text before touching the cache.
+        let snapshot = self.inner.snapshot.read().clone();
+        let trimmed = workspace::path_link::sanitize_path_text(text.trim());
+        if !Self::is_path_like(&snapshot, trimmed) {
+            return None;
+        }
+
         // Hot path: cache hit. `LruCache::get` mutates recency order, so we
         // must take the lock mutably; in practice this is uncontested because
         // all callers run on the foreground thread.
@@ -3245,9 +3252,12 @@ impl AgentCodeSpanResolver {
             return Some(cached);
         }
 
+        // Cache miss — walk worktrees. Reuse the snapshot and trimmed text we
+        // already computed above to avoid redoing string and lock work.
+        //
         // Only cache successful resolutions — see the doc comment on `cache`
         // for why negative results are deliberately not stored.
-        let resolved = self.resolve_uncached(text)?;
+        let resolved = Self::walk_worktrees(&snapshot, trimmed)?;
         self.inner
             .cache
             .lock()
@@ -3255,13 +3265,7 @@ impl AgentCodeSpanResolver {
         Some(resolved)
     }
 
-    fn resolve_uncached(&self, text: &str) -> Option<SharedString> {
-        let snapshot = self.inner.snapshot.read().clone();
-        let trimmed = workspace::path_link::sanitize_path_text(text.trim());
-        if !Self::is_path_like(&snapshot, trimmed) {
-            return None;
-        }
-
+    fn walk_worktrees(snapshot: &ResolverSnapshot, trimmed: &str) -> Option<SharedString> {
         let path_with_position = PathWithPosition::parse_str(trimmed);
         let candidate_path = &path_with_position.path;
         if candidate_path.as_os_str().is_empty() {
@@ -3294,8 +3298,14 @@ impl AgentCodeSpanResolver {
     }
 
     fn is_path_like(snapshot: &ResolverSnapshot, text: &str) -> bool {
-        if text.is_empty()
+        // Require at least 3 bytes. Real paths in committed code are
+        // effectively always ≥ 3 chars (e.g. `a.c`, `t/x`); anything
+        // shorter is overwhelmingly a language token (`fn`, `as`, `Ok`,
+        // single-letter identifiers, etc.). Byte length is a safe
+        // proxy here because UTF-8 bytes ≥ char count.
+        if text.len() < 3
             || text.contains("://")
+            || text.contains('|')
             || text.chars().any(char::is_control)
             || text.chars().all(|character| character.is_ascii_digit())
         {
