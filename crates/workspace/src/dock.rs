@@ -33,6 +33,14 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
+/// Label shown next to a panel's status-bar icon button.
+pub enum PanelButtonLabel {
+    /// A numeric badge rendered alongside the icon-only button.
+    Count(usize),
+    /// A textual label rendered inside the button, replacing the icon-only form.
+    Text(SharedString),
+}
+
 pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn panel_key() -> &'static str;
@@ -63,7 +71,7 @@ pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self) -> Box<dyn Action>;
-    fn icon_label(&self, _window: &Window, _: &App) -> Option<String> {
+    fn icon_label(&self, _window: &Window, _: &App) -> Option<PanelButtonLabel> {
         None
     }
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -117,7 +125,7 @@ pub trait PanelHandle: Send + Sync {
     fn icon(&self, window: &Window, cx: &App) -> Option<ui::IconName>;
     fn icon_tooltip(&self, window: &Window, cx: &App) -> Option<&'static str>;
     fn toggle_action(&self, window: &Window, cx: &App) -> Box<dyn Action>;
-    fn icon_label(&self, window: &Window, cx: &App) -> Option<String>;
+    fn icon_label(&self, window: &Window, cx: &App) -> Option<PanelButtonLabel>;
     fn panel_focus_handle(&self, cx: &App) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &App) -> u32;
@@ -229,7 +237,7 @@ where
         self.read(cx).toggle_action()
     }
 
-    fn icon_label(&self, window: &Window, cx: &App) -> Option<String> {
+    fn icon_label(&self, window: &Window, cx: &App) -> Option<PanelButtonLabel> {
         self.read(cx).icon_label(window, cx)
     }
 
@@ -1349,66 +1357,59 @@ impl Render for PanelButtons {
                         .trigger(move |is_active, _window, _cx| {
                             // Include active state in element ID to invalidate the cached
                             // tooltip when panel state changes (e.g., via keyboard shortcut)
-                            let numeric_icon_label = icon_label
-                                .clone()
-                                .and_then(|label| label.parse::<usize>().ok());
-                            let text_icon_label = icon_label
-                                .clone()
-                                .filter(|label| label.parse::<usize>().is_err());
-                            let icon_focus_handle = focus_handle.clone();
-                            let text_focus_handle = focus_handle.clone();
-                            let icon_tooltip = tooltip.clone();
-                            let text_tooltip = tooltip.clone();
-                            let icon_click_action = action.boxed_clone();
-                            let text_click_action = action.boxed_clone();
-                            let icon_tooltip_action = action.boxed_clone();
-                            let text_tooltip_action = action.boxed_clone();
-                            let button = text_icon_label.map_or_else(
-                                || {
-                                    IconButton::new((name, is_active_button as u64), icon)
-                                        .icon_size(IconSize::Small)
-                                        .toggle_state(is_active_button)
-                                        .on_click({
-                                            let action = icon_click_action.boxed_clone();
-                                            move |_, window, cx| {
-                                                window.focus(&icon_focus_handle, cx);
-                                                window.dispatch_action(action.boxed_clone(), cx)
-                                            }
+                            let text_label = match icon_label.as_ref() {
+                                Some(PanelButtonLabel::Text(label)) => Some(label.clone()),
+                                _ => None,
+                            };
+                            let count_label = match icon_label.as_ref() {
+                                Some(PanelButtonLabel::Count(count)) => Some(*count),
+                                _ => None,
+                            };
+                            let click_focus_handle = focus_handle.clone();
+                            let tooltip_action = action.boxed_clone();
+                            let click_action = action.boxed_clone();
+                            let tooltip_label = tooltip.clone();
+                            let button = if let Some(label) = text_label {
+                                Button::new((name, is_active_button as u64), label)
+                                    .start_icon(Icon::new(icon).size(IconSize::Small))
+                                    .label_size(LabelSize::Small)
+                                    .toggle_state(is_active_button)
+                                    .on_click(move |_, window, cx| {
+                                        window.focus(&click_focus_handle, cx);
+                                        window.dispatch_action(click_action.boxed_clone(), cx)
+                                    })
+                                    .when(!is_active, |this| {
+                                        this.tooltip(move |_window, cx| {
+                                            Tooltip::for_action(
+                                                tooltip_label.clone(),
+                                                &*tooltip_action,
+                                                cx,
+                                            )
                                         })
-                                        .when(!is_active, |this| {
-                                            let action = icon_tooltip_action.boxed_clone();
-                                            let tooltip = icon_tooltip.clone();
-                                            this.tooltip(move |_window, cx| {
-                                                Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                            })
+                                    })
+                                    .into_any_element()
+                            } else {
+                                IconButton::new((name, is_active_button as u64), icon)
+                                    .icon_size(IconSize::Small)
+                                    .toggle_state(is_active_button)
+                                    .on_click(move |_, window, cx| {
+                                        window.focus(&click_focus_handle, cx);
+                                        window.dispatch_action(click_action.boxed_clone(), cx)
+                                    })
+                                    .when(!is_active, |this| {
+                                        this.tooltip(move |_window, cx| {
+                                            Tooltip::for_action(
+                                                tooltip_label.clone(),
+                                                &*tooltip_action,
+                                                cx,
+                                            )
                                         })
-                                        .into_any_element()
-                                },
-                                |label| {
-                                    Button::new((name, is_active_button as u64), label)
-                                        .start_icon(Icon::new(icon).size(IconSize::Small))
-                                        .label_size(LabelSize::Small)
-                                        .toggle_state(is_active_button)
-                                        .on_click({
-                                            let action = text_click_action.boxed_clone();
-                                            move |_, window, cx| {
-                                                window.focus(&text_focus_handle, cx);
-                                                window.dispatch_action(action.boxed_clone(), cx)
-                                            }
-                                        })
-                                        .when(!is_active, |this| {
-                                            let action = text_tooltip_action.boxed_clone();
-                                            let tooltip = text_tooltip.clone();
-                                            this.tooltip(move |_window, cx| {
-                                                Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                            })
-                                        })
-                                        .into_any_element()
-                                },
-                            );
+                                    })
+                                    .into_any_element()
+                            };
 
                             div().relative().child(button).when_some(
-                                numeric_icon_label.filter(|_| !is_active_button),
+                                count_label.filter(|_| !is_active_button),
                                 |this, count| this.child(CountBadge::new(count)),
                             )
                         }),

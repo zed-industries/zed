@@ -84,7 +84,7 @@ use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_pat
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelButtonLabel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
 
@@ -6753,7 +6753,7 @@ impl Panel for GitPanel {
         Some("Git Panel")
     }
 
-    fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {
+    fn icon_label(&self, _: &Window, cx: &App) -> Option<PanelButtonLabel> {
         let settings = GitPanelSettings::get_global(cx);
 
         if settings.show_branch_name_in_status_bar {
@@ -6762,21 +6762,22 @@ impl Panel for GitPanel {
                 .as_ref()
                 .and_then(|repo| repo.read(cx).branch.as_ref().map(|branch| branch.name()));
 
-            return branch_name.map(|branch_name| {
-                let max_label_length = 24;
-                if branch_name.len() <= max_label_length {
+            if let Some(branch_name) = branch_name {
+                const MAX_LABEL_LENGTH: usize = 24;
+                let label = if branch_name.len() <= MAX_LABEL_LENGTH {
                     branch_name.to_string()
                 } else {
-                    util::truncate_and_trailoff(branch_name.trim_ascii(), max_label_length)
-                }
-            });
+                    util::truncate_and_trailoff(branch_name.trim_ascii(), MAX_LABEL_LENGTH)
+                };
+                return Some(PanelButtonLabel::Text(label.into()));
+            }
         }
 
         if !settings.show_count_badge {
             return None;
         }
         let total = self.changes_count;
-        (total > 0).then(|| total.to_string())
+        (total > 0).then_some(PanelButtonLabel::Count(total))
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {

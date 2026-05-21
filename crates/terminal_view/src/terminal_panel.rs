@@ -32,7 +32,7 @@ use workspace::{
     MoveItemToPaneInDirection, MovePaneDown, MovePaneLeft, MovePaneRight, MovePaneUp, Pane,
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
-    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
+    dock::{DockPosition, Panel, PanelButtonLabel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, pane,
 };
@@ -1616,7 +1616,7 @@ impl Panel for TerminalPanel {
         })
     }
 
-    fn icon_label(&self, _window: &Window, cx: &App) -> Option<String> {
+    fn icon_label(&self, _window: &Window, cx: &App) -> Option<PanelButtonLabel> {
         if !TerminalSettings::get_global(cx).show_count_badge {
             return None;
         }
@@ -1626,11 +1626,7 @@ impl Panel for TerminalPanel {
             .into_iter()
             .map(|pane| pane.read(cx).items_len())
             .sum::<usize>();
-        if count == 0 {
-            None
-        } else {
-            Some(count.to_string())
-        }
+        (count > 0).then_some(PanelButtonLabel::Count(count))
     }
 
     fn persistent_name() -> &'static str {
