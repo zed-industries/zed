@@ -7461,6 +7461,7 @@ dependencies = [
  "settings",
  "smallvec",
  "strum 0.27.2",
+ "sysinfo 0.37.2",
  "task",
  "telemetry",
  "theme",
@@ -22476,7 +22477,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

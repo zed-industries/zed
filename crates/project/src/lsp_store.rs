@@ -5939,8 +5939,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.definitions_with_filter(buffer, position, false, cx)
+    }
+
+    pub fn workspace_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitions { position };
+            let request = GetDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -5965,7 +5987,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitions { position }.response_from_proto(
+                    GetDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -5988,7 +6014,10 @@ impl LspStore {
             let definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetDefinitions { position },
+                GetDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6079,8 +6108,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.type_definitions_with_filter(buffer, position, false, cx)
+    }
+
+    pub fn workspace_type_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.type_definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn type_definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitions { position };
+            let request = GetTypeDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6103,7 +6154,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitions { position }.response_from_proto(
+                    GetTypeDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6126,7 +6181,10 @@ impl LspStore {
             let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetTypeDefinitions { position },
+                GetTypeDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
