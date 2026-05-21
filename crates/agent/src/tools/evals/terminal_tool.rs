@@ -231,6 +231,7 @@ impl TerminalToolTest {
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
+                sandboxing: false,
             };
             template.render(&Templates::new())?
         };
