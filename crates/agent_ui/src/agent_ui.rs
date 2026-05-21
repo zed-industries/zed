@@ -244,6 +244,8 @@ actions!(
         ScrollOutputToNextMessage,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
+        /// Starts a new terminal thread.
+        NewTerminalThread,
     ]
 );
 
@@ -850,6 +852,10 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be visible by default"
+            );
         });
 
         // Disable agent
@@ -868,6 +874,10 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be hidden when agent is disabled"
             );
         });
 
