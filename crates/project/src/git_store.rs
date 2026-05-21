@@ -1054,6 +1054,10 @@ impl GitStore {
             // staged changes.
             let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
             diff.update(cx, |diff, cx| {
+                // `set_base_text`'s `language` arg only feeds the diff options; the
+                // base buffer (which renders the deleted/red lines) needs
+                // `language_changed` to get a language for syntax highlighting.
+                diff.language_changed(language.clone(), Some(language_registry), cx);
                 diff.set_base_text(
                     head_text.map(Arc::<str>::from),
                     language.clone(),

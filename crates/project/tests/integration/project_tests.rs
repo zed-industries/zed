@@ -9283,6 +9283,62 @@ async fn test_staged_index_snapshot_buffer_has_detected_language(cx: &mut gpui::
 }
 
 #[gpui::test]
+async fn test_staged_index_snapshot_base_text_buffer_has_detected_language(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    // Deleted (red) lines inside a hunk are drawn from the diff's base-text
+    // buffer (the HEAD content), which is a separate buffer from the displayed
+    // index buffer. It must carry the detected language so deleted lines
+    // highlight just like context and added lines do.
+    let committed_contents = "fn main() {\n    let removed = 1;\n}\n";
+    let staged_contents = "fn main() {\n}\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "main.rs": staged_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("main.rs", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("main.rs", staged_contents.into())]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (_buffer, diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo, repo_path("main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    diff.read_with(cx, |diff, cx| {
+        let base_buffer = diff.base_text_buffer().read(cx);
+        assert_eq!(
+            base_buffer.language().map(|language| language.name()),
+            Some("Rust".into()),
+            "the diff base-text buffer (source of deleted lines) should detect Rust \
+             so deleted lines highlight like context and added lines",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_staged_index_snapshot_file_resolves_to_its_repo_path(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
