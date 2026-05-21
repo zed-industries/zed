@@ -361,6 +361,22 @@ pub struct TurnFields {
     pub turn_tokens: Option<u64>,
 }
 
+/// How a tool call is rendered relative to its surroundings.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ToolCallLayout {
+    /// Inline in the thread list with outer chrome.
+    Standalone,
+    /// Hosted by a container that provides its own framing.
+    Embedded,
+}
+
+impl ToolCallLayout {
+    /// Whether the tool call should draw its own border/margin/location header.
+    fn has_outer_chrome(self) -> bool {
+        matches!(self, Self::Standalone)
+    }
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -2258,13 +2274,22 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
-        let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
+        let main_agent_awaiting_permission = self.render_main_agent_awaiting_permission(window, cx);
+        let has_main_agent_awaiting = main_agent_awaiting_permission.is_some();
+
+        // If the main agent is awaiting permission, hide the subagents awaiting permission state.
+        let subagents_awaiting_permission = if has_main_agent_awaiting {
+            None
+        } else {
+            self.render_subagents_awaiting_permission(cx)
+        };
         let has_subagents_awaiting = subagents_awaiting_permission.is_some();
 
         if changed_buffers.is_empty()
             && plan.is_empty()
             && queue_is_empty
             && !has_subagents_awaiting
+            && !has_main_agent_awaiting
         {
             return None;
         }
@@ -2304,6 +2329,17 @@ impl ThreadView {
                         blur_radius: px(2.),
                         spread_radius: px(0.),
                     }])
+                    .when_some(main_agent_awaiting_permission, |this, element| {
+                        this.child(element)
+                    })
+                    .when(
+                        has_main_agent_awaiting
+                            && (has_subagents_awaiting
+                                || !plan.is_empty()
+                                || !changed_buffers.is_empty()
+                                || !queue_is_empty),
+                        |this| this.child(Divider::horizontal().color(DividerColor::Border)),
+                    )
                     .when_some(subagents_awaiting_permission, |this, element| {
                         this.child(element)
                     })
@@ -2696,6 +2732,96 @@ impl ThreadView {
                 )
                 .into_any(),
         )
+    }
+
+    /// Returns true when the entry has been measured and sits entirely below
+    /// the current viewport.
+    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
+        self.list_state
+            .bounds_for_item(entry_ix)
+            .is_some_and(|entry_bounds| {
+                !entry_bounds.intersects(&self.list_state.viewport_bounds())
+            })
+    }
+
+    pub(crate) fn render_main_agent_awaiting_permission(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.is_subagent() {
+            return None;
+        }
+
+        let active_session_id = self.thread.read(cx).session_id().clone();
+        let (tool_call_id, _options) = self
+            .conversation
+            .read(cx)
+            .pending_tool_call_for_session(&active_session_id, cx)?;
+
+        let thread = self.thread.read(cx);
+        let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
+
+        if !self.entry_is_below_viewport(entry_ix) {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle(cx);
+
+        let card = self.render_tool_call(
+            &active_session_id,
+            entry_ix,
+            tool_call,
+            &focus_handle,
+            ToolCallLayout::Embedded,
+            window,
+            cx,
+        );
+
+        let header = h_flex()
+            .py_1()
+            .px_2()
+            .w_full()
+            .gap_1p5()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .w_2()
+                    .justify_center()
+                    .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
+            )
+            .child(
+                LoadingLabel::new("Awaiting Confirmation")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(div().flex_1())
+            .child(
+                h_flex()
+                    .id("main-agent-permission-scroll-to")
+                    .cursor_pointer()
+                    .gap_0p5()
+                    .child(
+                        Label::new("Scroll to")
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
+                    )
+                    .child(
+                        Icon::new(IconName::ArrowDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.list_state.scroll_to(ListOffset {
+                            item_ix: entry_ix,
+                            offset_in_item: px(0.0),
+                        });
+                        cx.notify();
+                    })),
+            );
+
+        Some(v_flex().child(header).child(card).into_any())
     }
 
     fn render_message_queue_summary(
@@ -4814,7 +4940,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
-                    false,
+                    ToolCallLayout::Standalone,
                     window,
                     cx,
                 );
@@ -6015,7 +6141,7 @@ impl ThreadView {
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -6232,7 +6358,7 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .when(!is_subagent, |this| {
+            .when(layout.has_outer_chrome(), |this| {
                 this.my_1p5()
                     .mx_5()
                     .border_1()
@@ -6317,7 +6443,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6347,7 +6473,7 @@ impl ThreadView {
                         terminal,
                         tool_call,
                         focus_handle,
-                        is_subagent,
+                        layout,
                         window,
                         cx,
                     )
@@ -6358,7 +6484,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     focus_handle,
-                    is_subagent,
+                    layout,
                     window,
                     cx,
                 ))
@@ -6372,7 +6498,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6620,7 +6746,7 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if is_subagent {
+                if !layout.has_outer_chrome() {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
@@ -6634,7 +6760,7 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .when(!is_subagent, |this| {
+            .when(layout.has_outer_chrome(), |this| {
                 this.map(|this| {
                     if has_location && !use_card_layout {
                         this.ml_4()
@@ -7633,7 +7759,7 @@ impl ThreadView {
                 terminal,
                 tool_call,
                 focus_handle,
-                false,
+                ToolCallLayout::Standalone,
                 window,
                 cx,
             ),
@@ -8170,7 +8296,7 @@ impl ThreadView {
                                 entry_ix,
                                 tool_call,
                                 focus_handle,
-                                true,
+                                ToolCallLayout::Embedded,
                                 window,
                                 cx,
                             ))
