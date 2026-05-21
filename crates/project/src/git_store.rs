@@ -7835,7 +7835,7 @@ impl Repository {
                 let RepositoryState::Local(LocalRepositoryState { backend, .. }) = state else {
                     bail!("not a local repository")
                 };
-                let snapshot = compute_snapshot(this.clone(), backend.clone(), &mut cx).await?;
+                let snapshot = compute_snapshot(this.clone(), backend.clone(), &mut cx).await;
                 this.update(&mut cx, |this, cx| {
                     this.clear_pending_ops(cx);
                 });
@@ -9201,7 +9201,7 @@ async fn compute_snapshot(
     this: Entity<Repository>,
     backend: Arc<dyn GitRepository>,
     cx: &mut AsyncApp,
-) -> Result<RepositorySnapshot> {
+) -> RepositorySnapshot {
     log::debug!("starting compute snapshot");
 
     let (id, work_directory_abs_path, prev_snapshot) = this.update(cx, |this, _| {
@@ -9342,7 +9342,7 @@ async fn compute_snapshot(
         .await;
     log::debug!("new merge details: {merge_details:?}");
 
-    Ok(this.update(cx, |this, cx| {
+    this.update(cx, |this, cx| {
         if conflicts_changed || statuses_by_path != this.snapshot.statuses_by_path {
             cx.emit(RepositoryEvent::StatusesChanged);
         }
@@ -9356,7 +9356,7 @@ async fn compute_snapshot(
         this.snapshot.stash_entries = stash_entries;
 
         this.snapshot.clone()
-    }))
+    })
 }
 
 fn status_from_proto(
