@@ -123,12 +123,19 @@ impl CustomLabels {
         let labels = patterns
             .into_iter()
             .filter_map(|(pattern, template)| {
-                let matcher =
-                    PathMatcher::new([pattern.as_ref()], PathStyle::Posix).ok()?;
-                Some(CustomLabel {
-                    matcher,
-                    template: LabelTemplate::parse(template.as_ref()),
-                })
+                let pattern = pattern.as_ref();
+                match PathMatcher::new([pattern], PathStyle::Posix) {
+                    Ok(matcher) => Some(CustomLabel {
+                        matcher,
+                        template: LabelTemplate::parse(template.as_ref()),
+                    }),
+                    Err(error) => {
+                        log::warn!(
+                            "ignoring invalid `custom_labels` glob pattern {pattern:?}: {error}"
+                        );
+                        None
+                    }
+                }
             })
             .collect();
         Self { labels }
