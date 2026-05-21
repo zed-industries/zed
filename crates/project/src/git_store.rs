@@ -302,6 +302,7 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
+    pub dot_git_abs_path: Arc<Path>,
     /// Absolute path to the directory holding this worktree's Git state.
     ///
     /// For a linked worktree this is the worktree-specific directory under the
@@ -390,14 +391,6 @@ pub struct Repository {
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
-    refetch_repo_state: Arc<
-        dyn Fn(
-            &mut Context<Self>,
-        ) -> (
-            mpsc::UnboundedSender<GitJob>,
-            Shared<Task<Result<RepositoryState, String>>>,
-        ),
-    >,
 }
 
 impl std::ops::Deref for Repository {
@@ -546,13 +539,27 @@ impl GitStore {
                     let (mut watcher, _) = watcher.await;
                     while let Some(_) = watcher.next().await {
                         let Ok(_) = this.update(cx, |this, cx| {
+                            let GitStoreState::Local {
+                                project_environment,
+                                fs,
+                                ..
+                            } = &this.state
+                            else {
+                                return;
+                            };
+                            let project_environment = project_environment.downgrade();
+                            let fs = fs.clone();
                             for repo in this.repositories.values() {
-                                repo.update(cx, |this, cx| {
-                                    if this.job_sender.is_closed() {
-                                        let (job_sender, state) = (this.refetch_repo_state)(cx);
-                                        this.repository_state = state;
-                                        this.job_sender = job_sender;
-                                        this.schedule_scan(None, cx);
+                                repo.update(cx, |repo, cx| {
+                                    if repo.job_sender.is_closed() {
+                                        let is_trusted = repo.is_trusted();
+                                        repo.respawn_local_worker(
+                                            project_environment.clone(),
+                                            fs.clone(),
+                                            is_trusted,
+                                            cx,
+                                        );
+                                        repo.schedule_scan(None, cx);
                                     }
                                 })
                             }
@@ -1627,10 +1634,44 @@ impl GitStore {
                         .entry(repo_id)
                         .or_insert_with(HashSet::new)
                         .insert(worktree_id);
-                    existing.update(cx, |existing, cx| {
-                        existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
-                        existing.schedule_scan(updates_tx.clone(), cx);
-                    });
+                    let path_changed = update.old_work_directory_abs_path.as_ref()
+                        != update.new_work_directory_abs_path.as_ref();
+                    if path_changed
+                        && let Some(dot_git_abs_path) = update.dot_git_abs_path.clone()
+                        && let Some(repository_dir_abs_path) =
+                            update.repository_dir_abs_path.clone()
+                        && let Some(common_dir_abs_path) = update.common_dir_abs_path.clone()
+                    {
+                        let is_trusted = TrustedWorktrees::try_get_global(cx)
+                            .map(|trusted_worktrees| {
+                                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                                    trusted_worktrees.can_trust(
+                                        &self.worktree_store,
+                                        worktree_id,
+                                        cx,
+                                    )
+                                })
+                            })
+                            .unwrap_or(false);
+                        existing.update(cx, |existing, cx| {
+                            existing.reinitialize_local_backend(
+                                new_work_directory_abs_path,
+                                dot_git_abs_path,
+                                repository_dir_abs_path,
+                                common_dir_abs_path,
+                                project_environment.downgrade(),
+                                fs.clone(),
+                                is_trusted,
+                                cx,
+                            );
+                            existing.schedule_scan(updates_tx.clone(), cx);
+                        });
+                    } else {
+                        existing.update(cx, |existing, cx| {
+                            existing.snapshot.work_directory_abs_path = new_work_directory_abs_path;
+                            existing.schedule_scan(updates_tx.clone(), cx);
+                        });
+                    }
                 } else {
                     if let Some(worktree_ids) = self.worktree_ids.get_mut(&repo_id) {
                         worktree_ids.remove(&worktree_id);
@@ -4104,11 +4145,14 @@ impl RepositorySnapshot {
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
         repository_dir_abs_path: Option<Arc<Path>>,
+        dot_git_abs_path: Option<Arc<Path>>,
         common_dir_abs_path: Option<Arc<Path>>,
         path_style: PathStyle,
     ) -> Self {
         let repository_dir_abs_path =
             repository_dir_abs_path.unwrap_or_else(|| work_directory_abs_path.join(".git").into());
+        let dot_git_abs_path =
+            dot_git_abs_path.unwrap_or_else(|| work_directory_abs_path.join(".git").into());
         let common_dir_abs_path =
             common_dir_abs_path.unwrap_or_else(|| repository_dir_abs_path.clone());
 
@@ -4116,6 +4160,7 @@ impl RepositorySnapshot {
             id,
             statuses_by_path: Default::default(),
             repository_dir_abs_path,
+            dot_git_abs_path,
             common_dir_abs_path,
             work_directory_abs_path,
             branch: None,
@@ -4465,6 +4510,57 @@ impl Repository {
             .cloned()
     }
 
+    fn respawn_local_worker(
+        &mut self,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
+        is_trusted: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let work_directory_abs_path = self.snapshot.work_directory_abs_path.clone();
+        let dot_git_abs_path = self.snapshot.dot_git_abs_path.clone();
+
+        let state = cx
+            .spawn(async move |_, cx| {
+                LocalRepositoryState::new(
+                    work_directory_abs_path,
+                    dot_git_abs_path,
+                    project_environment,
+                    fs,
+                    is_trusted,
+                    cx,
+                )
+                .await
+                .map_err(|err| err.to_string())
+            })
+            .shared();
+        self.job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
+        self.repository_state = cx
+            .spawn(async move |_, _| {
+                let state = state.await?;
+                Ok(RepositoryState::Local(state))
+            })
+            .shared();
+    }
+
+    fn reinitialize_local_backend(
+        &mut self,
+        work_directory_abs_path: Arc<Path>,
+        dot_git_abs_path: Arc<Path>,
+        repository_dir_abs_path: Arc<Path>,
+        common_dir_abs_path: Arc<Path>,
+        project_environment: WeakEntity<ProjectEnvironment>,
+        fs: Arc<dyn Fs>,
+        is_trusted: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.snapshot.work_directory_abs_path = work_directory_abs_path;
+        self.snapshot.dot_git_abs_path = dot_git_abs_path;
+        self.snapshot.repository_dir_abs_path = repository_dir_abs_path;
+        self.snapshot.common_dir_abs_path = common_dir_abs_path;
+        self.respawn_local_worker(project_environment, fs, is_trusted, cx);
+    }
+
     fn local(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
@@ -4479,64 +4575,34 @@ impl Repository {
     ) -> Self {
         let snapshot = RepositorySnapshot::empty(
             id,
-            work_directory_abs_path.clone(),
+            work_directory_abs_path,
             Some(repository_dir_abs_path),
+            Some(dot_git_abs_path),
             Some(common_dir_abs_path),
             PathStyle::local(),
         );
-        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
-            let work_directory_abs_path = work_directory_abs_path.clone();
-            let dot_git_abs_path = dot_git_abs_path.clone();
-            let project_environment = project_environment.clone();
-            let fs = fs.clone();
 
-            let state = cx
-                .spawn(async move |_, cx| {
-                    LocalRepositoryState::new(
-                        work_directory_abs_path,
-                        dot_git_abs_path,
-                        project_environment,
-                        fs,
-                        is_trusted,
-                        cx,
-                    )
-                    .await
-                    .map_err(|err| err.to_string())
-                })
-                .shared();
-            let job_sender = Repository::spawn_local_git_worker(state.clone(), cx);
-            let state = cx
-                .spawn(async move |_, _| {
-                    let state = state.await?;
-                    Ok(RepositoryState::Local(state))
-                })
-                .shared();
-
-            (job_sender, state)
-        });
-
-        let (job_sender, state) = (refetch_repo_state)(cx);
-        cx.subscribe_self(Self::handle_subscribe_self).detach();
-
-        Repository {
+        let mut repo = Repository {
             this: cx.weak_entity(),
             git_store,
             snapshot,
             pending_ops: Default::default(),
-            repository_state: state,
+            repository_state: Task::ready(Err("not yet initialized".into())).shared(),
             commit_message_buffer: None,
             askpass_delegates: Default::default(),
             paths_needing_status_update: Default::default(),
             latest_askpass_id: 0,
-            job_sender,
+            job_sender: mpsc::unbounded().0,
             job_id: 0,
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
-            refetch_repo_state,
-        }
+        };
+        repo.respawn_local_worker(project_environment, fs, is_trusted, cx);
+        cx.subscribe_self(Self::handle_subscribe_self).detach();
+        repo
     }
 
     fn remote(
@@ -4554,21 +4620,14 @@ impl Repository {
             id,
             work_directory_abs_path,
             repository_dir_abs_path,
+            None,
             common_dir_abs_path,
             path_style,
         );
-        let refetch_repo_state = Arc::new(move |cx: &mut Context<Self>| {
-            let repository_state = RemoteRepositoryState {
-                project_id,
-                client: client.clone(),
-            };
-            let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
-            let repository_state =
-                Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
-            (job_sender, repository_state)
-        });
 
-        let (job_sender, repository_state) = (refetch_repo_state)(cx);
+        let repository_state = RemoteRepositoryState { project_id, client };
+        let job_sender = Self::spawn_remote_git_worker(repository_state.clone(), cx);
+        let repository_state = Task::ready(Ok(RepositoryState::Remote(repository_state))).shared();
         cx.subscribe_self(Self::handle_subscribe_self).detach();
 
         Self {
@@ -4588,7 +4647,6 @@ impl Repository {
             initial_graph_data: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
-            refetch_repo_state,
         }
     }
 
