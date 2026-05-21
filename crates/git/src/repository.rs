@@ -2888,6 +2888,10 @@ impl GitRepository for RealGitRepository {
                     }
                 }
 
+                if git.run(&["rev-parse", "main"]).await.is_ok() {
+                    return Ok(Some("main".into()));
+                }
+
                 if git.run(&["rev-parse", "master"]).await.is_ok() {
                     return Ok(Some("master".into()));
                 }
