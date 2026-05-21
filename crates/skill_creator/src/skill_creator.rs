@@ -90,19 +90,17 @@ fn project_scopes_from_workspace(
         return Vec::new();
     };
     let workspace = workspace.read(cx);
-    let project = workspace.project().read(cx);
-    project
+    let root_paths = workspace.root_paths(cx);
+    workspace
         .visible_worktrees(cx)
-        .filter_map(|worktree| {
+        .zip(root_paths)
+        .map(|(worktree, abs_path)| {
             let worktree = worktree.read(cx);
-            if !worktree.is_local() {
-                return None;
-            }
-            Some(ScopeChoice::Project {
+            ScopeChoice::Project {
                 worktree_id: worktree.id(),
                 root_name: SharedString::from(worktree.root_name_str().to_string()),
-                abs_path: worktree.abs_path(),
-            })
+                abs_path,
+            }
         })
         .collect()
 }
