@@ -567,9 +567,13 @@ file-less `path_for_buffer` fallback in `render_buffer_header` is removed.
       stays `Capability::ReadOnly`, the multibuffer stays `ReadWrite`. *(Test:
       `test_staged_index_snapshot_buffer_carries_file_for_diff_view`, which also
       asserts `resolve_file_path` works without the removed fallback.)*
-- [x] **Syntax highlighting.** Language detected from the file path + content and
-      async-loaded, assigned to the buffer and both `set_base_text` calls. *(Test:
-      `test_staged_index_snapshot_buffer_has_detected_language`.)*
+- [x] **Syntax highlighting (buffer: context + added lines).** Language detected
+      from the file path + content and async-loaded, assigned to the buffer and both
+      `set_base_text` calls. *(Test:
+      `test_staged_index_snapshot_buffer_has_detected_language`.)* This colors
+      context and added/green lines; deleted/red lines render from the diff
+      base-text buffer and needed a separate `language_changed` call — see the
+      post-A9 follow-up below.
 - [x] **A/M/D status badge.** `BranchDiffAddon` registered for the Staged base
       supplies `override_status_for_buffer_id`; `repository_and_path_for_buffer_id`
       falls back to `index_snapshot_repos` so it resolves the synthetic buffer.
@@ -601,6 +605,22 @@ builds the index rope once (normalized via `LineEnding`/`new_normalized`, matchi
 and snapshot diff-event handlers share one `write_hunk_staging_to_index` helper;
 (4) the stale "file-less" comments were corrected to "not registered in the buffer
 store" (the buffer carries a synthetic file post-A9).
+
+- [x] **Followup — highlight deleted (red) lines.** A9's syntax highlighting only
+      reached the buffer (context + added/green lines). Deleted/red lines render from
+      the diff **base-text buffer** — a separate `language::Buffer` whose language is
+      set only by `BufferDiff::language_changed`, never by `set_base_text` (whose
+      `language` arg feeds the diff options only). `open_staged_index_snapshot` called
+      `set_base_text` but not `language_changed`, so the HEAD base buffer stayed
+      language-less and deleted lines rendered uncolored. Fixed by calling
+      `diff.language_changed(language, Some(language_registry), cx)` on the primary
+      diff before `set_base_text`, matching the worktree-diff path
+      (`git_store.rs:1242`). This was the deferred "Q#10" finding from the post-A9
+      review, originally misjudged as low-risk on the wrong assumption that
+      `set_base_text` highlighted the base. *(Test:
+      `test_staged_index_snapshot_base_text_buffer_has_detected_language` asserts the
+      base buffer carries the detected language; verified RED before the fix. Commit
+      `28ae6d7db9`.)*
 
 - [ ] **Followup — cache the staged snapshot.** `open_staged_index_snapshot` mints
       a fresh buffer + diff on every call, so the `RefreshReason`-driven rebuild
