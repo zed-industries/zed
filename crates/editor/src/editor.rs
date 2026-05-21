@@ -198,7 +198,7 @@ use persistence::EditorDb;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
     CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, GitEvent,
-    InlayHint, InlayId, InvalidationStrategy, Location, LocationLink, LspAction,
+    InlayHint, InlayId, InvalidationStrategy, Location, LocationLink, LspAction, LspStoreEvent,
     PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction,
     bookmark_store::BookmarkStore,
     debugger::{
@@ -216,7 +216,10 @@ use project::{
 };
 use rand::seq::SliceRandom;
 use regex::Regex;
-use rpc::{ErrorCode, ErrorExt, proto::PeerId};
+use rpc::{
+    ErrorCode, ErrorExt,
+    proto::{self, PeerId},
+};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, SharedScrollAnchor};
 use selections_collection::{MutableSelectionsCollection, SelectionsCollection};
 use serde::{Deserialize, Serialize};
@@ -1852,77 +1855,6 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens { .. } => {
-                        editor.refresh_code_lenses(None, window, cx);
-                    }
-                    project::Event::RefreshInlayHints {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::RefreshRequested {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            },
-                            cx,
-                        );
-                    }
-                    project::Event::RefreshSemanticTokens {
-                        server_id,
-                        request_id,
-                    } => {
-                        editor.refresh_semantic_tokens(
-                            None,
-                            Some(RefreshForServer {
-                                server_id: *server_id,
-                                request_id: *request_id,
-                            }),
-                            cx,
-                        );
-                    }
-                    project::Event::LanguageServerRemoved(_) => {
-                        editor.registered_buffers.clear();
-                        editor.register_visible_buffers(cx);
-                        editor.invalidate_semantic_tokens(None);
-                        editor.refresh_runnables(None, window, cx);
-                        editor.update_lsp_data(None, window, cx);
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
-                    }
-                    project::Event::SnippetEdit(id, snippet_edits) => {
-                        // todo(lw): Non singletons
-                        if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
-                            let snapshot = buffer.read(cx).snapshot();
-                            let focus_handle = editor.focus_handle(cx);
-                            if snapshot.remote_id() == *id && focus_handle.is_focused(window) {
-                                for (range, snippet) in snippet_edits {
-                                    let buffer_range =
-                                        language::range_from_lsp(*range).to_offset(&snapshot);
-                                    editor
-                                        .insert_snippet(
-                                            &[MultiBufferOffset(buffer_range.start)
-                                                ..MultiBufferOffset(buffer_range.end)],
-                                            snippet.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .ok();
-                                }
-                            }
-                        }
-                    }
-                    project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
-                        let buffer_id = *buffer_id;
-                        if editor.buffer().read(cx).buffer(buffer_id).is_some() {
-                            editor.register_buffer(buffer_id, cx);
-                            editor.refresh_runnables(Some(buffer_id), window, cx);
-                            editor.update_lsp_data(Some(buffer_id), window, cx);
-                            editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
-                            refresh_linked_ranges(editor, window, cx);
-                            editor.refresh_code_actions_for_selection(window, cx);
-                            editor.refresh_document_highlights(cx);
-                        }
-                    }
-
                     project::Event::EntryRenamed(transaction, project_path, abs_path) => {
                         let Some(workspace) = editor.workspace() else {
                             return;
@@ -1959,29 +1891,118 @@ impl Editor {
                         }
                     }
 
-                    project::Event::WorkspaceEditApplied { transaction, .. } => {
-                        let Some(workspace) = editor.workspace() else {
-                            return;
-                        };
-                        let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
-                        else {
-                            return;
-                        };
-
-                        if active_editor.entity_id() == cx.entity_id() {
-                            Self::open_transaction_for_hidden_buffers(
-                                workspace,
-                                transaction.clone(),
-                                "LSP Edit".to_string(),
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-
                     _ => {}
                 },
             ));
+            project_subscriptions.push(
+                cx.subscribe_in(
+                    project,
+                    window,
+                    |editor, _, event: &LspStoreEvent, window, cx| match event {
+                        LspStoreEvent::RefreshCodeLens { .. } => {
+                            editor.refresh_code_lenses(None, window, cx);
+                        }
+                        LspStoreEvent::RefreshInlayHints {
+                            server_id,
+                            request_id,
+                        } => {
+                            editor.refresh_inlay_hints(
+                                InlayHintRefreshReason::RefreshRequested {
+                                    server_id: *server_id,
+                                    request_id: *request_id,
+                                },
+                                cx,
+                            );
+                        }
+                        LspStoreEvent::RefreshSemanticTokens {
+                            server_id,
+                            request_id,
+                        } => {
+                            editor.refresh_semantic_tokens(
+                                None,
+                                Some(RefreshForServer {
+                                    server_id: *server_id,
+                                    request_id: *request_id,
+                                }),
+                                cx,
+                            );
+                        }
+                        LspStoreEvent::LanguageServerRemoved(_) => {
+                            editor.registered_buffers.clear();
+                            editor.register_visible_buffers(cx);
+                            editor.invalidate_semantic_tokens(None);
+                            editor.refresh_runnables(None, window, cx);
+                            editor.update_lsp_data(None, window, cx);
+                            editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRemoved, cx);
+                        }
+                        LspStoreEvent::SnippetEdit {
+                            buffer_id: id,
+                            edits: snippet_edits,
+                            ..
+                        } => {
+                            // todo(lw): Non singletons
+                            if let Some(buffer) = editor.buffer.read(cx).as_singleton() {
+                                let snapshot = buffer.read(cx).snapshot();
+                                let focus_handle = editor.focus_handle(cx);
+                                if snapshot.remote_id() == *id && focus_handle.is_focused(window) {
+                                    for (range, snippet) in snippet_edits {
+                                        let buffer_range =
+                                            language::range_from_lsp(*range).to_offset(&snapshot);
+                                        editor
+                                            .insert_snippet(
+                                                &[MultiBufferOffset(buffer_range.start)
+                                                    ..MultiBufferOffset(buffer_range.end)],
+                                                snippet.clone(),
+                                                window,
+                                                cx,
+                                            )
+                                            .ok();
+                                    }
+                                }
+                            }
+                        }
+                        LspStoreEvent::LanguageServerUpdate {
+                            message:
+                                proto::update_language_server::Variant::RegisteredForBuffer(update),
+                            ..
+                        } => {
+                            let Ok(buffer_id) = BufferId::new(update.buffer_id) else {
+                                return;
+                            };
+                            if editor.buffer().read(cx).buffer(buffer_id).is_some() {
+                                editor.register_buffer(buffer_id, cx);
+                                editor.refresh_runnables(Some(buffer_id), window, cx);
+                                editor.update_lsp_data(Some(buffer_id), window, cx);
+                                editor
+                                    .refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                                refresh_linked_ranges(editor, window, cx);
+                                editor.refresh_code_actions_for_selection(window, cx);
+                                editor.refresh_document_highlights(cx);
+                            }
+                        }
+                        LspStoreEvent::WorkspaceEditApplied { transaction, .. } => {
+                            let Some(workspace) = editor.workspace() else {
+                                return;
+                            };
+                            let Some(active_editor) = workspace.read(cx).active_item_as::<Self>(cx)
+                            else {
+                                return;
+                            };
+
+                            if active_editor.entity_id() == cx.entity_id() {
+                                Self::open_transaction_for_hidden_buffers(
+                                    workspace,
+                                    transaction.clone(),
+                                    "LSP Edit".to_string(),
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                        _ => {}
+                    },
+                ),
+            );
             if let Some(task_inventory) = project
                 .read(cx)
                 .task_store(cx)

@@ -12,7 +12,7 @@ use lsp::{
 use rpc::{AnyProtoClient, proto};
 use settings::WorktreeId;
 
-use crate::{LanguageServerLogType, Project, ProjectItem as _};
+use crate::{LanguageServerLogType, LspStoreEvent, Project, ProjectItem as _};
 
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
@@ -47,7 +47,7 @@ pub struct LogStore {
 }
 
 struct ProjectState {
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
     copilot_log_subscription: Option<lsp::Subscription>,
 }
 
@@ -268,112 +268,124 @@ impl LogStore {
         self.projects.insert(
             project.downgrade(),
             ProjectState {
-                _subscriptions: [
-                    cx.observe_release(project, move |this, _, _| {
-                        this.projects.remove(&weak_project);
-                        this.language_servers
-                            .retain(|_, state| state.kind.project() != Some(&weak_project));
-                    }),
-                    cx.subscribe(project, move |log_store, project, event, cx| {
-                        let server_kind = if project.read(cx).is_local(cx) {
-                            LanguageServerKind::Local {
-                                project: project.downgrade(),
-                            }
-                        } else {
-                            LanguageServerKind::Remote {
-                                project: project.downgrade(),
-                            }
-                        };
-                        match event {
-                            crate::Event::LanguageServerAdded(id, name, worktree_id) => {
-                                log_store.add_language_server(
-                                    server_kind,
-                                    *id,
-                                    Some(name.clone()),
-                                    *worktree_id,
-                                    project
-                                        .read(cx)
-                                        .lsp_store(cx)
-                                        .read(cx)
-                                        .language_server_for_id(*id),
-                                    cx,
-                                );
-                            }
-                            crate::Event::LanguageServerBufferRegistered {
-                                server_id,
-                                buffer_id,
-                                name,
-                                ..
-                            } => {
-                                let worktree_id = project
-                                    .read(cx)
-                                    .buffer_for_id(*buffer_id, cx)
-                                    .and_then(|buffer| {
-                                        Some(buffer.read(cx).project_path(cx)?.worktree_id)
-                                    });
-                                let name = name.clone().or_else(|| {
-                                    project
-                                        .read(cx)
-                                        .lsp_store(cx)
-                                        .read(cx)
-                                        .language_server_statuses
-                                        .get(server_id)
-                                        .map(|status| status.name.clone())
-                                });
-                                log_store.add_language_server(
-                                    server_kind,
-                                    *server_id,
+                _subscriptions:
+                    [
+                        cx.observe_release(project, move |this, _, _| {
+                            this.projects.remove(&weak_project);
+                            this.language_servers
+                                .retain(|_, state| state.kind.project() != Some(&weak_project));
+                        }),
+                        cx.subscribe(project, move |log_store, project, event, cx| {
+                            let server_kind = if project.read(cx).is_local(cx) {
+                                LanguageServerKind::Local {
+                                    project: project.downgrade(),
+                                }
+                            } else {
+                                LanguageServerKind::Remote {
+                                    project: project.downgrade(),
+                                }
+                            };
+                            match event {
+                                LspStoreEvent::LanguageServerAdded(id, name, worktree_id) => {
+                                    log_store.add_language_server(
+                                        server_kind,
+                                        *id,
+                                        Some(name.clone()),
+                                        *worktree_id,
+                                        project
+                                            .read(cx)
+                                            .lsp_store(cx)
+                                            .read(cx)
+                                            .language_server_for_id(*id),
+                                        cx,
+                                    );
+                                }
+                                LspStoreEvent::LanguageServerUpdate {
+                                    language_server_id: server_id,
                                     name,
-                                    worktree_id,
-                                    None,
-                                    cx,
-                                );
-                            }
-                            crate::Event::LanguageServerRemoved(id) => {
-                                log_store.remove_language_server(*id, cx);
-                            }
-                            crate::Event::LanguageServerLog(id, typ, message) => {
-                                log_store.add_language_server(
-                                    server_kind,
-                                    *id,
-                                    None,
-                                    None,
-                                    None,
-                                    cx,
-                                );
-                                match typ {
-                                    crate::LanguageServerLogType::Log(typ) => {
-                                        log_store.add_language_server_log(*id, *typ, message, cx);
-                                    }
-                                    crate::LanguageServerLogType::Trace { verbose_info } => {
-                                        log_store.add_language_server_trace(
-                                            *id,
-                                            message,
-                                            verbose_info.clone(),
-                                            cx,
-                                        );
-                                    }
-                                    crate::LanguageServerLogType::Rpc { received } => {
-                                        let kind = if *received {
-                                            MessageKind::Receive
-                                        } else {
-                                            MessageKind::Send
-                                        };
-                                        log_store.add_language_server_rpc(*id, kind, message, cx);
+                                    message:
+                                        proto::update_language_server::Variant::RegisteredForBuffer(
+                                            update,
+                                        ),
+                                } => {
+                                    let Ok(buffer_id) = language::BufferId::new(update.buffer_id)
+                                    else {
+                                        return;
+                                    };
+                                    let worktree_id = project
+                                        .read(cx)
+                                        .buffer_for_id(buffer_id, cx)
+                                        .and_then(|buffer| {
+                                            Some(buffer.read(cx).project_path(cx)?.worktree_id)
+                                        });
+                                    let name = name.clone().or_else(|| {
+                                        project
+                                            .read(cx)
+                                            .lsp_store(cx)
+                                            .read(cx)
+                                            .language_server_statuses
+                                            .get(server_id)
+                                            .map(|status| status.name.clone())
+                                    });
+                                    log_store.add_language_server(
+                                        server_kind,
+                                        *server_id,
+                                        name,
+                                        worktree_id,
+                                        None,
+                                        cx,
+                                    );
+                                }
+                                LspStoreEvent::LanguageServerRemoved(id) => {
+                                    log_store.remove_language_server(*id, cx);
+                                }
+                                LspStoreEvent::LanguageServerLog(id, typ, message) => {
+                                    log_store.add_language_server(
+                                        server_kind,
+                                        *id,
+                                        None,
+                                        None,
+                                        None,
+                                        cx,
+                                    );
+                                    match typ {
+                                        crate::LanguageServerLogType::Log(typ) => {
+                                            log_store
+                                                .add_language_server_log(*id, *typ, message, cx);
+                                        }
+                                        crate::LanguageServerLogType::Trace { verbose_info } => {
+                                            log_store.add_language_server_trace(
+                                                *id,
+                                                message,
+                                                verbose_info.clone(),
+                                                cx,
+                                            );
+                                        }
+                                        crate::LanguageServerLogType::Rpc { received } => {
+                                            let kind = if *received {
+                                                MessageKind::Receive
+                                            } else {
+                                                MessageKind::Send
+                                            };
+                                            log_store
+                                                .add_language_server_rpc(*id, kind, message, cx);
+                                        }
                                     }
                                 }
+                                _ => {}
                             }
-                            crate::Event::ToggleLspLogs {
+                        }),
+                        cx.subscribe(project, move |log_store, _, event, _| {
+                            if let crate::Event::ToggleLspLogs {
                                 server_id,
                                 enabled,
                                 toggled_log_kind,
-                            } => {
+                            } = event
+                            {
                                 log_store.toggle_lsp_logs(*server_id, *enabled, *toggled_log_kind);
                             }
-                            _ => {}
-                        }
-                    }),
-                ],
+                        }),
+                    ],
                 copilot_log_subscription: None,
             },
         );

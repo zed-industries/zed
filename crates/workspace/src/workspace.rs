@@ -95,8 +95,8 @@ pub use persistence::{
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    WorktreeSettings,
+    DirectoryLister, LspStoreEvent, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree,
+    WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -1584,20 +1584,6 @@ impl Workspace {
                     this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
-                project::Event::LanguageServerPrompt(request) => {
-                    struct LanguageServerPrompt;
-
-                    this.show_notification(
-                        NotificationId::composite::<LanguageServerPrompt>(request.id),
-                        cx,
-                        |cx| {
-                            cx.new(|cx| {
-                                notifications::LanguageServerPrompt::new(request.clone(), cx)
-                            })
-                        },
-                    );
-                }
-
                 project::Event::AgentLocationChanged => {
                     this.handle_agent_location_changed(window, cx)
                 }
@@ -1605,6 +1591,19 @@ impl Workspace {
                 _ => {}
             }
             cx.notify()
+        })
+        .detach();
+
+        cx.subscribe(&project, |this, _, event: &LspStoreEvent, cx| {
+            if let LspStoreEvent::LanguageServerPrompt(request) = event {
+                struct LanguageServerPrompt;
+
+                this.show_notification(
+                    NotificationId::composite::<LanguageServerPrompt>(request.id),
+                    cx,
+                    |cx| cx.new(|cx| notifications::LanguageServerPrompt::new(request.clone(), cx)),
+                );
+            }
         })
         .detach();
 

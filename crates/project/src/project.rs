@@ -7110,7 +7110,7 @@ impl Project {
             })
             .collect();
         this.update(&mut cx, |_, cx| {
-            cx.emit(Event::LanguageServerPrompt(
+            cx.emit(LspStoreEvent::LanguageServerPrompt(
                 LanguageServerPromptRequest::new(
                     LanguageServerId::from_proto(envelope.payload.server_id),
                     proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
