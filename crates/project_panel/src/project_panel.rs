@@ -1012,7 +1012,42 @@ impl ProjectPanel {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
+            self.refresh_expanded_directories(cx);
             cx.emit(Event::Focus);
+        }
+    }
+
+    fn refresh_expanded_directories(&mut self, cx: &mut Context<Self>) {
+        let expanded_dir_ids = self.state.expanded_dir_ids.clone();
+        let tasks = self.project.update(cx, |project, cx| {
+            let mut tasks = Vec::new();
+            for (worktree_id, entry_ids) in expanded_dir_ids {
+                let Some(worktree) = project.worktree_for_id(worktree_id, cx) else {
+                    continue;
+                };
+                let mut paths = {
+                    let worktree = worktree.read(cx);
+                    entry_ids
+                        .into_iter()
+                        .filter_map(|entry_id| {
+                            let entry = worktree.entry_for_id(entry_id)?;
+                            entry.is_dir().then(|| entry.path.clone())
+                        })
+                        .collect::<Vec<_>>()
+                };
+                paths.sort_unstable();
+                paths.dedup();
+                if paths.is_empty() {
+                    continue;
+                }
+                if let Some(task) = project.refresh_directories_for_paths(worktree_id, paths, cx) {
+                    tasks.push(task);
+                }
+            }
+            tasks
+        });
+        for task in tasks {
+            task.detach_and_log_err(cx);
         }
     }
 

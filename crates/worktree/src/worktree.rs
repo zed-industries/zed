@@ -151,6 +151,7 @@ pub struct PathPrefixScanRequest {
 
 struct ScanRequest {
     relative_paths: Vec<Arc<RelPath>>,
+    directory_paths: Vec<Arc<RelPath>>,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
@@ -967,6 +968,21 @@ impl Worktree {
                 }))
             }
         }
+    }
+
+    pub fn refresh_directories_for_paths(
+        &mut self,
+        paths: Vec<Arc<RelPath>>,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<()>> {
+        let Some(local) = self.as_local() else {
+            return Task::ready(Ok(()));
+        };
+        let mut refresh = local.refresh_directories_for_paths(paths);
+        cx.background_spawn(async move {
+            refresh.next().await;
+            Ok(())
+        })
     }
 
     pub fn expand_all_for_entry(
@@ -1930,6 +1946,7 @@ impl LocalWorktree {
         self.scan_requests_tx
             .try_send(ScanRequest {
                 relative_paths: paths,
+                directory_paths: Vec::new(),
                 done: smallvec![tx],
             })
             .ok();
@@ -1942,6 +1959,18 @@ impl LocalWorktree {
         paths: Vec<Arc<RelPath>>,
     ) -> barrier::Receiver {
         self.refresh_entries_for_paths(paths)
+    }
+
+    pub fn refresh_directories_for_paths(&self, paths: Vec<Arc<RelPath>>) -> barrier::Receiver {
+        let (tx, rx) = barrier::channel();
+        self.scan_requests_tx
+            .try_send(ScanRequest {
+                relative_paths: Vec::new(),
+                directory_paths: paths,
+                done: smallvec![tx],
+            })
+            .ok();
+        rx
     }
 
     pub fn add_path_prefix_to_scan(&self, path_prefix: Arc<RelPath>) -> barrier::Receiver {
@@ -2988,7 +3017,8 @@ impl LocalSnapshot {
 
 impl BackgroundScannerState {
     fn should_scan_directory(&self, entry: &Entry) -> bool {
-        (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
+        (self.scanning_enabled && !entry.is_external
+            && (!entry.is_ignored || entry.is_always_included))
             || entry.path.file_name() == Some(DOT_GIT)
             || entry.path.file_name() == Some(local_settings_folder_name())
             || entry.path.file_name() == Some(local_vscode_folder_name())
@@ -3092,6 +3122,8 @@ impl BackgroundScannerState {
         parent_path: Arc<RelPath>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
+        watcher: &dyn Watcher,
+        remove_missing_entries: bool,
     ) {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
@@ -3123,6 +3155,23 @@ impl BackgroundScannerState {
             self.snapshot
                 .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
+        }
+
+        let entries = entries.into_iter().collect::<Vec<_>>();
+        if remove_missing_entries {
+            let new_entry_paths = entries
+                .iter()
+                .map(|entry| entry.path.clone())
+                .collect::<HashSet<_>>();
+            let removed_child_paths = self
+                .snapshot
+                .child_entries(&parent_path)
+                .filter(|entry| !new_entry_paths.contains(&entry.path))
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>();
+            for path in removed_child_paths {
+                self.remove_path(&path, watcher);
+            }
         }
 
         let parent_entry_id = parent_entry.id;
@@ -4201,6 +4250,7 @@ impl BackgroundScanner {
                     self.process_events(paths.into_iter().filter(|event| event.kind.is_some()).collect()).await;
                 }
 
+
                 _ = global_gitignore_events.next().fuse() => {
                     if let Some(path) = &global_gitignore_file {
                         self.update_global_gitignore(&path).await;
@@ -4211,10 +4261,24 @@ impl BackgroundScanner {
     }
 
     async fn process_scan_request(&self, mut request: ScanRequest, scanning: bool) -> bool {
-        log::debug!("rescanning paths {:?}", request.relative_paths);
+        log::debug!(
+            "rescanning paths {:?} and directories {:?}",
+            request.relative_paths,
+            request.directory_paths
+        );
 
         request.relative_paths.sort_unstable();
-        self.forcibly_load_paths(&request.relative_paths).await;
+        request.directory_paths.sort_unstable();
+        request.directory_paths.dedup();
+        let mut paths_to_refresh = request
+            .relative_paths
+            .iter()
+            .chain(request.directory_paths.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        paths_to_refresh.sort_unstable();
+        paths_to_refresh.dedup();
+        self.forcibly_load_paths(&paths_to_refresh).await;
 
         let root_path = self.state.lock().await.snapshot.abs_path.clone();
         let root_canonical_path = self.fs.canonicalize(root_path.as_path()).await;
@@ -4225,17 +4289,6 @@ impl BackgroundScanner {
                 return true;
             }
         };
-        let abs_paths = request
-            .relative_paths
-            .iter()
-            .map(|path| {
-                if path.file_name().is_some() {
-                    root_canonical_path.as_path().join(path.as_std_path())
-                } else {
-                    root_canonical_path.as_path().to_path_buf()
-                }
-            })
-            .collect::<Vec<_>>();
 
         {
             let mut state = self.state.lock().await;
@@ -4246,14 +4299,33 @@ impl BackgroundScanner {
             }
         }
 
+        let abs_paths = paths_to_refresh
+            .iter()
+            .map(|path| {
+                if path.file_name().is_some() {
+                    root_canonical_path.as_path().join(path.as_std_path())
+                } else {
+                    root_canonical_path.as_path().to_path_buf()
+                }
+            })
+            .collect::<Vec<_>>();
+
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
-            &request.relative_paths,
+            &paths_to_refresh,
             abs_paths,
             None,
         )
         .await;
+        self.scan_directories_once(&request.directory_paths).await;
+        {
+            let mut state = self.state.lock().await;
+            state.snapshot.completed_scan_id = state.snapshot.scan_id;
+            for (_, entry) in mem::take(&mut state.removed_entries) {
+                state.scanned_dirs.remove(&entry.id);
+            }
+        }
 
         self.send_status_update(scanning, request.done, &[]).await
     }
@@ -4683,6 +4755,40 @@ impl BackgroundScanner {
         !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty()
     }
 
+    async fn scan_directories_once(&self, paths: &[Arc<RelPath>]) {
+        let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
+        {
+            let state = self.state.lock().await;
+            let root_path = state.snapshot.abs_path.clone();
+            for path in paths {
+                let Some(entry) = state.snapshot.entry_for_path(path) else {
+                    continue;
+                };
+                if !entry.is_dir() {
+                    continue;
+                }
+
+                let abs_path = if entry.is_external {
+                    entry
+                        .canonical_path
+                        .as_ref()
+                        .map(|path| path.as_ref().to_path_buf())
+                        .unwrap_or_else(|| root_path.join(path.as_std_path()))
+                } else {
+                    root_path.join(path.as_std_path())
+                };
+                state
+                    .enqueue_scan_dir(abs_path.into(), entry, &scan_job_tx, self.fs.as_ref())
+                    .await;
+            }
+        }
+        drop(scan_job_tx);
+
+        while let Ok(job) = scan_job_rx.recv().await {
+            self.scan_dir(&job).await.log_err();
+        }
+    }
+
     async fn scan_dirs(
         &self,
         enable_progress_updates: bool,
@@ -4807,16 +4913,22 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
+        let mut remove_missing_entries = true;
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
             .await?
-            .filter_map(|entry| async {
-                match entry {
-                    Ok(entry) => Some(entry),
-                    Err(error) => {
-                        log::error!("error processing entry {:?}", error);
-                        None
+            .filter_map(|entry| {
+                if entry.is_err() {
+                    remove_missing_entries = false;
+                }
+                async move {
+                    match entry {
+                        Ok(entry) => Some(entry),
+                        Err(error) => {
+                            log::error!("error processing entry {:?}", error);
+                            None
+                        }
                     }
                 }
             })
@@ -4840,6 +4952,7 @@ impl BackgroundScanner {
                 .to_str()
                 .and_then(|name| Some(job.path.join(RelPath::unix(name).ok()?)))
             else {
+                remove_missing_entries = false;
                 continue;
             };
 
@@ -4885,8 +4998,12 @@ impl BackgroundScanner {
 
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
                 Ok(Some(metadata)) => metadata,
-                Ok(None) => continue,
+                Ok(None) => {
+                    remove_missing_entries = false;
+                    continue;
+                }
                 Err(err) => {
+                    remove_missing_entries = false;
                     log::error!("error processing {:?}: {err:#}", child_abs_path.display());
                     continue;
                 }
@@ -4906,6 +5023,7 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
+                        remove_missing_entries = false;
                         log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
                         continue;
                     }
@@ -4918,6 +5036,7 @@ impl BackgroundScanner {
                     None => match self.fs.canonicalize(&root_abs_path).await {
                         Ok(path) => root_canonical_path.insert(path),
                         Err(err) => {
+                            remove_missing_entries = false;
                             log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
                             continue;
                         }
@@ -5013,7 +5132,13 @@ impl BackgroundScanner {
             }
         }
 
-        state.populate_dir(job.path.clone(), new_entries, new_ignore);
+        state.populate_dir(
+            job.path.clone(),
+            new_entries,
+            new_ignore,
+            self.watcher.as_ref(),
+            remove_missing_entries,
+        );
 
         self.watcher.add(job.abs_path.as_ref()).log_err();
 
@@ -5584,6 +5709,7 @@ impl BackgroundScanner {
         let mut request = self.scan_requests_rx.recv().await?;
         while let Ok(next_request) = self.scan_requests_rx.try_recv() {
             request.relative_paths.extend(next_request.relative_paths);
+            request.directory_paths.extend(next_request.directory_paths);
             request.done.extend(next_request.done);
         }
         Ok(request)

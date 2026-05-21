@@ -2686,6 +2686,18 @@ impl Project {
         worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
+    pub fn refresh_directories_for_paths(
+        &mut self,
+        worktree_id: WorktreeId,
+        paths: Vec<Arc<RelPath>>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        Some(worktree.update(cx, |worktree, cx| {
+            worktree.refresh_directories_for_paths(paths, cx)
+        }))
+    }
+
     pub fn expand_all_for_entry(
         &mut self,
         worktree_id: WorktreeId,
