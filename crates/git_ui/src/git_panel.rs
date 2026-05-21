@@ -6718,6 +6718,28 @@ impl editor::Addon for GitPanelAddon {
     }
 }
 
+const STATUS_BAR_BRANCH_LABEL_MAX_LEN: usize = 24;
+
+fn icon_label_for(
+    show_branch_name: bool,
+    branch_name: Option<&str>,
+    show_count_badge: bool,
+    changes_count: usize,
+) -> Option<PanelButtonLabel> {
+    if show_branch_name
+        && let Some(branch_name) = branch_name.map(str::trim_ascii).filter(|s| !s.is_empty())
+    {
+        let label = util::truncate_and_trailoff(branch_name, STATUS_BAR_BRANCH_LABEL_MAX_LEN);
+        return Some(PanelButtonLabel::Text(label.into()));
+    }
+
+    if show_count_badge && changes_count > 0 {
+        return Some(PanelButtonLabel::Count(changes_count));
+    }
+
+    None
+}
+
 impl Panel for GitPanel {
     fn persistent_name() -> &'static str {
         "GitPanel"
@@ -6755,29 +6777,16 @@ impl Panel for GitPanel {
 
     fn icon_label(&self, _: &Window, cx: &App) -> Option<PanelButtonLabel> {
         let settings = GitPanelSettings::get_global(cx);
-
-        if settings.show_branch_name_in_status_bar {
-            let branch_name = self
-                .active_repository
-                .as_ref()
-                .and_then(|repo| repo.read(cx).branch.as_ref().map(|branch| branch.name()));
-
-            if let Some(branch_name) = branch_name {
-                const MAX_LABEL_LENGTH: usize = 24;
-                let label = if branch_name.len() <= MAX_LABEL_LENGTH {
-                    branch_name.to_string()
-                } else {
-                    util::truncate_and_trailoff(branch_name.trim_ascii(), MAX_LABEL_LENGTH)
-                };
-                return Some(PanelButtonLabel::Text(label.into()));
-            }
-        }
-
-        if !settings.show_count_badge {
-            return None;
-        }
-        let total = self.changes_count;
-        (total > 0).then_some(PanelButtonLabel::Count(total))
+        let branch_name = self
+            .active_repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch.as_ref().map(|branch| branch.name()));
+        icon_label_for(
+            settings.show_branch_name_in_status_bar,
+            branch_name,
+            settings.show_count_badge,
+            self.changes_count,
+        )
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
@@ -7511,6 +7520,74 @@ mod tests {
             editor::init(cx);
             crate::init(cx);
         });
+    }
+
+    #[test]
+    fn test_icon_label_for_shows_branch_text_when_enabled() {
+        let label = icon_label_for(true, Some("main"), true, 3);
+        assert!(matches!(label, Some(PanelButtonLabel::Text(s)) if s == "main"));
+    }
+
+    #[test]
+    fn test_icon_label_for_text_label_takes_priority_over_count_badge() {
+        let label = icon_label_for(true, Some("feature"), true, 7);
+        assert!(matches!(label, Some(PanelButtonLabel::Text(_))));
+    }
+
+    #[test]
+    fn test_icon_label_for_renders_digits_only_branch_as_text() {
+        let label = icon_label_for(true, Some("123"), true, 0);
+        assert!(matches!(label, Some(PanelButtonLabel::Text(s)) if s == "123"));
+    }
+
+    #[test]
+    fn test_icon_label_for_truncates_long_branch_names() {
+        let long = "feature/very-long-branch-name-that-exceeds-the-limit";
+        let label = icon_label_for(true, Some(long), false, 0);
+        let Some(PanelButtonLabel::Text(s)) = label else {
+            panic!("expected text label");
+        };
+        assert!(s.chars().count() <= STATUS_BAR_BRANCH_LABEL_MAX_LEN + 1);
+        assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn test_icon_label_for_trims_whitespace_around_branch_name() {
+        let label = icon_label_for(true, Some("  develop  "), false, 0);
+        assert!(matches!(label, Some(PanelButtonLabel::Text(s)) if s == "develop"));
+    }
+
+    #[test]
+    fn test_icon_label_for_falls_back_to_count_when_no_branch() {
+        let label = icon_label_for(true, None, true, 5);
+        assert!(matches!(label, Some(PanelButtonLabel::Count(5))));
+    }
+
+    #[test]
+    fn test_icon_label_for_falls_back_to_count_when_branch_name_is_blank() {
+        let label = icon_label_for(true, Some("   "), true, 2);
+        assert!(matches!(label, Some(PanelButtonLabel::Count(2))));
+    }
+
+    #[test]
+    fn test_icon_label_for_returns_none_when_no_branch_and_count_disabled() {
+        assert!(icon_label_for(true, None, false, 5).is_none());
+    }
+
+    #[test]
+    fn test_icon_label_for_returns_count_when_branch_disabled() {
+        let label = icon_label_for(false, Some("main"), true, 7);
+        assert!(matches!(label, Some(PanelButtonLabel::Count(7))));
+    }
+
+    #[test]
+    fn test_icon_label_for_returns_none_when_count_badge_disabled() {
+        assert!(icon_label_for(false, Some("main"), false, 5).is_none());
+    }
+
+    #[test]
+    fn test_icon_label_for_returns_none_when_count_zero() {
+        assert!(icon_label_for(false, None, true, 0).is_none());
     }
 
     #[test]
