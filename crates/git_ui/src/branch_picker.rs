@@ -16,7 +16,10 @@ use project::project_settings::ProjectSettings;
 use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
-use ui::{Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
+use ui::{
+    Banner, Divider, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Severity, Tooltip,
+    prelude::*,
+};
 use ui_input::ErasedEditor;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
@@ -233,6 +236,9 @@ impl BranchList {
                 )
             })
             .unwrap_or_default();
+        let branch_list_error = repository
+            .as_ref()
+            .and_then(|repo| repo.read(cx).branch_list_error.clone());
 
         let default_branch_request = repository.clone().map(|repository| {
             repository.update(cx, |repository, _| repository.default_branch(false))
@@ -246,6 +252,7 @@ impl BranchList {
             cx,
         );
         delegate.all_branches = all_branches;
+        delegate.branch_list_error = branch_list_error;
 
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
@@ -267,7 +274,9 @@ impl BranchList {
                 window,
                 move |this, repo, event, window, cx| {
                     if matches!(event, RepositoryEvent::BranchListChanged) {
-                        let branch_list = repo.read(cx).branch_list.clone();
+                        let snapshot = repo.read(cx);
+                        let branch_list = snapshot.branch_list.clone();
+                        let branch_list_error = snapshot.branch_list_error.clone();
                         this.picker.update(cx, |picker, cx| {
                             picker.delegate.restore_selected_branch = picker
                                 .delegate
@@ -278,6 +287,7 @@ impl BranchList {
                                 &branch_list,
                                 picker.delegate.branch_selection_behavior.selected_branch(),
                             );
+                            picker.delegate.branch_list_error = branch_list_error;
                             picker.refresh(window, cx);
                         });
                     }
@@ -410,6 +420,7 @@ impl Focusable for BranchList {
 
 impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let branch_list_error = self.picker.read(cx).delegate.branch_list_error.clone();
         v_flex()
             .key_context("GitBranchSelector")
             .w(self.width)
@@ -417,6 +428,23 @@ impl Render for BranchList {
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_force_delete))
             .on_action(cx.listener(Self::handle_filter))
+            .when_some(branch_list_error, |this, error| {
+                let message = format!("Some branches could not be loaded: {error}");
+                this.child(
+                    div()
+                        .id("branch-list-error")
+                        .p_1p5()
+                        .child(
+                            Banner::new().severity(Severity::Warning).child(
+                                Label::new(message.clone())
+                                    .size(LabelSize::Small)
+                                    .single_line()
+                                    .truncate(),
+                            ),
+                        )
+                        .tooltip(Tooltip::text(message)),
+                )
+            })
             .child(self.picker.clone())
             .when(!self.embedded, |this| {
                 this.on_mouse_down_out({
@@ -497,6 +525,7 @@ pub struct BranchListDelegate {
     workspace: WeakEntity<Workspace>,
     matches: Vec<Entry>,
     all_branches: Vec<Branch>,
+    branch_list_error: Option<SharedString>,
     default_branch: Option<SharedString>,
     repo: Option<Entity<Repository>>,
     style: BranchListStyle,
@@ -815,6 +844,7 @@ impl BranchListDelegate {
             repo,
             style,
             all_branches: Vec::new(),
+            branch_list_error: None,
             default_branch: None,
             selected_index: 0,
             last_query: Default::default(),
@@ -2191,7 +2221,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
         let repo_branches = repo_branches
             .iter()
             .map(|b| b.name())
@@ -2276,7 +2307,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
         assert!(
             repo_branches
                 .iter()
@@ -2355,7 +2387,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
         assert!(
             repo_branches
                 .iter()
@@ -2436,7 +2469,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
         assert!(
             repo_branches
                 .iter()
@@ -2514,7 +2548,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
         let repo_branches = repo_branches
             .iter()
             .map(|b| b.name())
@@ -2698,7 +2733,8 @@ mod tests {
             })
             .await
             .unwrap()
-            .unwrap();
+            .unwrap()
+            .branches;
 
         let new_branch = branches
             .into_iter()
