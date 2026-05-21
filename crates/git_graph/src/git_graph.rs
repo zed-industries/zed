@@ -1845,7 +1845,7 @@ impl GitGraph {
             return;
         };
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha));
+        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff_preview(sha));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(Ok(diff)) = diff_receiver.await {
@@ -5250,6 +5250,113 @@ mod tests {
                 LogSource::Path(tracked2_repo_path)
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_commit_preview_jobs_replace_queued_preview_requests(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let oid1 = Oid::random(&mut rng);
+        let oid2 = Oid::random(&mut rng);
+        let oid3 = Oid::random(&mut rng);
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: oid1,
+                    parents: smallvec![oid2],
+                    ref_names: vec!["HEAD".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: oid2,
+                    parents: smallvec![oid3],
+                    ref_names: vec![],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: oid3,
+                    parents: smallvec![],
+                    ref_names: vec![],
+                }),
+            ],
+        );
+
+        fs.set_commit_diff_for_repo(
+            Path::new("/project/.git"),
+            &oid1.to_string(),
+            vec![("one.txt".into(), None, Some("one".into()), false)],
+        );
+        fs.set_commit_diff_for_repo(
+            Path::new("/project/.git"),
+            &oid2.to_string(),
+            vec![("two.txt".into(), None, Some("two".into()), false)],
+        );
+        fs.set_commit_diff_for_repo(
+            Path::new("/project/.git"),
+            &oid3.to_string(),
+            vec![("three.txt".into(), None, Some("three".into()), false)],
+        );
+        fs.set_commit_load_delay_for_repo(
+            Path::new("/project/.git"),
+            &oid1.to_string(),
+            std::time::Duration::from_millis(200),
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(project.clone(), workspace_weak, window, cx)
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(&mut *cx, |this, window, cx| {
+            this.select_first(&SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(&mut *cx, |this, window, cx| {
+            this.select_next(&SelectNext, window, cx);
+            this.select_next(&SelectNext, window, cx);
+        });
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(std::time::Duration::from_millis(250));
+        cx.run_until_parked();
+
+        let load_calls = fs.commit_load_calls_for_repo(Path::new("/project/.git"));
+        assert_eq!(
+            load_calls,
+            vec![oid1.to_string(), oid3.to_string()],
+            "queued preview requests should keep only the latest pending commit diff job",
+        );
+
+        let selected_preview_path = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .selected_commit_diff
+                .as_ref()
+                .and_then(|diff| diff.files.first())
+                .map(|file| file.path.as_unix_str().to_string())
+        });
+        assert_eq!(selected_preview_path.as_deref(), Some("three.txt"));
     }
 
     #[gpui::test]

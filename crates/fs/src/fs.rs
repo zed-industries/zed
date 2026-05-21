@@ -2253,6 +2253,46 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_commit_diff_for_repo(
+        &self,
+        dot_git: &Path,
+        commit: &str,
+        files: Vec<(String, Option<String>, Option<String>, bool)>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.commit_diffs.insert(
+                commit.to_string(),
+                git::repository::CommitDiff {
+                    files: files
+                        .into_iter()
+                        .map(
+                            |(path, old_text, new_text, is_binary)| git::repository::CommitFile {
+                                path: repo_path(&path),
+                                old_text,
+                                new_text,
+                                is_binary,
+                            },
+                        )
+                        .collect(),
+                },
+            );
+        })
+        .unwrap();
+    }
+
+    pub fn set_commit_load_delay_for_repo(&self, dot_git: &Path, commit: &str, delay: Duration) {
+        self.with_git_state(dot_git, true, |state| {
+            state
+                .commit_load_delay_ms
+                .insert(commit.to_string(), delay.as_millis() as u64);
+        })
+        .unwrap();
+    }
+
+    pub fn commit_load_calls_for_repo(&self, dot_git: &Path) -> Vec<String> {
+        self.with_git_state(dot_git, false, |state| state.commit_load_calls.clone())
+            .unwrap()
+    }
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
     pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {

@@ -379,7 +379,7 @@ pub struct Repository {
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
     // and that should be examined during the next status scan.
     paths_needing_status_update: Vec<Vec<RepoPath>>,
-    job_sender: mpsc::UnboundedSender<GitJob>,
+    job_sender: GitJobQueue,
     active_jobs: HashMap<JobId, JobInfo>,
     job_debug_queue: job_debug_queue::GitJobDebugQueue,
     pending_ops: SumTree<PendingOps>,
@@ -391,12 +391,7 @@ pub struct Repository {
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
     refetch_repo_state: Arc<
-        dyn Fn(
-            &mut Context<Self>,
-        ) -> (
-            mpsc::UnboundedSender<GitJob>,
-            Shared<Task<Result<RepositoryState, String>>>,
-        ),
+        dyn Fn(&mut Context<Self>) -> (GitJobQueue, Shared<Task<Result<RepositoryState, String>>>),
     >,
 }
 
@@ -512,6 +507,65 @@ pub struct GitJob {
     id: JobId,
     job: Box<dyn FnOnce(RepositoryState, &mut AsyncApp) -> Task<()>>,
     key: Option<GitJobKey>,
+    dedup: GitJobDedup,
+}
+
+#[derive(Clone)]
+struct GitJobQueue {
+    jobs: Arc<Mutex<VecDeque<GitJob>>>,
+    wake_tx: mpsc::UnboundedSender<()>,
+}
+
+impl GitJobQueue {
+    fn new() -> (Self, mpsc::UnboundedReceiver<()>) {
+        let (wake_tx, wake_rx) = mpsc::unbounded();
+        (
+            Self {
+                jobs: Arc::new(Mutex::new(VecDeque::new())),
+                wake_tx,
+            },
+            wake_rx,
+        )
+    }
+
+    fn push(&self, job: GitJob) -> Vec<JobId> {
+        let mut removed_job_ids = Vec::new();
+        {
+            let mut jobs = self.jobs.lock();
+            if matches!(job.dedup, GitJobDedup::Enqueue)
+                && let Some(key) = job.key.as_ref()
+            {
+                let mut retained_jobs = VecDeque::with_capacity(jobs.len());
+                while let Some(queued_job) = jobs.pop_front() {
+                    if queued_job.key.as_ref() == Some(key) {
+                        removed_job_ids.push(queued_job.id);
+                    } else {
+                        retained_jobs.push_back(queued_job);
+                    }
+                }
+                *jobs = retained_jobs;
+            }
+            jobs.push_back(job);
+        }
+
+        self.wake_tx.unbounded_send(()).ok();
+        removed_job_ids
+    }
+
+    fn pop(&self) -> Option<GitJob> {
+        self.jobs.lock().pop_front()
+    }
+
+    fn is_closed(&self) -> bool {
+        self.wake_tx.is_closed()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GitJobDedup {
+    None,
+    Dequeue,
+    Enqueue,
 }
 
 #[derive(PartialEq, Eq)]
@@ -520,6 +574,7 @@ enum GitJobKey {
     ReloadBufferDiffBases,
     RefreshStatuses,
     ReloadGitState,
+    LoadCommitDiffPreview,
 }
 
 impl GitStore {
@@ -4806,49 +4861,53 @@ impl Repository {
         let (result_tx, result_rx) = futures::channel::oneshot::channel();
         let job_id = post_inc(&mut self.job_id);
         let this = self.this.clone();
-
         let key_label = key.as_ref().map(format_job_key);
         self.job_debug_queue.add(job_id, description, key_label);
-
-        self.job_sender
-            .unbounded_send(GitJob {
-                id: job_id,
-                key,
-                job: Box::new(move |state, cx: &mut AsyncApp| {
-                    let job = job(state, cx.clone());
-                    cx.spawn(async move |cx| {
-                        this.update(cx, |this, cx| {
-                            this.job_debug_queue.mark_running(job_id);
-                            if let Some(s) = status {
-                                this.active_jobs.insert(
-                                    job_id,
-                                    JobInfo {
-                                        start: Instant::now(),
-                                        message: s,
-                                    },
-                                );
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-
-                        let result = job.await;
-
-                        this.update(cx, |this, cx| {
-                            this.job_debug_queue.mark_complete(
+        let dedup = match &key {
+            Some(GitJobKey::LoadCommitDiffPreview) => GitJobDedup::Enqueue,
+            Some(_) => GitJobDedup::Dequeue,
+            None => GitJobDedup::None,
+        };
+        let removed_job_ids = self.job_sender.push(GitJob {
+            id: job_id,
+            key,
+            dedup,
+            job: Box::new(move |state, cx: &mut AsyncApp| {
+                let job = job(state, cx.clone());
+                cx.spawn(async move |cx| {
+                    this.update(cx, |this, cx| {
+                        this.job_debug_queue.mark_running(job_id);
+                        if let Some(s) = status {
+                            this.active_jobs.insert(
                                 job_id,
-                                job_debug_queue::CompletedJobStatus::Finished,
+                                JobInfo {
+                                    start: Instant::now(),
+                                    message: s,
+                                },
                             );
-                            this.active_jobs.remove(&job_id);
-                            cx.notify();
-                        })
-                        .ok();
-
-                        result_tx.send(result).ok();
+                        }
+                        cx.notify();
                     })
-                }),
-            })
-            .ok();
+                    .ok();
+
+                    let result = job.await;
+
+                    this.update(cx, |this, cx| {
+                        this.job_debug_queue
+                            .mark_complete(job_id, job_debug_queue::CompletedJobStatus::Finished);
+                        this.active_jobs.remove(&job_id);
+                        cx.notify();
+                    })
+                    .ok();
+
+                    result_tx.send(result).ok();
+                })
+            }),
+        });
+        for removed_job_id in removed_job_ids {
+            self.job_debug_queue
+                .mark_complete(removed_job_id, job_debug_queue::CompletedJobStatus::Skipped);
+        }
         result_rx
     }
 
@@ -5145,6 +5204,49 @@ impl Repository {
         })
     }
 
+    pub fn load_commit_diff_preview(
+        &mut self,
+        commit: String,
+    ) -> oneshot::Receiver<Result<CommitDiff>> {
+        let id = self.id;
+        self.send_keyed_job(
+            "load_commit_diff_preview",
+            Some(GitJobKey::LoadCommitDiffPreview),
+            None,
+            move |git_repo, cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.load_commit(commit, cx).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState {
+                        client, project_id, ..
+                    }) => {
+                        let response = client
+                            .request(proto::LoadCommitDiff {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                commit,
+                            })
+                            .await?;
+                        Ok(CommitDiff {
+                            files: response
+                                .files
+                                .into_iter()
+                                .map(|file| {
+                                    Ok(CommitFile {
+                                        path: RepoPath::from_proto(&file.path)?,
+                                        old_text: file.old_text,
+                                        new_text: file.new_text,
+                                        is_binary: file.is_binary,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>>>()?,
+                        })
+                    }
+                }
+            },
+        )
+    }
     pub fn get_graph_data(
         &self,
         log_source: LogSource,
@@ -7794,8 +7896,9 @@ impl Repository {
     fn spawn_local_git_worker(
         state: Shared<Task<Result<LocalRepositoryState, String>>>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedSender<GitJob> {
-        let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+    ) -> GitJobQueue {
+        let (job_queue, mut wake_rx) = GitJobQueue::new();
+        let worker_queue = job_queue.clone();
 
         cx.spawn(async move |this, cx| {
             let state = state.await.map_err(|err| anyhow::anyhow!(err))?;
@@ -7809,17 +7912,14 @@ impl Repository {
                 .await;
             }
             let state = RepositoryState::Local(state);
-            let mut jobs = VecDeque::new();
             loop {
-                while let Ok(next_job) = job_rx.try_recv() {
-                    jobs.push_back(next_job);
-                }
-
-                if let Some(job) = jobs.pop_front() {
-                    if let Some(current_key) = &job.key
-                        && jobs
-                            .iter()
-                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
+                if let Some(job) = worker_queue.pop() {
+                    if matches!(job.dedup, GitJobDedup::Dequeue)
+                        && let Some(current_key) = &job.key
+                        && worker_queue.jobs.lock().iter().any(|other_job| {
+                            other_job.key.as_ref() == Some(current_key)
+                                && matches!(other_job.dedup, GitJobDedup::Dequeue)
+                        })
                     {
                         let skipped_job_id = job.id;
                         this.update(cx, |repo, _| {
@@ -7832,38 +7932,36 @@ impl Repository {
                         continue;
                     }
                     (job.job)(state.clone(), cx).await;
-                } else if let Some(job) = job_rx.next().await {
-                    jobs.push_back(job);
-                } else {
+                } else if wake_rx.next().await.is_none() {
                     break;
+                } else {
+                    continue;
                 }
             }
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
-        job_tx
+        job_queue
     }
 
     fn spawn_remote_git_worker(
         state: RemoteRepositoryState,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedSender<GitJob> {
-        let (job_tx, mut job_rx) = mpsc::unbounded::<GitJob>();
+    ) -> GitJobQueue {
+        let (job_queue, mut wake_rx) = GitJobQueue::new();
+        let worker_queue = job_queue.clone();
 
         cx.spawn(async move |this, cx| {
             let state = RepositoryState::Remote(state);
-            let mut jobs = VecDeque::new();
             loop {
-                while let Ok(next_job) = job_rx.try_recv() {
-                    jobs.push_back(next_job);
-                }
-
-                if let Some(job) = jobs.pop_front() {
-                    if let Some(current_key) = &job.key
-                        && jobs
-                            .iter()
-                            .any(|other_job| other_job.key.as_ref() == Some(current_key))
+                if let Some(job) = worker_queue.pop() {
+                    if matches!(job.dedup, GitJobDedup::Dequeue)
+                        && let Some(current_key) = &job.key
+                        && worker_queue.jobs.lock().iter().any(|other_job| {
+                            other_job.key.as_ref() == Some(current_key)
+                                && matches!(other_job.dedup, GitJobDedup::Dequeue)
+                        })
                     {
                         let skipped_job_id = job.id;
                         this.update(cx, |repo, _| {
@@ -7876,17 +7974,17 @@ impl Repository {
                         continue;
                     }
                     (job.job)(state.clone(), cx).await;
-                } else if let Some(job) = job_rx.next().await {
-                    jobs.push_back(job);
-                } else {
+                } else if wake_rx.next().await.is_none() {
                     break;
+                } else {
+                    continue;
                 }
             }
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
-        job_tx
+        job_queue
     }
 
     fn load_staged_text(
@@ -8230,6 +8328,7 @@ fn format_job_key(key: &GitJobKey) -> SharedString {
         GitJobKey::ReloadBufferDiffBases => "ReloadBufferDiffBases".into(),
         GitJobKey::RefreshStatuses => "RefreshStatuses".into(),
         GitJobKey::ReloadGitState => "ReloadGitState".into(),
+        GitJobKey::LoadCommitDiffPreview => "LoadCommitDiffPreview".into(),
     }
 }
 

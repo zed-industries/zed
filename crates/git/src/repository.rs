@@ -492,7 +492,23 @@ pub struct CommitDetails {
     pub author_name: SharedString,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FileHistoryEntry {
+    pub sha: SharedString,
+    pub subject: SharedString,
+    pub message: SharedString,
+    pub commit_timestamp: i64,
+    pub author_name: SharedString,
+    pub author_email: SharedString,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileHistory {
+    pub entries: Vec<FileHistoryEntry>,
+    pub path: RepoPath,
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
 }
@@ -504,7 +520,7 @@ pub enum CommitFileStatus {
     Deleted,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
