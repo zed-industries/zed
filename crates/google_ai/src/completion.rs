@@ -500,7 +500,7 @@ mod tests {
         assert_eq!(thinking_config.thinking_level, Some(ThinkingLevel::Low));
 
         let serialized = serde_json::to_value(thinking_config).unwrap();
-        assert_eq!(serialized["thinkingLevel"], "low");
+        assert_eq!(serialized["thinkingLevel"], "LOW");
         assert_eq!(serialized["includeThoughts"], true);
     }
 
