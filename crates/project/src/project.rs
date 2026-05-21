@@ -4365,23 +4365,19 @@ impl Project {
 
         match event {
             LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
-                cx.emit(Event::DiagnosticsUpdated {
+                cx.emit(LspStoreEvent::DiagnosticsUpdated {
+                    server_id: *server_id,
                     paths: paths
                         .iter()
                         .filter(|path| self.owns_worktree_id(path.worktree_id, cx))
                         .cloned()
                         .collect(),
-                    language_server_id: *server_id,
-                })
+                });
             }
             LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => {
                 self.language_servers.insert(*server_id);
+                cx.emit(event.clone());
 
-                cx.emit(Event::LanguageServerAdded(
-                    *server_id,
-                    name.clone(),
-                    *worktree_id,
-                ));
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     let lsp_store = self.lsp_store(cx).read(cx);
                     if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(server_id) {
@@ -4402,28 +4398,19 @@ impl Project {
             }
             LspStoreEvent::LanguageServerRemoved(server_id) => {
                 self.language_servers.remove(server_id);
-                cx.emit(Event::LanguageServerRemoved(*server_id))
+                cx.emit(event.clone());
             }
-            LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
-                Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
-            ),
-            LspStoreEvent::LanguageDetected {
-                buffer,
-                new_language,
-            } => {
-                let Some(_) = new_language else {
-                    cx.emit(Event::LanguageNotFound(buffer.clone()));
-                    return;
-                };
+            LspStoreEvent::LanguageServerLog(..) => cx.emit(event.clone()),
+            LspStoreEvent::LanguageDetected { new_language, .. } => {
+                if new_language.is_none() {
+                    cx.emit(event.clone());
+                }
             }
             LspStoreEvent::RefreshInlayHints {
                 server_id,
                 request_id,
             } => {
-                cx.emit(Event::RefreshInlayHints {
-                    server_id: *server_id,
-                    request_id: *request_id,
-                });
+                cx.emit(event.clone());
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshInlayHints {
@@ -4438,10 +4425,7 @@ impl Project {
                 server_id,
                 request_id,
             } => {
-                cx.emit(Event::RefreshSemanticTokens {
-                    server_id: *server_id,
-                    request_id: *request_id,
-                });
+                cx.emit(event.clone());
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshSemanticTokens {
@@ -4453,9 +4437,7 @@ impl Project {
                 }
             }
             LspStoreEvent::RefreshCodeLens { server_id } => {
-                cx.emit(Event::RefreshCodeLens {
-                    server_id: *server_id,
-                });
+                cx.emit(event.clone());
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshCodeLens {
@@ -4480,14 +4462,6 @@ impl Project {
                 summary,
                 more_summaries,
             } => {
-                // Gate on this Project owning the worktree the
-                // diagnostics belong to. In Phase 2 sharing, sibling
-                // Projects on the same host LspStore would otherwise
-                // each fire the same downstream broadcast.
-                let owns_worktree = self.worktrees(cx).any(|w| w.read(cx).id() == *worktree_id);
-                if !owns_worktree {
-                    return;
-                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::UpdateDiagnosticSummary {
@@ -4499,18 +4473,12 @@ impl Project {
                         .log_err();
                 }
             }
-            LspStoreEvent::LanguageServerPrompt(prompt) => {
-                cx.emit(Event::LanguageServerPrompt(prompt.clone()))
+            LspStoreEvent::LanguageServerPrompt(_) => cx.emit(event.clone()),
+            LspStoreEvent::DiskBasedDiagnosticsStarted { .. } => {
+                cx.emit(event.clone());
             }
-            LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id } => {
-                cx.emit(Event::DiskBasedDiagnosticsStarted {
-                    language_server_id: *language_server_id,
-                });
-            }
-            LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
-                cx.emit(Event::DiskBasedDiagnosticsFinished {
-                    language_server_id: *language_server_id,
-                });
+            LspStoreEvent::DiskBasedDiagnosticsFinished { .. } => {
+                cx.emit(event.clone());
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -4570,43 +4538,15 @@ impl Project {
                             }
                         });
                     }
-                    proto::update_language_server::Variant::RegisteredForBuffer(update) => {
-                        if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
-                            cx.emit(Event::LanguageServerBufferRegistered {
-                                buffer_id,
-                                server_id: *language_server_id,
-                                buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
-                                name: name.clone(),
-                            });
-                        }
+                    proto::update_language_server::Variant::RegisteredForBuffer(_) => {
+                        cx.emit(event.clone());
                     }
                     _ => (),
                 }
             }
-            LspStoreEvent::Notification {
-                message,
-                worktree_id: _,
-            } => cx.emit(Event::Toast {
-                notification_id: "lsp".into(),
-                message: message.clone(),
-                link: None,
-            }),
-            LspStoreEvent::SnippetEdit {
-                buffer_id,
-                edits,
-                most_recent_edit,
-            } => {
-                if most_recent_edit.replica_id == self.replica_id(cx) {
-                    cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
-                }
-            }
-            LspStoreEvent::WorkspaceEditApplied {
-                server_id,
-                transaction,
-            } => cx.emit(Event::WorkspaceEditApplied {
-                server_id: *server_id,
-                transaction: transaction.clone(),
-            }),
+            LspStoreEvent::Notification { .. } => cx.emit(event.clone()),
+            LspStoreEvent::SnippetEdit { .. } => cx.emit(event.clone()),
+            LspStoreEvent::WorkspaceEditApplied { .. } => cx.emit(event.clone()),
             LspStoreEvent::ApplyWorkspaceEditRequested {
                 server_id,
                 params,
