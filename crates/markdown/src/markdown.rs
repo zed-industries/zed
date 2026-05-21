@@ -3558,6 +3558,7 @@ mod tests {
                     .on_code_span_link(callback)
                     .code_block_renderer(CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     })
             },
