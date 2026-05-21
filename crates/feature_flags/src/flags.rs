@@ -59,6 +59,18 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
 
+pub struct UpdateTitleToolFeatureFlag;
+
+impl FeatureFlag for UpdateTitleToolFeatureFlag {
+    const NAME: &'static str = "update-title-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(UpdateTitleToolFeatureFlag);
+
 pub struct LspToolFeatureFlag;
 
 impl FeatureFlag for LspToolFeatureFlag {
