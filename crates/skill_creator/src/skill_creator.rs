@@ -36,8 +36,8 @@ actions!(
 
 const NAME_FIELD_TAB_INDEX: isize = 1;
 const DESCRIPTION_FIELD_TAB_INDEX: isize = 2;
-const SCOPE_FIELD_TAB_INDEX: isize = 3;
-const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
+const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 3;
+const SCOPE_FIELD_TAB_INDEX: isize = 4;
 const BODY_FIELD_TAB_INDEX: isize = 5;
 
 pub fn init(_cx: &mut App) {}
@@ -555,9 +555,7 @@ impl SkillCreator {
         };
 
         let selected_label = h_flex()
-            .min_w_0()
-            .w_full()
-            .child(Label::new(selected_label).truncate())
+            .child(Label::new(selected_label))
             .into_any_element();
 
         let weak = cx.weak_entity();
@@ -595,13 +593,11 @@ impl SkillCreator {
                     .child(Label::new(scope_hint).color(Color::Muted)),
             )
             .child(
-                div().w_1_3().min_w_0().child(
-                    DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
-                        .tab_index(SCOPE_FIELD_TAB_INDEX)
-                        .style(DropdownStyle::Outlined)
-                        .trigger_size(ButtonSize::Medium)
-                        .full_width(true),
-                ),
+                DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
+                    .tab_index(SCOPE_FIELD_TAB_INDEX)
+                    .style(DropdownStyle::Outlined)
+                    .trigger_size(ButtonSize::Medium)
+                    .full_width(false),
             )
     }
 
@@ -620,7 +616,8 @@ impl SkillCreator {
                 this.toggle_disable_model_invocation(cx);
             }),
         )
-        .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX).into_any_element()
+        .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX)
+        .into_any_element()
     }
 
     fn render_body_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -816,7 +813,7 @@ impl Render for SkillCreator {
                         .child(
                             v_flex()
                                 .gap_2()
-                                .child(Label::new("Font-matter"))
+                                .child(Label::new("Front-matter"))
                                 .child(self.name_editor.clone())
                                 .child(self.description_editor.clone()),
                         )
