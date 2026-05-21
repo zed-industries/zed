@@ -4,12 +4,14 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UserAgentsMd, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use feature_flags::{
     FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
+    UpdateTitleToolFeatureFlag,
 };
 
 use agent_client_protocol::schema as acp;
@@ -1247,10 +1249,11 @@ impl Thread {
             // but still display the saved result if available.
             // We need to send both ToolCall and ToolCallUpdate events because the UI
             // only converts raw_output to displayable content in update_fields, not from_acp.
+            let title = Self::title_for_replayed_tool_use(tool_use);
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(
-                    acp::ToolCall::new(tool_use.id.to_string(), tool_use.name.to_string())
+                    acp::ToolCall::new(tool_use.id.to_string(), title.clone())
                         .status(status)
                         .raw_input(tool_use.input.clone()),
                 )))
@@ -1258,6 +1261,9 @@ impl Thread {
             let mut fields = acp::ToolCallUpdateFields::new()
                 .status(status)
                 .raw_output(output);
+            if tool_use.name.as_ref() == UpdateTitleTool::NAME {
+                fields = fields.title(title);
+            }
             if let Some(content) = replay_content {
                 fields = fields.content(content);
             }
@@ -1303,6 +1309,16 @@ impl Thread {
                 .raw_output(output),
             None,
         );
+    }
+
+    fn title_for_replayed_tool_use(tool_use: &LanguageModelToolUse) -> String {
+        if tool_use.name.as_ref() == UpdateTitleTool::NAME {
+            let input = serde_json::from_value(tool_use.input.clone())
+                .map_err(|_| serde_json::Value::String(tool_use.raw_input.clone()));
+            UpdateTitleTool::title_for_input(input).to_string()
+        } else {
+            tool_use.name.to_string()
+        }
     }
 
     fn tool_result_content_for_replay(
@@ -1669,6 +1685,9 @@ impl Thread {
         self.add_tool(MovePathTool::new(self.project.clone()));
         if cx.has_flag::<UpdatePlanToolFeatureFlag>() {
             self.add_tool(UpdatePlanTool);
+        }
+        if cx.has_flag::<UpdateTitleToolFeatureFlag>() {
+            self.add_tool(UpdateTitleTool::new(cx.weak_entity()));
         }
         self.add_tool(ReadFileTool::new(
             self.project.clone(),
@@ -2183,7 +2202,7 @@ impl Thread {
 
             this.update(cx, |this, cx| {
                 this.flush_pending_message(cx);
-                if this.title.is_none() && this.pending_title_generation.is_none() {
+                if this.title.is_none() {
                     this.generate_title(cx);
                 }
             })?;
@@ -2712,6 +2731,20 @@ impl Thread {
         self.title_generation_failed
     }
 
+    pub fn can_generate_title(&self, cx: &App) -> bool {
+        self.pending_title_generation.is_none()
+            && self.summarization_model.is_some()
+            && !self.update_title_tool_available(cx)
+    }
+
+    fn update_title_tool_available(&self, cx: &App) -> bool {
+        if let Some(running_turn) = self.running_turn.as_ref() {
+            running_turn.tools.contains_key(UpdateTitleTool::NAME)
+        } else {
+            self.enabled_tools(cx).contains_key(UpdateTitleTool::NAME)
+        }
+    }
+
     pub fn summary(&mut self, cx: &mut Context<Self>) -> Shared<Task<Option<SharedString>>> {
         if let Some(summary) = self.summary.as_ref() {
             return Task::ready(Some(summary.clone())).shared();
@@ -2773,6 +2806,10 @@ impl Thread {
     }
 
     pub fn generate_title(&mut self, cx: &mut Context<Self>) {
+        if !self.can_generate_title(cx) {
+            return;
+        }
+
         self.title_generation_failed = false;
         let Some(model) = self.summarization_model.clone() else {
             return;
@@ -4624,6 +4661,134 @@ mod tests {
 
         assert!(tool_use_ids_with_image_content.contains(&registered_tool_use_id.to_string()));
         assert!(tool_use_ids_with_image_content.contains(&missing_tool_use_id.to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_update_title_tool_replay_does_not_reenter_thread(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("title_tool_id");
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+                push_completed_update_title_tool_call(thread, tool_use_id.clone());
+
+                thread.replay(cx)
+            })
+        });
+
+        let mut saw_tool_call_title = false;
+        let mut saw_replayed_title_update = false;
+        let mut saw_completed_update = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            match event {
+                ThreadEvent::ToolCall(tool_call)
+                    if tool_call.tool_call_id.to_string() == tool_use_id.to_string()
+                        && tool_call.title == "Update title: Replayed title" =>
+                {
+                    saw_tool_call_title = true;
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.tool_call_id.to_string() == tool_use_id.to_string() =>
+                {
+                    if update.fields.title == Some("Update title: Replayed title".to_string()) {
+                        saw_replayed_title_update = true;
+                    }
+                    if update.fields.status == Some(acp::ToolCallStatus::Completed) {
+                        saw_completed_update = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_tool_call_title);
+        assert!(saw_replayed_title_update);
+        assert!(saw_completed_update);
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_update_title_tool_replay_title_when_tool_not_registered(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let tool_use_id = LanguageModelToolUseId::from("title_tool_id");
+        let mut replay_events = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                push_completed_update_title_tool_call(thread, tool_use_id.clone());
+                thread.replay(cx)
+            })
+        });
+
+        let mut saw_tool_call_title = false;
+        let mut saw_replayed_title_update = false;
+        let mut saw_completed_update = false;
+        while let Some(event) = replay_events.next().await {
+            let event = event.unwrap();
+            match event {
+                ThreadEvent::ToolCall(tool_call)
+                    if tool_call.tool_call_id.to_string() == tool_use_id.to_string()
+                        && tool_call.title == "Update title: Replayed title" =>
+                {
+                    saw_tool_call_title = true;
+                }
+                ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update))
+                    if update.tool_call_id.to_string() == tool_use_id.to_string() =>
+                {
+                    if update.fields.title == Some("Update title: Replayed title".to_string()) {
+                        saw_replayed_title_update = true;
+                    }
+                    if update.fields.status == Some(acp::ToolCallStatus::Completed) {
+                        saw_completed_update = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        assert!(saw_tool_call_title);
+        assert!(saw_replayed_title_update);
+        assert!(saw_completed_update);
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), None);
+        });
+    }
+
+    fn push_completed_update_title_tool_call(
+        thread: &mut Thread,
+        tool_use_id: LanguageModelToolUseId,
+    ) {
+        let tool_use = LanguageModelToolUse {
+            id: tool_use_id.clone(),
+            name: UpdateTitleTool::NAME.into(),
+            raw_input: json!({ "title": "Replayed title" }).to_string(),
+            input: json!({ "title": "Replayed title" }),
+            is_input_complete: true,
+            thought_signature: None,
+        };
+
+        let mut tool_results = IndexMap::default();
+        tool_results.insert(
+            tool_use_id.clone(),
+            LanguageModelToolResult {
+                tool_use_id,
+                tool_name: UpdateTitleTool::NAME.into(),
+                is_error: false,
+                content: vec![LanguageModelToolResultContent::Text(
+                    "Session title updated".into(),
+                )],
+                output: Some(json!("Session title updated")),
+            },
+        );
+
+        thread.messages.push(Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::ToolUse(tool_use)],
+            tool_results,
+            reasoning_details: None,
+        }));
     }
 
     #[gpui::test]
