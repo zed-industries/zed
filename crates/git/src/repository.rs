@@ -823,6 +823,13 @@ pub trait GitRepository: Send + Sync {
         create: bool,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Removes a git worktree.
+    ///
+    /// When the path has no entry in the main repo's worktree registry
+    /// (because it was never registered, or its registration was already
+    /// pruned), implementations return [`NotAWorktreeError`] as the error
+    /// payload so callers can downcast and treat the "nothing to remove"
+    /// case as a no-op.
     fn remove_worktree(&self, path: PathBuf, force: bool) -> BoxFuture<'_, Result<()>>;
 
     fn rename_worktree(&self, old_path: PathBuf, new_path: PathBuf) -> BoxFuture<'_, Result<()>>;
@@ -1930,6 +1937,35 @@ impl GitRepository for RealGitRepository {
 
         self.executor
             .spawn(async move {
+                // Pre-check the worktree registry directly rather than
+                // matching `git worktree remove`'s stderr. Git localizes its
+                // error messages (`LC_MESSAGES`), and Zed makes no attempt to
+                // pin the locale on its git invocations, so substring-matching
+                // an English phrase would silently miss the "not registered"
+                // case on non-English machines.
+                let list_output = git
+                    .build_command(&["worktree", "list", "--porcelain"])
+                    .output()
+                    .await?;
+                if !list_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&list_output.stderr);
+                    anyhow::bail!("git worktree list failed: {stderr}");
+                }
+                let stdout = String::from_utf8_lossy(&list_output.stdout);
+                let worktrees = parse_worktrees_from_str(&stdout, None);
+                // Cheap literal-equality pass first so the common case
+                // (caller path matches the registered form byte-for-byte)
+                // doesn't pay for an `fs::canonicalize` per registered
+                // worktree. Only fall back to the symlink-resolving
+                // comparison when literal equality misses.
+                let matches_registration = worktrees.iter().any(|wt| wt.path == path)
+                    || worktrees
+                        .iter()
+                        .any(|wt| util::paths::paths_resolve_to_same_location(&wt.path, &path));
+                if !matches_registration {
+                    return Err(anyhow::Error::new(NotAWorktreeError { path }));
+                }
+
                 let mut args: Vec<OsString> = vec!["worktree".into(), "remove".into()];
                 if force {
                     args.push("--force".into());
@@ -3451,6 +3487,17 @@ struct GitBinaryCommandError {
     status: ExitStatus,
 }
 
+/// Returned by [`GitRepository::remove_worktree`] implementations when the
+/// target path is not a registered worktree (e.g. its registration was
+/// already pruned, or it was never `git worktree add`-ed). Callers that
+/// want to treat "nothing to remove" as success can match on this with
+/// `error.downcast_ref::<NotAWorktreeError>()`.
+#[derive(Error, Debug)]
+#[error("'{}' is not a registered git worktree", path.display())]
+pub struct NotAWorktreeError {
+    pub path: PathBuf,
+}
+
 async fn run_git_command(
     env: Arc<HashMap<String, String>>,
     ask_pass: AskPassDelegate,
@@ -4448,6 +4495,133 @@ mod tests {
         let worktrees = repo.worktrees().await.unwrap();
         assert_eq!(worktrees.len(), 1);
         assert!(!worktree_path.exists());
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_returns_not_a_worktree_error_for_unregistered_path(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        git2::Repository::init(&repo_dir).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let bogus_path = temp_dir.path().join("never-registered");
+        let error = repo
+            .remove_worktree(bogus_path.clone(), true)
+            .await
+            .expect_err("removing a path with no worktree registration must fail");
+
+        assert!(
+            error
+                .downcast_ref::<NotAWorktreeError>()
+                .is_some_and(|e| e.path == bogus_path),
+            "error must downcast to NotAWorktreeError with the requested path, got: {error:#}"
+        );
+    }
+
+    /// Regression: a worktree whose directory has been deleted from disk
+    /// must still be removable when the caller passes a path that doesn't
+    /// canonicalize the same way git's registry does. Naive
+    /// `std::fs::canonicalize` on the caller-passed path returns `Err`
+    /// (path missing), so the literal/path-equality check would miss the
+    /// match on systems where `temp_dir()` and its canonical form differ
+    /// (e.g. macOS, where `/var` is a symlink to `/private/var`). We
+    /// instead canonicalize the longest existing ancestor and compare
+    /// that, which must succeed here.
+    #[gpui::test]
+    async fn test_remove_worktree_succeeds_when_directory_was_deleted(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        let worktrees_dir = temp_dir.path().join("worktrees");
+        git2::Repository::init(&repo_dir).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        smol::fs::write(repo_dir.join("file.txt"), "content")
+            .await
+            .unwrap();
+        repo.stage_paths(vec![repo_path("file.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+            Arc::new(checkpoint_author_envs()),
+        )
+        .await
+        .unwrap();
+
+        let worktree_path = worktrees_dir.join("to-be-deleted");
+        repo.create_worktree(
+            CreateWorktreeTarget::NewBranch {
+                branch_name: "to-be-deleted".to_string(),
+                base_sha: Some("HEAD".to_string()),
+            },
+            worktree_path.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(worktree_path.exists(), "precondition: worktree dir exists");
+
+        // Simulate the original Windows file-locks scenario where the
+        // working directory is gone but the main-repo registration still
+        // points at it.
+        std::fs::remove_dir_all(&worktree_path).unwrap();
+        assert!(
+            !worktree_path.exists(),
+            "precondition: worktree dir is gone"
+        );
+
+        // Must NOT return `NotAWorktreeError` — the registration is still
+        // present, and git can still clean it up via
+        // `git worktree remove --force`.
+        repo.remove_worktree(worktree_path.clone(), true)
+            .await
+            .expect("remove_worktree on a missing-but-registered path must succeed");
+
+        let worktrees = repo.worktrees().await.unwrap();
+        assert!(
+            worktrees.iter().all(|w| w.path != worktree_path),
+            "registration must be gone after remove_worktree"
+        );
     }
 
     #[gpui::test]

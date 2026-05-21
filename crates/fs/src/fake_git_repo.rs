@@ -13,8 +13,8 @@ use git::{
     repository::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, NotAWorktreeError,
+        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -769,9 +769,17 @@ impl GitRepository for FakeGitRepository {
                     .trim();
                 PathBuf::from(gitdir)
             } else {
-                self.find_worktree_entry_dir_by_path(&path)
-                    .await
-                    .with_context(|| format!("no worktree found at path: {}", path.display()))?
+                match self.find_worktree_entry_dir_by_path(&path).await {
+                    Some(dir) => dir,
+                    None => {
+                        // Match the real backend's behavior: surface a
+                        // structured `NotAWorktreeError` so callers can
+                        // treat "nothing to remove" as success.
+                        return Err(anyhow::Error::new(NotAWorktreeError {
+                            path: path.clone(),
+                        }));
+                    }
+                }
             };
 
             // Remove the worktree checkout directory if it still exists.

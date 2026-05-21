@@ -661,6 +661,68 @@ pub fn normalize_lexically(path: &Path) -> Result<PathBuf, NormalizeError> {
     Ok(lexical)
 }
 
+/// Returns whether `a` and `b` refer to the same on-disk location.
+///
+/// Tries literal equality first. Falls back to canonicalizing the longest
+/// existing ancestor of each path and joining the unresolved tail, then
+/// comparing. This handles two cases that a naive `std::fs::canonicalize`
+/// of each side does not:
+///
+/// - **The leaf path doesn't exist.** `canonicalize` requires every
+///   component to exist; if the worktree directory was deleted but its
+///   registration is still around, naive canonicalize returns `Err` and
+///   the caller falls back to literal comparison, which then misses any
+///   symlink-mediated equivalence.
+/// - **The path traverses a symlinked ancestor.** Git canonicalizes
+///   paths when storing them in its registries (notably resolving
+///   macOS's `/var` -> `/private/var` symlink, or Windows junction
+///   points), but callers passing paths into Zed APIs typically use the
+///   un-resolved form. Walking up to the nearest existing ancestor and
+///   canonicalizing *that* lets the comparison succeed even when the
+///   leaf is gone.
+///
+/// Does sync I/O via `std::fs::canonicalize`; call it from a spawned task
+/// or background context, not on a foreground async path.
+pub fn paths_resolve_to_same_location(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let Some(canon_a) = canonicalize_with_existing_ancestor(a) else {
+        return false;
+    };
+    let Some(canon_b) = canonicalize_with_existing_ancestor(b) else {
+        return false;
+    };
+    canon_a == canon_b
+}
+
+/// Canonicalizes the longest existing prefix of `path` and re-appends the
+/// remaining (unresolved) tail. Returns `None` only if no ancestor of
+/// `path` can be canonicalized, which on any working filesystem means
+/// even the root is unreadable.
+fn canonicalize_with_existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut tail = PathBuf::new();
+    let mut current = path.to_path_buf();
+    loop {
+        if let Ok(canon) = std::fs::canonicalize(&current) {
+            return Some(if tail.as_os_str().is_empty() {
+                canon
+            } else {
+                canon.join(&tail)
+            });
+        }
+        let Some(file_name) = current.file_name().map(|n| n.to_os_string()) else {
+            return None;
+        };
+        let mut new_tail = PathBuf::from(&file_name);
+        new_tail.push(&tail);
+        tail = new_tail;
+        if !current.pop() {
+            return None;
+        }
+    }
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -3557,6 +3619,66 @@ mod tests {
         assert_eq!(
             url.to_file_path_ext(PathStyle::Windows),
             Ok(PathBuf::from("C:\\Users\\file.txt"))
+        );
+    }
+
+    #[test]
+    fn test_paths_resolve_to_same_location_literal_equality() {
+        let p = Path::new("/some/nonexistent/path/that/will/never/exist/xyz");
+        assert!(paths_resolve_to_same_location(p, p));
+    }
+
+    #[test]
+    fn test_paths_resolve_to_same_location_nonexistent_distinct() {
+        let a = Path::new("/totally/nonexistent/path/a");
+        let b = Path::new("/totally/nonexistent/path/b");
+        assert!(!paths_resolve_to_same_location(a, b));
+    }
+
+    #[test]
+    fn test_paths_resolve_to_same_location_handles_symlinked_ancestor() {
+        // Set up: tmp/real_dir/ exists, tmp/link_dir is a symlink to it.
+        // Compare a leaf under each form. The leaf itself does NOT exist,
+        // so naive `canonicalize` would fail on both and the function
+        // would have to fall back to ancestor-canonicalize. This mirrors
+        // the worktree-removal scenario where git registers the resolved
+        // path and we pass the un-resolved form for a directory that's
+        // already gone.
+        let tmp = tempfile::tempdir().unwrap();
+        let real_dir = tmp.path().join("real_dir");
+        std::fs::create_dir(&real_dir).unwrap();
+        let link_dir = tmp.path().join("link_dir");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real_dir, &link_dir).unwrap();
+        #[cfg(windows)]
+        {
+            // Best-effort; skip the assertion if the test process lacks
+            // SeCreateSymbolicLinkPrivilege.
+            if std::os::windows::fs::symlink_dir(&real_dir, &link_dir).is_err() {
+                return;
+            }
+        }
+
+        let via_real = real_dir.join("missing_leaf");
+        let via_link = link_dir.join("missing_leaf");
+        assert!(
+            paths_resolve_to_same_location(&via_real, &via_link),
+            "paths through a symlinked ancestor must compare equal even when the leaf is missing"
+        );
+    }
+
+    #[test]
+    fn test_paths_resolve_to_same_location_distinct_existing_ancestors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a_parent = tmp.path().join("a");
+        let b_parent = tmp.path().join("b");
+        std::fs::create_dir(&a_parent).unwrap();
+        std::fs::create_dir(&b_parent).unwrap();
+        let a = a_parent.join("missing");
+        let b = b_parent.join("missing");
+        assert!(
+            !paths_resolve_to_same_location(&a, &b),
+            "distinct parents with the same missing leaf must not compare equal"
         );
     }
 }

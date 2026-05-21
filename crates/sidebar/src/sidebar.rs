@@ -24,9 +24,10 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EntityId,
+    FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task,
+    TaskExt, WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list,
+    prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -430,6 +431,50 @@ fn workspace_contains_worktree_path(
         .read(cx)
         .visible_worktrees(cx)
         .any(|worktree| worktree.read(cx).abs_path().as_ref() == worktree_path)
+}
+
+/// Commits the DB-visible state changes for a successful restore:
+/// rewrites worktree paths on the thread metadata, unarchives the
+/// thread, and returns the updated metadata.
+///
+/// Uses [`AsyncApp`] (not the window-bound context) so this commit
+/// succeeds even if the user closed the window between the destructive
+/// restore pass and now. That ordering matters for correctness: the
+/// on-disk worktrees are already restored at this point, and if the DB
+/// is left out-of-sync the user would re-open Zed to a thread marked
+/// archived whose worktrees are physically present, and clicking
+/// Restore would prompt them to overwrite their own freshly-restored
+/// files.
+///
+/// Returns `None` when the thread has been removed from the store mid-
+/// restore (e.g. another window deleted it); the caller distinguishes
+/// this case so the spinner gets cleared and the user gets a log line.
+async fn commit_db_state_after_restore(
+    store: &Entity<ThreadMetadataStore>,
+    thread_id: ThreadId,
+    path_replacements: &[(PathBuf, PathBuf)],
+    cx: &mut AsyncApp,
+) -> Option<ThreadMetadata> {
+    if path_replacements.is_empty() {
+        return None;
+    }
+    // `AsyncApp::update` panics if the App is fully dropped (process
+    // shutdown); for our purposes that's fine, since at that point the
+    // task is being torn down with the rest of the process.
+    cx.update(|cx| {
+        store.update(cx, |store, cx| {
+            store.update_restored_worktree_paths(thread_id, path_replacements, cx);
+        });
+    });
+    let updated_metadata = cx.update(|cx| store.read(cx).entry(thread_id).cloned());
+    if updated_metadata.is_some() {
+        cx.update(|cx| {
+            store.update(cx, |store, cx| {
+                store.unarchive(thread_id, cx);
+            });
+        });
+    }
+    updated_metadata
 }
 
 #[derive(Clone)]
@@ -2938,6 +2983,62 @@ impl Sidebar {
         })
     }
 
+    fn finish_restore_ui(
+        &mut self,
+        thread_id: agent_ui::ThreadId,
+        weak_archive_view: &Option<WeakEntity<ThreadsArchiveView>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.restoring_tasks.remove(&thread_id);
+        if let Some(weak_archive_view) = weak_archive_view {
+            weak_archive_view
+                .update(cx, |view, cx| {
+                    view.clear_restoring(&thread_id, cx);
+                })
+                .ok();
+        }
+    }
+
+    /// Shows a toast in the current window's active workspace. Used for the
+    /// transient "restore" status messages so each callsite doesn't repeat
+    /// the `multi_workspace.upgrade()` ladder. Silently no-ops if the
+    /// multi-workspace has been torn down.
+    ///
+    /// Takes `&mut self` for consistency with [`Self::finish_restore_ui`]
+    /// and [`Self::fail_restore_with_toast`], even though the body only
+    /// reads `self`; sibling helpers are commonly called as a pair and
+    /// matching receivers keeps borrow patterns at the call sites uniform.
+    fn show_restore_toast(
+        &mut self,
+        notification_id: NotificationId,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+        let workspace = multi_workspace.read(cx).workspace().clone();
+        let message = message.into();
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(Toast::new(notification_id, message).autohide(), cx);
+        });
+    }
+
+    /// Combined UI cleanup helper for the failure paths of
+    /// [`Self::open_thread_from_archive`]: clears the spinner / restoring
+    /// state and shows a toast with the given message.
+    fn fail_restore_with_toast(
+        &mut self,
+        thread_id: agent_ui::ThreadId,
+        weak_archive_view: &Option<WeakEntity<ThreadsArchiveView>>,
+        notification_id: NotificationId,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.finish_restore_ui(thread_id, weak_archive_view, cx);
+        self.show_restore_toast(notification_id, message, cx);
+    }
+
     fn open_thread_from_archive(
         &mut self,
         metadata: ThreadMetadata,
@@ -2945,6 +3046,15 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         let thread_id = metadata.thread_id;
+        // Re-entry guard: if a restore is already in flight for this
+        // thread (e.g. the user double-clicked Restore while the
+        // previous task is still in flight), silently no-op so we don't
+        // spawn a second task that would race the first and leave the
+        // worktree in a half-restored state.
+        if self.restoring_tasks.contains_key(&thread_id) {
+            log::debug!("restore already in flight for {thread_id:?}; ignoring duplicate request");
+            return;
+        }
         let weak_archive_view = match &self.view {
             SidebarView::Archive(view) => Some(view.downgrade()),
             _ => None,
@@ -2990,10 +3100,29 @@ impl Sidebar {
         };
         let path_list = metadata.folder_paths().clone();
 
-        let restore_task = cx.spawn_in(window, async move |this, cx| {
+        // Mark this thread as restoring synchronously, BEFORE spawning, so the
+        // per-window re-entry guard at the top of this function rejects a
+        // double-click before the foreground executor has a chance to run the
+        // spawned body. The map's value type is `Task<()>` for historical
+        // reasons, but it's only ever read for presence — we insert a
+        // `Task::ready(())` placeholder here and detach the real task.
+        //
+        // The reason not to store the real task is that the spawned body's
+        // own error handlers call `finish_restore_ui` -> `restoring_tasks
+        // .remove(...)`. If the map held the real task, that remove would
+        // drop the task we're currently inside — which GPUI tolerates but
+        // is a fragile pattern. Detaching the real task makes the remove a
+        // no-op on a `Task::ready(())`, with no "drop the task we're inside"
+        // hazard.
+        self.restoring_tasks.insert(thread_id, Task::ready(()));
+
+        cx.spawn_in(window, async move |this, cx| {
             let result: anyhow::Result<()> = async {
                 let archived_worktrees = task.await?;
 
+                // Empty-archive activation has no destructive on-disk
+                // work to serialize against — skip the cross-window claim
+                // entirely and run the simple activation path.
                 if archived_worktrees.is_empty() {
                     this.update_in(cx, |this, window, cx| {
                         this.restoring_tasks.remove(&thread_id);
@@ -3035,51 +3164,37 @@ impl Sidebar {
                     return anyhow::Ok(());
                 }
 
+                // Destructive pass: recreate each archived worktree.
+                // We do NOT delete each archived worktree's DB record in
+                // this loop. If we did, a later worktree's failure would
+                // strand the thread: the successful rows would have no
+                // archived metadata left to retry from, leaving on-disk
+                // worktrees orphaned and the thread permanently broken.
+                // Cleanup happens only after the DB-visible state is
+                // committed below.
                 let mut path_replacements: Vec<(PathBuf, PathBuf)> = Vec::new();
                 for row in &archived_worktrees {
                     match thread_worktree_archive::restore_worktree_via_git(
                         row,
                         metadata.remote_connection.as_ref(),
-                        &mut *cx,
+                        cx,
                     )
                     .await
                     {
                         Ok(restored_path) => {
-                            thread_worktree_archive::cleanup_archived_worktree_record(
-                                row,
-                                metadata.remote_connection.as_ref(),
-                                &mut *cx,
-                            )
-                            .await;
                             path_replacements.push((row.worktree_path.clone(), restored_path));
                         }
                         Err(error) => {
                             log::error!("Failed to restore worktree: {error:#}");
                             this.update_in(cx, |this, _window, cx| {
-                                this.restoring_tasks.remove(&thread_id);
-                                if let Some(weak_archive_view) = &weak_archive_view {
-                                    weak_archive_view
-                                        .update(cx, |view, cx| {
-                                            view.clear_restoring(&thread_id, cx);
-                                        })
-                                        .ok();
-                                }
-
-                                if let Some(multi_workspace) = this.multi_workspace.upgrade() {
-                                    let workspace = multi_workspace.read(cx).workspace().clone();
-                                    workspace.update(cx, |workspace, cx| {
-                                        struct RestoreWorktreeErrorToast;
-                                        workspace.show_toast(
-                                            Toast::new(
-                                                NotificationId::unique::<RestoreWorktreeErrorToast>(
-                                                ),
-                                                format!("Failed to restore worktree: {error:#}"),
-                                            )
-                                            .autohide(),
-                                            cx,
-                                        );
-                                    });
-                                }
+                                struct RestoreWorktreeErrorToast;
+                                this.fail_restore_with_toast(
+                                    thread_id,
+                                    &weak_archive_view,
+                                    NotificationId::unique::<RestoreWorktreeErrorToast>(),
+                                    format!("Failed to restore worktree: {error:#}"),
+                                    cx,
+                                );
                             })
                             .ok();
                             return anyhow::Ok(());
@@ -3087,29 +3202,22 @@ impl Sidebar {
                     }
                 }
 
-                if !path_replacements.is_empty() {
-                    cx.update(|_window, cx| {
-                        store.update(cx, |store, cx| {
-                            store.update_restored_worktree_paths(thread_id, &path_replacements, cx);
-                        });
-                    })?;
+                // Commit the DB-visible state through `AsyncApp` so it
+                // survives the user closing the window between the
+                // destructive pass and now (see `commit_db_state_after_
+                // restore`'s docs). The activation `update_in` below is
+                // window-bound and best-effort; correctness lives in the
+                // commit above.
+                let updated_metadata =
+                    commit_db_state_after_restore(&store, thread_id, &path_replacements, cx).await;
 
-                    let updated_metadata =
-                        cx.update(|_window, cx| store.read(cx).entry(thread_id).cloned())?;
-
-                    if let Some(updated_metadata) = updated_metadata {
+                match updated_metadata {
+                    Some(updated_metadata) => {
                         let new_paths = updated_metadata.folder_paths().clone();
                         let key = ProjectGroupKey::from_worktree_paths(
                             &updated_metadata.worktree_paths,
                             updated_metadata.remote_connection.clone(),
                         );
-
-                        cx.update(|_window, cx| {
-                            store.update(cx, |store, cx| {
-                                store.unarchive(updated_metadata.thread_id, cx);
-                            });
-                        })?;
-
                         this.update_in(cx, |this, window, cx| {
                             this.restoring_tasks.remove(&thread_id);
                             this.open_workspace_and_activate_thread(
@@ -3120,8 +3228,45 @@ impl Sidebar {
                                 cx,
                             );
                             this.show_thread_list(window, cx);
-                        })?;
+                        })
+                        .ok();
                     }
+                    None if !path_replacements.is_empty() => {
+                        // The thread was removed from the store between
+                        // the restore loop and this lookup (e.g. another
+                        // window deleted it). The on-disk restore has
+                        // already succeeded, but there's nothing left
+                        // here to activate. Make sure the per-window
+                        // "restoring..." state is cleared so the
+                        // spinner doesn't get stuck.
+                        log::warn!(
+                            "Thread {thread_id:?} disappeared from the store mid-restore; \
+                             on-disk worktrees were restored but the thread can't be activated."
+                        );
+                        this.update_in(cx, |this, _window, cx| {
+                            this.finish_restore_ui(thread_id, &weak_archive_view, cx);
+                        })
+                        .ok();
+                    }
+                    None => {}
+                }
+
+                // Finally, drop the archive records. This happens last so
+                // a failure or cancellation between the visible state
+                // changes above and this loop only leaves the user with
+                // some stale DB rows (recoverable by a later cleanup
+                // pass), not a thread stuck in an inconsistent
+                // "unarchived but archive rows missing" state.
+                // `cleanup_archived_worktree_record` swallows its own
+                // errors, so a cleanup failure leaks a DB row but doesn't
+                // break the thread.
+                for row in &archived_worktrees {
+                    thread_worktree_archive::cleanup_archived_worktree_record(
+                        row,
+                        metadata.remote_connection.as_ref(),
+                        cx,
+                    )
+                    .await;
                 }
 
                 anyhow::Ok(())
@@ -3129,9 +3274,20 @@ impl Sidebar {
             .await;
             if let Err(error) = result {
                 log::error!("{error:#}");
+                this.update_in(cx, |this, _window, cx| {
+                    struct RestoreFailedToast;
+                    this.fail_restore_with_toast(
+                        thread_id,
+                        &weak_archive_view,
+                        NotificationId::unique::<RestoreFailedToast>(),
+                        format!("Failed to restore thread: {error:#}"),
+                        cx,
+                    );
+                })
+                .ok();
             }
-        });
-        self.restoring_tasks.insert(thread_id, restore_task);
+        })
+        .detach();
     }
 
     fn expand_selected_entry(

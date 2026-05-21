@@ -7140,6 +7140,21 @@ impl Repository {
         )
     }
 
+    /// Removes a worktree by path.
+    ///
+    /// Note on error shape: the local backend translates git's "path is
+    /// not a working tree" failure into a structured
+    /// [`git::repository::NotAWorktreeError`] (see
+    /// [`git::repository::GitRepository::remove_worktree`]). The remote arm
+    /// here does **not** preserve that type — the RPC boundary collapses
+    /// the error into a generic `anyhow::Error` whose `Display` carries
+    /// the original message. Callers that need to react to the "nothing to
+    /// remove" case structurally must either route through the local
+    /// backend or pre-check with `Self::worktrees()`. As of writing the
+    /// only such caller (archived-thread restore in `agent_ui`) takes the
+    /// pre-check path and rejects remote restores at its entry point, so
+    /// this asymmetry has no live consumer; document it here so the next
+    /// caller doesn't get surprised.
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
         let repository_anchor_path: Arc<Path> = self
