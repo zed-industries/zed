@@ -8264,12 +8264,12 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            cx.debug_bounds("MENU_ITEM-Create a Skill").is_some(),
-            "Create a Skill menu item should be visible"
+            cx.debug_bounds("MENU_ITEM-Create Skill…").is_some(),
+            "Create Skill… menu item should be visible"
         );
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
-            "Create a Skill menu item should show the OpenRulesLibrary shortcut"
+            "Create Skill… menu item should show the OpenRulesLibrary shortcut"
         );
     }
 
