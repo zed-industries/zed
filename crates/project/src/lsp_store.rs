@@ -11948,7 +11948,7 @@ impl LspStore {
         })
     }
 
-    pub fn language_server_adapter_for_id(
+    pub(crate) fn language_server_adapter_for_id(
         &self,
         id: LanguageServerId,
     ) -> Option<Arc<CachedLspAdapter>> {

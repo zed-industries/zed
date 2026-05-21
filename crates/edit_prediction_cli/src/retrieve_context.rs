@@ -115,17 +115,17 @@ async fn wait_for_language_servers_to_start(
 
     let (mut started_tx, mut started_rx) = mpsc::channel(servers_pending_start.len().max(1));
     let (mut diag_tx, mut diag_rx) = mpsc::channel(servers_pending_diagnostics.len().max(1));
-    let subscriptions = [cx.subscribe(&lsp_store, {
+    let subscriptions = [cx.subscribe(project, {
         let step_progress = step_progress.clone();
-        move |lsp_store, event, cx| match event {
+        move |project, event, cx| match event {
             project::LspStoreEvent::LanguageServerAdded(id, name, _) => {
                 step_progress.set_substatus(format!("LSP started: {}", name));
                 started_tx.try_send(*id).ok();
             }
             project::LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
-                let name = lsp_store
+                let name = project
                     .read(cx)
-                    .language_server_adapter_for_id(*language_server_id)
+                    .language_server_adapter_for_id(*language_server_id, cx)
                     .unwrap()
                     .name();
                 step_progress.set_substatus(format!("LSP idle: {}", name));

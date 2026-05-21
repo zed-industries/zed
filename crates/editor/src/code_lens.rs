@@ -69,9 +69,7 @@ pub(super) fn try_handle_client_command(
     let project = workspace.read(cx).project().clone();
     let client_command = project
         .read(cx)
-        .lsp_store(cx)
-        .read(cx)
-        .language_server_adapter_for_id(action.server_id)
+        .language_server_adapter_for_id(action.server_id, cx)
         .and_then(|adapter| adapter.adapter.client_command(&command.command, arguments))
         .or_else(|| match command.command.as_str() {
             "editor.action.showReferences"

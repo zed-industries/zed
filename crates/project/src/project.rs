@@ -95,9 +95,9 @@ use gpui::{
     Task, TaskExt, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
-    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    Buffer, BufferEvent, CachedLspAdapter, Capability, CodeLabel, CursorShape, DiskState, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain,
+    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
 use lsp::{
@@ -5217,6 +5217,19 @@ impl Project {
             .read(cx)
             .language_server_statuses()
             .filter(|(server_id, _)| self.language_servers.contains(server_id))
+    }
+
+    pub fn language_server_adapter_for_id(
+        &self,
+        id: LanguageServerId,
+        cx: &App,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        if !self.language_servers.contains(&id) {
+            return None;
+        }
+        self.lsp_store(cx)
+            .read(cx)
+            .language_server_adapter_for_id(id)
     }
 
     pub fn last_formatting_failure<'a>(&self, cx: &'a App) -> Option<&'a str> {
