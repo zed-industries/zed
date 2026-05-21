@@ -367,14 +367,19 @@ impl RenderOnce for ThreadItem {
             AgentThreadStatus::Error | AgentThreadStatus::WaitingForConfirmation
         );
 
-        let linked_worktrees: Vec<ThreadItemWorktreeInfo> = self
+        let visible_worktrees: Vec<ThreadItemWorktreeInfo> = self
             .worktrees
             .into_iter()
-            .filter(|wt| wt.kind == WorktreeKind::Linked)
+            .map(|mut wt| {
+                if wt.kind == WorktreeKind::Main {
+                    wt.worktree_name = None
+                }
+                wt
+            })
             .filter(|wt| wt.worktree_name.is_some() || wt.branch_name.is_some())
             .collect();
 
-        let has_worktree = !linked_worktrees.is_empty();
+        let has_worktree = !visible_worktrees.is_empty();
 
         let has_metadata = has_project_name
             || has_project_paths
@@ -472,7 +477,7 @@ impl RenderOnce for ThreadItem {
                                     this.child(dot_separator())
                                 })
                                 .children(
-                                    linked_worktrees.into_iter().map(|wt| {
+                                    visible_worktrees.into_iter().map(|wt| {
                                         let worktree_label = wt.worktree_name.clone().map(|name| {
                                             if wt.highlight_positions.is_empty() {
                                                 Label::new(name)
@@ -736,7 +741,7 @@ impl Component for ThreadItem {
                     .into_any_element(),
             ),
             single_example(
-                "Main Worktree (hidden) + Changes + Timestamp",
+                "Main Worktree Branch + Changes + Timestamp",
                 container()
                     .child(
                         ThreadItem::new("ti-5e", "Main worktree branch with diff stats")
