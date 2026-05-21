@@ -64,6 +64,11 @@ pub enum MentionUri {
     MergeConflict {
         file_path: String,
     },
+    Skill {
+        name: String,
+        source: String,
+        skill_file_path: PathBuf,
+    },
 }
 
 impl MentionUri {
@@ -261,6 +266,40 @@ impl MentionUri {
                 } else if path.starts_with("/agent/merge-conflict") {
                     let file_path = single_query_param(&url, "path")?.unwrap_or_default();
                     Ok(Self::MergeConflict { file_path })
+                } else if path.starts_with("/agent/skill") {
+                    let mut name = None;
+                    let mut source = None;
+                    let mut skill_file_path = None;
+
+                    for (key, value) in url.query_pairs() {
+                        match key.as_ref() {
+                            "name" => {
+                                if name.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill name query parameter");
+                                }
+                            }
+                            "source" => {
+                                if source.replace(value.to_string()).is_some() {
+                                    bail!("duplicate skill source query parameter");
+                                }
+                            }
+                            "path" => {
+                                if skill_file_path
+                                    .replace(PathBuf::from(value.to_string()))
+                                    .is_some()
+                                {
+                                    bail!("duplicate skill file path query parameter");
+                                }
+                            }
+                            _ => bail!("invalid query parameter"),
+                        }
+                    }
+
+                    Ok(Self::Skill {
+                        name: name.context("missing skill name")?,
+                        source: source.context("missing skill source")?,
+                        skill_file_path: skill_file_path.context("missing skill file path")?,
+                    })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -303,6 +342,33 @@ impl MentionUri {
                 ..
             } => selection_name(path.as_deref(), line_range),
             MentionUri::Fetch { url } => url.to_string(),
+            MentionUri::Skill { name, .. } => name.clone(),
+        }
+    }
+
+    /// Returns a label for this mention at the given disambiguation `detail`
+    /// level. `detail == 0` is the base name returned by [`Self::name`]; higher
+    /// levels include progressively more context (e.g. additional parent path
+    /// components for files, or the source for skills) until a fixed point is
+    /// reached. Intended to be driven by [`util::disambiguate::compute_disambiguation_details`].
+    pub fn disambiguated_name(&self, detail: usize) -> String {
+        if detail == 0 {
+            return self.name();
+        }
+
+        match self {
+            MentionUri::Skill { name, source, .. } => {
+                if source.is_empty() {
+                    // Must match `SkillSource::display_label()` in agent_skills.
+                    format!("{} (global)", name)
+                } else {
+                    format!("{} ({})", name, source)
+                }
+            }
+            MentionUri::File { abs_path, .. } | MentionUri::Directory { abs_path, .. } => {
+                project::path_suffix(abs_path, detail)
+            }
+            _ => self.name(),
         }
     }
 
@@ -337,6 +403,9 @@ impl MentionUri {
                 )
                 .into(),
             ),
+            MentionUri::Skill {
+                skill_file_path, ..
+            } => Some(skill_file_path.to_string_lossy().into_owned().into()),
             _ => None,
         }
     }
@@ -358,6 +427,7 @@ impl MentionUri {
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
             MentionUri::MergeConflict { .. } => IconName::GitMergeConflict.path().into(),
+            MentionUri::Skill { .. } => IconName::Sparkle.path().into(),
         }
     }
 
@@ -463,6 +533,19 @@ impl MentionUri {
             MentionUri::MergeConflict { file_path } => {
                 let mut url = Url::parse("zed:///agent/merge-conflict").unwrap();
                 url.query_pairs_mut().append_pair("path", file_path);
+                url
+            }
+            MentionUri::Skill {
+                name,
+                source,
+                skill_file_path,
+            } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/skill");
+                url.query_pairs_mut()
+                    .append_pair("name", name)
+                    .append_pair("source", source)
+                    .append_pair("path", &skill_file_path.to_string_lossy());
                 url
             }
         }
@@ -703,6 +786,20 @@ mod tests {
             _ => panic!("Expected Rule variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), rule_uri);
+    }
+
+    #[test]
+    fn test_parse_skill_uri_round_trip() {
+        let skill_uri = MentionUri::Skill {
+            name: "rust-best-practices".to_string(),
+            source: "my-personal-project".to_string(),
+            skill_file_path: PathBuf::from(path!("/path/to/skills/rust-best-practices/SKILL.md")),
+        };
+
+        let serialized = skill_uri.to_uri().to_string();
+        let parsed = MentionUri::parse(&serialized, PathStyle::local()).unwrap();
+
+        assert_eq!(parsed, skill_uri);
     }
 
     #[test]
@@ -992,5 +1089,69 @@ mod tests {
         let single_line_uri = "zed:///agent/terminal-selection?lines=1";
         let parsed_single = MentionUri::parse(single_line_uri, PathStyle::local()).unwrap();
         assert_eq!(parsed_single.name(), "Terminal (1 line)");
+    }
+
+    #[test]
+    fn test_disambiguated_name() {
+        // Two files with the same name — should disambiguate with parent dir
+        let file_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/src/README.md")),
+        };
+        let file_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/project/docs/README.md")),
+        };
+        assert_eq!(file_a.name(), "README.md");
+        assert_eq!(file_b.name(), "README.md");
+        assert_eq!(file_a.disambiguated_name(0), "README.md");
+        assert_eq!(file_a.disambiguated_name(1), "src/README.md");
+        assert_eq!(file_b.disambiguated_name(1), "docs/README.md");
+
+        // Files that still collide at one parent should grow further.
+        let deep_a = MentionUri::File {
+            abs_path: PathBuf::from(path!("/a/src/foo.rs")),
+        };
+        let deep_b = MentionUri::File {
+            abs_path: PathBuf::from(path!("/b/src/foo.rs")),
+        };
+        assert_eq!(deep_a.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(1), "src/foo.rs");
+        assert_eq!(deep_a.disambiguated_name(2), "a/src/foo.rs");
+        assert_eq!(deep_b.disambiguated_name(2), "b/src/foo.rs");
+
+        // Two skills with the same name — should disambiguate with source
+        let global_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "".into(),
+            skill_file_path: PathBuf::from("/global/create-skill/SKILL.md"),
+        };
+        let project_skill = MentionUri::Skill {
+            name: "create-skill".into(),
+            source: "my-project".into(),
+            skill_file_path: PathBuf::from("/project/create-skill/SKILL.md"),
+        };
+        assert_eq!(global_skill.name(), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(0), "create-skill");
+        assert_eq!(global_skill.disambiguated_name(1), "create-skill (global)");
+        assert_eq!(
+            project_skill.disambiguated_name(1),
+            "create-skill (my-project)"
+        );
+
+        // A type without special disambiguation (Thread) — detail has no effect
+        // (the value is a fixed point so the disambiguation loop terminates).
+        let thread = MentionUri::Thread {
+            id: acp::SessionId::new("123"),
+            name: "My Thread".into(),
+        };
+        assert_eq!(thread.disambiguated_name(0), "My Thread");
+        assert_eq!(thread.disambiguated_name(1), "My Thread");
+        assert_eq!(thread.disambiguated_name(5), "My Thread");
+
+        // Edge case: file at filesystem root has no parent to show
+        let root_file = MentionUri::File {
+            abs_path: PathBuf::from(path!("/README.md")),
+        };
+        assert_eq!(root_file.disambiguated_name(1), "README.md");
+        assert_eq!(root_file.disambiguated_name(5), "README.md");
     }
 }

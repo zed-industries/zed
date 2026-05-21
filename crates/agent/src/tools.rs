@@ -16,17 +16,15 @@ mod go_to_definition_tool;
 mod grep_tool;
 mod list_directory_tool;
 mod move_path_tool;
-mod now_tool;
-mod open_tool;
 mod read_file_tool;
 mod rename_tool;
-mod restore_file_from_disk_tool;
-mod save_file_tool;
+mod skill_tool;
 mod spawn_agent_tool;
 mod symbol_locator;
 mod terminal_tool;
 mod tool_permissions;
 mod update_plan_tool;
+mod update_title_tool;
 mod web_search_tool;
 mod write_file_tool;
 
@@ -75,17 +73,15 @@ pub use go_to_definition_tool::*;
 pub use grep_tool::*;
 pub use list_directory_tool::*;
 pub use move_path_tool::*;
-pub use now_tool::*;
-pub use open_tool::*;
 pub use read_file_tool::*;
 pub use rename_tool::*;
-pub use restore_file_from_disk_tool::*;
-pub use save_file_tool::*;
+pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use update_plan_tool::*;
+pub use update_title_tool::*;
 pub use web_search_tool::*;
 pub use write_file_tool::*;
 
@@ -172,15 +168,13 @@ tools! {
     GrepTool,
     ListDirectoryTool,
     MovePathTool,
-    NowTool,
-    OpenTool,
     ReadFileTool,
     RenameTool,
-    RestoreFileFromDiskTool,
-    SaveFileTool,
+    SkillTool,
     SpawnAgentTool,
     TerminalTool,
     UpdatePlanTool,
+    UpdateTitleTool,
     WebSearchTool,
     WriteFileTool,
 }

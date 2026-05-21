@@ -13,7 +13,7 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -7280,7 +7280,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 3] {
+    fn git_hunks_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7304,6 +7304,28 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().path_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Stage/Restore Buttons",
+                description: "Whether to show the stage and restore buttons on diff hunks.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.show_stage_restore_buttons"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .show_stage_restore_buttons
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .show_stage_restore_buttons = value;
                     },
                 }),
                 metadata: None,
@@ -7462,6 +7484,15 @@ fn ai_page(cx: &App) -> SettingsPage {
     fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Skills".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.skills"),
+                description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                in_json: false,
+                files: USER | PROJECT,
+                render: render_skills_setup_page,
+            }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
@@ -8500,7 +8531,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn completions_section() -> [SettingsPageItem; 7] {
+    fn completions_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Completions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8607,6 +8638,21 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.completion_detail_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Menu Item Kind",
+                description: "How to display the LSP item kind (function, method, variable, etc.) of each entry in the completions menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_menu_item_kind"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_menu_item_kind.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.completion_menu_item_kind = value;
                     },
                 }),
                 metadata: None,

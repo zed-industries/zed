@@ -14,8 +14,6 @@ use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
-use crate::Agent;
-
 #[derive(IntoElement)]
 pub struct MentionCrease {
     id: ElementId,
@@ -182,6 +180,11 @@ fn open_mention_uri(
         MentionUri::Rule { id, .. } => {
             open_rule(workspace, id, window, cx);
         }
+        MentionUri::Skill {
+            skill_file_path, ..
+        } => {
+            open_skill_file(workspace, skill_file_path, window, cx);
+        }
         MentionUri::Fetch { url } => {
             cx.open_url(url.as_str());
         }
@@ -192,6 +195,62 @@ fn open_mention_uri(
         | MentionUri::GitDiff { .. }
         | MentionUri::MergeConflict { .. } => {}
     });
+}
+
+fn open_skill_file(
+    workspace: &mut Workspace,
+    skill_file_path: PathBuf,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    // Built-in skills have synthetic paths that don't exist on disk.
+    // Open a read-only buffer with the embedded content instead.
+    if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
+        let project = workspace.project().clone();
+        let languages = project.read(cx).languages().clone();
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer(content, None, false, cx)
+        });
+        // Set markdown highlighting asynchronously — the buffer
+        // opens instantly and the highlighting appears once loaded.
+        cx.spawn({
+            let buffer = buffer.clone();
+            async move |_, cx| {
+                if let Ok(markdown) = languages.language_for_name("Markdown").await {
+                    buffer.update(cx, |buffer, cx| buffer.set_language(Some(markdown), cx));
+                }
+            }
+        })
+        .detach();
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::for_buffer(buffer, None, window, cx);
+            editor.set_read_only(true);
+            let title = skill_file_path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "built-in skill".into());
+            editor
+                .buffer()
+                .update(cx, |buffer, cx| buffer.set_title(title, cx));
+            editor
+        });
+        let pane = workspace.active_pane().clone();
+        workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
+        return;
+    }
+
+    workspace
+        .open_abs_path(
+            skill_file_path,
+            OpenOptions {
+                focus: Some(true),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
 }
 
 fn open_file(
@@ -271,24 +330,30 @@ fn open_thread(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    use crate::AgentPanel;
+    use crate::{Agent, AgentPanel, AgentThreadSource, thread_metadata_store::ThreadMetadataStore};
 
     let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
         return;
     };
 
-    // Right now we only support loading threads in the native agent
+    // Right now we only support loading threads in the native agent.
     panel.update(cx, |panel, cx| {
-        panel.load_agent_thread(
-            Agent::NativeAgent,
-            id,
-            None,
-            Some(name.into()),
-            true,
-            "agent_panel",
-            window,
-            cx,
-        )
+        let thread_id = ThreadMetadataStore::try_global(cx)
+            .and_then(|store| store.read(cx).entry_by_session(&id).map(|m| m.thread_id));
+        if let Some(thread_id) = thread_id {
+            panel.load_agent_thread(
+                Agent::NativeAgent,
+                thread_id,
+                None,
+                Some(name.into()),
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        } else {
+            panel.open_thread(id, None, Some(name.into()), window, cx);
+        }
     });
 }
 

@@ -26,10 +26,11 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
-    fake_provider::FakeLanguageModel,
+    LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
+    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
+    Role, StopReason, TokenUsage,
+    fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -40,7 +41,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::{LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore};
 use std::{
     path::Path,
     pin::Pin,
@@ -1655,6 +1656,7 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
 
     let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
     assert_eq!(tool_call_params.name, "screenshot");
+    let image_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
     tool_call_response
         .send(context_server::types::CallToolResponse {
             content: vec![
@@ -1662,7 +1664,7 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
                     text: "Some text".into(),
                 },
                 context_server::types::ToolResponseContent::Image {
-                    data: "aGVsbG8=".into(),
+                    data: image_data.into(),
                     mime_type: "image/png".into(),
                 },
                 context_server::types::ToolResponseContent::Text {
@@ -1690,13 +1692,25 @@ async fn test_mcp_tool_multi_content_response(cx: &mut TestAppContext) {
         })
         .expect("expected a tool result");
     assert_eq!(tool_result.tool_use_id, "tool_1".into());
-    assert_eq!(tool_result.content.len(), 2);
+    assert_eq!(tool_result.content.len(), 3);
+    assert_eq!(
+        tool_result.content[0],
+        language_model::LanguageModelToolResultContent::Text(Arc::from("Some text"))
+    );
+    let expected_image =
+        language_model::LanguageModelImage::from_base64_image(image_data, "image/png")
+            .expect("image conversion should not error")
+            .expect("image conversion should succeed");
     assert_eq!(
         tool_result.content[0],
         language_model::LanguageModelToolResultContent::Text(Arc::from("Some text"))
     );
     assert_eq!(
         tool_result.content[1],
+        language_model::LanguageModelToolResultContent::Image(expected_image)
+    );
+    assert_eq!(
+        tool_result.content[2],
         language_model::LanguageModelToolResultContent::Text(Arc::from("Some more text"))
     );
     fake_model.end_last_completion_stream();
@@ -3123,6 +3137,57 @@ async fn test_truncate_first_message(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_latest_token_usage_counts_cached_input_tokens(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let message_1_id = UserMessageId::new();
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(message_1_id, ["Message 1"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Response 1");
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::UsageUpdate(
+        language_model::TokenUsage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: 25,
+            cache_read_input_tokens: 75,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.latest_token_usage(),
+            Some(acp_thread::TokenUsage {
+                used_tokens: 250,
+                max_tokens: 1_000_000,
+                max_output_tokens: None,
+                input_tokens: 200,
+                output_tokens: 50,
+            })
+        );
+    });
+
+    let message_2_id = UserMessageId::new();
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(message_2_id.clone(), ["Message 2"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.tokens_before_message(&message_2_id), Some(200));
+    });
+}
+
+#[gpui::test]
 async fn test_truncate_second_message(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3743,6 +3808,155 @@ async fn test_update_plan_tool_updates_thread_events(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_update_title_tool_sets_thread_title(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    let summary_model = Arc::new(FakeLanguageModel::default());
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["update-title-tool".to_string()]);
+    });
+    thread.update(cx, |thread, cx| {
+        thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+        thread.set_summarization_model(Some(summary_model.clone()), cx);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let input = json!({
+        "title": "Session title tool"
+    });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "title_1".into(),
+            name: UpdateTitleTool::NAME.into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(
+        tool_call,
+        acp::ToolCall::new("title_1", "Update title: Session title tool")
+            .kind(acp::ToolKind::Think)
+            .raw_input(json!({
+                "title": "Session title tool"
+            }))
+            .meta(acp::Meta::from_iter([(
+                "tool_name".into(),
+                "update_title".into()
+            )]))
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "title_1",
+            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress)
+        )
+    );
+
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate::new(
+            "title_1",
+            acp::ToolCallUpdateFields::new()
+                .status(acp::ToolCallStatus::Completed)
+                .raw_output("Session title updated")
+        )
+    );
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Session title tool".into()));
+    });
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_update_title_availability_suppresses_summary_title_generation(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    let summary_model = Arc::new(FakeLanguageModel::default());
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["update-title-tool".to_string()]);
+    });
+    thread.update(cx, |thread, cx| {
+        thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
+        thread.set_summarization_model(Some(summary_model.clone()), cx);
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), None);
+    });
+    assert_eq!(summary_model.pending_completions(), Vec::new());
+}
+
+#[gpui::test]
+async fn test_update_title_flag_without_available_tool_falls_back_to_summary_title_generation(
+    cx: &mut TestAppContext,
+) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+    let summary_model = Arc::new(FakeLanguageModel::default());
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["update-title-tool".to_string()]);
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx);
+    });
+
+    let send = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Explore title tooling"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_text_chunk("Done");
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    assert_eq!(summary_model.pending_completions().len(), 1);
+
+    summary_model.send_last_completion_stream_text_chunk("Fallback title");
+    summary_model.end_last_completion_stream();
+    send.collect::<Vec<_>>().await;
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), Some("Fallback title".into()));
+    });
+}
+
+#[gpui::test]
 async fn test_send_no_retry_on_success(cx: &mut TestAppContext) {
     let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -4255,6 +4469,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                             StreamingFailingEchoTool::NAME: true,
                             TerminalTool::NAME: true,
                             UpdatePlanTool::NAME: true,
+                            UpdateTitleTool::NAME: true,
                         }
                     }
                 }
@@ -5496,6 +5711,90 @@ async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestApp
 }
 
 #[gpui::test]
+async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let parent_model = Arc::new(FakeLanguageModel::default());
+    let subagent_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "subagent-model",
+        "Subagent Model",
+        true,
+    ));
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![subagent_model.clone()]),
+        );
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.subagent_model = Some(LanguageModelSelection {
+            provider: LanguageModelProviderSetting("fake-corp".to_string()),
+            model: "subagent-model".to_string(),
+            enable_thinking: true,
+            effort: Some("high".to_string()),
+            speed: None,
+        });
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(parent_model.clone()),
+            cx,
+        )
+    });
+
+    let subagent_thread = cx.new(|cx| Thread::new_subagent(&parent_thread, cx));
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(subagent_model.id())
+        );
+        assert!(subagent_thread.thinking_enabled());
+        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+    });
+
+    parent_thread.update(cx, |parent_thread, _cx| {
+        parent_thread.register_running_subagent(subagent_thread.downgrade());
+    });
+    parent_thread.update(cx, |parent_thread, cx| {
+        parent_thread.set_model(parent_model.clone(), cx);
+        parent_thread.set_thinking_enabled(false, cx);
+        parent_thread.set_thinking_effort(None, cx);
+    });
+
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(subagent_model.id())
+        );
+        assert!(subagent_thread.thinking_enabled());
+        assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
+    });
+}
+
+#[gpui::test]
 async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5579,12 +5878,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
         GetCodeActionsTool::NAME,
         ApplyCodeActionTool::NAME,
         GoToDefinitionTool::NAME,
-        RenameTool::NAME,
     ];
 
-    // All LSP tools should be registered on the thread regardless of the flag,
-    // since the feature flag now only controls exposure to the model rather
-    // than registration.
+    // All LSP tools and the rename tool should be registered on the thread
+    // regardless of the flag, since the feature flags only control exposure
+    // to the model rather than registration.
     thread.read_with(cx, |thread, _| {
         for name in &lsp_tool_names {
             assert!(
@@ -5592,10 +5890,16 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
                 "expected LSP tool {name} to be registered"
             );
         }
+        assert!(
+            thread.has_registered_tool(RenameTool::NAME),
+            "expected rename tool to be registered"
+        );
     });
 
     // Without the `lsp-tool` flag, sending a message should produce a
     // completion request whose tool list excludes the LSP tools.
+    // The rename tool is on its own `rename-tool` flag with
+    // `enabled_for_staff`, so it is already visible in debug builds.
     thread
         .update(cx, |thread, cx| {
             thread.send(UserMessageId::new(), ["hello"], cx)
@@ -5612,6 +5916,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to be visible (enabled_for_staff in debug builds), \
+         but completion tools were: {tool_names:?}"
+    );
     // Sanity check: a non-LSP default tool should still be exposed.
     assert!(
         tool_names.iter().any(|t| t == ReadFileTool::NAME),
@@ -5642,6 +5951,11 @@ async fn test_lsp_tools_gated_by_feature_flag(cx: &mut TestAppContext) {
              but completion tools were: {tool_names:?}"
         );
     }
+    assert!(
+        tool_names.iter().any(|t| t == RenameTool::NAME),
+        "expected rename tool to still be exposed, \
+         but completion tools were: {tool_names:?}"
+    );
 }
 
 #[gpui::test]
@@ -6388,112 +6702,6 @@ async fn test_copy_path_tool_deny_rule_blocks_copy(cx: &mut TestAppContext) {
     assert!(
         result.unwrap_err().contains("blocked"),
         "error should mention the copy was blocked"
-    );
-}
-
-#[gpui::test]
-async fn test_save_file_tool_denies_if_any_path_denied(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        "/root",
-        json!({
-            "normal.txt": "normal content",
-            "readonly": {
-                "config.txt": "readonly content"
-            }
-        }),
-    )
-    .await;
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.tool_permissions.tools.insert(
-            SaveFileTool::NAME.into(),
-            agent_settings::ToolRules {
-                default: Some(settings::ToolPermissionMode::Allow),
-                always_allow: vec![],
-                always_deny: vec![agent_settings::CompiledRegex::new(r"readonly", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::SaveFileTool::new(project));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            ToolInput::resolved(crate::SaveFileToolInput {
-                paths: vec![
-                    std::path::PathBuf::from("root/normal.txt"),
-                    std::path::PathBuf::from("root/readonly/config.txt"),
-                ],
-            }),
-            event_stream,
-            cx,
-        )
-    });
-
-    let result = task.await;
-    assert!(
-        result.is_err(),
-        "expected save to be blocked due to denied path"
-    );
-    assert!(
-        result.unwrap_err().contains("blocked"),
-        "error should mention the save was blocked"
-    );
-}
-
-#[gpui::test]
-async fn test_save_file_tool_respects_deny_rules(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/root", json!({"config.secret": "secret config"}))
-        .await;
-    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-
-    cx.update(|cx| {
-        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
-        settings.tool_permissions.tools.insert(
-            SaveFileTool::NAME.into(),
-            agent_settings::ToolRules {
-                default: Some(settings::ToolPermissionMode::Allow),
-                always_allow: vec![],
-                always_deny: vec![agent_settings::CompiledRegex::new(r"\.secret$", false).unwrap()],
-                always_confirm: vec![],
-                invalid_patterns: vec![],
-            },
-        );
-        agent_settings::AgentSettings::override_global(settings, cx);
-    });
-
-    #[allow(clippy::arc_with_non_send_sync)]
-    let tool = Arc::new(crate::SaveFileTool::new(project));
-    let (event_stream, _rx) = crate::ToolCallEventStream::test();
-
-    let task = cx.update(|cx| {
-        tool.run(
-            ToolInput::resolved(crate::SaveFileToolInput {
-                paths: vec![std::path::PathBuf::from("root/config.secret")],
-            }),
-            event_stream,
-            cx,
-        )
-    });
-
-    let result = task.await;
-    assert!(result.is_err(), "expected save to be blocked");
-    assert!(
-        result.unwrap_err().contains("blocked"),
-        "error should mention the save was blocked"
     );
 }
 

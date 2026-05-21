@@ -87,7 +87,6 @@ pub enum ExtensionCategoryFilter {
     Grammars,
     LanguageServers,
     ContextServers,
-    AgentServers,
     Snippets,
     DebugAdapters,
 }
@@ -468,7 +467,7 @@ pub mod buffer_search {
             Dismiss,
             /// Focuses back on the editor.
             FocusEditor,
-            /// Sets the search query to the current selection without opening the search bar or running a search.
+            /// Sets the search query from the selection or word under cursor.
             UseSelectionForFind,
         ]
     );
@@ -505,6 +504,8 @@ pub mod agent {
             ToggleModelSelector,
             /// Triggers re-authentication on Gemini
             ReauthenticateAgent,
+            /// Logs out of the current external agent
+            LogoutAgent,
             /// Add the current selection as context for threads in the agent panel.
             #[action(deprecated_aliases = ["assistant::QuoteSelection", "agent::QuoteSelection"])]
             AddSelectionToThread,
@@ -568,6 +569,8 @@ pub mod assistant {
             #[action(deprecated_aliases = ["assistant::ToggleFocus"])]
             ToggleFocus,
             FocusAgent,
+            /// Opens the skill creator window for creating a new skill.
+            OpenSkillCreator,
         ]
     );
 
