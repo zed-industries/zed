@@ -264,7 +264,10 @@ impl Editor {
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
         let in_snippet_choice = self.snippet_stack.last().is_some_and(|snippet| {
-            snippet.choices.get(snippet.active_index).is_some_and(|choices| choices.is_some())
+            snippet
+                .choices
+                .get(snippet.active_index)
+                .is_some_and(|choices| choices.is_some())
         });
 
         let anchor = self.selections.newest_anchor();
