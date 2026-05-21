@@ -1100,22 +1100,28 @@ fn resolve_path(
                 .and_then(|file_name| RelPath::unix(file_name).ok())
                 .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
 
-            let project_path = project
+            let parent_project_path = project
                 .find_project_path(&parent_path, cx)
-                .map(|parent| ProjectPath {
-                    path: parent.path.join(file_name),
-                    ..parent
-                })
-                .or_else(|| project.find_project_path(&path, cx))
-                .ok_or_else(|| "Can't create file".to_string())?;
+                .ok_or_else(|| "Can't create file: path is not inside a worktree".to_string())?;
 
-            if project_path.path.ancestors().any(|ancestor| {
-                let path = ProjectPath {
+            let worktree_id = parent_project_path.worktree_id;
+            let project_path = ProjectPath {
+                worktree_id,
+                path: parent_project_path.path.join(file_name),
+            };
+
+            // Walk only the *ancestors* of the new file (skip the file path itself,
+            // since we already established above that it doesn't exist). The underlying
+            // `fs.save` will `create_dir_all` any missing intermediate directories, so
+            // we just need to reject the case where some ancestor already exists as a
+            // non-directory and would block creation.
+            if project_path.path.ancestors().skip(1).any(|ancestor| {
+                let ancestor_path = ProjectPath {
+                    worktree_id,
                     path: ancestor.into(),
-                    ..project_path.clone()
                 };
                 project
-                    .entry_for_path(&path, cx)
+                    .entry_for_path(&ancestor_path, cx)
                     .is_some_and(|entry| !entry.is_dir())
             }) {
                 return Err("Can't create file: parent is not a directory".to_string());

@@ -480,6 +480,14 @@ mod tests {
 
         let result = test_resolve_path(&mode, "root/dir/nonexistent_dir/new.txt", cx);
         assert_resolved_path_eq(result.await, rel_path("dir/nonexistent_dir/new.txt"));
+
+        // An existing file in the middle of the path blocks creation, even though
+        // intermediate directories would otherwise be auto-created.
+        let result = test_resolve_path(&mode, "root/dir/subdir/existing.txt/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err(),
+            "Can't create file: parent is not a directory"
+        );
     }
 
     #[gpui::test]
