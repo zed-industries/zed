@@ -263,14 +263,16 @@ impl Editor {
 
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
-        // Typically `start` == `end`, but with snippet tabstop choices the default choice is
-        // inserted and selected. To handle that case, the start of the selection is used so that
-        // the menu starts with all choices.
-        let position = self
-            .selections
-            .newest_anchor()
-            .start
-            .bias_right(&multibuffer_snapshot);
+        let in_snippet_choice = self.snippet_stack.last().is_some_and(|snippet| {
+            snippet.choices.get(snippet.active_index).is_some_and(|choices| choices.is_some())
+        });
+
+        let anchor = self.selections.newest_anchor();
+        let position = if in_snippet_choice {
+            anchor.start.bias_right(&multibuffer_snapshot)
+        } else {
+            anchor.head().bias_right(&multibuffer_snapshot)
+        };
 
         if position.diff_base_anchor().is_some() {
             return;
