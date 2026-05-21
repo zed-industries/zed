@@ -73,6 +73,7 @@ use util::{
 use workspace::PathList;
 use workspace::{
     CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
@@ -3213,7 +3214,7 @@ impl AgentCodeSpanResolver {
     }
 
     fn try_resolve(&self, text: &str, cx: &App) -> Option<SharedString> {
-        let trimmed = Self::sanitize_code_span_path_text(text.trim());
+        let trimmed = sanitize_path_text(text.trim());
         if !Self::is_path_like(trimmed) {
             return None;
         }
@@ -3308,38 +3309,6 @@ impl AgentCodeSpanResolver {
             paths.push(Arc::from(stripped));
         }
         paths
-    }
-
-    fn sanitize_code_span_path_text(text: &str) -> &str {
-        let mut sanitized = text;
-        let (open_parens, mut close_parens) =
-            sanitized
-                .chars()
-                .fold((0, 0), |(opens, closes), character| match character {
-                    '(' => (opens + 1, closes),
-                    ')' => (opens, closes + 1),
-                    _ => (opens, closes),
-                });
-
-        while let Some(last_char) = sanitized.chars().last() {
-            let should_remove = match last_char {
-                '.' | ',' | ':' | ';' => true,
-                '(' => true,
-                ')' if close_parens > open_parens => {
-                    close_parens -= 1;
-                    true
-                }
-                _ => false,
-            };
-
-            if should_remove {
-                sanitized = &sanitized[..sanitized.len() - last_char.len_utf8()];
-            } else {
-                break;
-            }
-        }
-
-        sanitized
     }
 
     fn is_path_like(text: &str) -> bool {
