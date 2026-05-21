@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 use serde_json::Value;
 
 use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
@@ -147,13 +147,44 @@ pub enum ToolDefinition {
     },
 }
 
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct ResponseError {
-    #[serde(default)]
     pub code: Option<String>,
     pub message: String,
-    #[serde(default)]
     pub param: Option<Value>,
+}
+
+impl<'de> Deserialize<'de> for ResponseError {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let value = value.get("error").unwrap_or(&value);
+        let Some(error) = value.as_object() else {
+            return Err(D::Error::custom("expected response error object"));
+        };
+
+        let code = error
+            .get("code")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let param = match error.get("param") {
+            Some(Value::Null) | None => None,
+            Some(param) => Some(param.clone()),
+        };
+
+        Ok(Self {
+            code,
+            message,
+            param,
+        })
+    }
 }
 
 #[derive(Deserialize, Debug)]

@@ -2224,6 +2224,31 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_nested_generic_context_error_maps_to_prompt_too_large() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+                "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+                "param": "input"
+            },
+            "sequence_number": 2
+        }))
+        .expect("nested generic context error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+    }
+
+    #[test]
     fn responses_stream_maps_refusal_events_to_refusal_stop() {
         let delta = serde_json::from_value::<ResponsesStreamEvent>(json!({
             "type": "response.refusal.delta",
