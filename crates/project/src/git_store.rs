@@ -661,6 +661,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
+        client.add_entity_request_handler(Self::handle_add_path_to_gitignore);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_askpass);
@@ -3232,6 +3233,23 @@ impl GitStore {
                 repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
             })
             .await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_add_path_to_gitignore(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitAddPathToGitignore>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let repo_path = RepoPath::from_proto(&envelope.payload.path)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.add_path_to_gitignore(&repo_path, envelope.payload.is_dir)
+            })
+            .await??;
         Ok(proto::Ack {})
     }
 
@@ -6225,8 +6243,10 @@ impl Repository {
         repo_path: &RepoPath,
         is_dir: bool,
     ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
         let work_dir = self.snapshot.work_directory_abs_path.clone();
         let path_display = repo_path.as_ref().display(PathStyle::Posix);
+        let path = repo_path.to_proto();
         let file_path_str = if is_dir {
             format!("{}/", path_display)
         } else {
@@ -6241,7 +6261,10 @@ impl Repository {
                     RepositoryState::Local(LocalRepositoryState { fs, .. }) => {
                         let gitignore_path = work_dir.join(".gitignore");
 
-                        let existing_content = fs.load(&gitignore_path).await.unwrap_or_default();
+                        let existing_content = fs
+                            .load(&gitignore_path)
+                            .await
+                            .with_context(|| format!("fs loading {}", gitignore_path.display()))?;
 
                         if existing_content
                             .lines()
@@ -6265,9 +6288,18 @@ impl Repository {
                         )
                         .await
                     }
-                    RepositoryState::Remote(_) => Err(anyhow::anyhow!(
-                        "Cannot modify .gitignore on remote repository"
-                    )),
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitAddPathToGitignore {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                path,
+                                is_dir,
+                            })
+                            .await
+                            .context("sending add path to .gitignore request")?;
+                        Ok(())
+                    }
                 }
             },
         )
