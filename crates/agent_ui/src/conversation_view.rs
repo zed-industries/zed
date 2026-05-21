@@ -3144,6 +3144,11 @@ fn render_agent_markdown(
     let worktree_roots = code_span_resolver.worktree_roots();
     let resolver = code_span_resolver.clone();
     MarkdownElement::new(markdown, style)
+        .code_block_renderer(markdown::CodeBlockRenderer::Default {
+            copy_button_visibility: markdown::CopyButtonVisibility::VisibleOnHover,
+            wrap_button_visibility: markdown::WrapButtonVisibility::VisibleOnHover,
+            border: false,
+        })
         .image_resolver(move |dest_url| resolve_agent_image(dest_url, &worktree_roots))
         .on_url_click(move |text, window, cx| {
             thread_view::open_link(text, &workspace, window, cx);

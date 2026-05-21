@@ -5997,6 +5997,7 @@ impl ThreadView {
             .render_markdown(command, style, cx)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::Hidden,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
         let copy_button = CopyButton::new("copy-command", command_text)
