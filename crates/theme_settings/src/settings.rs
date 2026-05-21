@@ -117,14 +117,9 @@ pub struct AgentBufferFontSize(Pixels);
 impl Global for AgentBufferFontSize {}
 
 #[derive(Default)]
-pub struct GitPanelBufferFontSize(Pixels);
+pub struct GitCommitBufferFontSize(Pixels);
 
-impl Global for GitPanelBufferFontSize {}
-
-#[derive(Default)]
-pub struct GitModalBufferFontSize(Pixels);
-
-impl Global for GitModalBufferFontSize {}
+impl Global for GitCommitBufferFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -418,18 +413,12 @@ impl ThemeSettings {
             .unwrap_or_else(|| self.buffer_font_size(cx))
     }
 
-    pub fn git_panel_buffer_font_size(&self, cx: &App) -> Pixels {
-        cx.try_global::<GitPanelBufferFontSize>()
+    pub fn git_commit_buffer_font_size(&self, cx: &App) -> Pixels {
+        cx.try_global::<GitCommitBufferFontSize>()
             .map(|size| size.0)
             .or(self.git_commit_buffer_font_size)
             .map(clamp_font_size)
             .unwrap_or_else(|| self.buffer_font_size(cx))
-    }
-
-    pub fn git_modal_buffer_font_size(&self, cx: &App) -> Pixels {
-        cx.try_global::<GitModalBufferFontSize>()
-            .map(|size| clamp_font_size(size.0))
-            .unwrap_or_else(|| self.git_panel_buffer_font_size(cx))
     }
 
     /// Returns the font family to use in the markdown preview,
@@ -627,34 +616,18 @@ pub fn reset_agent_buffer_font_size(cx: &mut App) {
     }
 }
 
-pub fn adjust_git_panel_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
-    let git_panel_buffer_font_size = ThemeSettings::get_global(cx).git_panel_buffer_font_size(cx);
+pub fn adjust_git_commit_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
+    let git_commit_buffer_font_size = ThemeSettings::get_global(cx).git_commit_buffer_font_size(cx);
     let adjusted_size = cx
-        .try_global::<GitPanelBufferFontSize>()
-        .map_or(git_panel_buffer_font_size, |adjusted_size| adjusted_size.0);
-    cx.set_global(GitPanelBufferFontSize(clamp_font_size(f(adjusted_size))));
+        .try_global::<GitCommitBufferFontSize>()
+        .map_or(git_commit_buffer_font_size, |adjusted_size| adjusted_size.0);
+    cx.set_global(GitCommitBufferFontSize(clamp_font_size(f(adjusted_size))));
     cx.refresh_windows();
 }
 
-pub fn reset_git_panel_buffer_font_size(cx: &mut App) {
-    if cx.has_global::<GitPanelBufferFontSize>() {
-        cx.remove_global::<GitPanelBufferFontSize>();
-        cx.refresh_windows();
-    }
-}
-
-pub fn adjust_git_modal_buffer_font_size(cx: &mut App, f: impl FnOnce(Pixels) -> Pixels) {
-    let git_modal_buffer_font_size = ThemeSettings::get_global(cx).git_modal_buffer_font_size(cx);
-    let adjusted_size = cx
-        .try_global::<GitModalBufferFontSize>()
-        .map_or(git_modal_buffer_font_size, |adjusted_size| adjusted_size.0);
-    cx.set_global(GitModalBufferFontSize(clamp_font_size(f(adjusted_size))));
-    cx.refresh_windows();
-}
-
-pub fn reset_git_modal_buffer_font_size(cx: &mut App) {
-    if cx.has_global::<GitModalBufferFontSize>() {
-        cx.remove_global::<GitModalBufferFontSize>();
+pub fn reset_git_commit_buffer_font_size(cx: &mut App) {
+    if cx.has_global::<GitCommitBufferFontSize>() {
+        cx.remove_global::<GitCommitBufferFontSize>();
         cx.refresh_windows();
     }
 }

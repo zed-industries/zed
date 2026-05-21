@@ -230,7 +230,7 @@ impl CommitModal {
 
     fn commit_editor_element(&self, _window: &mut Window, cx: &mut Context<Self>) -> EditorElement {
         let settings = theme_settings::ThemeSettings::get_global(cx);
-        let editor_style = git_commit_editor_style(settings.git_modal_buffer_font_size(cx), cx);
+        let editor_style = git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
         EditorElement::new(&self.commit_editor, editor_style)
     }
 
@@ -537,24 +537,35 @@ impl CommitModal {
 
     fn increase_font_size(
         &mut self,
-        _: &IncreaseBufferFontSize,
-        _: &mut Window,
+        action: &IncreaseBufferFontSize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        theme_settings::adjust_git_modal_buffer_font_size(cx, |size| size + px(1.0));
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.increase_font_size(action, window, cx);
+        });
     }
 
     fn decrease_font_size(
         &mut self,
-        _: &DecreaseBufferFontSize,
-        _: &mut Window,
+        action: &DecreaseBufferFontSize,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        theme_settings::adjust_git_modal_buffer_font_size(cx, |size| size - px(1.0));
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.decrease_font_size(action, window, cx);
+        });
     }
 
-    fn reset_font_size(&mut self, _: &ResetBufferFontSize, _: &mut Window, cx: &mut Context<Self>) {
-        theme_settings::reset_git_modal_buffer_font_size(cx);
+    fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.git_panel.update(cx, |git_panel, cx| {
+            git_panel.reset_font_size(action, window, cx);
+        });
     }
 }
 

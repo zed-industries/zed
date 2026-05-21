@@ -3411,7 +3411,7 @@ impl GitPanel {
         }
     }
 
-    fn increase_font_size(
+    pub(crate) fn increase_font_size(
         &mut self,
         action: &IncreaseBufferFontSize,
         _: &mut Window,
@@ -3420,7 +3420,7 @@ impl GitPanel {
         self.handle_font_size_action(action.persist, px(1.0), cx);
     }
 
-    fn decrease_font_size(
+    pub(crate) fn decrease_font_size(
         &mut self,
         action: &DecreaseBufferFontSize,
         _: &mut Window,
@@ -3432,19 +3432,19 @@ impl GitPanel {
     fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
         if persist {
             update_settings_file(self.fs.clone(), cx, move |settings, cx| {
-                let git_panel_buffer_font_size =
-                    ThemeSettings::get_global(cx).git_panel_buffer_font_size(cx) + delta;
+                let git_commit_buffer_font_size =
+                    ThemeSettings::get_global(cx).git_commit_buffer_font_size(cx) + delta;
 
                 let _ = settings.theme.git_commit_buffer_font_size.insert(
-                    f32::from(theme_settings::clamp_font_size(git_panel_buffer_font_size)).into(),
+                    f32::from(theme_settings::clamp_font_size(git_commit_buffer_font_size)).into(),
                 );
             });
         } else {
-            theme_settings::adjust_git_panel_buffer_font_size(cx, |size| size + delta);
+            theme_settings::adjust_git_commit_buffer_font_size(cx, |size| size + delta);
         }
     }
 
-    fn reset_font_size(
+    pub(crate) fn reset_font_size(
         &mut self,
         action: &ResetBufferFontSize,
         _: &mut Window,
@@ -3455,7 +3455,7 @@ impl GitPanel {
                 settings.theme.git_commit_buffer_font_size = None;
             });
         } else {
-            theme_settings::reset_git_panel_buffer_font_size(cx);
+            theme_settings::reset_git_commit_buffer_font_size(cx);
         }
     }
 
@@ -4530,7 +4530,7 @@ impl GitPanel {
         let active_repository = self.active_repository.clone()?;
         let settings = ThemeSettings::get_global(cx);
         let panel_editor_style =
-            git_commit_editor_style(settings.git_panel_buffer_font_size(cx), cx);
+            git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
         let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
