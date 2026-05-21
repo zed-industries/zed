@@ -738,7 +738,7 @@ impl ConversationView {
                         | project::Event::WorktreeRemoved(_)
                         | project::Event::WorktreeUpdatedEntries(_, _)
                 ) {
-                    resolver.refresh(&this.project.downgrade(), cx);
+                    resolver.schedule_refresh(&this.project.downgrade(), cx);
                 }
             }
         }));
@@ -3180,9 +3180,15 @@ const CODE_SPAN_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(2048) {
     None => unreachable!(),
 };
 
+/// How long to wait after the most recent worktree-change event before
+/// rebuilding the resolver snapshot. Bursts of `WorktreeUpdatedEntries`
+/// events (e.g. during a `cargo build` or `git checkout`) coalesce into a
+/// single rebuild instead of hitching the foreground thread on each event.
+const REFRESH_DEBOUNCE: Duration = Duration::from_millis(100);
+
 struct AgentCodeSpanResolverInner {
     /// Snapshot of worktree contents used for path resolution. Swapped
-    /// wholesale on `refresh`; readers clone the `Arc` cheaply.
+    /// wholesale on refresh; readers clone the `Arc` cheaply.
     snapshot: RwLock<Arc<ResolverSnapshot>>,
     /// LRU-bounded memoized results keyed by the raw code span text. Only
     /// successful resolutions are cached — unresolved lookups (regex
@@ -3190,10 +3196,15 @@ struct AgentCodeSpanResolverInner {
     /// deliberately not stored so they can't evict legitimately resolved
     /// entries under capacity pressure.
     ///
-    /// Cleared on `refresh`. A `Mutex` rather than `RwLock` because
+    /// Cleared on refresh. A `Mutex` rather than `RwLock` because
     /// `LruCache::get` must mutate recency order; in practice all access
     /// is from the foreground thread so contention is nil.
     cache: Mutex<LruCache<Arc<str>, SharedString>>,
+    /// Pending debounced refresh. Replacing this field drops the prior
+    /// task, which cancels its timer if it hasn't fired yet, so repeated
+    /// `schedule_refresh` calls within `REFRESH_DEBOUNCE` coalesce into a
+    /// single rebuild.
+    pending_refresh: Mutex<Option<Task<()>>>,
 }
 
 struct ResolverSnapshot {
@@ -3214,13 +3225,34 @@ impl AgentCodeSpanResolver {
             inner: Arc::new(AgentCodeSpanResolverInner {
                 snapshot: RwLock::new(snapshot),
                 cache: Mutex::new(LruCache::new(CODE_SPAN_CACHE_CAPACITY)),
+                pending_refresh: Mutex::new(None),
             }),
         }
     }
 
-    /// Rebuild the worktree snapshot and clear the resolution cache. Should be
-    /// called when the project's worktrees change (entries added/removed/renamed).
-    pub(crate) fn refresh(&self, project: &WeakEntity<Project>, cx: &App) {
+    /// Schedules a rebuild of the worktree snapshot and clears the cache,
+    /// debounced by `REFRESH_DEBOUNCE`. Should be called when the project's
+    /// worktrees change (entries added/removed/renamed); rapid bursts of
+    /// such events coalesce into a single rebuild.
+    pub(crate) fn schedule_refresh(&self, project: &WeakEntity<Project>, cx: &App) {
+        let project = project.clone();
+        // Capture the inner state weakly so a pending timer doesn't keep the
+        // resolver alive after the owning conversation/thread views are gone.
+        let weak_inner = Arc::downgrade(&self.inner);
+        let task = cx.spawn(async move |cx| {
+            cx.background_executor().timer(REFRESH_DEBOUNCE).await;
+            let Some(inner) = weak_inner.upgrade() else {
+                return;
+            };
+            cx.update(|cx| {
+                let resolver = AgentCodeSpanResolver { inner };
+                resolver.refresh_now(&project, cx);
+            });
+        });
+        *self.inner.pending_refresh.lock() = Some(task);
+    }
+
+    fn refresh_now(&self, project: &WeakEntity<Project>, cx: &App) {
         *self.inner.snapshot.write() = Arc::new(Self::build_snapshot(project, cx));
         self.inner.cache.lock().clear();
     }
@@ -3248,7 +3280,11 @@ impl AgentCodeSpanResolver {
         // Hot path: cache hit. `LruCache::get` mutates recency order, so we
         // must take the lock mutably; in practice this is uncontested because
         // all callers run on the foreground thread.
-        if let Some(cached) = self.inner.cache.lock().get(text).cloned() {
+        //
+        // Key by `trimmed` (not `text`) so inputs differing only in leading/
+        // trailing whitespace or trailing punctuation share a cache entry —
+        // `is_path_like` and `walk_worktrees` both operate on `trimmed`.
+        if let Some(cached) = self.inner.cache.lock().get(trimmed).cloned() {
             return Some(cached);
         }
 
@@ -3261,7 +3297,7 @@ impl AgentCodeSpanResolver {
         self.inner
             .cache
             .lock()
-            .push(Arc::from(text), resolved.clone());
+            .push(Arc::from(trimmed), resolved.clone());
         Some(resolved)
     }
 
@@ -3336,11 +3372,7 @@ impl AgentCodeSpanResolver {
         for worktree in project.read(cx).visible_worktrees(cx) {
             let worktree = worktree.read(cx);
             let mut files = HashSet::default();
-            for entry in worktree.entries(false, 0) {
-                if !entry.is_file() {
-                    continue;
-                }
-
+            for entry in worktree.files(false, 0) {
                 if let Some(extension) = entry
                     .path
                     .as_std_path()
