@@ -9144,6 +9144,8 @@ async fn compute_snapshot(
     backend: Arc<dyn GitRepository>,
     cx: &mut AsyncApp,
 ) -> Result<RepositorySnapshot> {
+    log::debug!("starting compute snapshot");
+
     let (id, work_directory_abs_path, prev_snapshot) = this.update(cx, |this, _| {
         this.paths_needing_status_update.clear();
         (
@@ -9172,6 +9174,7 @@ async fn compute_snapshot(
     };
     let (branches, head_commit, all_worktrees) =
         futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
+    log::debug!("fetched branches, head commit, worktrees");
 
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
@@ -9183,6 +9186,8 @@ async fn compute_snapshot(
 
     let remote_origin_url = backend.remote_url("origin").await;
     let remote_upstream_url = backend.remote_url("upstream").await;
+
+    log::debug!("fetched remotes");
 
     let snapshot = this.update(cx, |this, cx| {
         let head_changed =
@@ -9248,6 +9253,7 @@ async fn compute_snapshot(
 
     let (statuses, diff_stats, stash_entries) =
         futures::future::join3(statuses_future, diff_stat_future, stash_entries_future).await;
+    log::debug!("fetched statuses, diff stats, stash entries");
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
