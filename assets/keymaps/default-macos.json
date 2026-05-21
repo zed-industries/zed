@@ -1640,6 +1640,7 @@
   {
     "context": "GitGraph",
     "bindings": {
+      "cmd-f": "git_graph::FocusSearch",
       "tab": "git_graph::FocusNextTabStop",
       "shift-tab": "git_graph::FocusPreviousTabStop",
     },

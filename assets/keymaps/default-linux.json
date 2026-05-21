@@ -1547,6 +1547,7 @@
   {
     "context": "GitGraph",
     "bindings": {
+      "ctrl-f": "git_graph::FocusSearch",
       "tab": "git_graph::FocusNextTabStop",
       "shift-tab": "git_graph::FocusPreviousTabStop",
     },
