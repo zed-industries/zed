@@ -50,10 +50,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes, Scrollbars, Tab,
-    ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*,
-    render_modifiers,
+    AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
+    HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
+    Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
+    prelude::*, render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -2302,6 +2302,19 @@ impl Sidebar {
                     })
                     .unwrap_or_default();
 
+                // Compute reorder state at menu-open time so it reflects the
+                // most recent group ordering.
+                let (group_index, total_groups) = multi_workspace
+                    .read_with(cx, |mw, _| {
+                        let keys = mw.project_group_keys();
+                        let index = keys.iter().position(|k| k == &project_group_key);
+                        (index, keys.len())
+                    })
+                    .unwrap_or((None, 0));
+                let show_reorder_entries = total_groups >= 2;
+                let can_move_up = group_index.is_some_and(|i| i > 0);
+                let can_move_down = group_index.is_some_and(|i| i + 1 < total_groups);
+
                 let active_workspace = multi_workspace
                     .read_with(cx, |multi_workspace, _cx| {
                         multi_workspace.workspace().clone()
@@ -2521,19 +2534,57 @@ impl Sidebar {
                             menu
                         };
 
+                        let menu = menu.when(show_reorder_entries, |this| {
+                            let move_up_multi_workspace = multi_workspace.clone();
+                            let move_up_key = project_group_key.clone();
+                            let move_up_weak_menu = weak_menu.clone();
+                            let move_down_multi_workspace = multi_workspace.clone();
+                            let move_down_key = project_group_key.clone();
+                            let move_down_weak_menu = weak_menu.clone();
+
+                            this.separator()
+                                .item(
+                                    ContextMenuEntry::new("Move Up")
+                                        .disabled(!can_move_up)
+                                        .handler(move |_window, cx| {
+                                            move_up_multi_workspace
+                                                .update(cx, |mw, cx| {
+                                                    mw.move_project_group_up(&move_up_key, cx);
+                                                })
+                                                .ok();
+                                            move_up_weak_menu
+                                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        }),
+                                )
+                                .item(
+                                    ContextMenuEntry::new("Move Down")
+                                        .disabled(!can_move_down)
+                                        .handler(move |_window, cx| {
+                                            move_down_multi_workspace
+                                                .update(cx, |mw, cx| {
+                                                    mw.move_project_group_down(&move_down_key, cx);
+                                                })
+                                                .ok();
+                                            move_down_weak_menu
+                                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        }),
+                                )
+                        });
+
                         let project_group_key = project_group_key.clone();
                         let remove_multi_workspace = multi_workspace.clone();
-                        menu.separator()
-                            .entry("Remove Project", None, move |window, cx| {
-                                remove_multi_workspace
-                                    .update(cx, |multi_workspace, cx| {
-                                        multi_workspace
-                                            .remove_project_group(&project_group_key, window, cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                            })
+                        menu.separator().entry("Remove", None, move |window, cx| {
+                            remove_multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace
+                                        .remove_project_group(&project_group_key, window, cx)
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                            weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                        })
                     });
 
                 let this = this.clone();
