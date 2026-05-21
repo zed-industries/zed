@@ -1514,6 +1514,61 @@ impl MessageEditor {
             .detach_and_log_err(cx);
     }
 
+    pub fn insert_skill_crease(
+        &mut self,
+        skill: &AvailableSkill,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let mention_uri = MentionUri::Skill {
+            name: skill.name.to_string(),
+            source: skill.source.to_string(),
+            skill_file_path: skill.skill_file_path.clone(),
+        };
+
+        let link_text = mention_uri.as_link().to_string();
+        let content_len = link_text.len();
+        let mention_text = format!("{} ", link_text);
+        let crease_text: SharedString = mention_uri.name().into();
+
+        let start_anchor = self.editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let buffer_snapshot = snapshot.as_singleton()?;
+            let cursor = editor.selections.newest_anchor().start;
+            let text_anchor = snapshot
+                .anchor_to_buffer_anchor(cursor)?
+                .0
+                .bias_left(buffer_snapshot);
+
+            editor.insert(&mention_text, window, cx);
+            Some(text_anchor)
+        });
+
+        let Some(start_anchor) = start_anchor else {
+            return;
+        };
+
+        self.mention_set
+            .update(cx, |mention_set, cx| {
+                mention_set.confirm_mention_completion(
+                    crease_text,
+                    start_anchor,
+                    content_len,
+                    mention_uri,
+                    false,
+                    self.editor.clone(),
+                    &workspace,
+                    window,
+                    cx,
+                )
+            })
+            .detach();
+    }
+
     pub(crate) fn insert_selections(
         &mut self,
         selection: AgentContextSelection,
