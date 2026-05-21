@@ -12,6 +12,7 @@ use agent_client_protocol::schema as acp;
 use anyhow::Context as _;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Entity, Task};
+use itertools::Itertools;
 use ui::SharedString;
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -28,7 +29,7 @@ pub fn read(thread_id: ThreadId, cx: &App) -> Option<Vec<acp::ContentBlock>> {
     let kvp = KeyValueStore::global(cx);
     let raw = kvp
         .scoped(NAMESPACE)
-        .read(&thread_id_key(thread_id))
+        .read(&thread_id.to_key_string())
         .log_err()
         .flatten()?;
     serde_json::from_str(&raw).log_err()
@@ -40,7 +41,7 @@ pub fn write(
     cx: &App,
 ) -> Task<anyhow::Result<()>> {
     let kvp = KeyValueStore::global(cx);
-    let key = thread_id_key(thread_id);
+    let key = thread_id.to_key_string();
     let payload = match serde_json::to_string(prompt).context("serializing draft prompt") {
         Ok(payload) => payload,
         Err(err) => return Task::ready(Err(err)),
@@ -50,12 +51,43 @@ pub fn write(
 
 pub fn delete(thread_id: ThreadId, cx: &App) -> Task<anyhow::Result<()>> {
     let kvp = KeyValueStore::global(cx);
-    let key = thread_id_key(thread_id);
+    let key = thread_id.to_key_string();
     cx.background_spawn(async move { kvp.scoped(NAMESPACE).delete(key).await })
 }
 
-fn thread_id_key(thread_id: ThreadId) -> String {
-    thread_id.to_key_string()
+pub fn draft_has_user_content<'a>(
+    thread_id: ThreadId,
+    workspaces: impl IntoIterator<Item = &'a Entity<Workspace>>,
+    cx: &App,
+) -> bool {
+    let mut found_live_copy = false;
+    for blocks in workspaces
+        .into_iter()
+        .filter_map(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
+        .filter_map(|panel| {
+            panel
+                .read(cx)
+                .draft_prompt_blocks_if_in_memory(thread_id, cx)
+        })
+    {
+        found_live_copy = true;
+        if blocks_have_user_content(&blocks) {
+            return true;
+        }
+    }
+
+    if found_live_copy {
+        false
+    } else {
+        read(thread_id, cx).is_some_and(|blocks| blocks_have_user_content(&blocks))
+    }
+}
+
+fn blocks_have_user_content(blocks: &[acp::ContentBlock]) -> bool {
+    blocks.iter().any(|block| match block {
+        acp::ContentBlock::Text(text) => !text.text.trim().is_empty(),
+        _ => true,
+    })
 }
 
 /// Rewrites `[@Something](scheme://...)` mention links as `@Something` so the
@@ -128,7 +160,6 @@ pub fn display_label_for_draft(
             acp::ContentBlock::ResourceLink(link) => Some(link.uri.as_str()),
             _ => None,
         })
-        .collect::<Vec<_>>()
         .join(" ");
     truncate_draft_label(&raw)
 }

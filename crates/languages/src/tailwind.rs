@@ -72,7 +72,7 @@ impl LspInstaller for TailwindLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -80,13 +80,9 @@ impl LspInstaller for TailwindLspAdapter {
 
         async move {
             let server_path = container_dir.join(SERVER_PATH);
-            let latest_version = latest_version.to_string();
 
-            node.npm_install_packages(
-                &container_dir,
-                &[(Self::PACKAGE_NAME, latest_version.as_str())],
-            )
-            .await?;
+            node.npm_install_latest_packages(&container_dir, &[Self::PACKAGE_NAME])
+                .await?;
 
             Ok(LanguageServerBinary {
                 path: node.binary_path().await?,
