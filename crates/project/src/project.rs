@@ -524,7 +524,6 @@ pub enum GitEvent {
     JobsUpdated,
     ConflictsUpdated {
         buffer_id: BufferId,
-        repository_id: Option<RepositoryId>,
     },
     GlobalConfigurationUpdated,
 }
@@ -4129,12 +4128,8 @@ impl Project {
             }
             GitStoreEvent::ConflictsUpdated(buffer_id) => {
                 if self.buffers.contains(buffer_id) {
-                    let repository_id = self
-                        .repository_and_path_for_buffer_id(*buffer_id, cx)
-                        .map(|(repository, _)| repository.read(cx).id);
                     cx.emit(GitEvent::ConflictsUpdated {
                         buffer_id: *buffer_id,
-                        repository_id,
                     });
                 }
             }

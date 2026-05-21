@@ -78,10 +78,7 @@ impl BranchDiff {
                         .repo
                         .as_ref()
                         .is_some_and(|r| r.read(cx).snapshot().id == *event_repo_id),
-                    GitEvent::ConflictsUpdated { repository_id, .. } => this
-                        .repo
-                        .as_ref()
-                        .is_some_and(|r| Some(r.read(cx).snapshot().id) == *repository_id),
+                    GitEvent::ConflictsUpdated { .. } => this.repo.is_some(),
                     _ => false,
                 };
 
