@@ -166,6 +166,17 @@ impl AsyncApp {
         lock.update(f)
     }
 
+    /// Like [`AsyncApp::update`], but returns an error instead of panicking if
+    /// the app is already mutably borrowed (e.g. when called from a `Drop`
+    /// impl that happens to fire inside an active `update` closure). Use this
+    /// in destructors that may run while a borrow is held so they can log and
+    /// skip their work rather than abort the process.
+    pub fn try_update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut lock = app.try_borrow_mut()?;
+        Ok(lock.update(f))
+    }
+
     /// Arrange for the given callback to be invoked whenever the given entity emits an event of a given type.
     /// The callback is provided a handle to the emitting entity and a reference to the emitted event.
     pub fn subscribe<T, Event>(

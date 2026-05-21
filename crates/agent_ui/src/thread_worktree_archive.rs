@@ -567,12 +567,19 @@ pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &m
 /// **Destructive**: the final step (`restore_archive_checkpoint`) clobbers the
 /// working directory unconditionally via `git read-tree --reset -u`. If the
 /// path has any pre-existing content (a non-empty directory, a file, or a
-/// symlink) it is moved aside into a `zed-restore-backup-<uuid>` sibling
-/// directory before the rest of the destructive work runs. If a later
-/// step fails, the backup is moved back over `worktree_path` so the user
-/// does not lose their content. On success the backup directory is
-/// deleted asynchronously so a multi-GB cleanup does not block the
-/// caller.
+/// symlink) it is moved aside into a `zed-restore-backup-<uuid>` directory
+/// before the rest of the destructive work runs. We try to place the backup
+/// next to `worktree_path` so the rename stays on the same filesystem
+/// (atomic and fast), and fall back to the system temp directory if a
+/// sibling cannot be created. If a later step fails, the backup is moved
+/// back over `worktree_path` so the user does not lose their content. On
+/// success the backup directory is deleted asynchronously so a multi-GB
+/// cleanup does not block the caller.
+///
+/// Callers MUST first call [`restore_would_overwrite`] and confirm with the
+/// user before invoking this function — there is no preflight or refusal
+/// mode here, only a best-effort backup of whatever happens to be at the
+/// path when we run.
 pub async fn restore_worktree_via_git(
     row: &ArchivedGitWorktree,
     remote_connection: Option<&RemoteConnectionOptions>,
@@ -608,7 +615,10 @@ pub async fn restore_worktree_via_git(
     //
     // An empty directory at `worktree_path` is left in place: `git worktree
     // add` is happy to adopt one and we don't want to round-trip through a
-    // backup for it.
+    // backup for it. This matches the preflight behaviour in
+    // [`restore_would_overwrite`] (which also treats empty dirs as
+    // "no content") so the destructive pass cannot silently delete
+    // something the user wasn't warned about.
     let session = BackupSession::take(fs, worktree_path).await?;
 
     // From here on, every destructive step either (a) calls
@@ -1214,6 +1224,24 @@ async fn classify_dir_emptiness(fs: &dyn Fs, path: &Path) -> DirEmptiness {
         }
         Err(error) => DirEmptiness::Unknown(error),
     }
+}
+
+/// Returns whether restoring this archived worktree would clobber any
+/// pre-existing content on disk at the worktree's path.
+///
+/// Callers must invoke this **before** [`restore_worktree_via_git`] and prompt
+/// the user for confirmation if it returns `true`, since the restore will
+/// otherwise destroy that content.
+pub async fn restore_would_overwrite(
+    row: &ArchivedGitWorktree,
+    remote_connection: Option<&RemoteConnectionOptions>,
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    if remote_connection.is_some() {
+        anyhow::bail!("restoring archived worktrees on remote machines is not yet supported");
+    }
+    let app_state = current_app_state(cx).context("no app state available")?;
+    worktree_path_has_content(app_state.fs.as_ref(), &row.worktree_path).await
 }
 
 /// Returns whether the worktree path has any content that a restore would
@@ -2146,6 +2174,34 @@ mod tests {
             host: "test-host".into(),
             ..Default::default()
         });
+
+        let overwrite_row = ArchivedGitWorktree {
+            id: 1,
+            worktree_path: PathBuf::from("/remote/worktree"),
+            main_repo_path: PathBuf::from("/remote/project"),
+            branch_name: Some("feature".to_string()),
+            staged_commit_hash: "abc123".to_string(),
+            unstaged_commit_hash: "def456".to_string(),
+            original_commit_hash: "789abc".to_string(),
+        };
+
+        let overwrite_result = cx
+            .spawn(|mut cx| {
+                let remote_connection = remote_connection.clone();
+                async move {
+                    restore_would_overwrite(&overwrite_row, Some(&remote_connection), &mut cx).await
+                }
+            })
+            .await;
+
+        assert!(
+            overwrite_result.is_err(),
+            "restore_would_overwrite should reject remote connections"
+        );
+        assert!(
+            format!("{:#}", overwrite_result.unwrap_err()).contains("remote machines"),
+            "error message should mention remote machines"
+        );
 
         let restore_row = ArchivedGitWorktree {
             id: 1,

@@ -12560,10 +12560,50 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
 }
 
 #[gpui::test]
+async fn test_restore_would_overwrite_detects_existing_content(cx: &mut TestAppContext) {
+    // The read-only preflight `restore_would_overwrite` must report that
+    // an overwrite would happen when there are user files at the worktree
+    // path — and must not touch any of those files. Replaces the old
+    // "OverwritePolicy::Refuse" coverage now that the policy enum is gone
+    // and the prompt/preflight live in the sidebar above the destructive
+    // restore call.
+    let fixture = setup_archived_worktree_fixture(
+        "feature-preflight",
+        serde_json::json!({
+            "src": { "existing.rs": "// user's existing work" },
+        }),
+        cx,
+    )
+    .await;
+    let fs = fixture.fs.clone();
+    let row = fixture.archived_row();
+
+    let would_overwrite = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_would_overwrite(&row, None, &mut cx).await
+        })
+        .await
+        .expect("preflight should succeed against an existing worktree path");
+
+    assert!(
+        would_overwrite,
+        "preflight must report a would-overwrite for a worktree path with user content"
+    );
+
+    let existing_content = fs
+        .load(Path::new("/wt-feature-preflight/src/existing.rs"))
+        .await
+        .expect("existing file must still be present after the read-only preflight");
+    assert_eq!(existing_content, "// user's existing work");
+}
+
+#[gpui::test]
 async fn test_restore_worktree_succeeds_when_path_is_missing(cx: &mut TestAppContext) {
-    // When the worktree path doesn't exist on disk, the destructive
-    // restore should proceed and recreate the worktree (there's nothing
-    // to back up).
+    // When the worktree path doesn't exist on disk, the preflight should
+    // report no would-overwrite (so the sidebar wouldn't prompt) AND the
+    // destructive restore should proceed and recreate the worktree.
+    // Replaces the second half of the old "Refuse allows when empty"
+    // test now that the policy enum is gone.
     let fixture = setup_archived_worktree_fixture("feature-empty", serde_json::json!({}), cx).await;
     let fs = fixture.fs.clone();
 
@@ -12584,6 +12624,26 @@ async fn test_restore_worktree_succeeds_when_path_is_missing(cx: &mut TestAppCon
         "precondition: worktree directory must not exist"
     );
 
+    // Preflight on the missing path: must report no overwrite.
+    let preflight_row = fixture.archived_row();
+    let would_overwrite = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_would_overwrite(
+                &preflight_row,
+                None,
+                &mut cx,
+            )
+            .await
+        })
+        .await
+        .expect("preflight on missing path should succeed");
+    assert!(
+        !would_overwrite,
+        "preflight must report no overwrite when the worktree path is missing"
+    );
+
+    // The destructive restore should still proceed and recreate the
+    // worktree (since there's nothing to back up).
     let restore_row = fixture.archived_row();
     let result = cx
         .spawn(|mut cx| async move {
@@ -12605,4 +12665,78 @@ async fn test_restore_worktree_succeeds_when_path_is_missing(cx: &mut TestAppCon
             .is_some(),
         "worktree path should exist after a successful restore"
     );
+}
+
+#[gpui::test]
+async fn test_open_thread_from_archive_re_entry_guard_shows_toast(cx: &mut TestAppContext) {
+    // The re-entry guard at the top of `open_thread_from_archive` exists
+    // to prevent a double-click on Restore from spawning a second task
+    // that would cancel the first (potentially mid-restore, before the
+    // backup rollback could run). Verify both halves of the contract:
+    //   1. A second call while a task is in flight surfaces a toast.
+    //   2. The existing `restoring_tasks` entry is left intact, i.e. the
+    //      first task is not replaced.
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("reentry-thread")),
+        Some("reentry".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+
+    let metadata = cx.update(|_window, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entries()
+            .find(|m| {
+                m.session_id
+                    .as_ref()
+                    .is_some_and(|sid| sid.0.as_ref() == "reentry-thread")
+            })
+            .cloned()
+            .expect("test setup should have created metadata")
+    });
+    let thread_id = metadata.thread_id;
+
+    // Pretend a restore is already in flight by injecting a placeholder
+    // task. `Task::ready(())` never actually runs, but its mere presence
+    // in the map is what the re-entry guard keys on.
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar
+            .restoring_tasks
+            .insert(thread_id, gpui::Task::ready(()));
+    });
+
+    let notifications_before = workspace.read_with(cx, |ws, _| ws.notification_ids().len());
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.open_thread_from_archive(metadata.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    let notifications_after = workspace.read_with(cx, |ws, _| ws.notification_ids().len());
+    assert_eq!(
+        notifications_after,
+        notifications_before + 1,
+        "a re-entry while a restore is in flight must surface one toast"
+    );
+
+    // The original placeholder task must still be there — if the second
+    // call had inserted its own task, the placeholder would have been
+    // dropped. We can't compare `Task` values directly, but we can
+    // confirm the entry exists.
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(
+            sidebar.restoring_tasks.contains_key(&thread_id),
+            "re-entry must not remove or replace the in-flight task entry"
+        );
+    });
 }

@@ -20,10 +20,10 @@ use db::{
 };
 use fs::Fs;
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt};
+use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt, WeakEntity};
 pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
-use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use remote::{RemoteConnectionIdentity, RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
 use util::ResultExt as _;
 use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
@@ -493,7 +493,155 @@ pub struct ThreadMetadataStore {
     conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
     pending_thread_ops_tx: async_channel::Sender<DbOperation>,
     in_flight_archives: HashMap<ThreadId, (Task<()>, async_channel::Sender<()>)>,
+    /// Restores currently in flight. Tracked globally so only one window
+    /// at a time can run the destructive restore for a given thread or
+    /// target the same on-disk worktree path; other windows surface a
+    /// toast instead. Per-window `restoring_tasks` state still exists in
+    /// `Sidebar`; this is the cross-window claim layer in front of it.
+    active_restores: ActiveRestores,
     _db_operations_task: Task<()>,
+}
+
+/// Key used to claim a single on-disk worktree path for restore.
+///
+/// A path string alone is not enough to disambiguate: two different
+/// remote machines (or local + a remote) can plausibly use the same
+/// path string (e.g. `/home/me/project`), and we mustn't false-collide
+/// those claims. Combining the remote identity with the path makes
+/// the claim scoped to the actual on-disk location.
+///
+/// `Option::None` represents the local machine, mirroring how
+/// `RemoteConnectionOptions` is `Option`-al at the call site.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RestorePathKey {
+    remote: Option<RemoteConnectionIdentity>,
+    path: Arc<Path>,
+}
+
+/// Tracks the set of restores currently in flight across all windows.
+///
+/// Two distinct invariants need to be enforced:
+///
+/// 1. **Per-thread**: only one window at a time may restore a given thread,
+///    even when the thread has no archived worktrees on disk (so we can
+///    still serialize the "open thread" side of the flow).
+/// 2. **Per-(remote, path)**: only one restore at a time may touch a given
+///    worktree path on a given machine, even if two different threads happen
+///    to reference the same on-disk location.
+///
+/// The relationship is many-to-many (one thread → many paths, one path →
+/// many threads), so these can't collapse to a single map. Bundling them
+/// behind a single `try_claim` / `release` API keeps the two invariants in
+/// sync; callers can't accidentally claim one without the other.
+#[derive(Default)]
+struct ActiveRestores {
+    /// Keys are stored shared with `paths_in_use` so the collision index
+    /// doesn't duplicate the path bytes per claim.
+    by_thread: HashMap<ThreadId, Vec<Arc<RestorePathKey>>>,
+    /// Derived index of every key appearing in any value of `by_thread`,
+    /// kept in sync by `try_claim` / `release`. Lets the collision check
+    /// stay O(paths-in-this-claim) instead of scanning every in-flight
+    /// restore.
+    paths_in_use: HashSet<Arc<RestorePathKey>>,
+}
+
+impl ActiveRestores {
+    /// Attempts to register a new restore for `thread_id` holding `paths`
+    /// on the given `remote` (None = local machine). Returns `false`
+    /// (and leaves `self` unchanged) if `thread_id` is already
+    /// restoring, or if any (remote, path) pair is already claimed by
+    /// another in-flight restore.
+    ///
+    /// `paths` is expected to be free of duplicates; the data model has one
+    /// archived-worktree row per on-disk path, so a duplicate would indicate
+    /// a caller bug (e.g. building the path list off the wrong field).
+    /// `release` decrements `paths_in_use` per element rather than
+    /// dedup-on-remove, so a duplicate would mean the slot is dropped
+    /// after the first remove and the second is a silent no-op — not
+    /// dangerous, but worth surfacing in debug builds.
+    fn try_claim(
+        &mut self,
+        thread_id: ThreadId,
+        remote: Option<&RemoteConnectionOptions>,
+        paths: Vec<PathBuf>,
+    ) -> bool {
+        debug_assert!(
+            paths.iter().collect::<HashSet<_>>().len() == paths.len(),
+            "try_claim received duplicate paths for thread {thread_id:?}: {paths:?}"
+        );
+        if self.by_thread.contains_key(&thread_id) {
+            return false;
+        }
+        let remote_identity = remote.map(RemoteConnectionIdentity::from);
+        let keys: Vec<Arc<RestorePathKey>> = paths
+            .into_iter()
+            .map(|path| {
+                Arc::new(RestorePathKey {
+                    remote: remote_identity.clone(),
+                    path: Arc::from(path),
+                })
+            })
+            .collect();
+        if keys.iter().any(|k| self.paths_in_use.contains(k)) {
+            return false;
+        }
+        for key in &keys {
+            self.paths_in_use.insert(key.clone());
+        }
+        self.by_thread.insert(thread_id, keys);
+        true
+    }
+
+    fn release(&mut self, thread_id: ThreadId) {
+        if let Some(keys) = self.by_thread.remove(&thread_id) {
+            for key in keys {
+                self.paths_in_use.remove(&key);
+            }
+        }
+    }
+
+    fn is_restoring(&self, thread_id: ThreadId) -> bool {
+        self.by_thread.contains_key(&thread_id)
+    }
+}
+
+/// RAII guard returned by [`ThreadMetadataStore::try_claim_restore`]. When
+/// dropped, releases the claim on the global store so the lock is freed
+/// even on early returns or panics.
+pub struct RestoreGuard {
+    thread_id: ThreadId,
+    store: WeakEntity<ThreadMetadataStore>,
+    cx: gpui::AsyncApp,
+}
+
+impl Drop for RestoreGuard {
+    fn drop(&mut self) {
+        let Some(store) = self.store.upgrade() else {
+            // Store already gone (e.g. test teardown); nothing to release.
+            return;
+        };
+        let thread_id = self.thread_id;
+        // `try_update` rather than `update` so a drop that lands inside an
+        // active `App` borrow logs instead of aborting the process. In the
+        // current design that shouldn't happen — callers detach the spawned
+        // restore task so its locals (including this guard) drop outside
+        // any outer `update` closure — but a future caller that violates
+        // that pattern would otherwise crash the app. The cost of being
+        // wrong is a leaked claim, surfaced via the warning below; the
+        // cost of using `update` would be a panic.
+        if let Err(error) = self.cx.try_update(|cx| {
+            store.update(cx, |store, _| {
+                store.active_restores.release(thread_id);
+            });
+        }) {
+            log::warn!(
+                "RestoreGuard could not release claim for {thread_id:?}: {error:#}; \
+                 the thread will remain marked as restoring until process exit. \
+                 This usually means the guard was dropped inside an active \
+                 App::update borrow — drop the guard between updates instead."
+            );
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -560,6 +708,51 @@ impl ThreadMetadataStore {
 
     pub fn global(cx: &App) -> Entity<Self> {
         cx.global::<GlobalThreadMetadataStore>().0.clone()
+    }
+
+    pub fn is_restoring(&self, thread_id: ThreadId) -> bool {
+        self.active_restores.is_restoring(thread_id)
+    }
+
+    /// Attempts to claim exclusive ownership of restoring `thread_id`,
+    /// which will touch the on-disk worktrees at `paths` on the given
+    /// `remote` machine (None = local). If some other caller already
+    /// holds a claim on this thread, or on any of the given
+    /// `(remote, path)` pairs, returns `None` — the caller should
+    /// surface a "this thread is already being restored in another
+    /// window" message to the user. On success, the returned guard
+    /// releases the claim when dropped.
+    ///
+    /// `remote` is part of the key so that two different remote machines
+    /// (or local + a remote) can't false-collide on identical-looking
+    /// path strings.
+    ///
+    /// Despite the `Self` namespace, this is an associated function rather
+    /// than a `&mut self` method: the returned [`RestoreGuard`] needs to
+    /// own both a `WeakEntity<Self>` (to release the claim) and an
+    /// `AsyncApp` (to run the release between `update` calls), and the
+    /// natural call site already holds an `Entity<Self>` and an
+    /// `AsyncApp`. A method form would require synthesizing the
+    /// `AsyncApp` from inside an `update` closure, which is more cumbersome
+    /// for no real benefit.
+    pub fn try_claim_restore(
+        this: &Entity<Self>,
+        thread_id: ThreadId,
+        remote: Option<&RemoteConnectionOptions>,
+        paths: Vec<PathBuf>,
+        cx: &mut gpui::AsyncApp,
+    ) -> Option<RestoreGuard> {
+        let claimed = this.update(cx, |store, _| {
+            store.active_restores.try_claim(thread_id, remote, paths)
+        });
+        if !claimed {
+            return None;
+        }
+        Some(RestoreGuard {
+            thread_id,
+            store: this.downgrade(),
+            cx: cx.clone(),
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1180,6 +1373,7 @@ impl ThreadMetadataStore {
             conversation_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
             in_flight_archives: HashMap::default(),
+            active_restores: ActiveRestores::default(),
             _db_operations_task,
         };
         let _ = this.reload(cx);
@@ -4170,5 +4364,211 @@ mod tests {
                 "retained thread A's stored path must not be updated while the project is via collab"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_try_claim_restore_is_mutually_exclusive(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let thread_id = ThreadId::new();
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let mut async_cx = cx.to_async();
+        let first_guard =
+            ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx)
+                .expect("first claim should succeed");
+
+        cx.update(|cx| {
+            assert!(
+                store.read(cx).is_restoring(thread_id),
+                "store should report the thread as being restored while a guard is alive"
+            );
+        });
+
+        let second =
+            ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx);
+        assert!(
+            second.is_none(),
+            "a second concurrent claim must be rejected while the first guard is alive"
+        );
+
+        drop(first_guard);
+
+        cx.update(|cx| {
+            assert!(
+                !store.read(cx).is_restoring(thread_id),
+                "dropping the guard must release the claim"
+            );
+        });
+
+        let third =
+            ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx)
+                .expect("a fresh claim should succeed after the previous guard was dropped");
+        drop(third);
+    }
+
+    #[gpui::test]
+    async fn test_try_claim_restore_rejects_overlapping_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let thread_a = ThreadId::new();
+        let thread_b = ThreadId::new();
+        let shared_path = PathBuf::from("/tmp/shared-worktree");
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let mut async_cx = cx.to_async();
+        let guard_a = ThreadMetadataStore::try_claim_restore(
+            &store,
+            thread_a,
+            None,
+            vec![shared_path.clone()],
+            &mut async_cx,
+        )
+        .expect("first claim should succeed");
+
+        let attempt_b = ThreadMetadataStore::try_claim_restore(
+            &store,
+            thread_b,
+            None,
+            vec![shared_path.clone()],
+            &mut async_cx,
+        );
+        assert!(
+            attempt_b.is_none(),
+            "a second thread targeting the same path must be rejected"
+        );
+
+        drop(guard_a);
+
+        let guard_b = ThreadMetadataStore::try_claim_restore(
+            &store,
+            thread_b,
+            None,
+            vec![shared_path],
+            &mut async_cx,
+        )
+        .expect("claim should succeed after the first guard is dropped");
+        drop(guard_b);
+    }
+
+    /// Two restores that target identical-looking path strings on
+    /// different remote machines (or local + a remote) must NOT collide:
+    /// the path strings refer to different on-disk locations, so claiming
+    /// one shouldn't lock out the other.
+    #[gpui::test]
+    async fn test_try_claim_restore_disambiguates_remote_identity(cx: &mut TestAppContext) {
+        use remote::SshConnectionOptions;
+
+        init_test(cx);
+
+        let thread_a = ThreadId::new();
+        let thread_b = ThreadId::new();
+        let shared_path = PathBuf::from("/home/me/project/worktree");
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+
+        let remote_a = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "host-a".into(),
+            ..Default::default()
+        });
+        let remote_b = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "host-b".into(),
+            ..Default::default()
+        });
+
+        let mut async_cx = cx.to_async();
+        let guard_a = ThreadMetadataStore::try_claim_restore(
+            &store,
+            thread_a,
+            Some(&remote_a),
+            vec![shared_path.clone()],
+            &mut async_cx,
+        )
+        .expect("first claim should succeed");
+
+        // Same path string, different remote → different on-disk
+        // location; must be allowed.
+        let guard_b = ThreadMetadataStore::try_claim_restore(
+            &store,
+            thread_b,
+            Some(&remote_b),
+            vec![shared_path.clone()],
+            &mut async_cx,
+        )
+        .expect("claim on a different remote with the same path must succeed");
+
+        // But trying again on remote_a must still collide.
+        let attempt = ThreadMetadataStore::try_claim_restore(
+            &store,
+            ThreadId::new(),
+            Some(&remote_a),
+            vec![shared_path],
+            &mut async_cx,
+        );
+        assert!(
+            attempt.is_none(),
+            "a third claim on the SAME remote and path must still be rejected"
+        );
+
+        drop(guard_a);
+        drop(guard_b);
+    }
+
+    /// Dropping a [`RestoreGuard`] inside an active `App::update` borrow
+    /// is contractually disallowed in current callers (the restore task is
+    /// detached, so its locals — including the guard — drop outside any
+    /// outer `update`). If a future caller ever violates that, `Drop` must
+    /// log a warning and leak the claim rather than panic on a double
+    /// borrow. This test reaches into the unsupported shape to confirm
+    /// that fallback.
+    ///
+    /// This test asserts the **worst-case ceiling**, not desired behavior.
+    /// If future work makes `RestoreGuard::drop` recover the claim from
+    /// inside an active borrow (e.g. by deferring the release onto a
+    /// later turn of the executor), this test should be deleted, not
+    /// updated to chase the new behavior.
+    #[gpui::test]
+    async fn test_restore_guard_drop_inside_app_borrow_logs_and_leaks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let thread_id = ThreadId::new();
+        let store = cx.update(|cx| ThreadMetadataStore::global(cx));
+        let mut async_cx = cx.to_async();
+
+        let guard =
+            ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx)
+                .expect("initial claim should succeed");
+
+        cx.update(|cx| {
+            assert!(
+                store.read(cx).is_restoring(thread_id),
+                "precondition: claim must be held inside the outer borrow"
+            );
+            // Dropping inside the borrow must not panic the app. The
+            // `try_update` inside `RestoreGuard::Drop` returns `Err` and
+            // logs; the claim leaks. That's the documented worst-case for
+            // a misused guard.
+            drop(guard);
+            assert!(
+                store.read(cx).is_restoring(thread_id),
+                "claim leaks when the guard is dropped during an active borrow"
+            );
+        });
+
+        // After the borrow releases, the claim still leaks — we don't try
+        // to recover. Confirm a fresh claim is rejected so the contract is
+        // visible.
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert!(
+                store.read(cx).is_restoring(thread_id),
+                "leaked claim must remain held after pumping the executor"
+            );
+        });
+        let mut async_cx = cx.to_async();
+        assert!(
+            ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx)
+                .is_none(),
+            "a fresh claim must be rejected while the leaked claim is still held"
+        );
     }
 }
