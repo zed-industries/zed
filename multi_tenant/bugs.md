@@ -62,6 +62,23 @@ over collab, then has the guest send a hand-rolled `proto::SynchronizeBuffers`
 naming the un-shared Project's buffer id. Test fails on the pre-fix branch
 (`response.buffers.len() == 1`) and passes with the gate in place.
 
+### `LspStore::restart_all_language_servers` restarts every Project's servers
+
+**Fixed:** status-bar “Restart All Servers” and “Stop All Servers” now call
+`Project::restart_all_language_servers` / `Project::stop_all_language_servers`
+instead of the shared host `LspStore` all-server methods. Restart keeps the
+existing buffer-derived semantics but narrows the input to Project-owned open
+buffers; stop uses `self.language_servers` so it is scoped to the current
+Project's owned LSP ids. `LspStore::{restart,stop}_all_language_servers` were
+made `pub(crate)` so external UI code goes through the Project facade.
+
+Regression coverage:
+`test_restart_all_language_servers_is_scoped_to_project` in
+`crates/project/tests/integration/multi_tenant.rs` builds two Projects sharing
+one host `LspStore`, starts separate Rust servers for Project A and Project B,
+restarts all servers via Project A, and asserts Project B's server is not shut
+down.
+
 ### `RepositoryUpdated(_, _, is_active)` bool now lies
 
 **Fixed:** `GitStoreEvent::RepositoryUpdated` now carries only
@@ -83,32 +100,6 @@ Regression coverage: `test_repository_updated_ignores_non_active_repos` in
 updates do not populate the panel while active repository updates do refresh it.
 
 ## 🚨 Ship-blockers (live bugs today)
-
-### 3. `LspStore::restart_all_language_servers` restarts every Project's servers
-
-`crates/project/src/lsp_store.rs:11198`
-
-```rust
-pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
-    let buffers = self.buffer_store.read(cx).buffers().collect(); // host-wide
-    self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
-}
-```
-
-`restart_language_servers_for_buffers` then derives `language_servers_to_stop`
-from `local.language_server_ids_for_buffer(buffer, cx)` for every passed buffer
-(L11335-49) — i.e. every server on the host — and after stopping, re-registers
-every passed buffer (L11247-53).
-
-The "Restart All Servers" button in `crates/language_tools/src/lsp_button.rs:264`
-calls this. **Clicking it in workspace A restarts every server in workspace B
-too**, even servers B uses that A doesn't share at all. Same applies to
-"Stop All Servers".
-
-**Fix:** add `Project::restart_all_language_servers(&self, cx)` that collects
-`self.buffers` (mapped to `Entity<Buffer>` via `buffer_store.get`) and calls
-`restart_language_servers_for_buffers` with that set. LSP button calls the
-`Project` method. Make `LspStore::restart_all_language_servers` `pub(crate)`.
 
 ### 16. `Project::shared` / `Project::reshared` broadcast every host repository
 

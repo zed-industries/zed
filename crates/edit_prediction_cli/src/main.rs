@@ -1350,6 +1350,7 @@ fn main() {
                                     project.update(&mut cx, |project, cx| {
                                         let lsp_store = project.lsp_store(cx);
                                         lsp_store.update(cx, |lsp_store, cx| {
+                                            // todo! should this be lsp store or project called?
                                             lsp_store.shutdown_all_language_servers(cx)
                                         })
                                     });

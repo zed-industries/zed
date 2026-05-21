@@ -11161,7 +11161,7 @@ impl LspStore {
         Task::ready(())
     }
 
-    pub fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
         self.shutdown_all_language_servers(cx).detach();
     }
 
@@ -11196,7 +11196,7 @@ impl LspStore {
         }
     }
 
-    pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
         let buffers = self.buffer_store.read(cx).buffers().collect();
         self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
     }

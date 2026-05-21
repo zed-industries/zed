@@ -4986,6 +4986,16 @@ impl Project {
         })
     }
 
+    pub fn restart_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        let buffer_store = self.buffer_store(cx).read(cx);
+        let buffers = self
+            .buffers
+            .iter()
+            .filter_map(|buffer_id| buffer_store.get(*buffer_id))
+            .collect();
+        self.restart_language_servers_for_buffers(buffers, HashSet::default(), cx);
+    }
+
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
@@ -4997,6 +5007,20 @@ impl Project {
                 lsp_store.stop_language_servers_for_buffers(buffers, also_restart_servers, cx)
             })
             .detach_and_log_err(cx);
+    }
+
+    pub fn stop_all_language_servers(&mut self, cx: &mut Context<Self>) {
+        if self.language_servers.is_empty() {
+            return;
+        }
+
+        let language_servers = self
+            .language_servers
+            .iter()
+            .copied()
+            .map(LanguageServerSelector::Id)
+            .collect();
+        self.stop_language_servers_for_buffers(Vec::new(), language_servers, cx);
     }
 
     pub fn cancel_language_server_work_for_buffers(

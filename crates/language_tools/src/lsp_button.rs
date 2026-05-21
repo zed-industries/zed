@@ -295,16 +295,20 @@ impl LanguageServerState {
                 let button = ContextMenuEntry::new(label).handler({
                     let state = cx.entity();
                     move |_, cx| {
-                        let lsp_store = state.read(cx).lsp_store.clone();
-                        lsp_store
-                            .update(cx, |lsp_store, cx| {
+                        let project = state
+                            .read(cx)
+                            .workspace
+                            .upgrade()
+                            .map(|workspace| workspace.read(cx).project().clone());
+                        if let Some(project) = project {
+                            project.update(cx, |project, cx| {
                                 if restart {
-                                    lsp_store.restart_all_language_servers(cx);
+                                    project.restart_all_language_servers(cx);
                                 } else {
-                                    lsp_store.stop_all_language_servers(cx);
+                                    project.stop_all_language_servers(cx);
                                 }
-                            })
-                            .ok();
+                            });
+                        }
                     }
                 });
 

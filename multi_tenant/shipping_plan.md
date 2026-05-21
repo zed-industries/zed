@@ -24,7 +24,7 @@ two-Project test.
 
 - [ ] `maintain_buffer_languages` (~L4751) touches sibling buffers.
 - [ ] `stop_local_language_server` (~L11049) clears sibling diagnostics.
-- [ ] `restart_all_language_servers` (~L11184) restarts sibling servers.
+- [x] `restart_all_language_servers` (~L11184) restarts sibling servers — fixed: status-bar “Restart All Servers” / “Stop All Servers” now route through `Project::{restart,stop}_all_language_servers`; restart derives servers from Project-owned open buffers, while stop uses Project-owned language server ids. Regression test: `test_restart_all_language_servers_is_scoped_to_project` in `crates/project/tests/integration/multi_tenant.rs` verifies Project A does not shut down Project B's server.
 - [ ] `insert_newly_running_language_server` (~L11679) attaches to sibling buffers.
 - [ ] `clear_unregistered_diagnostics` (~L13076) collects sibling abs_paths.
 

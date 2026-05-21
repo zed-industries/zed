@@ -10,9 +10,10 @@ use anyhow::{Context as _, Result, ensure};
 use collections::BTreeMap;
 use dap::client::SessionId;
 use fs::FakeFs;
+use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::proptest::prelude::*;
 use gpui::{App, AppContext as _, Entity, TestAppContext};
-use language::Buffer;
+use language::{Buffer, FakeLspAdapter, rust_lang};
 use project::{
     Event, Project, ProjectPath, TaskSourceKind, WorktreeId,
     bookmark_store::SerializedBookmark,
@@ -648,6 +649,116 @@ async fn test_git_store_multi_tenant_random_invariants(
                 .unwrap();
         });
     }
+}
+
+// ────────────────────────────────────────────────────────────────
+// LspStore
+// ────────────────────────────────────────────────────────────────
+
+#[gpui::test]
+async fn test_restart_all_language_servers_is_scoped_to_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repos"),
+        json!({
+            "alpha": {
+                "src": { "lib.rs": "fn alpha() {}\n" },
+            },
+            "beta": {
+                "src": { "lib.rs": "fn beta() {}\n" },
+            },
+        }),
+    )
+    .await;
+
+    let project_a = Project::test(fs.clone(), [path!("/repos/alpha").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/repos/beta").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    let lsp_store_a = project_a.read_with(cx, |project, cx| project.lsp_store(cx));
+    let lsp_store_b = project_b.read_with(cx, |project, cx| project.lsp_store(cx));
+    assert_eq!(
+        lsp_store_a.entity_id(),
+        lsp_store_b.entity_id(),
+        "both projects must share a single LspStore"
+    );
+
+    let language_registry = project_a.read_with(cx, |project, _| project.languages().clone());
+    let server_capabilities = || lsp::ServerCapabilities {
+        text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+            lsp::TextDocumentSyncOptions {
+                open_close: Some(true),
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    };
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: server_capabilities(),
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    let (_alpha_buffer, _alpha_lsp_handle) = project_a
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repos/alpha/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (_beta_buffer, _beta_lsp_handle) = project_b
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repos/beta/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    let mut sibling_rust_server = fake_rust_servers.next().await.unwrap();
+
+    let rust_open = fake_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        rust_open.text_document.uri,
+        lsp::Uri::from_file_path(path!("/repos/alpha/src/lib.rs")).unwrap()
+    );
+    let sibling_rust_open = sibling_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        sibling_rust_open.text_document.uri,
+        lsp::Uri::from_file_path(path!("/repos/beta/src/lib.rs")).unwrap()
+    );
+
+    let mut rust_shutdown_requests = fake_rust_server
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+    let mut sibling_rust_shutdown_requests = sibling_rust_server
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+
+    project_a.update(cx, |project, cx| project.restart_all_language_servers(cx));
+
+    assert!(
+        rust_shutdown_requests.next().await.is_some(),
+        "restarting all servers for project_a should stop project_a's Rust server"
+    );
+
+    cx.executor().run_until_parked();
+    assert!(
+        sibling_rust_shutdown_requests
+            .next()
+            .now_or_never()
+            .is_none(),
+        "restarting all servers for project_a must not shut down project_b's Rust server"
+    );
 }
 
 // ────────────────────────────────────────────────────────────────
