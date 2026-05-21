@@ -18,8 +18,7 @@ use settings::{Settings, SettingsStore, TerminalDockPosition};
 use std::sync::Arc;
 use ui::{
     Button, ContextMenu, CountBadge, Divider, DividerColor, Icon, IconButton, IconSize, Tooltip,
-    prelude::*,
-    right_click_menu,
+    prelude::*, right_click_menu,
 };
 use util::ResultExt as _;
 
@@ -1356,18 +1355,32 @@ impl Render for PanelButtons {
                             let text_icon_label = icon_label
                                 .clone()
                                 .filter(|label| label.parse::<usize>().is_err());
-                            let action_for_click = action.boxed_clone();
+                            let icon_focus_handle = focus_handle.clone();
+                            let text_focus_handle = focus_handle.clone();
+                            let icon_tooltip = tooltip.clone();
+                            let text_tooltip = tooltip.clone();
+                            let icon_click_action = action.boxed_clone();
+                            let text_click_action = action.boxed_clone();
+                            let icon_tooltip_action = action.boxed_clone();
+                            let text_tooltip_action = action.boxed_clone();
                             let button = text_icon_label.map_or_else(
                                 || {
                                     IconButton::new((name, is_active_button as u64), icon)
                                         .icon_size(IconSize::Small)
                                         .toggle_state(is_active_button)
                                         .on_click({
-                                            let action = action_for_click.boxed_clone();
+                                            let action = icon_click_action.boxed_clone();
                                             move |_, window, cx| {
-                                                window.focus(&focus_handle, cx);
+                                                window.focus(&icon_focus_handle, cx);
                                                 window.dispatch_action(action.boxed_clone(), cx)
                                             }
+                                        })
+                                        .when(!is_active, |this| {
+                                            let action = icon_tooltip_action.boxed_clone();
+                                            let tooltip = icon_tooltip.clone();
+                                            this.tooltip(move |_window, cx| {
+                                                Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                            })
                                         })
                                         .into_any_element()
                                 },
@@ -1377,20 +1390,22 @@ impl Render for PanelButtons {
                                         .label_size(LabelSize::Small)
                                         .toggle_state(is_active_button)
                                         .on_click({
-                                            let action = action_for_click.boxed_clone();
+                                            let action = text_click_action.boxed_clone();
                                             move |_, window, cx| {
-                                                window.focus(&focus_handle, cx);
+                                                window.focus(&text_focus_handle, cx);
                                                 window.dispatch_action(action.boxed_clone(), cx)
                                             }
+                                        })
+                                        .when(!is_active, |this| {
+                                            let action = text_tooltip_action.boxed_clone();
+                                            let tooltip = text_tooltip.clone();
+                                            this.tooltip(move |_window, cx| {
+                                                Tooltip::for_action(tooltip.clone(), &*action, cx)
+                                            })
                                         })
                                         .into_any_element()
                                 },
                             );
-                            let button = div().child(button).when(!is_active, |this| {
-                                this.tooltip(move |_window, cx| {
-                                    Tooltip::for_action(tooltip.clone(), &*action, cx)
-                                })
-                            });
 
                             div().relative().child(button).when_some(
                                 numeric_icon_label.filter(|_| !is_active_button),
