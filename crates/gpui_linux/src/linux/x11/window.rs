@@ -3,11 +3,11 @@ use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
 use gpui::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, px,
+    AnyWindowHandle, Bounds, Decorations, DevicePixels, ExternalPaths, FileDragSession,
+    ForegroundExecutor, GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowDecorations, WindowKind, WindowParams, px,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig};
 
@@ -47,6 +47,8 @@ x11rb::atom_manager! {
         XdndFinished,
         XdndTypeList,
         XdndActionCopy,
+        XdndProxy,
+        TARGETS,
         TextUriList: b"text/uri-list",
         UTF8_STRING,
         TEXT,
@@ -261,7 +263,7 @@ pub struct X11WindowState {
     client: X11ClientStatePtr,
     executor: ForegroundExecutor,
     atoms: XcbAtoms,
-    x_root_window: xproto::Window,
+    pub(crate) x_root_window: xproto::Window,
     x_screen_index: usize,
     visual_id: u32,
     pub(crate) counter_id: sync::Counter,
@@ -1732,6 +1734,12 @@ impl PlatformWindow for X11Window {
     fn start_window_move(&self) {
         const MOVERESIZE_MOVE: u32 = 8;
         self.send_moveresize(MOVERESIZE_MOVE).log_err();
+    }
+
+    fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+        let client = self.0.state.borrow().client.clone();
+        client.start_file_drag(self.0.x_window, paths).log_err();
+        FileDragSession::noop()
     }
 
     fn start_window_resize(&self, edge: ResizeEdge) {

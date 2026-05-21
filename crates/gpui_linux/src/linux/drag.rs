@@ -10,7 +10,7 @@ pub(crate) fn encode_paths_as_uri_list(paths: &ExternalPaths) -> Result<Vec<u8>>
         let url = Url::from_file_path(path)
             .map_err(|_| anyhow!("failed to encode file path as URL: {path:?}"))?;
         bytes.extend_from_slice(url.as_str().as_bytes());
-        bytes.push(b'\n');
+        bytes.extend_from_slice(b"\r\n");
     }
     Ok(bytes)
 }
@@ -26,14 +26,14 @@ mod tests {
         let encoded = encode_paths_as_uri_list(&paths).unwrap();
         assert_eq!(
             String::from_utf8(encoded).unwrap(),
-            "file:///tmp/with%20space.txt\n"
+            "file:///tmp/with%20space.txt\r\n"
         );
     }
 
     #[test]
-    fn encode_paths_as_uri_list_ends_with_newline() {
+    fn encode_paths_as_uri_list_ends_with_crlf() {
         let paths = ExternalPaths(vec![PathBuf::from("/tmp/example.txt")].into());
         let encoded = encode_paths_as_uri_list(&paths).unwrap();
-        assert!(encoded.ends_with(b"\n"));
+        assert!(encoded.ends_with(b"\r\n"));
     }
 }
