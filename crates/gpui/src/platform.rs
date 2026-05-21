@@ -595,16 +595,38 @@ impl Tiling {
 /// A handle for a file drag operation initiated from a window.
 ///
 /// Returned by [`PlatformWindow::start_file_drag`] and [`Window::start_file_drag`].
+/// Keep this handle alive while the platform drag session is active.
 /// On unsupported platforms it is a no-op handle that does nothing.
-#[derive(Clone, Debug, Default)]
+#[must_use = "FileDragSession must be kept alive for the duration of the drag"]
 pub struct FileDragSession {
-    _private: (),
+    _cleanup: Option<Box<dyn FnOnce() + Send + 'static>>,
+}
+
+impl Drop for FileDragSession {
+    fn drop(&mut self) {
+        if let Some(cleanup) = self._cleanup.take() {
+            cleanup();
+        }
+    }
+}
+
+impl Debug for FileDragSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FileDragSession").finish_non_exhaustive()
+    }
 }
 
 impl FileDragSession {
     /// Create a no-op session handle for unsupported platforms.
     pub fn noop() -> Self {
-        Self::default()
+        Self { _cleanup: None }
+    }
+
+    /// Create a session handle that runs cleanup when dropped.
+    pub fn cleanup(cleanup: impl FnOnce() + Send + 'static) -> Self {
+        Self {
+            _cleanup: Some(Box::new(cleanup)),
+        }
     }
 }
 

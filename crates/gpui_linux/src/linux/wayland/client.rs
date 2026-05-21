@@ -6,6 +6,7 @@ use std::{
     os::fd::{AsRawFd, BorrowedFd, OwnedFd},
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -278,7 +279,7 @@ pub struct DragState {
 
 pub struct OutboundDrag {
     source: wl_data_source::WlDataSource,
-    payload: Vec<u8>,
+    payload: Arc<[u8]>,
 }
 
 pub struct ClickState {
@@ -327,6 +328,7 @@ impl WaylandClientStatePtr {
             state.globals.data_device_manager.clone(),
             state.data_device.clone(),
         ) else {
+            log::warn!("wayland: cannot start file drag - missing data_device_manager or data_device globals");
             return;
         };
 
@@ -340,7 +342,34 @@ impl WaylandClientStatePtr {
         source.offer(FILE_LIST_MIME_TYPE.to_string());
         source.set_actions(DndAction::Copy);
         data_device.start_drag(Some(&source), &window.surface(), None, serial);
-        state.outbound_drag = Some(OutboundDrag { source, payload });
+        state.outbound_drag = Some(OutboundDrag {
+            source: source.clone(),
+            payload: payload.into(),
+        });
+        if state
+            .loop_handle
+            .insert_source(Timer::from_duration(Duration::from_secs(15)), {
+                let source = source.clone();
+                move |_, _, this| {
+                    let client = this.get_client();
+                    let mut state = client.borrow_mut();
+                    if state
+                        .outbound_drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.source.id() == source.id())
+                    {
+                        log::warn!("wayland: cancelling stale outbound file drag");
+                        source.destroy();
+                        state.outbound_drag = None;
+                    }
+                    TimeoutAction::Drop
+                }
+            })
+            .log_err()
+            .is_none()
+        {
+            log::warn!("wayland: failed to register outbound drag timeout");
+        }
     }
 
     pub fn set_pending_activation(&self, window: ObjectId) {
@@ -2459,10 +2488,10 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
 fn send_drag_payload(
     loop_handle: &LoopHandle<'static, WaylandClientStatePtr>,
     fd: OwnedFd,
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
 ) {
     let mut written = 0;
-    loop_handle
+    if loop_handle
         .insert_source(
             calloop::generic::Generic::new(
                 File::from(fd),
@@ -2470,6 +2499,10 @@ fn send_drag_payload(
                 calloop::Mode::Level,
             ),
             move |_, file, _| {
+                // SAFETY: calloop dispatches each event source to a single
+                // callback at a time, so there are no concurrent mutable
+                // references to this file. The Generic was registered with
+                // Interest::WRITE in Mode::Level, ensuring exclusive access.
                 let file = unsafe { file.get_mut() };
                 loop {
                     match file.write(&bytes[written..]) {
@@ -2478,12 +2511,19 @@ fn send_drag_payload(
                         Err(err) if err.kind() == ErrorKind::WouldBlock => {
                             break Ok(PostAction::Continue);
                         }
-                        Err(_) => break Ok(PostAction::Remove),
+                        Err(err) => {
+                            log::warn!("wayland: failed to write outbound drag payload: {err}");
+                            break Ok(PostAction::Remove);
+                        }
                     }
                 }
             },
         )
-        .unwrap();
+        .log_err()
+        .is_none()
+    {
+        log::warn!("wayland: failed to register outbound drag data transfer");
+    }
 }
 
 impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
@@ -2501,12 +2541,12 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
                 if mime_type == FILE_LIST_MIME_TYPE
-                    && state
+                    && let Some(outbound_drag) = state
                         .outbound_drag
                         .as_ref()
-                        .is_some_and(|drag| drag.source.id() == data_source.id())
+                        .filter(|drag| drag.source.id() == data_source.id())
                 {
-                    let payload = state.outbound_drag.as_ref().unwrap().payload.clone();
+                    let payload = outbound_drag.payload.clone();
                     let loop_handle = state.loop_handle.clone();
                     drop(state);
                     send_drag_payload(&loop_handle, fd, payload);

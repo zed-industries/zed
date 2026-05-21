@@ -1743,7 +1743,8 @@ impl PlatformWindow for MacWindow {
             return FileDragSession::noop();
         }
 
-        let mut lock = self.0.lock();
+        let window_state = self.0.clone();
+        let mut lock = window_state.lock();
         lock.outbound_files_dragged = true;
         let view = lock.native_view.as_ptr();
         drop(lock);
@@ -1751,25 +1752,50 @@ impl PlatformWindow for MacWindow {
         unsafe {
             let app = NSApplication::sharedApplication(nil);
             let event: id = msg_send![app, currentEvent];
+            if event.is_null() {
+                window_state.lock().outbound_files_dragged = false;
+                return FileDragSession::noop();
+            }
             let event_location: NSPoint = msg_send![event, locationInWindow];
 
             let items: id = msg_send![class!(NSMutableArray), array];
+            let requested_count = paths.paths().len();
+            let mut dragged_count = 0;
             let mut origin = NSPoint::new(event_location.x - 16., event_location.y - 16.);
 
             for path in paths.paths() {
                 let path_string = ns_string(path.to_string_lossy().as_ref());
                 let url: id = NSURL::fileURLWithPath_(nil, path_string);
+                if url.is_null() {
+                    continue;
+                }
+
                 let item: id = msg_send![class!(NSDraggingItem), alloc];
                 let item: id = msg_send![item, initWithPasteboardWriter: url];
+                if item.is_null() {
+                    continue;
+                }
 
                 let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
                 let icon: id = msg_send![workspace, iconForFile: path_string];
                 let frame = NSRect::new(origin, NSSize::new(32., 32.));
                 let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
                 let _: () = msg_send![items, addObject: item];
+                dragged_count += 1;
 
                 origin.x += 12.;
                 origin.y -= 12.;
+            }
+
+            if dragged_count != requested_count {
+                log::warn!(
+                    "macos: created {dragged_count} drag items for {requested_count} requested paths"
+                );
+            }
+
+            if dragged_count == 0 {
+                window_state.lock().outbound_files_dragged = false;
+                return FileDragSession::noop();
             }
 
             let _: id = msg_send![
@@ -1780,7 +1806,9 @@ impl PlatformWindow for MacWindow {
             ];
         }
 
-        FileDragSession::noop()
+        FileDragSession::cleanup(move || {
+            window_state.lock().outbound_files_dragged = false;
+        })
     }
 
     fn play_system_bell(&self) {

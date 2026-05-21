@@ -1130,7 +1130,7 @@ mod tests {
         let paths = ExternalPaths(vec![PathBuf::from("/tmp/example.txt")].into());
 
         cx.update(|window, _| {
-            window.start_file_drag(paths.clone());
+            let _ = window.start_file_drag(paths.clone());
         });
 
         assert_eq!(cx.file_drag_paths(), Some(paths));

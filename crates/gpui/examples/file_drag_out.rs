@@ -1,8 +1,8 @@
 #![cfg_attr(target_family = "wasm", no_main)]
 
 use gpui::{
-    App, Bounds, Context, ExternalPaths, KeyBinding, Menu, MenuItem, MouseButton, SharedString,
-    Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Bounds, Context, ExternalPaths, FileDragSession, KeyBinding, Menu, MenuItem, MouseButton,
+    SharedString, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 use gpui_platform::application;
 use std::path::PathBuf;
@@ -14,10 +14,12 @@ fn test_dir() -> &'static PathBuf {
     TEST_DIR.get().unwrap()
 }
 
-struct FileDragOut;
+struct FileDragOut {
+    _drag_session: Option<FileDragSession>,
+}
 
 impl Render for FileDragOut {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let names = ["document.txt", "image.png", "archive.zip"];
 
         div()
@@ -53,10 +55,13 @@ impl Render for FileDragOut {
                             .hover(|this| this.bg(rgb(0xe8f0fe)))
                             .text_color(rgb(0x333333))
                             .child(SharedString::from(name))
-                            .on_mouse_down(MouseButton::Left, move |_, window, _| {
-                                let paths = ExternalPaths(vec![test_dir().join(name)].into());
-                                window.start_file_drag(paths);
-                            })
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, window, _| {
+                                    let paths = ExternalPaths(vec![test_dir().join(name)].into());
+                                    this._drag_session = Some(window.start_file_drag(paths));
+                                }),
+                            )
                     })),
             )
     }
@@ -71,6 +76,13 @@ fn run_example() {
     }
 
     TEST_DIR.set(tmp).ok();
+    let _cleanup = gpui_util::defer(|| {
+        if let Some(dir) = TEST_DIR.get()
+            && let Err(error) = std::fs::remove_dir_all(dir)
+        {
+            eprintln!("failed to remove temporary file drag directory: {error}");
+        }
+    });
 
     application().run(|cx: &mut App| {
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -83,15 +95,15 @@ fn run_example() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| FileDragOut),
+            |_, cx| {
+                cx.new(|_| FileDragOut {
+                    _drag_session: None,
+                })
+            },
         )
         .unwrap();
         cx.activate(true);
     });
-
-    if let Some(dir) = TEST_DIR.get() {
-        let _ = std::fs::remove_dir_all(dir);
-    }
 }
 
 actions!(example, [Quit]);
