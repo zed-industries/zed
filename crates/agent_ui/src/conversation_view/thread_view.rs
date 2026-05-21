@@ -329,6 +329,10 @@ pub struct ThreadView {
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
+    /// Cache + worktree snapshot for resolving paths in markdown code spans.
+    /// Cloned from the parent `ConversationView` so the cache is shared and the
+    /// snapshot stays in sync via the parent's project-event subscription.
+    pub(crate) code_span_resolver: AgentCodeSpanResolver,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
@@ -381,6 +385,7 @@ impl ThreadView {
         session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
+        code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
@@ -600,6 +605,7 @@ impl ThreadView {
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             project,
+            code_span_resolver,
             show_external_source_prompt_warning,
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
@@ -8679,9 +8685,9 @@ impl ThreadView {
         &self,
         markdown: Entity<Markdown>,
         style: MarkdownStyle,
-        cx: &App,
+        _cx: &App,
     ) -> MarkdownElement {
-        render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
+        render_agent_markdown(markdown, style, &self.workspace, &self.code_span_resolver)
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {

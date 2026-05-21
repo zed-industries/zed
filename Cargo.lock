@@ -407,6 +407,7 @@ dependencies = [
  "language_models",
  "languages",
  "log",
+ "lru",
  "lsp",
  "markdown",
  "menu",
