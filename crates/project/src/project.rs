@@ -1796,7 +1796,12 @@ impl Project {
                 buffers: HashSet::default(),
                 repositories: HashMap::default(),
                 active_repository_id: None,
-                language_servers: HashSet::default(),
+                language_servers: response
+                    .payload
+                    .language_servers
+                    .iter()
+                    .map(|server| LanguageServerId(server.id as usize))
+                    .collect(),
                 pending_worktree_paths: HashSet::default(),
                 context_server_update_task: None,
                 context_server_needs_update: false,
@@ -3197,6 +3202,11 @@ impl Project {
         self.join_project_response_message_id = message_id;
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
+        self.language_servers = message
+            .language_servers
+            .iter()
+            .map(|server| LanguageServerId(server.id as usize))
+            .collect();
 
         let project = cx.weak_entity();
         self.lsp_store(cx).update(cx, |lsp_store, cx| {
@@ -5186,7 +5196,10 @@ impl Project {
         &'a self,
         cx: &'a App,
     ) -> impl DoubleEndedIterator<Item = (LanguageServerId, &'a LanguageServerStatus)> {
-        self.lsp_store(cx).read(cx).language_server_statuses()
+        self.lsp_store(cx)
+            .read(cx)
+            .language_server_statuses()
+            .filter(|(server_id, _)| self.language_servers.contains(server_id))
     }
 
     pub fn last_formatting_failure<'a>(&self, cx: &'a App) -> Option<&'a str> {

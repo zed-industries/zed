@@ -656,6 +656,141 @@ async fn test_git_store_multi_tenant_random_invariants(
 // ────────────────────────────────────────────────────────────────
 
 #[gpui::test]
+async fn test_language_server_statuses_are_scoped_to_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/repos"),
+        json!({
+            "alpha": {
+                "src": { "lib.rs": "fn alpha() {}\n" },
+            },
+            "beta": {
+                "src": { "lib.rs": "fn beta() {}\n" },
+            },
+        }),
+    )
+    .await;
+
+    let project_a = Project::test(fs.clone(), [path!("/repos/alpha").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/repos/beta").as_ref()], cx).await;
+    cx.run_until_parked();
+
+    let lsp_store_a = project_a.read_with(cx, |project, cx| project.lsp_store(cx));
+    let lsp_store_b = project_b.read_with(cx, |project, cx| project.lsp_store(cx));
+    assert_eq!(
+        lsp_store_a.entity_id(),
+        lsp_store_b.entity_id(),
+        "both projects must share a single LspStore"
+    );
+
+    let language_registry = project_a.read_with(cx, |project, _| project.languages().clone());
+    let server_capabilities = || lsp::ServerCapabilities {
+        text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+            lsp::TextDocumentSyncOptions {
+                open_close: Some(true),
+                ..Default::default()
+            },
+        )),
+        ..Default::default()
+    };
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            capabilities: server_capabilities(),
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+    cx.executor().run_until_parked();
+
+    let (_alpha_buffer, _alpha_lsp_handle) = project_a
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repos/alpha/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (_beta_buffer, _beta_lsp_handle) = project_b
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/repos/beta/src/lib.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    let mut sibling_rust_server = fake_rust_servers.next().await.unwrap();
+    let alpha_server_id = fake_rust_server.server.server_id();
+    let beta_server_id = sibling_rust_server.server.server_id();
+
+    let rust_open = fake_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        rust_open.text_document.uri,
+        lsp::Uri::from_file_path(path!("/repos/alpha/src/lib.rs")).unwrap()
+    );
+    let sibling_rust_open = sibling_rust_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        sibling_rust_open.text_document.uri,
+        lsp::Uri::from_file_path(path!("/repos/beta/src/lib.rs")).unwrap()
+    );
+
+    let alpha_worktree_id = project_a.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let beta_worktree_id = project_b.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let host_status_ids = lsp_store_a.read_with(cx, |lsp_store, _| {
+        lsp_store
+            .language_server_statuses()
+            .map(|(server_id, _)| server_id)
+            .collect::<HashSet<_>>()
+    });
+    assert_eq!(
+        host_status_ids,
+        HashSet::from([alpha_server_id, beta_server_id])
+    );
+
+    let project_a_statuses = project_a.read_with(cx, |project, cx| {
+        project
+            .language_server_statuses(cx)
+            .map(|(server_id, status)| (server_id, status.name.clone(), status.worktree))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        project_a_statuses,
+        vec![(
+            alpha_server_id,
+            "rust-analyzer".into(),
+            Some(alpha_worktree_id)
+        )]
+    );
+
+    let project_b_statuses = project_b.read_with(cx, |project, cx| {
+        project
+            .language_server_statuses(cx)
+            .map(|(server_id, status)| (server_id, status.name.clone(), status.worktree))
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        project_b_statuses,
+        vec![(
+            beta_server_id,
+            "rust-analyzer".into(),
+            Some(beta_worktree_id)
+        )]
+    );
+}
+
+#[gpui::test]
 async fn test_restart_all_language_servers_is_scoped_to_project(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
