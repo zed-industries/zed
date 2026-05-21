@@ -31,8 +31,8 @@ use context_server_store::{
     ContextServerStore, ContextServersChanged, registry::ContextServerDescriptorRegistry,
 };
 pub use environment::ProjectEnvironmentEvent;
-use git::repository::get_git_committer;
-use git_store::{GitStoreEvent, Repository, RepositoryId, RepositorySnapshot};
+use git::repository::{RepoPath, get_git_committer};
+use git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId, RepositorySnapshot};
 pub mod search_history;
 pub mod yarn;
 
@@ -508,6 +508,25 @@ pub enum Event {
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum GitEvent {
+    ActiveRepositoryChanged(Option<RepositoryId>),
+    RepositoryUpdated {
+        repo_id: RepositoryId,
+        event: RepositoryEvent,
+        is_active: bool,
+    },
+    RepositoryAdded(RepositoryId, Entity<Repository>),
+    RepositoryRemoved(RepositoryId),
+    IndexWriteError(String),
+    JobsUpdated,
+    ConflictsUpdated {
+        buffer_id: BufferId,
+        repository_id: Option<RepositoryId>,
+    },
+    GlobalConfigurationUpdated,
 }
 
 pub struct AgentLocationChanged;
@@ -2125,6 +2144,7 @@ impl Project {
 
     /// Returns a future that resolves when all visible worktrees have completed
     /// their initial scan.
+    /// todo! this should be for project specific worktrees only
     pub fn wait_for_initial_scan(&self, cx: &App) -> impl Future<Output = ()> + use<> {
         self.worktree_store(cx).read(cx).wait_for_initial_scan()
     }
@@ -4070,17 +4090,56 @@ impl Project {
             GitStoreEvent::RepositoryAdded(id, repo) => {
                 if self.repository_belongs_to_us(*id, &git_store, cx) {
                     let inserted = self.repositories.insert(*id, repo.clone()).is_none();
+                    if inserted {
+                        cx.emit(GitEvent::RepositoryAdded(*id, repo.clone()));
+                    }
                     if inserted && self.active_repository_id.is_none() {
                         self.set_active_repository_id(Some(*id), cx);
                     }
                 }
             }
             GitStoreEvent::RepositoryRemoved(id) => {
-                self.repositories.remove(id);
+                if self.repositories.remove(id).is_some() {
+                    cx.emit(GitEvent::RepositoryRemoved(*id));
+                }
                 if self.active_repository_id == Some(*id) {
                     let fallback = self.next_active_repository_id(cx);
                     self.set_active_repository_id(fallback, cx);
                 }
+            }
+            GitStoreEvent::RepositoryUpdated(id, event) => {
+                if self.repositories.contains_key(id) {
+                    let is_active = self.active_repository_id == Some(*id);
+                    cx.emit(GitEvent::RepositoryUpdated {
+                        repo_id: *id,
+                        event: event.clone(),
+                        is_active,
+                    });
+                }
+            }
+            GitStoreEvent::IndexWriteError(id, error) => {
+                if self.repositories.contains_key(id) {
+                    cx.emit(GitEvent::IndexWriteError(error.to_string()));
+                }
+            }
+            GitStoreEvent::JobsUpdated(id) => {
+                if self.repositories.contains_key(id) {
+                    cx.emit(GitEvent::JobsUpdated);
+                }
+            }
+            GitStoreEvent::ConflictsUpdated(buffer_id) => {
+                if self.buffers.contains(buffer_id) {
+                    let repository_id = self
+                        .repository_and_path_for_buffer_id(*buffer_id, cx)
+                        .map(|(repository, _)| repository.read(cx).id);
+                    cx.emit(GitEvent::ConflictsUpdated {
+                        buffer_id: *buffer_id,
+                        repository_id,
+                    });
+                }
+            }
+            GitStoreEvent::GlobalConfigurationUpdated => {
+                cx.emit(GitEvent::GlobalConfigurationUpdated);
             }
             _ => {}
         }
@@ -6341,6 +6400,31 @@ impl Project {
         )
     }
 
+    pub fn repository_and_path_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let abs_path = self.absolute_path(project_path, cx)?;
+        self.repositories()
+            .values()
+            .filter_map(|repo| {
+                let repo_path = repo.read(cx).snapshot().abs_path_to_repo_path(&abs_path)?;
+                Some((repo.clone(), repo_path))
+            })
+            .max_by_key(|(repo, _)| repo.read(cx).work_directory_abs_path.clone())
+    }
+
+    pub fn repository_and_path_for_buffer_id(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, RepoPath)> {
+        let buffer = self.buffer_for_id(buffer_id, cx)?;
+        let project_path = buffer.read(cx).project_path(cx)?;
+        self.repository_and_path_for_project_path(&project_path, cx)
+    }
+
     /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
     /// is a *full path*, meaning it starts with the root name of a worktree, we'll locate
     /// it in that worktree. Otherwise, we'll attempt to find it as a relative path in
@@ -7978,7 +8062,7 @@ impl Project {
             join_all(scans_complete).await;
             let barriers = this
                 .update(cx, |this, cx| {
-                    let repos = this.repositories(cx).values().cloned().collect::<Vec<_>>();
+                    let repos = this.repositories().values().cloned().collect::<Vec<_>>();
                     repos
                         .into_iter()
                         .map(|repo| repo.update(cx, |repo, _| repo.barrier()))
@@ -8007,6 +8091,7 @@ impl Project {
         if self.active_repository_id != repository_id {
             self.active_repository_id = repository_id;
             cx.emit(Event::ActiveRepositoryChanged(repository_id));
+            cx.emit(GitEvent::ActiveRepositoryChanged(repository_id));
             cx.notify();
         }
     }
@@ -8043,7 +8128,7 @@ impl Project {
         };
         let worktree_abs_path = worktree.read(cx).abs_path();
         let repository_id = self
-            .repositories(cx)
+            .repositories()
             .values()
             .filter(|repo| {
                 let repo_path = &repo.read(cx).work_directory_abs_path;
@@ -8055,7 +8140,7 @@ impl Project {
     }
 
     fn next_active_repository_id(&self, cx: &App) -> Option<RepositoryId> {
-        self.repositories(cx)
+        self.repositories()
             .into_iter()
             .sorted_by(|(_, left), (_, right)| {
                 left.read(cx)
@@ -8066,7 +8151,8 @@ impl Project {
             .next()
     }
 
-    pub fn repositories(&self, _cx: &App) -> HashMap<RepositoryId, Entity<Repository>> {
+    pub fn repositories(&self) -> HashMap<RepositoryId, Entity<Repository>> {
+        // todo! make this return a ref
         // `Project::repositories` already holds the strong handles for
         // every repo this Project owns. The host `GitStore` keeps only
         // `WeakEntity`s, so we don't need to filter through it here —
@@ -8425,6 +8511,7 @@ impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
 }
 
 impl EventEmitter<Event> for Project {}
+impl EventEmitter<GitEvent> for Project {}
 
 impl PeerBufferAccess for Project {
     fn create_buffer_for_peer(

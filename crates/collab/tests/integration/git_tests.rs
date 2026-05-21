@@ -144,7 +144,7 @@ fn branch_list_snapshot(
     cx: &mut TestAppContext,
 ) -> (Option<String>, Vec<String>) {
     project.read_with(cx, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         assert_eq!(repos.len(), 1, "project should have exactly 1 repository");
         let repo = repos.values().next().unwrap();
         let snapshot = repo.read(cx).snapshot();
@@ -167,16 +167,16 @@ fn build_git_graph(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<GitGraph> {
-    let (repository_id, git_store) = project.read_with(cx, |project, cx| {
+    let repository_id = project.read_with(cx, |project, cx| {
         let repository = project
             .active_repository(cx)
             .expect("project should have an active repository");
-        (repository.read(cx).id, project.git_store(cx).clone())
+        repository.read(cx).id
     });
     let workspace = workspace.downgrade();
 
     cx.new_window_entity(|window, cx| {
-        GitGraph::new(repository_id, git_store, workspace, None, window, cx)
+        GitGraph::new(repository_id, project.clone(), workspace, None, window, cx)
     })
 }
 
@@ -468,7 +468,7 @@ async fn test_remote_git_worktrees(
         let repo_a = cx_a.update(|cx| {
             project_a
                 .read(cx)
-                .repositories(cx)
+                .repositories()
                 .values()
                 .next()
                 .unwrap()
@@ -994,7 +994,7 @@ async fn test_linked_worktrees_sync(
 
     // Verify the host sees 2 linked worktrees (main worktree is filtered out).
     let host_linked = project_a.read_with(cx_a, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         assert_eq!(repos.len(), 1, "host should have exactly 1 repository");
         let repo = repos.values().next().unwrap();
         repo.read(cx).linked_worktrees().to_vec()
@@ -1034,7 +1034,7 @@ async fn test_linked_worktrees_sync(
 
     // Verify the guest sees the same linked worktrees as the host.
     let guest_linked = project_b.read_with(cx_b, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         assert_eq!(repos.len(), 1, "guest should have exactly 1 repository");
         let repo = repos.values().next().unwrap();
         repo.read(cx).linked_worktrees().to_vec()
@@ -1065,7 +1065,7 @@ async fn test_linked_worktrees_sync(
 
     // Verify host now sees 3 linked worktrees.
     let host_linked_updated = project_a.read_with(cx_a, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         let repo = repos.values().next().unwrap();
         repo.read(cx).linked_worktrees().to_vec()
     });
@@ -1081,7 +1081,7 @@ async fn test_linked_worktrees_sync(
 
     // Verify the guest also received the update.
     let guest_linked_updated = project_b.read_with(cx_b, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         let repo = repos.values().next().unwrap();
         repo.read(cx).linked_worktrees().to_vec()
     });
@@ -1105,7 +1105,7 @@ async fn test_linked_worktrees_sync(
     // Verify host now sees 2 linked worktrees (feature-branch and hotfix-branch).
     let (host_linked_after_removal, host_git_paths_after_removal) =
         project_a.read_with(cx_a, |project, cx| {
-            let repos = project.repositories(cx);
+            let repos = project.repositories();
             let repo = repos.values().next().unwrap();
             let repo = repo.read(cx);
             (
@@ -1130,7 +1130,7 @@ async fn test_linked_worktrees_sync(
 
     // Verify the guest also reflects the removal.
     let guest_linked_after_removal = project_b.read_with(cx_b, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         let repo = repos.values().next().unwrap();
         repo.read(cx).linked_worktrees().to_vec()
     });
@@ -1145,7 +1145,7 @@ async fn test_linked_worktrees_sync(
     executor.run_until_parked();
 
     let late_joiner_linked = project_c.read_with(cx_c, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         assert_eq!(
             repos.len(),
             1,
@@ -1159,7 +1159,7 @@ async fn test_linked_worktrees_sync(
         "late-joining client's linked_worktrees should match host's (DB roundtrip)"
     );
     let late_joiner_git_paths = project_c.read_with(cx_c, |project, cx| {
-        let repos = project.repositories(cx);
+        let repos = project.repositories();
         let repo = repos.values().next().unwrap();
         let repo = repo.read(cx);
         (
@@ -1185,7 +1185,7 @@ async fn test_linked_worktrees_sync(
     // Verify client B still has the correct linked worktrees after reconnection.
     let (guest_linked_after_reconnect, guest_git_paths_after_reconnect) =
         project_b.read_with(cx_b, |project, cx| {
-            let repos = project.repositories(cx);
+            let repos = project.repositories();
             assert_eq!(
                 repos.len(),
                 1,

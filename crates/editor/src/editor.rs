@@ -197,9 +197,9 @@ use parking_lot::Mutex;
 use persistence::EditorDb;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionDisplayOptions, CompletionIntent,
-    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, InlayId,
-    InvalidationStrategy, Location, LocationLink, LspAction, PrepareRenameResponse, Project,
-    ProjectItem, ProjectPath, ProjectTransaction,
+    CompletionResponse, CompletionSource, DisableAiSettings, DocumentHighlight, GitEvent,
+    InlayHint, InlayId, InvalidationStrategy, Location, LocationLink, LspAction,
+    PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction,
     bookmark_store::BookmarkStore,
     debugger::{
         breakpoint_store::{
@@ -208,7 +208,6 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    git_store::GitStoreEvent,
     lsp_store::{
         BufferSemanticTokens, CacheInlayHints, CompletionDocumentation, FormatTrigger,
         LspFormatTarget, OpenLspBufferHandle, RefreshForServer,
@@ -2017,22 +2016,22 @@ impl Editor {
                     _ => {}
                 },
             ));
-            let git_store = project.read(cx).git_store(cx);
-            let project = project.clone();
-            project_subscriptions.push(cx.subscribe(&git_store, move |this, _, event, cx| {
-                if let GitStoreEvent::RepositoryAdded(_, _) = event {
-                    this.load_diff_task = Some(
-                        update_uncommitted_diff_for_buffer(
-                            cx.entity(),
-                            &project,
-                            this.buffer.read(cx).all_buffers(),
-                            this.buffer.clone(),
-                            cx,
-                        )
-                        .shared(),
-                    );
-                }
-            }));
+            project_subscriptions.push(cx.subscribe(
+                &project,
+                move |this, project, event: &GitEvent, cx| {
+                    if let GitEvent::RepositoryAdded(_, _) = event {
+                        this.load_diff_task = Some(
+                            update_uncommitted_diff_for_buffer(
+                                &project,
+                                this.buffer.read(cx).all_buffers(),
+                                this.buffer.clone(),
+                                cx,
+                            )
+                            .shared(),
+                        );
+                    }
+                },
+            ));
         }
 
         let buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -2075,7 +2074,6 @@ impl Editor {
         if let Some(project) = project.clone() {
             load_uncommitted_diff = Some(
                 update_uncommitted_diff_for_buffer(
-                    cx.entity(),
                     &project,
                     multi_buffer.read(cx).all_buffers(),
                     multi_buffer.clone(),
@@ -9306,7 +9304,6 @@ impl Editor {
                     && let Some(project) = &self.project
                 {
                     update_uncommitted_diff_for_buffer(
-                        cx.entity(),
                         project,
                         [buffer.clone()],
                         self.buffer.clone(),

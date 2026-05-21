@@ -1269,8 +1269,8 @@ mod git_worktrees {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         let worktrees = cx
@@ -1370,8 +1370,8 @@ mod git_worktrees {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         let worktree_path = PathBuf::from(path!("/worktrees/root/feature/nested/root"));
@@ -1457,8 +1457,8 @@ mod trust_tests {
         let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         repository.read_with(cx, |repo, _| {
@@ -1499,12 +1499,8 @@ mod trust_tests {
             store.worktrees().next().unwrap().read(cx).id()
         });
 
-        let repos = project.read_with(cx, |project, cx| {
-            project
-                .repositories(cx)
-                .values()
-                .cloned()
-                .collect::<Vec<_>>()
+        let repos = project.read_with(cx, |project, _| {
+            project.repositories().values().cloned().collect::<Vec<_>>()
         });
         assert_eq!(repos.len(), 2, "should have two repositories");
         for repo in &repos {
@@ -1563,8 +1559,8 @@ mod trust_tests {
             store.worktrees().next().unwrap().read(cx).id()
         });
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         repository.read_with(cx, |repo, _| {

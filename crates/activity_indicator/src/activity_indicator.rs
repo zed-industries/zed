@@ -11,8 +11,8 @@ use language::{
     LanguageServerStatusUpdate, ServerHealth,
 };
 use project::{
-    LanguageServerProgress, LspStoreEvent, ProgressToken, Project, ProjectEnvironmentEvent,
-    git_store::{GitStoreEvent, Repository},
+    GitEvent, LanguageServerProgress, LspStoreEvent, ProgressToken, Project,
+    ProjectEnvironmentEvent, git_store::Repository,
 };
 use smallvec::SmallVec;
 use std::{
@@ -205,14 +205,11 @@ impl ActivityIndicator {
             )
             .detach();
 
-            cx.subscribe(
-                &project.read(cx).git_store(cx),
-                |_, _, event: &GitStoreEvent, cx| {
-                    if let project::git_store::GitStoreEvent::JobsUpdated = event {
-                        cx.notify()
-                    }
-                },
-            )
+            cx.subscribe(&project, |_, _, event: &GitEvent, cx| {
+                if let GitEvent::JobsUpdated = event {
+                    cx.notify()
+                }
+            })
             .detach();
 
             Self {

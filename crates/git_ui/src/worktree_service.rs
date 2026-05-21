@@ -33,7 +33,7 @@ pub fn classify_worktrees(
     project: &Project,
     cx: &gpui::App,
 ) -> (Vec<Entity<Repository>>, Vec<PathBuf>) {
-    let repositories = project.repositories(cx);
+    let repositories = project.repositories();
     let mut git_repos: Vec<Entity<Repository>> = Vec::new();
     let mut non_git_paths: Vec<PathBuf> = Vec::new();
     let mut seen_repo_ids = HashSet::default();
@@ -296,7 +296,7 @@ pub fn handle_create_worktree(
 ) {
     let project = workspace.project().clone();
 
-    if project.read(cx).repositories(cx).is_empty() {
+    if project.read(cx).repositories().is_empty() {
         log::error!("create_worktree: no git repository in the project");
         return;
     }
@@ -392,7 +392,7 @@ pub fn handle_switch_worktree(
 ) {
     let project = workspace.project().clone();
 
-    if project.read(cx).repositories(cx).is_empty() {
+    if project.read(cx).repositories().is_empty() {
         log::error!("switch_to_worktree: no git repository in the project");
         return;
     }
@@ -669,7 +669,7 @@ async fn open_worktree_workspace(
             let repos = workspace
                 .project()
                 .read(cx)
-                .repositories(cx)
+                .repositories()
                 .values()
                 .cloned()
                 .collect::<Vec<_>>();

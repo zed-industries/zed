@@ -6878,8 +6878,8 @@ async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    let wt_repo = worktree_project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+    let wt_repo = worktree_project.read_with(cx, |project, _| {
+        project.repositories().values().next().unwrap().clone()
     });
     let (staged_hash, unstaged_hash) = cx
         .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
@@ -6992,8 +6992,8 @@ async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    let wt_repo = worktree_project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+    let wt_repo = worktree_project.read_with(cx, |project, _| {
+        project.repositories().values().next().unwrap().clone()
     });
     let (staged_hash, unstaged_hash) = cx
         .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))
@@ -7090,8 +7090,8 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
         mw.test_add_workspace(worktree_project.clone(), window, cx)
     });
 
-    let wt_repo = worktree_project.read_with(cx, |project, cx| {
-        project.repositories(cx).values().next().unwrap().clone()
+    let wt_repo = worktree_project.read_with(cx, |project, _| {
+        project.repositories().values().next().unwrap().clone()
     });
     let (staged_hash, unstaged_hash) = cx
         .update(|cx| wt_repo.update(cx, |repo, _| repo.create_archive_checkpoint()))

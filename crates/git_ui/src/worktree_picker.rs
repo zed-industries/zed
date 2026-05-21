@@ -81,7 +81,7 @@ impl WorktreePicker {
             .map(|wt| wt.read(cx).abs_path().to_path_buf())
             .collect();
 
-        let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
+        let has_multiple_repositories = project_ref.repositories().len() > 1;
         let repository = project_ref.active_repository(cx);
 
         let current_branch_name = repository.as_ref().and_then(|repo| {
@@ -423,7 +423,7 @@ impl WorktreePickerDelegate {
         let project = self.project.read(cx);
         if project.is_via_collab() {
             Some("Worktree creation is not supported in collaborative projects".into())
-        } else if project.repositories(cx).is_empty() {
+        } else if project.repositories().is_empty() {
             Some("Requires a Git repository in the project".into())
         } else {
             None
@@ -1400,8 +1400,8 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
         let worktree_path = PathBuf::from(path!("/root/worktrees/dirty-wt"));
 

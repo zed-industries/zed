@@ -15,6 +15,8 @@ This note tracks the `GitStore` portion of the project/host split. `GitStore` is
 Current branch status:
 
 - `GitStore.active_repo_id` has been removed.
+- `GitStoreEvent::ActiveRepositoryChanged` has been removed.
+- `GitStoreEvent::RepositoryUpdated` now carries only `(RepositoryId, RepositoryEvent)`; `Project` computes active-ness and re-emits `GitEvent::RepositoryUpdated { repo_id, event, is_active }`.
 - Active repository state now lives on `Project` as `active_repository_id: Option<RepositoryId>`.
 - Project-scoped APIs now include:
   - `Project::active_repository_id()`
@@ -28,7 +30,6 @@ Current branch status:
 
 Remaining active-repo follow-up:
 
-- `GitStoreEvent::RepositoryUpdated(_, _, is_active)` still has the `is_active` bool in its type, but `GitStore` no longer has enough project context to compute it correctly. The current branch emits `false`; a follow-up should remove this bool or replace it with project-scoped handling.
 - Add a direct regression/property case for active-repo fallback: when a project has two owned repositories and the active one is removed, fallback must choose another repository owned by that same project; if none remain, active repo becomes `None`.
 
 ## Leak definition for this refactor
@@ -244,7 +245,7 @@ Events to cover in property tests or helpers:
 - `ForwardRepositoryUpdate`
 - `ForwardRepositoryRemove`
 
-`GitStoreEvent::RepositoryUpdated(repo_id, event, is_active)` still carries `is_active`, but after moving active repository state to `Project`, host-level `GitStore` cannot compute this per-project. Treat this bool as deprecated follow-up scope.
+`GitStoreEvent::RepositoryUpdated(repo_id, event)` is host-scoped. Project-scoped consumers should subscribe to `Project::GitEvent::RepositoryUpdated { repo_id, event, is_active }`, which is ownership-filtered by `Project::on_git_store_event` and computes `is_active` against that project's `active_repository_id`.
 
 ## Nested repos and same-repo sharing
 

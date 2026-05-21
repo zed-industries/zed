@@ -149,7 +149,7 @@ pub fn build_root_plan(
                 .read(cx)
                 .project()
                 .read(cx)
-                .repositories(cx)
+                .repositories()
                 .values()
                 .cloned()
                 .collect::<Vec<_>>()
@@ -297,7 +297,7 @@ async fn find_or_create_repository(
                 Some((
                     project
                         .read(cx)
-                        .repositories(cx)
+                        .repositories()
                         .values()
                         .find(|repo| {
                             repo.read(cx).snapshot().work_directory_abs_path.as_ref()
@@ -371,7 +371,7 @@ async fn find_or_create_repository(
     let repo = temp_project
         .update(cx, |project, cx| {
             project
-                .repositories(cx)
+                .repositories()
                 .values()
                 .find(|repo| {
                     repo.read(cx).snapshot().work_directory_abs_path.as_ref()

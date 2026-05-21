@@ -529,7 +529,7 @@ async fn test_ssh_collaboration_git_worktrees(
     let repo_a = cx_a.update(|cx| {
         project_a
             .read(cx)
-            .repositories(cx)
+            .repositories()
             .values()
             .next()
             .unwrap()

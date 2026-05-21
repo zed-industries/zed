@@ -21,8 +21,8 @@ use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{
-    AgentLocation, Project,
-    git_store::{GitStoreCheckpoint, GitStoreEvent, RepositoryEvent},
+    AgentLocation, GitEvent, Project,
+    git_store::{GitStoreCheckpoint, RepositoryEvent},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::to_string_pretty;
@@ -1083,7 +1083,7 @@ pub struct AcpThread {
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
-    _git_store_subscription: Subscription,
+    _git_event_subscription: Subscription,
     update_last_checkpoint_if_changed_task: Option<Task<Result<()>>>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     turn_id: u32,
@@ -1267,17 +1267,13 @@ impl AcpThread {
             }
         });
 
-        // todo!: This should filter by repository entities that the project is tracking
-        // we could probably make the project be the entity subscribed too in this case
-        let git_store = project.read(cx).git_store(cx);
-        let _git_store_subscription = cx.subscribe(&git_store, |this, _, event, cx| {
+        let _git_event_subscription = cx.subscribe(&project, |this, _, event: &GitEvent, cx| {
             if matches!(
                 event,
-                GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
-                    _
-                )
+                GitEvent::RepositoryUpdated {
+                    event: RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
+                    ..
+                }
             ) {
                 this.update_last_checkpoint_if_changed_task =
                     Some(this.update_last_checkpoint_if_changed(cx));
@@ -1288,7 +1284,7 @@ impl AcpThread {
             parent_session_id,
             work_dirs,
             action_log,
-            _git_store_subscription,
+            _git_event_subscription,
             update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),

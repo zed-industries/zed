@@ -62,53 +62,27 @@ over collab, then has the guest send a hand-rolled `proto::SynchronizeBuffers`
 naming the un-shared Project's buffer id. Test fails on the pre-fix branch
 (`response.buffers.len() == 1`) and passes with the gate in place.
 
+### `RepositoryUpdated(_, _, is_active)` bool now lies
+
+**Fixed:** `GitStoreEvent::RepositoryUpdated` now carries only
+`(RepositoryId, RepositoryEvent)`. Active-repository interpretation is
+computed in `Project::on_git_store_event` and re-emitted as
+`GitEvent::RepositoryUpdated { repo_id, event, is_active }`, so UI consumers
+can listen to project-scoped git events instead of the host store.
+
+`GitPanel`, `BranchDiff`, `ProjectPanel`, `Sidebar`, `TitleBar`, `GitGraph`,
+`GitBlame`, `AcpThread`, `ActivityIndicator`, `Editor`, and
+`MergeConflictIndicator` now subscribe to `Project` git events where they need
+tenant-scoped updates. The dead host-level
+`GitStoreEvent::ActiveRepositoryChanged` variant was removed; active changes
+are emitted by `Project` as `Event::ActiveRepositoryChanged` and
+`GitEvent::ActiveRepositoryChanged`.
+
+Regression coverage: `test_repository_updated_ignores_non_active_repos` in
+`crates/git_ui/src/git_panel.rs` verifies that non-active repository status
+updates do not populate the panel while active repository updates do refresh it.
+
 ## 🚨 Ship-blockers (live bugs today)
-
-### 2. `RepositoryUpdated(_, _, is_active)` bool now lies
-
-`crates/project/src/git_store.rs:484` (type), `1414` (emission)
-
-```rust
-pub enum GitStoreEvent {
-    ActiveRepositoryChanged(Option<RepositoryId>),
-    /// Bool is true when the repository that's updated is the active repository
-    /// todo! remove this bool
-    RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
-    ...
-}
-
-// on_repository_event
-cx.emit(GitStoreEvent::RepositoryUpdated(id, event.clone(), false))
-```
-
-Now that active-repository state lives on `Project::active_repository_id`,
-`GitStore` has no way to compute the `is_active` bool, so it hardcodes `false`.
-
-**Live regression today:** `crates/git_ui/src/git_panel.rs:828-837` pattern
-matches `RepositoryUpdated(_, StatusesChanged | HeadChanged, true)` and only
-schedules an update when the bool is `true`. With the bool hardwired to
-`false`, status/head changes in the active repository **never** trigger a
-git-panel refresh through this arm — the panel only updates via the
-`RepositoryAdded` / `RepositoryRemoved` / `GlobalConfigurationUpdated` /
-`ActiveRepositoryChanged` arms. Routine `git status` updates after a file
-change are dropped.
-
-Other subscribers that pattern-match the bool but currently ignore it:
-
-- `crates/project/src/git_store/branch_diff.rs:74-80`
-- `crates/editor/src/git/blame.rs:239-246`
-- `crates/acp_thread/src/acp_thread.rs:1303-1310`
-- `crates/git_ui/src/conflict_view.rs:550-551`
-- `crates/git_graph/src/git_graph.rs:1232`
-- `crates/git_graph/src/git_graph.rs:4759` — matches `true`, silently observes nothing.
-
-**Fix:** remove the bool from the variant. Have `git_panel.rs` subscribe to
-`Project::Event::ActiveRepositoryChanged` for the "active changed" axis, and
-treat every `RepositoryUpdated(repo_id, StatusesChanged | HeadChanged, _)` as a
-candidate but filter by `repo_id == project.active_repository_id` at the
-subscriber. The type cleanup is a touch-all-subscribers change; doing it first
-exposes the `git_panel.rs` regression and removes the foot-gun for new
-subscribers.
 
 ### 3. `LspStore::restart_all_language_servers` restarts every Project's servers
 
@@ -884,10 +858,7 @@ the project-owned buffer check.`
    (info disclosure / cross-Project handler pollution) — one-line gates
    each, all the same shape as bug 1; land them as a single PR to keep the
    collab-path audit contiguous.
-2. Bug 2 (live git panel regression) — touch-all-subscribers, do it before
-   adding more `RepositoryUpdated` consumers. Pair with the
-   `git_panel.rs:837 ActiveRepositoryChanged` repoint noted in
-   cross-cutting observations.
+2. ~~Bug 2~~ (✅ done — see "Done" section above).
 3. Bug 3 (Restart-All clobber) — visible to anyone clicking the LSP button.
 4. Bugs 11, 12 (env / scan races) — affect remote/SSH multi-project users
    most.

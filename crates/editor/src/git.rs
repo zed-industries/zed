@@ -238,7 +238,6 @@ impl Editor {
         if let Some(project) = self.project.clone() {
             self.load_diff_task = Some(
                 update_uncommitted_diff_for_buffer(
-                    cx.entity(),
                     &project,
                     self.buffer.read(cx).all_buffers(),
                     self.buffer.clone(),
@@ -2799,11 +2798,10 @@ pub(super) fn render_diff_hunk_controls(
 }
 
 pub(super) fn update_uncommitted_diff_for_buffer(
-    editor: Entity<Editor>,
     project: &Entity<Project>,
     buffers: impl IntoIterator<Item = Entity<Buffer>>,
     buffer: Entity<MultiBuffer>,
-    cx: &mut App,
+    cx: &mut Context<Editor>,
 ) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
@@ -2813,9 +2811,12 @@ pub(super) fn update_uncommitted_diff_for_buffer(
             }
         }
     });
-    cx.spawn(async move |cx| {
+    cx.spawn(async move |editor, cx| {
         let diffs = future::join_all(tasks).await;
-        if editor.read_with(cx, |editor, _cx| editor.temporary_diff_override) {
+        if editor
+            .read_with(cx, |editor, _cx| editor.temporary_diff_override)
+            .unwrap_or(false)
+        {
             return;
         }
 

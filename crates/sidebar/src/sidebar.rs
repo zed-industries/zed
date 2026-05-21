@@ -412,7 +412,7 @@ fn root_repository_snapshots(
     let path_list = workspace_path_list(workspace, cx);
     let project = workspace.read(cx).project().read(cx);
     let snapshots: Vec<project::git_store::RepositorySnapshot> = project
-        .repositories(cx)
+        .repositories()
         .into_values()
         .map(|repo| repo.read(cx).snapshot())
         .collect();
@@ -512,7 +512,7 @@ fn workspace_menu_worktree_labels(
     let project = workspace.read(cx).project().clone();
     let repository_snapshots: Vec<_> = project
         .read(cx)
-        .repositories(cx)
+        .repositories()
         .values()
         .map(|repo| repo.read(cx).snapshot())
         .collect();
@@ -809,19 +809,18 @@ impl Sidebar {
         )
         .detach();
 
-        let git_store = workspace.read(cx).project().read(cx).git_store(cx);
+        let project = workspace.read(cx).project().clone();
         cx.subscribe_in(
-            &git_store,
+            &project,
             window,
-            |this, _, event: &project::git_store::GitStoreEvent, _window, cx| {
+            |this, _, event: &project::GitEvent, _window, cx| {
                 if matches!(
                     event,
-                    project::git_store::GitStoreEvent::RepositoryUpdated(
-                        _,
-                        project::git_store::RepositoryEvent::GitWorktreeListChanged
+                    project::GitEvent::RepositoryUpdated {
+                        event: project::git_store::RepositoryEvent::GitWorktreeListChanged
                             | project::git_store::RepositoryEvent::HeadChanged,
-                        _,
-                    )
+                        ..
+                    }
                 ) {
                     this.update_entries(cx);
                 }
@@ -1248,7 +1247,7 @@ impl Sidebar {
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
-            for repo in project.repositories(cx).values() {
+            for repo in project.repositories().values() {
                 let snapshot = repo.read(cx).snapshot();
                 if let Some(branch) = &snapshot.branch {
                     branch_by_path.insert(
@@ -3668,11 +3667,7 @@ impl Sidebar {
 
         let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
         let barriers = project.update(cx, |project, cx| {
-            let repositories = project
-                .repositories(cx)
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
+            let repositories = project.repositories().values().cloned().collect::<Vec<_>>();
             repositories
                 .into_iter()
                 .map(|repository| repository.update(cx, |repository, _| repository.barrier()))
@@ -6621,7 +6616,7 @@ fn dump_single_workspace(workspace: &Workspace, output: &mut String, cx: &gpui::
     let project = workspace.project().read(cx);
 
     let repos: Vec<_> = project
-        .repositories(cx)
+        .repositories()
         .values()
         .map(|repo| repo.read(cx).snapshot())
         .collect();

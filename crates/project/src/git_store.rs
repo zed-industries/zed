@@ -484,10 +484,7 @@ pub struct JobsUpdated;
 
 #[derive(Debug)]
 pub enum GitStoreEvent {
-    ActiveRepositoryChanged(Option<RepositoryId>),
-    /// Bool is true when the repository that's updated is the active repository
-    /// todo! remove this bool
-    RepositoryUpdated(RepositoryId, RepositoryEvent, bool),
+    RepositoryUpdated(RepositoryId, RepositoryEvent),
     /// Fired when a repository is added to the host store. The id lets
     /// `Project` decide ownership against `self.worktrees` before
     /// claiming the repository in its per-project view. The strong
@@ -496,9 +493,9 @@ pub enum GitStoreEvent {
     /// a `WeakEntity` so a dropped tenant doesn't leak its repos.
     RepositoryAdded(RepositoryId, Entity<Repository>),
     RepositoryRemoved(RepositoryId),
-    IndexWriteError(anyhow::Error),
-    JobsUpdated,
-    ConflictsUpdated,
+    IndexWriteError(RepositoryId, anyhow::Error),
+    JobsUpdated(RepositoryId),
+    ConflictsUpdated(BufferId),
     GlobalConfigurationUpdated,
     /// A repository's snapshot changed; in `GitStoreState::Local` this is
     /// the source data for the downstream `proto::UpdateRepository` push.
@@ -1064,8 +1061,8 @@ impl GitStore {
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
         self._subscriptions
-            .push(cx.subscribe(&conflict_set, |_, _, _, cx| {
-                cx.emit(GitStoreEvent::ConflictsUpdated);
+            .push(cx.subscribe(&conflict_set, move |_, _, _, cx| {
+                cx.emit(GitStoreEvent::ConflictsUpdated(buffer_id));
             }));
 
         buffer_git_state.update(cx, |state, cx| {
@@ -1433,11 +1430,16 @@ impl GitStore {
                 .ok();
             }
         }
-        cx.emit(GitStoreEvent::RepositoryUpdated(id, event.clone(), false))
+        cx.emit(GitStoreEvent::RepositoryUpdated(id, event.clone()))
     }
 
-    fn on_jobs_updated(&mut self, _: Entity<Repository>, _: &JobsUpdated, cx: &mut Context<Self>) {
-        cx.emit(GitStoreEvent::JobsUpdated)
+    fn on_jobs_updated(
+        &mut self,
+        repository: Entity<Repository>,
+        _: &JobsUpdated,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(GitStoreEvent::JobsUpdated(repository.read(cx).id))
     }
 
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
@@ -1710,6 +1712,7 @@ impl GitStore {
                     diff_state.hunk_staging_operation_count
                 });
                 if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
+                    let repo_id = repo.read(cx).id;
                     let recv = repo.update(cx, |repo, cx| {
                         log::debug!("hunks changed for {}", path.as_unix_str());
                         repo.spawn_set_index_text_job(
@@ -1726,8 +1729,10 @@ impl GitStore {
                                 diff.clear_pending_hunks(cx);
                             })
                             .ok();
-                            this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
-                                .ok();
+                            this.update(cx, |_, cx| {
+                                cx.emit(GitStoreEvent::IndexWriteError(repo_id, error))
+                            })
+                            .ok();
                         }
                     })
                     .detach();

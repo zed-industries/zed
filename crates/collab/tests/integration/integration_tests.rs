@@ -3005,7 +3005,7 @@ async fn test_git_branch_name(
     #[track_caller]
     fn assert_branch(branch_name: Option<impl Into<String>>, project: &Project, cx: &App) {
         let branch_name = branch_name.map(Into::into);
-        let repositories = project.repositories(cx);
+        let repositories = project.repositories();
         let repositories = repositories.values().collect::<Vec<_>>();
         assert_eq!(repositories.len(), 1);
         let repository = repositories[0].clone();
@@ -3134,11 +3134,7 @@ async fn test_git_status_sync(
     #[track_caller]
     fn assert_status(file: &str, status: Option<FileStatus>, project: &Project, cx: &App) {
         let file = repo_path(file);
-        let repos = project
-            .repositories(cx)
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+        let repos = project.repositories().values().cloned().collect::<Vec<_>>();
         assert_eq!(repos.len(), 1);
         let repo = repos.into_iter().next().unwrap();
         assert_eq!(
@@ -7237,7 +7233,7 @@ async fn test_remote_git_branches(
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
             project
-                .repositories(cx)
+                .repositories()
                 .values()
                 .next()
                 .unwrap()
@@ -7275,7 +7271,7 @@ async fn test_remote_git_branches(
     let host_branch = cx_a.update(|cx| {
         project_a.update(cx, |project, cx| {
             project
-                .repositories(cx)
+                .repositories()
                 .values()
                 .next()
                 .unwrap()

@@ -37,7 +37,7 @@ impl RepositorySelector {
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_entries = project_handle.read_with(cx, |project, cx| {
-            let mut repos: Vec<_> = project.repositories(cx).values().cloned().collect();
+            let mut repos: Vec<_> = project.repositories().values().cloned().collect();
 
             repos.sort_by(|a, b| {
                 a.read(cx)

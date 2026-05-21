@@ -9174,8 +9174,8 @@ mod tests {
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         let multi_workspace =
@@ -9236,8 +9236,8 @@ mod tests {
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         // Actually create a worktree so it exists in FakeFs for rollback to find.
@@ -9338,8 +9338,8 @@ mod tests {
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         let multi_workspace =
@@ -9402,8 +9402,8 @@ mod tests {
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         cx.executor().run_until_parked();
 
-        let repository = project.read_with(cx, |project, cx| {
-            project.repositories(cx).values().next().unwrap().clone()
+        let repository = project.read_with(cx, |project, _| {
+            project.repositories().values().next().unwrap().clone()
         });
 
         let multi_workspace =

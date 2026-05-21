@@ -34,8 +34,8 @@ two-Project test.
 - [ ] `forget_shared_diffs_for(peer)` clears every Project's diffs.
 - [ ] `forget_all_shared_diffs` (called from `Project::unshare_internal`) `.clear()`s `shared_diffs` for every Project's peers. Bug 20. Same fix shape as bug 9 — move `shared_diffs` onto `Project`.
 - [ ] `GitStore::checkpoint` / `restore_checkpoint` / `compare_checkpoints` iterate `self.repositories.values()` host-wide. Used by agent "rewind". Bug 19.
-- [ ] `RepositoryUpdated(_, _, is_active)` still carries host-level `is_active` shape; current branch emits `false` because `GitStore` no longer has project context. Remove/replace this bool with project-scoped handling.
-- [x] `ActiveRepositoryChanged` as a `GitStoreEvent` is no longer emitted by `GitStore`; active repository changes now emit `Project::Event::ActiveRepositoryChanged`. Some raw `GitStoreEvent::ActiveRepositoryChanged` subscribers may still need cleanup as part of the event audit.
+- [x] `RepositoryUpdated(_, _, is_active)` still carries host-level `is_active` shape — fixed: `GitStoreEvent::RepositoryUpdated` now carries only `(RepositoryId, RepositoryEvent)`. `Project::on_git_store_event` computes project-scoped `is_active` and re-emits `GitEvent::RepositoryUpdated { repo_id, event, is_active }`; UI/project consumers now subscribe to `Project` git events.
+- [x] `ActiveRepositoryChanged` as a `GitStoreEvent` is no longer emitted by `GitStore` — fixed: the dead host-level variant was removed. Active repository changes now emit `Project::Event::ActiveRepositoryChanged` and `Project::GitEvent::ActiveRepositoryChanged`.
 
 ### `crates/project/src/project.rs`
 
@@ -47,7 +47,7 @@ two-Project test.
 - [ ] `Project::handle_reload_buffers` no ownership gate on `buffer_ids`. Bug 21.
 - [ ] `Project::handle_register_buffer_with_language_servers` no ownership gate; peer can pin sibling buffer into A's LSP state. Bug 22.
 - [ ] `Project::on_breakpoint_store_event` broadcasts `BreakpointsForFile` for any toggled path on the shared store without `self.owns_abs_path` gate. Bug 18.
-- [ ] `git_panel.rs:837` pattern-matches `GitStoreEvent::ActiveRepositoryChanged(_)` but `GitStore` no longer emits it — part of bug 2's touch-all-subscribers fix.
+- [x] `git_panel.rs:837` pattern-matches `GitStoreEvent::ActiveRepositoryChanged(_)` but `GitStore` no longer emits it — fixed: `GitPanel` now listens only to project-scoped `GitEvent`s for git updates/errors, and the host-level `GitStoreEvent::ActiveRepositoryChanged` variant was removed.
 
 ### `crates/project/src/agent_server_store.rs`, `environment.rs`
 

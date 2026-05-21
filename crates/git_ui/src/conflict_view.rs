@@ -11,8 +11,8 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
-    git_store::{GitStore, GitStoreEvent, RepositoryEvent},
+    ConflictRegion, ConflictSet, ConflictSetUpdate, GitEvent, Project, ProjectItem as _,
+    git_store::RepositoryEvent,
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
@@ -412,10 +412,9 @@ fn render_conflict_buttons(
 }
 
 fn collect_conflicted_file_paths(project: &Project, cx: &App) -> Vec<String> {
-    let git_store = project.git_store(cx).read(cx);
     let mut paths = Vec::new();
 
-    for repo in git_store.repositories().values() {
+    for repo in project.repositories().values() {
         let snapshot = repo.read(cx).snapshot();
         for (repo_path, _) in snapshot.merge.merge_heads_by_conflicted_path.iter() {
             let is_currently_conflicted = snapshot
@@ -523,9 +522,8 @@ pub struct MergeConflictIndicator {
 impl MergeConflictIndicator {
     pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store(cx);
 
-        let subscription = cx.subscribe(&git_store, Self::on_git_store_event);
+        let subscription = cx.subscribe(&project, Self::on_git_event);
 
         let conflicted_paths = collect_conflicted_file_paths(project.read(cx), cx);
         let last_shown_paths: HashSet<String> = conflicted_paths.iter().cloned().collect();
@@ -539,16 +537,19 @@ impl MergeConflictIndicator {
         }
     }
 
-    fn on_git_store_event(
+    fn on_git_event(
         &mut self,
-        _git_store: Entity<GitStore>,
-        event: &GitStoreEvent,
+        _project: Entity<Project>,
+        event: &GitEvent,
         cx: &mut Context<Self>,
     ) {
         let conflicts_changed = matches!(
             event,
-            GitStoreEvent::ConflictsUpdated
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
+            GitEvent::ConflictsUpdated { .. }
+                | GitEvent::RepositoryUpdated {
+                    event: RepositoryEvent::StatusesChanged,
+                    ..
+                }
         );
 
         let agent_settings = AgentSettings::get_global(cx);

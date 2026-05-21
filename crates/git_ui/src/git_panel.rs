@@ -56,10 +56,8 @@ use notifications::status_toast::StatusToast;
 use panel::PanelHeader;
 use project::git_store::GitAccess;
 use project::{
-    Fs, Project, ProjectPath,
-    git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
-    },
+    Fs, GitEvent, Project, ProjectPath,
+    git_store::{CommitDataState, Repository, RepositoryEvent, RepositoryId, pending_op},
     project_settings::{GitPathStyle, ProjectSettings},
 };
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
@@ -753,7 +751,6 @@ impl GitPanel {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
         let fs = app_state.fs.clone();
-        let git_store = project.read(cx).git_store(cx);
         let active_repository = project.read(cx).active_repository(cx);
 
         cx.new(|cx| {
@@ -822,39 +819,31 @@ impl GitPanel {
                 }
             });
 
-            cx.subscribe_in(
-                &git_store,
-                window,
-                move |this, _git_store, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
-                        true,
-                    )
-                    | GitStoreEvent::RepositoryAdded(_, _)
-                    | GitStoreEvent::RepositoryRemoved(_)
-                    | GitStoreEvent::GlobalConfigurationUpdated
-                    | GitStoreEvent::ActiveRepositoryChanged(_) => {
+            cx.subscribe_in(&project, window, {
+                move |this, _, event: &GitEvent, window, cx| match event {
+                    GitEvent::ActiveRepositoryChanged(_)
+                    | GitEvent::RepositoryUpdated {
+                        event: RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
+                        is_active: true,
+                        ..
+                    }
+                    | GitEvent::RepositoryAdded(_, _)
+                    | GitEvent::RepositoryRemoved(_)
+                    | GitEvent::GlobalConfigurationUpdated => {
                         this.schedule_update(window, cx);
                     }
-                    GitStoreEvent::IndexWriteError(error) => {
+                    GitEvent::IndexWriteError(error) => {
                         this.workspace
                             .update(cx, |workspace, cx| {
                                 workspace.show_error(error, cx);
                             })
                             .ok();
                     }
-                    GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                    GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
-                    // Downstream-broadcast variants are routed by `Project` /
-                    // `HeadlessProject`; the panel does not consume them.
-                    GitStoreEvent::RepositorySnapshotForDownstream(_)
-                    | GitStoreEvent::RepositorySnapshotRemovedForDownstream(_)
-                    | GitStoreEvent::ForwardRepositoryUpdate(_)
-                    | GitStoreEvent::ForwardRepositoryRemove(_)
-                    | GitStoreEvent::DiffBasesUpdatedForDownstream(_) => {}
-                },
-            )
+                    GitEvent::RepositoryUpdated { .. }
+                    | GitEvent::JobsUpdated
+                    | GitEvent::ConflictsUpdated { .. } => {}
+                }
+            })
             .detach();
 
             let mut this = Self {
@@ -6939,7 +6928,7 @@ impl RenderOnce for PanelRepoFooter {
 
         let single_repo = project
             .as_ref()
-            .map(|project| project.read(cx).repositories(cx).len() == 1)
+            .map(|project| project.read(cx).repositories().len() == 1)
             .unwrap_or(true);
 
         const MAX_BRANCH_LEN: usize = 16;
@@ -7641,6 +7630,134 @@ mod tests {
                         deleted: 1,
                     }),
                 },),
+            ],
+        );
+    }
+
+    /// Regression test for multi-tenant bug #2: with `GitStore` host-shared
+    /// across `Project`s, the `RepositoryUpdated(_, _, is_active)` bool is
+    /// hardwired to `false`, so `git_panel` never refreshes when the active
+    /// repository's status changes, and the panel must continue ignoring
+    /// updates from repositories that belong only to sibling tenants on the
+    /// same host.
+    #[gpui::test]
+    async fn test_repository_updated_ignores_non_active_repos(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "alpha": {
+                    ".git": {},
+                    "a.rs": "fn a() {}",
+                },
+                "beta": {
+                    ".git": {},
+                    "b.rs": "fn b() {}",
+                },
+            }),
+        )
+        .await;
+
+        // Start both repositories in a clean state — `FakeFs` otherwise
+        // reports every worktree file as `Untracked`, which would muddy the
+        // "non-active repo updates are ignored" assertion below.
+        fs.set_status_for_repo(Path::new(path!("/root/alpha/.git")), &[]);
+        fs.set_status_for_repo(Path::new(path!("/root/beta/.git")), &[]);
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/alpha"))], cx).await;
+        let sibling_project = Project::test(fs.clone(), [Path::new(path!("/root/beta"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.executor().run_until_parked();
+
+        // Pin alpha as the active repository.
+        let alpha_repo = project.read_with(cx, |project, cx| {
+            project
+                .repositories()
+                .values()
+                .find(|r| {
+                    r.read(cx).work_directory_abs_path.as_ref() == Path::new(path!("/root/alpha"))
+                })
+                .cloned()
+                .expect("alpha repository should be present")
+        });
+        project.update(cx, |project, cx| {
+            project.set_active_repository(&alpha_repo, cx);
+        });
+        cx.executor().run_until_parked();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        sibling_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        let drain = async |panel: &Entity<GitPanel>, cx: &mut VisualTestContext| {
+            let handle = cx.update_window_entity(panel, |panel, _, _| {
+                std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+            });
+            cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+            handle.await;
+        };
+
+        drain(&panel, cx).await;
+
+        // Both projects' repos start clean: panel should be empty.
+        let initial_entries = panel.read_with(cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(initial_entries, []);
+
+        // Status change on the sibling Project's repo (beta) must not surface
+        // beta's file in the panel.
+        fs.insert_file(path!("/root/beta/b.rs"), b"fn b() { 1 }".to_vec())
+            .await;
+        cx.executor().run_until_parked();
+        sibling_project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        drain(&panel, cx).await;
+
+        let entries_after_non_active = panel.read_with(cx, |panel, _| panel.entries.clone());
+        assert!(
+            !entries_after_non_active.iter().any(|e| matches!(
+                e,
+                GitListEntry::Status(s) if s.repo_path == repo_path("b.rs")
+            )),
+            "sibling repository (beta) should not appear in panel entries; got {entries_after_non_active:?}",
+        );
+
+        // Status change on the active repo (alpha) MUST refresh the panel.
+        fs.insert_file(path!("/root/alpha/a.rs"), b"fn a() { 1 }".to_vec())
+            .await;
+        cx.executor().run_until_parked();
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        drain(&panel, cx).await;
+
+        let entries_after_active = panel.read_with(cx, |panel, _| panel.entries.clone());
+        pretty_assertions::assert_eq!(
+            entries_after_active,
+            [
+                GitListEntry::Header(GitHeaderEntry {
+                    header: Section::Tracked
+                }),
+                GitListEntry::Status(GitStatusEntry {
+                    repo_path: repo_path("a.rs"),
+                    status: StatusCode::Modified.worktree(),
+                    staging: StageStatus::Unstaged,
+                    diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
+                }),
             ],
         );
     }

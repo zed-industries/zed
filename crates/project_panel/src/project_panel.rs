@@ -33,9 +33,9 @@ use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
-    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitTraversal, Project, ProjectEntryId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitEvent, GitTraversal, Project, ProjectEntryId,
     ProjectPath, Worktree, WorktreeId,
-    git_store::{GitStoreEvent, RepositoryEvent, git_traversal::ChildEntriesGitIter},
+    git_store::{RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
 use project_panel_settings::ProjectPanelSettings;
@@ -589,19 +589,21 @@ impl ProjectPanel {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store(cx);
         let path_style = project.read(cx).path_style(cx);
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
 
             cx.subscribe_in(
-                &git_store,
+                &project,
                 window,
-                |this, _, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, _)
-                    | GitStoreEvent::RepositoryAdded(_, _)
-                    | GitStoreEvent::RepositoryRemoved(_) => {
+                |this, _, event: &GitEvent, window, cx| match event {
+                    GitEvent::RepositoryUpdated {
+                        event: RepositoryEvent::StatusesChanged,
+                        ..
+                    }
+                    | GitEvent::RepositoryAdded(_, _)
+                    | GitEvent::RepositoryRemoved(_) => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }

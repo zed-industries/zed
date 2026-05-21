@@ -15,10 +15,7 @@ use itertools::Itertools;
 use language::{Bias, BufferSnapshot, Edit};
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, RowInfo};
-use project::{
-    Project, ProjectItem as _,
-    git_store::{GitStoreEvent, Repository},
-};
+use project::{GitEvent, Project, ProjectItem as _, git_store::Repository};
 use smallvec::SmallVec;
 use std::{sync::Arc, time::Duration};
 use sum_tree::SumTree;
@@ -233,12 +230,11 @@ impl GitBlame {
             }
         });
 
-        let git_store = project.read(cx).git_store(cx);
-        let git_store_subscription =
-            cx.subscribe(&git_store, move |this, _, event, cx| match event {
-                GitStoreEvent::RepositoryUpdated(_, _, _)
-                | GitStoreEvent::RepositoryAdded(_, _)
-                | GitStoreEvent::RepositoryRemoved(_) => {
+        let git_event_subscription =
+            cx.subscribe(&project, move |this, _, event: &GitEvent, cx| match event {
+                GitEvent::RepositoryUpdated { .. }
+                | GitEvent::RepositoryAdded(_, _)
+                | GitEvent::RepositoryRemoved(_) => {
                     log::debug!("Status of git repositories updated. Regenerating blame data...",);
                     this.generate(cx);
                 }
@@ -257,7 +253,7 @@ impl GitBlame {
             _regenerate_subscriptions: vec![
                 multi_buffer_subscription,
                 project_subscription,
-                git_store_subscription,
+                git_event_subscription,
             ],
         };
         this.generate(cx);
@@ -782,7 +778,7 @@ mod tests {
 
         let blame = cx.new(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
 
-        let event = project.next_event(cx).await;
+        let event = project.next_event::<project::Event>(cx).await;
         assert_eq!(
             event,
             project::Event::Toast {

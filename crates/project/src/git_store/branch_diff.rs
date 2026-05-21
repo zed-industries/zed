@@ -17,8 +17,8 @@ use util::ResultExt;
 use ztracing::instrument;
 
 use crate::{
-    Project,
-    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    GitEvent, Project,
+    git_store::{Repository, RepositoryEvent},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -61,25 +61,27 @@ impl BranchDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let git_store = project.read(cx).git_store(cx);
         let repo = project.read(cx).active_repository(cx);
         let git_store_subscription = cx.subscribe_in(
-            &git_store,
+            &project,
             window,
-            move |this, _git_store, event, _window, cx| {
+            move |this, _project, event: &GitEvent, _window, cx| {
                 let should_update = match event {
-                    GitStoreEvent::ActiveRepositoryChanged(new_repo_id) => {
+                    GitEvent::ActiveRepositoryChanged(new_repo_id) => {
                         this.repo.is_none() && new_repo_id.is_some()
                     }
-                    GitStoreEvent::RepositoryUpdated(
-                        event_repo_id,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
-                        _,
-                    ) => this
+                    GitEvent::RepositoryUpdated {
+                        repo_id: event_repo_id,
+                        event: RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
+                        ..
+                    } => this
                         .repo
                         .as_ref()
                         .is_some_and(|r| r.read(cx).snapshot().id == *event_repo_id),
-                    GitStoreEvent::ConflictsUpdated => this.repo.is_some(),
+                    GitEvent::ConflictsUpdated { repository_id, .. } => this
+                        .repo
+                        .as_ref()
+                        .is_some_and(|r| Some(r.read(cx).snapshot().id) == *repository_id),
                     _ => false,
                 };
 

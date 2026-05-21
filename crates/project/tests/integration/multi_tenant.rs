@@ -199,7 +199,7 @@ async fn test_project_claiming_existing_repository_sets_active_repository(cx: &m
 
     let (repository_count, active_repo_path) = project_b.read_with(cx, |project, cx| {
         (
-            project.repositories(cx).len(),
+            project.repositories().len(),
             project
                 .active_repository(cx)
                 .map(|repo| repo.read(cx).work_directory_abs_path.clone()),
@@ -462,7 +462,7 @@ fn verify_project_repository_ownership(
     cx: &App,
 ) -> Result<()> {
     for project in projects {
-        let project_worktree_ids = project.read_with(cx, |project, cx| {
+        let project_worktree_ids = project.read_with(cx, |project, _| {
             project
                 .worktrees(cx)
                 .map(|worktree| worktree.read(cx).id())
@@ -478,9 +478,9 @@ fn verify_project_repository_ownership(
                     .then_some(*repository_id)
             })
             .collect::<HashSet<_>>();
-        let actual_repository_ids = project.read_with(cx, |project, cx| {
+        let actual_repository_ids = project.read_with(cx, |project, _| {
             project
-                .repositories(cx)
+                .repositories()
                 .keys()
                 .copied()
                 .collect::<HashSet<_>>()

@@ -35,8 +35,7 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
-    trusted_worktrees::TrustedWorktrees,
+    GitEvent, Project, project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings as _;
@@ -391,7 +390,6 @@ impl TitleBar {
         cx: &mut Context<Self>,
     ) -> Self {
         let project = workspace.project().clone();
-        let git_store = project.read(cx).git_store(cx);
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
@@ -420,9 +418,11 @@ impl TitleBar {
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
         subscriptions.push(
-            cx.subscribe(&git_store, move |_, _, event, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, _, true) => {
+            cx.subscribe(&project, move |_, _, event: &GitEvent, cx| match event {
+                GitEvent::ActiveRepositoryChanged(_)
+                | GitEvent::RepositoryUpdated {
+                    is_active: true, ..
+                } => {
                     cx.notify();
                 }
                 _ => {}
