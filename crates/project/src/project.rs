@@ -428,17 +428,6 @@ pub struct ToastLink {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
-    LanguageServerRemoved(LanguageServerId),
-    LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
-    // [`lsp::notification::DidOpenTextDocument`] was sent to this server using the buffer data.
-    // Zed's buffer-related data is updated accordingly.
-    LanguageServerBufferRegistered {
-        server_id: LanguageServerId,
-        buffer_id: BufferId,
-        buffer_abs_path: PathBuf,
-        name: Option<LanguageServerName>,
-    },
     ToggleLspLogs {
         server_id: LanguageServerId,
         enabled: bool,
@@ -453,8 +442,6 @@ pub enum Event {
     HideToast {
         notification_id: SharedString,
     },
-    LanguageServerPrompt(LanguageServerPromptRequest),
-    LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
@@ -465,16 +452,6 @@ pub enum Event {
     WorktreeUpdatedRootRepoCommonDir(WorktreeId),
     WorktreePathsChanged {
         old_worktree_paths: WorktreePaths,
-    },
-    DiskBasedDiagnosticsStarted {
-        language_server_id: LanguageServerId,
-    },
-    DiskBasedDiagnosticsFinished {
-        language_server_id: LanguageServerId,
-    },
-    DiagnosticsUpdated {
-        paths: Vec<ProjectPath>,
-        language_server_id: LanguageServerId,
     },
     RemoteIdChanged(Option<u64>),
     DisconnectedFromHost,
@@ -492,25 +469,9 @@ pub enum Event {
     HostReshared,
     Reshared,
     Rejoined,
-    RefreshInlayHints {
-        server_id: LanguageServerId,
-        request_id: Option<usize>,
-    },
-    RefreshSemanticTokens {
-        server_id: LanguageServerId,
-        request_id: Option<usize>,
-    },
-    RefreshCodeLens {
-        server_id: LanguageServerId,
-    },
     RevealInProjectPanel(ProjectEntryId),
-    SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
-    WorkspaceEditApplied {
-        server_id: LanguageServerId,
-        transaction: ProjectTransaction,
-    },
     AgentLocationChanged,
     BufferEdited,
 }

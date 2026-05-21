@@ -4,6 +4,7 @@ use crate::{
     RELOAD_DEBOUNCE_DURATION, SchemaVersion,
 };
 use async_compression::futures::bufread::GzipEncoder;
+use client::proto;
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
@@ -15,7 +16,7 @@ use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
-use project::{DEFAULT_COMPLETION_CONTEXT, Project};
+use project::{DEFAULT_COMPLETION_CONTEXT, LspStoreEvent, Project};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use serde_json::json;
@@ -769,7 +770,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     );
     cx.executor().run_until_parked();
 
-    let mut project_events = cx.events(&project);
+    let mut project_events = cx.events::<LspStoreEvent, _>(&project);
     let buffer_path = project_dir.join("test.gleam");
     let (buffer, _handle) = await_or_timeout(
         &executor,
@@ -909,10 +910,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         5,
         async {
             while let Some(event) = project_events.next().await {
-                if let project::Event::LanguageServerBufferRegistered { buffer_id, .. } = event {
-                    if buffer_id == buffer_remote_id {
-                        return;
-                    }
+                if let LspStoreEvent::LanguageServerUpdate {
+                    message:
+                        proto::update_language_server::Variant::RegisteredForBuffer(update),
+                    ..
+                } = event
+                    && language::BufferId::new(update.buffer_id).ok() == Some(buffer_remote_id)
+                {
+                    return;
                 }
             }
 

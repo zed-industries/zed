@@ -63,13 +63,14 @@ use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
 use project::{
-    Event, TaskContexts,
+    Event, LspStoreEvent, TaskContexts,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
     search::{SearchQuery, SearchResult},
     task_store::{TaskSettingsLocation, TaskStore},
     *,
 };
 use rand::{Rng as _, rngs::StdRng};
+use rpc::proto;
 use serde_json::json;
 use settings::SettingsStore;
 #[cfg(not(windows))]
@@ -3004,24 +3005,23 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let mut events = cx.events::<Event, _>(&project);
+    let mut events = cx.events::<LspStoreEvent, _>(&project);
 
     let fake_server = fake_servers.next().await.unwrap();
-    assert_eq!(
+    let server_name = fake_server.server.name();
+    let expected_path: ProjectPath = (worktree_id, rel_path("a.rs")).into();
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(
-            LanguageServerId(0),
-            fake_server.server.name(),
-            Some(worktree_id)
-        ),
+        LspStoreEvent::LanguageServerAdded(LanguageServerId(0), name, Some(wt))
+            if name == server_name && wt == worktree_id,
     );
 
     fake_server
         .start_progress(format!("{}/0", progress_token))
         .await;
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiskBasedDiagnosticsStarted {
+        LspStoreEvent::DiskBasedDiagnosticsStarted {
             language_server_id: LanguageServerId(0),
         }
     );
@@ -3036,19 +3036,19 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
             ..Default::default()
         }],
     });
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiagnosticsUpdated {
-            language_server_id: LanguageServerId(0),
-            paths: vec![(worktree_id, rel_path("a.rs")).into()],
-        }
+        LspStoreEvent::DiagnosticsUpdated {
+            server_id: LanguageServerId(0),
+            paths,
+        } if paths == vec![expected_path.clone()],
     );
 
     fake_server.end_progress(format!("{}/0", progress_token));
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiskBasedDiagnosticsFinished {
-            language_server_id: LanguageServerId(0)
+        LspStoreEvent::DiskBasedDiagnosticsFinished {
+            language_server_id: LanguageServerId(0),
         }
     );
 
@@ -3084,12 +3084,12 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         version: None,
         diagnostics: Default::default(),
     });
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiagnosticsUpdated {
-            language_server_id: LanguageServerId(0),
-            paths: vec![(worktree_id, rel_path("a.rs")).into()],
-        }
+        LspStoreEvent::DiagnosticsUpdated {
+            server_id: LanguageServerId(0),
+            paths,
+        } if paths == vec![expected_path.clone()],
     );
 
     fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
@@ -3098,7 +3098,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         diagnostics: Default::default(),
     });
     cx.executor().run_until_parked();
-    assert_eq!(futures::poll!(events.next()), Poll::Pending);
+    assert!(matches!(futures::poll!(events.next()), Poll::Pending));
 }
 
 #[gpui::test]
@@ -3142,37 +3142,37 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
-    let mut events = cx.events::<Event, _>(&project);
+    let mut events = cx.events::<LspStoreEvent, _>(&project);
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
     cx.executor().run_until_parked();
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::LanguageServerRemoved(LanguageServerId(0))
+        LspStoreEvent::LanguageServerRemoved(LanguageServerId(0))
     );
-    assert_eq!(
+    let server_name = fake_server.server.name();
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(
-            LanguageServerId(1),
-            fake_server.server.name(),
-            Some(worktree_id)
-        )
+        LspStoreEvent::LanguageServerAdded(LanguageServerId(1), name, Some(wt))
+            if name == server_name && wt == worktree_id,
     );
     fake_server.start_progress(progress_token).await;
-    assert_eq!(
+    let expected_abs_path = PathBuf::from(path!("/dir/a.rs"));
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::LanguageServerBufferRegistered {
-            server_id: LanguageServerId(1),
-            buffer_id,
-            buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
-            name: Some(fake_server.server.name())
-        }
+        LspStoreEvent::LanguageServerUpdate {
+            language_server_id: LanguageServerId(1),
+            name: Some(name),
+            message: proto::update_language_server::Variant::RegisteredForBuffer(update),
+        } if name == server_name
+            && language::BufferId::new(update.buffer_id).ok() == Some(buffer_id)
+            && PathBuf::from(&update.buffer_abs_path) == expected_abs_path,
     );
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiskBasedDiagnosticsStarted {
-            language_server_id: LanguageServerId(1)
+        LspStoreEvent::DiskBasedDiagnosticsStarted {
+            language_server_id: LanguageServerId(1),
         }
     );
     project.update(cx, |project, cx| {
@@ -3187,10 +3187,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     // All diagnostics are considered done, despite the old server's diagnostic
     // task never completing.
     fake_server.end_progress(progress_token);
-    assert_eq!(
+    assert_matches!(
         events.next().await.unwrap(),
-        Event::DiskBasedDiagnosticsFinished {
-            language_server_id: LanguageServerId(1)
+        LspStoreEvent::DiskBasedDiagnosticsFinished {
+            language_server_id: LanguageServerId(1),
         }
     );
     project.update(cx, |project, cx| {
@@ -4066,7 +4066,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
         );
     });
 
-    let mut events = cx.events::<Event, _>(&project);
+    let mut events = cx.events::<LspStoreEvent, _>(&project);
 
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
@@ -4077,7 +4077,7 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     while let Some(Some(event)) =
         futures::FutureExt::now_or_never(futures::StreamExt::next(&mut events))
     {
-        if matches!(event, Event::DiagnosticsUpdated { .. }) {
+        if matches!(event, LspStoreEvent::DiagnosticsUpdated { .. }) {
             received_diagnostics_updated = true;
         }
     }

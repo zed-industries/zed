@@ -28,7 +28,7 @@ use lsp::{DEFAULT_LSP_REQUEST_TIMEOUT, LanguageServerId, OneOf};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
-    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
+    DiagnosticSummary, HoverBlockKind, LspStoreEvent, Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
     search::{SearchQuery, SearchResult},
 };
@@ -4211,8 +4211,8 @@ async fn test_collaborating_with_diagnostics(
     project_c.update(cx_c, |_, cx| {
         let summaries = project_c_diagnostic_summaries.clone();
         cx.subscribe(&project_c, {
-            move |p, _, event, cx| {
-                if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
+            move |p, _, event: &LspStoreEvent, cx| {
+                if let LspStoreEvent::DiskBasedDiagnosticsFinished { .. } = event {
                     *summaries.borrow_mut() = p.diagnostic_summaries(false, cx).collect();
                 }
             }
@@ -4474,8 +4474,8 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         let project_b = project_b.clone();
         let disk_based_diagnostics_finished = disk_based_diagnostics_finished.clone();
         move |_, cx| {
-            cx.subscribe(&project_b, move |_, _, event, cx| {
-                if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
+            cx.subscribe(&project_b, move |_, _, event: &LspStoreEvent, cx| {
+                if let LspStoreEvent::DiskBasedDiagnosticsFinished { .. } = event {
                     disk_based_diagnostics_finished.store(true, SeqCst);
                     for (buffer, _) in &guest_buffers {
                         assert_eq!(

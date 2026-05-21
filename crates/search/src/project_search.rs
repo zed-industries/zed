@@ -5096,7 +5096,7 @@ pub mod tests {
             );
         });
         project.update(cx, |_, cx| {
-            cx.emit(project::Event::RefreshInlayHints {
+            cx.emit(project::LspStoreEvent::RefreshInlayHints {
                 server_id: fake_server.server.server_id(),
                 request_id: Some(1),
             });
