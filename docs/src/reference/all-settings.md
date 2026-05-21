@@ -101,9 +101,10 @@ Non-negative `float` values
 ## Allow Rewrap
 
 - Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -131,14 +132,15 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> **Note:** This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
 - Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `auto_indent`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -147,9 +149,10 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Indent On Paste
 
 - Description: Whether indentation of pasted content should be adjusted based on the context.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `auto_indent_on_paste`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -457,7 +460,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> **Note:** Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -645,9 +648,10 @@ List of `string` values.
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `edit_predictions_disabled_in`
 - Default: `[]`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1627,9 +1631,11 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Enable Language Server
 
-- Description: Whether or not to use language servers to provide code intelligence. Note: this setting can be [overridden per language](#languages).
+- Description: Whether or not to use language servers to provide code intelligence.
 - Setting: `enable_language_server`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1637,9 +1643,11 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Ensure Final Newline On Save
 
-- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end. Note: this setting can be [overridden per language](#languages).
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1647,9 +1655,11 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Line Ending
 
-- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis. Note: this setting can be [overridden per language](#languages).
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
 - Setting: `line_ending`
 - Default: `detect`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1718,9 +1728,10 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ## Extend Comment On Newline
 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `extend_comment_on_newline`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1729,10 +1740,11 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ## Extend List On Newline
 
 - Description: Whether to start a new line with a list symbol when a previous line is a list element as well.
-  Note: this setting can be [overridden per language](#languages).
-  Currently only works for Markdown.
 - Setting: `extend_list_on_newline`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
+> **Note:** this setting currently only works for Markdown.
 
 ## Status Bar
 
@@ -1760,9 +1772,11 @@ There is an experimental setting that completely hides the status bar. This caus
 
 ## Language Servers
 
-- Description: The list of language servers to use (or disable). Note: this setting can be [overridden per language](#languages).
+- Description: The list of language servers to use (or disable).
 - Setting: `language_servers`
 - Default: `["..."]`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1912,9 +1926,11 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ## Format On Save
 
-- Description: Whether or not to perform a buffer format before saving. Note: this setting can be [overridden per language](#languages).
+- Description: Whether or not to perform a buffer format before saving.
 - Setting: `format_on_save`
 - Default: `on`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1936,9 +1952,11 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ## Formatter
 
-- Description: How to perform a buffer format. Note: this setting can be [overridden per language](#languages).
+- Description: How to perform a buffer format.
 - Setting: `formatter`
 - Default: `auto`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2018,9 +2036,11 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 ## Auto close
 
-- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters. Note: this setting can be [overridden per language](#languages).
+- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
 - Setting: `use_autoclose`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2028,9 +2048,11 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 ## Always Treat Brackets As Autoclosed
 
-- Description: Controls how the editor handles the autoclosed characters. Note: this setting can be [overridden per language](#languages).
+- Description: Controls how the editor handles the autoclosed characters.
 - Setting: `always_treat_brackets_as_autoclosed`
 - Default: `false`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2499,9 +2521,11 @@ Example:
 
 ## Hard Tabs
 
-- Description: Whether to indent lines using tab characters or multiple spaces. Note: this setting can be [overridden per language](#languages).
+- Description: Whether to indent lines using tab characters or multiple spaces.
 - Setting: `hard_tabs`
 - Default: `false`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2520,9 +2544,10 @@ Example:
 ## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `indent_guides`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -2715,10 +2740,12 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 ## Indent List On Tab
 
-- Description: Whether to indent list items when pressing tab after a list marker. Currently only works for Markdown.
-  Note: this setting can be [overridden per language](#languages).
+- Description: Whether to indent list items when pressing tab after a list marker.
 - Setting: `indent_list_on_tab`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
+> **Note:** this setting currently only works for Markdown.
 
 **Options**
 
@@ -2771,9 +2798,10 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 ## Inlay hints
 
 - Description: Configuration for displaying extra text with hints in the editor.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `inlay_hints`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -3214,9 +3242,10 @@ These values take in the same options as the root-level settings with the same n
 ## Debuggers
 
 - Description: What debuggers are preferred by default for all languages.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `debuggers`
 - Default: `[]`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Examples**
 
@@ -3282,9 +3311,10 @@ Configuration for various AI model providers including API URLs and authenticati
 ## Linked Edits
 
 - Description: Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening `<html>` tag, the contents of the closing `</html>` tag will be edited as well.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `linked_edits`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -3500,9 +3530,10 @@ Examples:
 ## Prettier
 
 - Description: Zed's Prettier integration settings.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `prettier`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -3685,9 +3716,11 @@ Any other elements in the object is forwarded to `prettier` as options if the bu
 
 ## Preferred Line Length
 
-- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled. Note: this setting can be [overridden per language](#languages).
+- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
 - Setting: `preferred_line_length`
 - Default: `80`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -3767,9 +3800,11 @@ List of `string` glob patterns
 
 ## Remove Trailing Whitespace On Save
 
-- Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it. Note: this setting can be [overridden per language](#languages).
+- Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it.
 - Setting: `remove_trailing_whitespace_on_save`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4002,9 +4037,11 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting. Note: this setting can be [overridden per language](#languages).
+- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
 - Setting: `semantic_tokens`
 - Default: `off`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4037,9 +4074,10 @@ May require language server restart to properly apply.
 ## LSP Folding Ranges
 
 - Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `document_folding_ranges`
 - Default: `off`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4069,9 +4107,10 @@ To enable LSP folding ranges for a specific language:
 ## LSP Document Symbols
 
 - Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `document_symbols`
 - Default: `off`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4127,9 +4166,10 @@ Examples:
 ## Code Actions On Format
 
 - Description: Which code actions to run in case [`format_on_save`](#format-on-save) is triggered. These run before formatters.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `code_actions_on_format`
 - Default: `{}`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4148,9 +4188,10 @@ Examples:
 ## Completions
 
 - Description: Controls how completions are processed for the current language.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `completions`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -4223,9 +4264,10 @@ Positive integer values
 ## Show Completions On Input
 
 - Description: Whether or not to show completions as you type.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `show_completions_on_input`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4243,9 +4285,11 @@ Positive integer values
 
 ## Show Edit Predictions
 
-- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`. Note: this setting can be [overridden per language](#languages).
+- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`.
 - Setting: `show_edit_predictions`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4253,9 +4297,11 @@ Positive integer values
 
 ## Show Whitespaces
 
-- Description: Whether or not to render whitespace characters in the editor. Note: this setting can be [overridden per language](#languages).
+- Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4266,9 +4312,11 @@ Positive integer values
 
 ## Whitespace Map
 
-- Description: Specify the characters used to render whitespace when show_whitespaces is enabled. Note: this setting can be [overridden per language](#languages).
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
 - Setting: `whitespace_map`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -4282,15 +4330,18 @@ Positive integer values
 ## Word Diff Enabled
 
 - Description: Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `word_diff_enabled`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 ## Soft Wrap
 
-- Description: Whether or not to automatically wrap lines of text to fit editor / preferred width. Note: this setting can be [overridden per language](#languages).
+- Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
 - Default: `none`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4301,9 +4352,11 @@ Positive integer values
 
 ## Show Wrap Guides
 
-- Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting. Note: this setting can be [overridden per language](#languages).
+- Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting.
 - Setting: `show_wrap_guides`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4312,9 +4365,10 @@ Positive integer values
 ## Use On Type Format
 
 - Description: Whether to use additional LSP queries to format (and amend) the code after every "trigger" symbol input, defined by LSP server capabilities.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `use_on_type_format`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4323,9 +4377,10 @@ Positive integer values
 ## Use Auto Surround
 
 - Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `use_auto_surround`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4363,9 +4418,11 @@ List of `integer` column numbers
 
 ## Tab Size
 
-- Description: The number of spaces to use for each tab character. Note: this setting can be [overridden per language](#languages).
+- Description: The number of spaces to use for each tab character.
 - Setting: `tab_size`
 - Default: `4`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4374,9 +4431,10 @@ List of `integer` column numbers
 ## Tasks
 
 - Description: Configuration for tasks that can be run within Zed.
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `tasks`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -5809,9 +5867,10 @@ You can define these in user or project settings; project settings are merged on
 ## Colorize Brackets
 
 - Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
-  Note: this setting can be [overridden per language](#languages).
 - Setting: `colorize_brackets`
 - Default: `false`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
