@@ -122,9 +122,8 @@ impl Diff {
             let mut diff = BufferDiff::new_unchanged(&buffer_text_snapshot, cx);
             diff.language_changed(language.clone(), language_registry.clone(), cx);
             let secondary_diff = cx.new(|cx| {
-                // For the secondary diff buffer we skip assigning the language as we do not really
-                // need to perform any syntax highlighting on it. As a result, by skipping it we are
-                // potentially shaving off a lot of RSS plus we get a snappier feel for large diff
+                // For the secondary diff buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
+                // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
                 // view multibuffers.
                 BufferDiff::new_unchanged(&buffer_text_snapshot, cx)
             });
