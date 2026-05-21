@@ -162,6 +162,39 @@ so I can review and stage with full clarity without leaving Zed.
     without reaching for the toolbar dropdown. The `+`/`-` button still
     bulk-stages or bulk-unstages the section without switching the diff
     filter. The Conflicts section header is unchanged.
+36. As a developer in the Staged filter, I want the diff to be a **read-only
+    snapshot of the git index** (`HEAD`→index) whose displayed buffer is the
+    index content itself — not the live worktree file — so that editing it is
+    impossible and later worktree edits never silently leak into the staged
+    view as unhighlighted context. (Bug A8.)
+37. As a developer in the read-only Staged filter, I want to still unstage
+    individual hunks inline, so that I can refine what is staged without
+    leaving the view. The index buffer is read-only to text editing, but the
+    stage/unstage hunk controls remain active. (Reinforces story 30 for the
+    new index-backed Staged buffer.)
+38. As a developer in the read-only Staged filter, I want activating a hunk or
+    the file header (Enter / double-click / an "Open File" affordance) to open
+    the actual worktree file in a normal editable editor, so that there is a
+    clear path from reviewing the staged snapshot to making new (unstaged)
+    edits — the "open the file" model other clients use.
+39. As a developer, I want the Staged snapshot to reload whenever the git index
+    changes — unstaging from within this view, the panel/header `+`/`-`
+    controls, or an external `git add`/`reset` in the terminal — so that the
+    staged view always reflects the current index.
+40. As a developer, I want the read-only Staged index buffer (which has no file
+    on disk) to be non-savable and non-reloadable, so that `Cmd-S` and reload
+    are no-ops rather than errors, and `ProjectDiff::active_path`
+    (`project_diff.rs:674`, which reads `buffer.file()?` at `:682`) still
+    resolves the focused excerpt to its `repo_path` via a stored-`repo_path`
+    fallback rather than returning `None`.
+41. As a developer in the read-only Staged filter, I want unstaging a hunk to
+    actually write the git index, which requires the inline staging-write path
+    to resolve the file-less index excerpt to its `repo_path` — because the
+    existing path (`Editor::do_stage_or_unstage` → `project.buffer_for_id` →
+    `BufferDiffEvent::HunksStagedOrUnstaged` → `GitStore::on_buffer_diff_event`
+    → `repository_and_path_for_buffer_id` → `buffer.project_path(cx)`) returns
+    `None` for a file-less buffer and silently skips the `set_index_text` job.
+    Without this plumbing the controls render but unstaging is a no-op.
 
 ## Implementation Decisions
 
@@ -232,6 +265,17 @@ a fresh base/target pair.
 
 The buffer-loading path (`load_buffer` / `load_buffers`) selects the loader
 based on the resolved `DiffType` from M1.
+
+**Revised for the Staged filter (see A8).** The secondary-diff route above is
+retained for the **Unstaged** filter (live worktree buffer, index↔worktree
+secondary diff). The **Staged** filter is reworked to show the git index as a
+**read-only** snapshot: a file-less `Buffer` built from `load_index_text`
+(`Capability::ReadOnly`) diffed against `HEAD` (`load_committed_text`). This is
+what prevents later worktree edits from leaking into the staged view. Inline
+unstage is preserved because the multibuffer stays `Capability::ReadWrite`
+(editor not read-only → controls render) while the index excerpt's per-buffer
+`ReadOnly` capability blocks text edits. See followup A8 for the full rationale
+and the file-less-buffer plumbing it requires.
 
 ### Module M3 — Diff filter dropdown (`git_ui`, project diff toolbar)
 
@@ -571,6 +615,30 @@ gets a dedicated assertion:
   and **no** new `DiffBase::Staged` view is created — the existing
   `Head` view stays active. Regression guard for the
   `cx.stop_propagation()` chain on the button.
+- **A8 / stories 36–41** — M2/M3 integration + UI tests on the read-only
+  index-snapshot Staged filter:
+  *Read-only:* in the Staged filter, a simulated text edit is rejected and the
+  buffer content is unchanged; assert the index buffer's capability is
+  `ReadOnly` while `editor.read_only(cx)` is `false` (so hunk controls still
+  render). *No leak:* with a partially-staged file, edit the worktree out of
+  band; assert the Staged view's buffer equals the index content and does
+  **not** contain the new worktree edit. *Inline unstage writes the index
+  (story 41 regression guard):* unstage a hunk from the **in-editor** control
+  in the Staged view; assert `set_index_text` actually ran — the git index
+  reverts that hunk toward `HEAD` and the hunk disappears once the snapshot
+  reloads. This must fail if the file-less excerpt's `repo_path` plumbing is
+  missing (the silent-no-op regression). *Panel unstage still works:* unstage
+  the same file from the panel/header `-` control and assert the index changes
+  (guards that the explicit-`RepoPath` `stage_or_unstage_entries` path is
+  unaffected). *Refresh on
+  external change:* stage a file via the backend (simulating terminal
+  `git add`) with the Staged view open; assert the snapshot reloads to include
+  it (converse for `reset`). *Open-to-edit:* activating a hunk/header in the
+  Staged view opens the worktree file in an editable editor (capability
+  `ReadWrite`, `buffer.file()` is `Some`). *Save/reload safety:* save and
+  reload on the Staged index buffer are no-ops and do not error.
+  *Unstaged stays editable:* a text edit in the Unstaged filter is accepted
+  (regression guard that the read-only scope is Staged-only).
 
 ## Out of Scope
 
@@ -867,3 +935,89 @@ Unstaged headers: the body is now clickable, but the click no longer
 toggles staging (the `+`/`-` button retains that responsibility) — it
 switches the diff filter via the A5 deploy path. Documented in M5
 ("Section-header level") and story 35.
+
+### A8 — Staged filter is editable and leaks later edits into the staged view (M2 / M3)
+
+**Observed.** Opening the Staged filter shows the staged changes, but the
+buffer is editable. Editing it — or editing the file elsewhere while the Staged
+view is open — leaves the new text visible in the Staged view (unhighlighted,
+but present), even though git correctly records the edit as unstaged. The staged
+view therefore misrepresents what is actually staged.
+
+**Root cause.** The Staged view does not show the git index; it shows excerpts
+of the **live worktree buffer** — the same `Buffer` entity as the file on disk —
+created `Capability::ReadWrite` (`project_diff.rs:408`), with
+`DiffHunkFilter::Staged` applied. There is no per-`DiffBase` read-only gating:
+`configure_editor_for_diff_base` only hides hunk controls for `Merge`, never
+sets read-only (`project_diff.rs:602-631`). The hunk filter governs which hunks
+are *highlighted as staged*, but the underlying text is worktree text, so
+unstaged edits appear as ordinary context lines.
+
+**Design decision.** For the **Staged** filter only, show the actual git
+**index content** as a **read-only snapshot** instead of the live worktree:
+
+- **Index-backed buffer.** Load index text via `load_index_text` and build a
+  synthetic, file-less `Buffer` with `Capability::ReadOnly`; diff base = `HEAD`
+  (`load_committed_text`). Because the displayed buffer *is* the index, later
+  worktree edits cannot appear in it. Unstaged and Uncommitted are unchanged
+  (live editable worktree); Branch is unchanged. (Scope: Staged only.)
+- **Inline unstage preserved — rendering (story 37).** `Capability::ReadOnly`
+  is enforced per-buffer in both the editor input path (`input.rs:92-104`) and
+  the multibuffer edit router (`multi_buffer.rs:1586+`), so typing into the
+  index excerpt is rejected. The ProjectDiff multibuffer stays
+  `Capability::ReadWrite`, so `editor.read_only(cx)` remains false and the
+  inline stage/unstage hunk controls still render (`element.rs:11211`). No
+  separate editor-level read-only flag is used (that would hide the controls).
+- **Inline unstage preserved — write path (story 41).** Rendering the control
+  is necessary but *not sufficient*: the write path
+  `Editor::do_stage_or_unstage` (`editor/src/git.rs:1417`) →
+  `project.buffer_for_id` (`:1425`) → `BufferDiffEvent::HunksStagedOrUnstaged`
+  → `GitStore::on_buffer_diff_event` (`git_store.rs:1986`) →
+  `repository_and_path_for_buffer_id` (`:2088`) → `buffer.project_path(cx)`
+  (`:2094`) resolves the target repo/path **from the buffer's project path**. A
+  file-less `Buffer::local` is neither registered in the project buffer store
+  (so `buffer_for_id` misses) nor has a `project_path` (so
+  `repository_and_path_for_buffer_id` returns `None` and the
+  `spawn_set_index_text_job` is silently skipped). This rework therefore
+  **requires** new `repo_path` plumbing: register the synthetic index buffer
+  with the project keyed to its `repo_path`, or carry an explicit `repo_path`
+  through the staging-write path so `set_index_text` runs. Without it, the
+  control renders but unstaging is a silent no-op.
+- **Refresh on any index change (story 39).** The snapshot reloads by hooking
+  the existing repository status-refresh signal, so unstaging from this view,
+  the panel/header `+`/`-`, and external `git add`/`reset` all keep it current.
+- **File-less-buffer plumbing (story 40).** Save and reload are disabled /
+  no-ops for the index buffer (the local save path rejects file-less buffers
+  with "buffer doesn't have a file"), and `ProjectDiff::active_path`
+  (`project_diff.rs:674`, which reads `buffer.file()?` at `:682`) must map the
+  focused index excerpt back to its `repo_path` via a path-key / stored
+  `repo_path` fallback rather than returning `None` when `buffer.file()` is
+  `None`.
+- **Open-to-edit (story 38).** Activating a hunk or the file header in the
+  read-only Staged view opens the **actual worktree file** in a normal editor,
+  giving an explicit path from reviewing the snapshot to making new (unstaged)
+  edits.
+
+**Implementation risks to validate.** Two distinct concerns, both on the inline
+unstage path:
+
+1. **Repo/path resolution (story 41) — the harder one.** As detailed in the
+   write-path bullet above, the inline editor staging path resolves the target
+   repo/path from `buffer.project_path(cx)`
+   (`repository_and_path_for_buffer_id`, `git_store.rs:2094`), which is `None`
+   for a file-less buffer, so the index write is silently skipped. Note the
+   bulk *panel* path is different: `stage_or_unstage_entries`
+   (`git_store.rs:6088-6250`) takes an explicit `Vec<RepoPath>` and is already
+   buffer-agnostic — so panel/header unstaging would keep working, while only
+   the *inline* (in-editor) control needs the new `repo_path` plumbing. This is
+   the change most likely to require touching `editor/src/git.rs` and the
+   `GitStore` buffer→repo resolution, not just the diff loader.
+2. **Index-content computation.** Inline unstage today derives the new index
+   text from the worktree buffer + the secondary (index↔worktree) diff. With an
+   index-backed buffer and base = `HEAD`, "unstage a hunk" means reverting that
+   hunk in the index toward `HEAD`; the `stage_or_unstage_hunks` wiring
+   (`editor/src/git.rs`, `git_store.rs` `set_index_text`) must be configured so
+   the computed index content is correct for this base/target pair.
+
+Documented as stories 36–41; supersedes the Staged half of M2's "secondary-diff
+route" decision.

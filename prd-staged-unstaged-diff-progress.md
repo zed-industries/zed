@@ -4,7 +4,10 @@ Companion to [`prd-staged-unstaged-diff.md`](prd-staged-unstaged-diff.md). Track
 the remaining work for the Phase 2 revision. Six followups surfaced after the
 first PoC build (A1–A6); A7 was added later after A5 landed and the
 staging-grouped section headers were observed to be inert outside the
-`+`/`-` button.
+`+`/`-` button. A8 was added after the Staged filter was observed to be
+editable — edits leak into the staged view because it shows the live worktree
+buffer rather than the git index — and is the only outstanding followup
+(A1–A7 are done).
 
 ## Status legend
 
@@ -25,7 +28,7 @@ work expected unless a Phase 2 followup uncovers a regression.
 
 ## Phase 2 — Panel grouping (M4 + M5)
 
-Initial build landed; six followups remain.
+Initial build landed; A1–A7 done, A8 outstanding.
 
 - [x] M4 — `Section::Staged` / `Section::Unstaged` variants, `group_by` setting,
       `(section, repo_path)` entry key (`d58c593003 feat(git_ui): group git panel entries by staging state`)
@@ -38,6 +41,7 @@ Initial build landed; six followups remain.
 - [x] A5 — click → filter switch coupling
 - [x] A6 — `SetSortBy` action + "Sort by" submenu, remove `ToggleGroupBy`
 - [x] A7 — section-header body click opens matching per-base `ProjectDiff`
+- [ ] A8 — Staged filter is a read-only git-index snapshot (fixes the edit leak)
 
 ## Followups (detailed checklists)
 
@@ -428,6 +432,95 @@ bulk-stage/unstage responsibility.
         the `cx.stop_propagation()` chain on the button.
 
 **Dependency:** A5 (uses `ProjectDiff::deploy_at(target_base, …)`).
+
+### A8 — Staged filter is a read-only git-index snapshot (M2 + M3) — NOT STARTED
+
+User stories: 36, 37, 38, 39, 40, 41. PRD: M2 "Revised for the Staged filter",
+appendix A8.
+
+**Problem.** The Staged filter shows excerpts of the **live worktree buffer**
+(`Capability::ReadWrite`, `project_diff.rs:408`) with `DiffHunkFilter::Staged`,
+not the git index. The filter only governs which hunks are highlighted, so
+later worktree edits appear in the staged view as unhighlighted context even
+though git records them as unstaged. Fix: for `DiffBase::Staged` only, show the
+git **index** content as a **read-only** snapshot. Scope is **Staged only** —
+Unstaged / Uncommitted stay live editable worktree; Branch unchanged.
+
+- [ ] **Index-backed buffer (M2, stories 36).** For `DiffBase::Staged`, build
+      the displayed buffer from `load_index_text` as a file-less
+      `Buffer::local(..)` with `Capability::ReadOnly`; diff base = `HEAD`
+      (`load_committed_text`). Unstaged keeps the existing worktree-buffer +
+      secondary-diff route. This is the core M2 asymmetry.
+- [ ] **Read-only enforcement is automatic (story 37, rendering half).**
+      Verify (a) typing into the index excerpt is rejected by the per-buffer
+      capability checks (`input.rs:92-104`, `multi_buffer.rs:1586+`), and (b)
+      the ProjectDiff multibuffer stays `Capability::ReadWrite` so
+      `editor.read_only(cx)` is `false` and the inline hunk controls still
+      render (`element.rs:11211`). No editor-level read-only flag.
+- [ ] **Inline unstage write-path plumbing (story 41) — the hard part.** The
+      inline write path resolves repo/path from the buffer:
+      `Editor::do_stage_or_unstage` → `project.buffer_for_id`
+      (`editor/src/git.rs:1425`) → `BufferDiffEvent::HunksStagedOrUnstaged` →
+      `GitStore::on_buffer_diff_event` (`git_store.rs:1986`) →
+      `repository_and_path_for_buffer_id` → `buffer.project_path(cx)`
+      (`git_store.rs:2094`). A file-less buffer isn't in the project buffer
+      store (`buffer_for_id` misses) and has no `project_path` (resolution
+      returns `None`, `spawn_set_index_text_job` silently skipped). Add
+      `repo_path` plumbing: register the synthetic index buffer with the
+      project keyed to its `repo_path`, **or** carry an explicit `repo_path`
+      through the staging-write path. Without this, the control renders but
+      unstaging is a no-op. (The bulk panel path `stage_or_unstage_entries`,
+      `git_store.rs:6088-6250`, already takes explicit `Vec<RepoPath>` and is
+      unaffected.)
+- [ ] **Index-content computation (story 41, second risk).** With base = `HEAD`
+      and the index as the buffer, confirm `stage_or_unstage_hunks` /
+      `set_index_text` compute the correct new index content for "revert this
+      hunk toward `HEAD`" (the existing logic was built around worktree +
+      secondary index↔worktree diff).
+- [ ] **Refresh on any index change (story 39).** Hook the existing repository
+      status-refresh signal to reload the index buffer, so unstaging from this
+      view, panel/header `+`/`-`, and external `git add`/`reset` all keep the
+      snapshot current (a synthetic buffer does not auto-reload from disk).
+- [ ] **File-less plumbing (story 40).** Make save and reload no-ops for the
+      index buffer (the local save path errors with "buffer doesn't have a
+      file"). Fix `ProjectDiff::active_path` (`project_diff.rs:674`, reads
+      `buffer.file()?` at `:682`) to resolve the focused index excerpt to its
+      `repo_path` via a path-key / stored-`repo_path` fallback instead of
+      returning `None`.
+- [ ] **Open-to-edit (story 38).** Activating a hunk or the file header in the
+      read-only Staged view opens the **actual worktree file** in a normal
+      editable editor (so edits land as unstaged changes). Add an "Open File"
+      affordance and wire Enter / double-click.
+- [ ] **Tests (A8 / stories 36–41)** in `crates/git_ui/` + `crates/project/`:
+      - *Read-only:* simulated text edit in the Staged filter is rejected;
+        assert index buffer capability `ReadOnly` and `editor.read_only(cx)`
+        is `false`.
+      - *No leak:* with a partially-staged file, edit the worktree out of band;
+        assert the Staged buffer equals the index content and lacks the edit.
+      - *Inline unstage writes the index (story 41 regression guard):* unstage
+        a hunk via the **in-editor** control; assert `set_index_text` ran and
+        the hunk reverts toward `HEAD`. Must fail if the `repo_path` plumbing
+        is missing (the silent-no-op).
+      - *Panel unstage still works:* unstage via the panel/header `-`; assert
+        the index changes (guards the explicit-`RepoPath` path).
+      - *Refresh on external change:* stage a file via the backend with the
+        Staged view open; assert the snapshot reloads (converse for `reset`).
+      - *Open-to-edit:* activating a hunk/header opens the worktree file
+        (capability `ReadWrite`, `buffer.file()` is `Some`).
+      - *Save/reload safety:* save / reload on the index buffer are no-ops, no
+        error.
+      - *Unstaged stays editable:* a text edit in the Unstaged filter is
+        accepted (scope-is-Staged-only guard).
+
+**Risks / open questions.** The inline unstage write-path rework (story 41) is
+the load-bearing unknown — it touches `editor/src/git.rs` and the `GitStore`
+buffer→repo resolution, not just the diff loader. If that plumbing proves too
+invasive for the PoC, a fallback is to drop *inline* unstage in the Staged view
+and rely on the panel/header `-` controls (which already work), revising stories
+37/41 — but the chosen design keeps inline unstage.
+
+**Dependency:** builds on M2 (single-sided loaders) and M3 (filter dropdown).
+Independent of A1–A7.
 
 ## Cross-cutting tasks
 
