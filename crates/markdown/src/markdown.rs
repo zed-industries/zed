@@ -53,7 +53,7 @@ use crate::parser::CodeBlockKind;
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
-pub type CodeSpanLinkCallback = Arc<dyn Fn(&str) -> Option<SharedString> + Send + Sync + 'static>;
+pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 
@@ -1144,7 +1144,7 @@ impl MarkdownElement {
 
     pub fn on_code_span_link(
         mut self,
-        callback: impl Fn(&str) -> Option<SharedString> + Send + Sync + 'static,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
     ) -> Self {
         self.code_span_link = Some(Arc::new(callback));
         self
@@ -1191,10 +1191,10 @@ impl MarkdownElement {
         range: Range<usize>,
         cx: &App,
     ) {
-        let link_url = if builder.code_block_stack.is_empty() {
+        let link_url = if builder.code_block_stack.is_empty() && builder.link_depth == 0 {
             self.code_span_link
                 .as_ref()
-                .and_then(|callback| callback(text))
+                .and_then(|callback| callback(text, cx))
         } else {
             None
         };
@@ -2059,6 +2059,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
+                                builder.link_depth += 1;
                                 builder.push_link(dest_url.clone(), range.clone());
                                 let style = self
                                     .style
@@ -2285,6 +2286,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
+                            builder.link_depth = builder.link_depth.saturating_sub(1);
                             builder.pop_text_style()
                         }
                     }
@@ -2715,6 +2717,7 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
+    link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
@@ -2753,6 +2756,7 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
+            link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
@@ -3534,7 +3538,7 @@ mod tests {
 
     fn render_markdown_with_code_span_link(
         markdown: &str,
-        callback: impl Fn(&str) -> Option<SharedString> + Send + Sync + 'static,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
         struct TestWindow;
@@ -4206,7 +4210,7 @@ mod tests {
         let source = "see `foo.rs` for details";
         let rendered = render_markdown_with_code_span_link(
             source,
-            |text| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
             cx,
         );
 
@@ -4230,6 +4234,19 @@ mod tests {
         let rendered = render_markdown("see `foo.rs` for details", cx);
 
         assert!(rendered.links.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_inside_markdown_link(cx: &mut TestAppContext) {
+        let source = "see [`foo.rs`](https://example.com) for details";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "https://example.com");
     }
 
     #[gpui::test]

@@ -453,6 +453,23 @@ impl ThreadView {
             && project.upgrade().is_some_and(|p| p.read(cx).is_local())
             && agent_id.as_ref() == "Codex";
 
+        if let Some(project) = project.upgrade() {
+            subscriptions.push(cx.subscribe(&project, {
+                let resolver = code_span_resolver.clone();
+                move |_this: &mut Self, _project, event: &project::Event, cx| {
+                    if matches!(
+                        event,
+                        project::Event::WorktreeAdded(_)
+                            | project::Event::WorktreeRemoved(_)
+                            | project::Event::WorktreeUpdatedEntries(_, _)
+                    ) {
+                        resolver.clear_cache();
+                        cx.notify();
+                    }
+                }
+            }));
+        }
+
         let title_editor = {
             let metadata = ThreadMetadataStore::try_global(cx)
                 .and_then(|store| store.read(cx).entry(root_thread_id).cloned());
@@ -8686,9 +8703,15 @@ impl ThreadView {
         &self,
         markdown: Entity<Markdown>,
         style: MarkdownStyle,
-        _cx: &App,
+        cx: &App,
     ) -> MarkdownElement {
-        render_agent_markdown(markdown, style, &self.workspace, &self.code_span_resolver)
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.code_span_resolver,
+            cx,
+        )
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
