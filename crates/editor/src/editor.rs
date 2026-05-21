@@ -35,6 +35,7 @@ pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
 mod lsp_ext;
+mod mouse;
 mod mouse_context_menu;
 pub mod movement;
 mod persistence;
