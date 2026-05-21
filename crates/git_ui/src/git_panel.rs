@@ -83,7 +83,7 @@ use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Workspace,
+    OpenTerminal, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
@@ -6956,6 +6956,11 @@ impl RenderOnce for PanelRepoFooter {
             .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
             .unwrap_or(true);
 
+        let work_dir_path = repo
+            .as_ref()
+            .and_then(|r| r.as_ref())
+            .map(|r| r.read(cx).work_directory_abs_path.clone());
+
         const MAX_BRANCH_LEN: usize = 16;
         const MAX_REPO_LEN: usize = 16;
         const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
@@ -7008,31 +7013,51 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector = PopoverMenu::new("repository-switcher")
-            .menu({
-                let project = project;
-                move |window, cx| {
-                    let project = project.clone()?;
-                    Some(cx.new(|cx| RepositorySelector::new(project, rems(20.), window, cx)))
-                }
-            })
-            .trigger_with_tooltip(
-                Button::new("repo-selector", truncated_repo_name)
-                    .size(ButtonSize::None)
-                    .label_size(LabelSize::Small)
-                    .truncate(true),
-                move |_, cx| {
-                    if single_repo {
-                        cx.new(|_| Empty).into()
-                    } else {
-                        Tooltip::simple("Switch Active Repository", cx)
-                    }
-                },
+        let repo_selector = div()
+            .id("repo-selector-wrapper")
+            .child(
+                PopoverMenu::new("repository-switcher")
+                    .menu({
+                        let project = project;
+                        move |window, cx| {
+                            let project = project.clone()?;
+                            Some(cx.new(|cx| RepositorySelector::new(project, rems(20.), window, cx)))
+                        }
+                    })
+                    .trigger_with_tooltip(
+                        Button::new("repo-selector", truncated_repo_name)
+                            .size(ButtonSize::None)
+                            .label_size(LabelSize::Small)
+                            .truncate(true),
+                        move |_, cx| {
+                            if single_repo {
+                                cx.new(|_| Empty).into()
+                            } else {
+                                Tooltip::simple("Switch Active Repository", cx)
+                            }
+                        },
+                    )
+                    .anchor(Anchor::BottomLeft)
+                    .offset(gpui::Point {
+                        x: px(0.0),
+                        y: px(-2.0),
+                    }),
             )
-            .anchor(Anchor::BottomLeft)
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-2.0),
+            .on_aux_click(move |event, window, cx| {
+                if !event.is_middle_click() {
+                    return;
+                }
+                if let Some(work_dir) = work_dir_path.clone() {
+                    cx.stop_propagation();
+                    window.dispatch_action(
+                        OpenTerminal {
+                            working_directory: work_dir.to_path_buf(),
+                            local: false,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                }
             })
             .into_any_element();
 
