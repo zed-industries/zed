@@ -803,7 +803,7 @@ impl Render for SkillCreator {
                         .child(
                             v_flex()
                                 .gap_2()
-                                .child(Label::new("Font-matter"))
+                                .child(Label::new("Front-matter"))
                                 .child(self.name_editor.clone())
                                 .child(self.description_editor.clone()),
                         )
