@@ -19197,6 +19197,7 @@ dependencies = [
  "gpui_util",
  "icons",
  "itertools 0.14.0",
+ "log",
  "menu",
  "num-format",
  "schemars 1.0.4",
