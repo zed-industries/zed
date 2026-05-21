@@ -6,6 +6,7 @@ mod timestamp;
 pub mod websocket_protocol;
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -147,6 +148,52 @@ pub struct SubmitEditPredictionSettledBody {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct SubmitEditPredictionSettledResponse {}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitJumpExampleBody {
+    pub example: JumpExampleSpec,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct SubmitJumpExampleResponse {}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct JumpExampleSpec {
+    pub capture_id: uuid::Uuid,
+    pub trigger: JumpExampleTrigger,
+    pub repository_url: Option<String>,
+    pub revision: Option<String>,
+    pub uncommitted_diff: String,
+    pub recently_opened_files: Vec<JumpExampleRecentFile>,
+    pub recently_viewed_files: Vec<JumpExampleRecentFile>,
+    pub cursor_path: Arc<Path>,
+    pub cursor_position: String,
+    pub edit_history: Vec<Arc<zeta_prompt::Event>>,
+    pub diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
+    pub future_edit_history: String,
+    pub navigation_history: Vec<JumpExampleRecentFile>,
+    pub git_log: Vec<JumpExampleGitCommit>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct JumpExampleGitCommit {
+    pub sha: String,
+    pub files: Vec<Arc<Path>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JumpExampleTrigger {
+    Prediction,
+    Diagnostic,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct JumpExampleRecentFile {
+    pub path: Arc<Path>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_position: Option<usize>,
+}
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct EditPredictionSettledKeptChars {

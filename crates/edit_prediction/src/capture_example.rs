@@ -5,9 +5,9 @@ use crate::{
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
-use gpui::{App, Entity, Task};
+use gpui::{App, AsyncApp, Entity, Task};
 use language::Buffer;
-use project::Project;
+use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
 use text::Point;
 
@@ -41,39 +41,15 @@ pub fn capture_example(
     let revision = repository_snapshot.head_commit.as_ref()?.sha.to_string();
 
     Some(cx.spawn(async move |cx| {
-        let mut events = events;
-        let mut diff_buffers_by_path: HashMap<Arc<Path>, (Entity<Buffer>, Entity<BufferDiff>)> =
-            HashMap::default();
-        for stored_event in &events {
-            let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-            let Some((project_path, relative_path)) = project.read_with(cx, |project, cx| {
-                let project_path = project
-                    .find_project_path(path, cx)
-                    .filter(|path| path.worktree_id == worktree_id)?;
-                let relative_path: Arc<Path> = project_path.path.as_std_path().into();
-                Some((project_path, relative_path))
-            }) else {
-                continue;
-            };
-
-            if let hash_map::Entry::Vacant(entry) = diff_buffers_by_path.entry(relative_path) {
-                let Some(diff) = uncommitted_diffs_by_path.get(entry.key()).cloned() else {
-                    continue;
-                };
-                let buffer = project
-                    .update(cx, |project, cx| {
-                        project.open_buffer(project_path.clone(), cx)
-                    })
-                    .await?;
-                entry.insert((buffer, diff));
-            }
-        }
-
-        events.retain(|stored_event| {
-            let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
-            let relative_path = strip_root_name(path, &root_name);
-            diff_buffers_by_path.contains_key(relative_path)
-        });
+        let (uncommitted_diff, events) = uncommitted_diff_for_events(
+            project.clone(),
+            worktree_id,
+            root_name.clone(),
+            events,
+            uncommitted_diffs_by_path,
+            cx,
+        )
+        .await?;
 
         let line_comment_prefix = snapshot
             .language()
@@ -85,19 +61,6 @@ pub fn capture_example(
             .background_executor()
             .spawn(async move { compute_cursor_excerpt(&snapshot, cursor_anchor) })
             .await;
-        let uncommitted_diff_snapshots = diff_buffers_by_path
-            .into_iter()
-            .map(|(relative_path, (buffer, diff))| {
-                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
-                let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
-                (relative_path, (snapshot, diff_snapshot))
-            })
-            .collect();
-        let uncommitted_diff = cx
-            .background_executor()
-            .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshots) })
-            .await;
-
         let mut edit_history = String::new();
         for stored_event in &events {
             write_event_with_relative_paths(&mut edit_history, &stored_event.event, &root_name);
@@ -163,7 +126,64 @@ fn strip_root_name<'a>(path: &'a Path, root_name: &str) -> &'a Path {
     path.strip_prefix(root_name).unwrap_or(path)
 }
 
-fn write_event_with_relative_paths(
+pub(crate) async fn uncommitted_diff_for_events(
+    project: Entity<Project>,
+    worktree_id: WorktreeId,
+    root_name: String,
+    mut events: Vec<StoredEvent>,
+    uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
+    cx: &mut AsyncApp,
+) -> Result<(String, Vec<StoredEvent>)> {
+    let mut diff_buffers_by_path: HashMap<Arc<Path>, (Entity<Buffer>, Entity<BufferDiff>)> =
+        HashMap::default();
+    for stored_event in &events {
+        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+        let Some((project_path, relative_path)) = project.read_with(cx, |project, cx| {
+            let project_path = project
+                .find_project_path(path, cx)
+                .filter(|path| path.worktree_id == worktree_id)?;
+            let relative_path: Arc<Path> = project_path.path.as_std_path().into();
+            Some((project_path, relative_path))
+        }) else {
+            continue;
+        };
+
+        if let hash_map::Entry::Vacant(entry) = diff_buffers_by_path.entry(relative_path) {
+            let Some(diff) = uncommitted_diffs_by_path.get(entry.key()).cloned() else {
+                continue;
+            };
+            let buffer = project
+                .update(cx, |project, cx| {
+                    project.open_buffer(project_path.clone(), cx)
+                })
+                .await?;
+            entry.insert((buffer, diff));
+        }
+    }
+
+    events.retain(|stored_event| {
+        let zeta_prompt::Event::BufferChange { path, .. } = stored_event.event.as_ref();
+        let relative_path = strip_root_name(path, &root_name);
+        diff_buffers_by_path.contains_key(relative_path)
+    });
+
+    let uncommitted_diff_snapshots = diff_buffers_by_path
+        .into_iter()
+        .map(|(relative_path, (buffer, diff))| {
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let diff_snapshot = diff.update(cx, |diff, cx| diff.snapshot(cx));
+            (relative_path, (snapshot, diff_snapshot))
+        })
+        .collect();
+    let uncommitted_diff = cx
+        .background_executor()
+        .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshots) })
+        .await;
+
+    Ok((uncommitted_diff, events))
+}
+
+pub(crate) fn write_event_with_relative_paths(
     output: &mut String,
     event: &zeta_prompt::Event,
     root_name: &str,

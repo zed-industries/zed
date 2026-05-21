@@ -69,6 +69,7 @@ use util::{RangeExt as _, ResultExt as _};
 pub mod cursor_excerpt;
 pub mod example_spec;
 pub mod fim;
+mod jump_example;
 mod license_detection;
 pub mod mercury;
 pub mod metrics;
@@ -90,6 +91,9 @@ mod edit_prediction_tests;
 use crate::cursor_excerpt::expand_context_syntactically_then_linewise;
 use crate::example_spec::ExampleSpec;
 use crate::example_spec::RecentFile;
+use crate::jump_example::{
+    JUMP_EXAMPLE_NAVIGATION_COUNT, JumpExampleTrigger, PendingJumpExampleCapture,
+};
 use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
@@ -327,6 +331,7 @@ struct ProjectState {
     last_edit_source: Option<BufferEditSource>,
     next_pending_prediction_id: usize,
     pending_predictions: ArrayVec<PendingPrediction, 2, u8>,
+    pending_jump_example_captures: Vec<PendingJumpExampleCapture>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     last_edit_prediction_refresh: Option<(EntityId, Instant)>,
     last_jump_prediction_refresh: Option<(EntityId, Instant)>,
@@ -392,6 +397,24 @@ impl ProjectState {
         let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
         let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
         Some((active_buffer, registered_buffer.last_position))
+    }
+
+    fn finalize_last_event(&mut self, cx: &mut Context<EditPredictionStore>) {
+        let Some(event) = self.last_event.take() else {
+            return;
+        };
+        let Some(event) = event.finalize(&self.license_detection_watchers, cx) else {
+            return;
+        };
+
+        for capture in &mut self.pending_jump_example_captures {
+            capture.future_events.push(event.event.clone());
+        }
+        jump_example::drain_completed_jump_example_captures(self, cx);
+        if self.events.len() + 1 >= EVENT_COUNT_MAX {
+            self.events.pop_front();
+        }
+        self.events.push_back(event.clone());
     }
 }
 
@@ -1012,7 +1035,7 @@ impl EditPredictionStore {
     }
 
     pub fn uncommitted_diffs_for_events(
-        &mut self,
+        &self,
         project: Entity<Project>,
         worktree_id: WorktreeId,
         events: Vec<StoredEvent>,
@@ -1216,6 +1239,7 @@ impl EditPredictionStore {
                 last_edit_source: None,
                 cancelled_predictions: HashSet::default(),
                 pending_predictions: ArrayVec::new(),
+                pending_jump_example_captures: Vec::new(),
                 next_pending_prediction_id: 0,
                 last_edit_prediction_refresh: None,
                 last_jump_prediction_refresh: None,
@@ -1333,7 +1357,17 @@ impl EditPredictionStore {
                     {
                         project_state.recent_paths.remove(ix);
                     }
+                    for capture in &mut project_state.pending_jump_example_captures {
+                        capture.navigation_history.push(RecentFile {
+                            path: path.path.as_std_path().into(),
+                            cursor_position: None,
+                        });
+                        if capture.navigation_history.len() > JUMP_EXAMPLE_NAVIGATION_COUNT {
+                            capture.navigation_history.remove(0);
+                        }
+                    }
                     project_state.recent_paths.push_front(path);
+                    jump_example::drain_completed_jump_example_captures(project_state, cx);
                 }
             }
             project::Event::DiagnosticsUpdated { .. } => {
@@ -1492,17 +1526,8 @@ impl EditPredictionStore {
             compute_diff_between_snapshots_in_range(&old_snapshot, &new_snapshot, &edit_range)
                 .is_some();
 
-        let events = &mut project_state.events;
-
         if !is_recordable_history_edit {
-            if let Some(event) = project_state.last_event.take() {
-                if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
-                    if events.len() + 1 >= EVENT_COUNT_MAX {
-                        events.pop_front();
-                    }
-                    events.push_back(event);
-                }
-            }
+            project_state.finalize_last_event(cx);
             return;
         }
 
@@ -1541,16 +1566,14 @@ impl EditPredictionStore {
             }
         }
 
-        if let Some(event) = project_state.last_event.take() {
-            if let Some(event) = event.finalize(&project_state.license_detection_watchers, cx) {
-                if events.len() + 1 >= EVENT_COUNT_MAX {
-                    events.pop_front();
-                }
-                events.push_back(event);
-            }
-        }
+        project_state.finalize_last_event(cx);
 
-        merge_trailing_events_if_needed(events, &old_snapshot, &new_snapshot, &edit_range);
+        merge_trailing_events_if_needed(
+            &mut project_state.events,
+            &old_snapshot,
+            &new_snapshot,
+            &edit_range,
+        );
 
         project_state.last_event = Some(LastEvent {
             old_file,
@@ -2621,7 +2644,7 @@ impl EditPredictionStore {
 
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta => {
-                let capture_events = (can_collect_data && rand::random_ratio(1, 10))
+                let capture_data = (can_collect_data && rand::random_ratio(1, 10))
                     .then(|| capture_worktree_id)
                     .flatten()
                     .map(|worktree_id| {
@@ -2630,13 +2653,29 @@ impl EditPredictionStore {
                             self.uncommitted_diffs_for_events(
                                 project.clone(),
                                 worktree_id,
-                                stored_events,
+                                stored_events.clone(),
                                 cx,
                             ),
                         )
                     });
+                if can_collect_data {
+                    jump_example::start_jump_example_capture(
+                        inputs.project.clone(),
+                        inputs.snapshot.clone(),
+                        inputs.position.clone(),
+                        match trigger {
+                            PredictEditsRequestTrigger::Diagnostics => {
+                                JumpExampleTrigger::Diagnostic
+                            }
+                            _ => JumpExampleTrigger::Prediction,
+                        },
+                        stored_events.clone(),
+                        inputs.diagnostic_search_range.clone(),
+                        cx,
+                    );
+                }
 
-                zeta::request_prediction_with_zeta(self, inputs, capture_events, repo_url, cx)
+                zeta::request_prediction_with_zeta(self, inputs, capture_data, repo_url, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -2957,6 +2996,7 @@ impl EditPredictionStore {
         project_state.recent_paths = paths.into_iter().collect();
     }
 
+    // todo! split method. Also should fix recently_opened_files just being opened_buffers call
     pub fn recent_paths_for_project(
         &self,
         project: &Entity<Project>,
