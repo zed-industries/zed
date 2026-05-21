@@ -29,6 +29,7 @@ pub struct GitPanelSettings {
     pub tree_view: bool,
     pub diff_stats: bool,
     pub show_count_badge: bool,
+    pub show_branch_name_in_status_bar: bool,
     pub starts_open: bool,
     pub commit_title_max_length: usize,
 }
@@ -76,6 +77,7 @@ impl Settings for GitPanelSettings {
             tree_view: git_panel.tree_view.unwrap(),
             diff_stats: git_panel.diff_stats.unwrap(),
             show_count_badge: git_panel.show_count_badge.unwrap(),
+            show_branch_name_in_status_bar: git_panel.show_branch_name_in_status_bar.unwrap(),
             starts_open: git_panel.starts_open.unwrap(),
             commit_title_max_length: git_panel.commit_title_max_length.unwrap(),
         }

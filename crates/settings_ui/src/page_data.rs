@@ -5718,6 +5718,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Branch Name in Status Bar",
+                description: "Whether to show the active branch name next to the git panel icon in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.show_branch_name_in_status_bar"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .show_branch_name_in_status_bar
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .show_branch_name_in_status_bar = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Commit Title Max Length",
                 description: "Maximum length of the commit message title before a warning is shown. Set to 0 to disable.",
                 field: Box::new(SettingField {

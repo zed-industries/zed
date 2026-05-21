@@ -706,6 +706,11 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub show_count_badge: Option<bool>,
 
+    /// Whether to show the current branch name next to the git panel icon in the status bar.
+    ///
+    /// Default: false
+    pub show_branch_name_in_status_bar: Option<bool>,
+
     /// Whether the git panel should open on startup.
     ///
     /// Default: false

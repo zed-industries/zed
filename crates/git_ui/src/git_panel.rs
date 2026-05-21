@@ -6754,7 +6754,25 @@ impl Panel for GitPanel {
     }
 
     fn icon_label(&self, _: &Window, cx: &App) -> Option<String> {
-        if !GitPanelSettings::get_global(cx).show_count_badge {
+        let settings = GitPanelSettings::get_global(cx);
+
+        if settings.show_branch_name_in_status_bar {
+            let branch_name = self
+                .active_repository
+                .as_ref()
+                .and_then(|repo| repo.read(cx).branch.as_ref().map(|branch| branch.name()));
+
+            return branch_name.map(|branch_name| {
+                let max_label_length = 24;
+                if branch_name.len() <= max_label_length {
+                    branch_name.to_string()
+                } else {
+                    util::truncate_and_trailoff(branch_name.trim_ascii(), max_label_length)
+                }
+            });
+        }
+
+        if !settings.show_count_badge {
             return None;
         }
         let total = self.changes_count;

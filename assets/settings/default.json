@@ -982,6 +982,10 @@
     //
     // Default: false
     "show_count_badge": false,
+    // Whether to show the active branch name next to the git panel icon in the status bar.
+    //
+    // Default: false
+    "show_branch_name_in_status_bar": false,
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
