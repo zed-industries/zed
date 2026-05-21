@@ -334,6 +334,7 @@ pub struct Markdown {
     mermaid_state: MermaidState,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
+    wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<String>,
@@ -356,9 +357,17 @@ pub enum CopyButtonVisibility {
     VisibleOnHover,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
         copy_button_visibility: CopyButtonVisibility,
+        wrap_button_visibility: WrapButtonVisibility,
         border: bool,
     },
     Custom {
@@ -401,12 +410,12 @@ enum EscapeAction {
 }
 
 impl EscapeAction {
-    fn output_len(&self) -> usize {
+    fn output_len(&self, c: char) -> usize {
         match self {
-            Self::PassThrough => 1,
+            Self::PassThrough => c.len_utf8(),
             Self::Nbsp(count) => count * '\u{00A0}'.len_utf8(),
             Self::DoubleNewline => 2,
-            Self::PrefixBackslash => 2,
+            Self::PrefixBackslash => '\\'.len_utf8() + c.len_utf8(),
         }
     }
 
@@ -431,8 +440,6 @@ impl EscapeAction {
     }
 }
 
-// Valid to operate on raw bytes since multi-byte UTF-8
-// sequences never contain ASCII-range bytes.
 struct MarkdownEscaper {
     in_leading_whitespace: bool,
 }
@@ -446,21 +453,21 @@ impl MarkdownEscaper {
         }
     }
 
-    fn next(&mut self, byte: u8) -> EscapeAction {
-        let action = if self.in_leading_whitespace && byte == b'\t' {
+    fn next(&mut self, c: char) -> EscapeAction {
+        let action = if self.in_leading_whitespace && c == '\t' {
             EscapeAction::Nbsp(Self::TAB_SIZE)
-        } else if self.in_leading_whitespace && byte == b' ' {
+        } else if self.in_leading_whitespace && c == ' ' {
             EscapeAction::Nbsp(1)
-        } else if byte == b'\n' {
+        } else if c == '\n' {
             EscapeAction::DoubleNewline
-        } else if byte.is_ascii_punctuation() {
+        } else if c.is_ascii_punctuation() {
             EscapeAction::PrefixBackslash
         } else {
             EscapeAction::PassThrough
         };
 
         self.in_leading_whitespace =
-            byte == b'\n' || (self.in_leading_whitespace && (byte == b' ' || byte == b'\t'));
+            c == '\n' || (self.in_leading_whitespace && (c == ' ' || c == '\t'));
         action
     }
 }
@@ -507,6 +514,7 @@ impl Markdown {
             mermaid_state: MermaidState::default(),
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
+            wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
@@ -528,6 +536,16 @@ impl Markdown {
             },
             cx,
         )
+    }
+
+    fn is_code_block_wrapped(&self, id: usize) -> bool {
+        self.wrapped_code_blocks.contains(&id)
+    }
+
+    fn toggle_code_block_wrap(&mut self, id: usize) {
+        if !self.wrapped_code_blocks.remove(&id) {
+            self.wrapped_code_blocks.insert(id);
+        }
     }
 
     fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
@@ -675,7 +693,7 @@ impl Markdown {
     pub fn escape(s: &str) -> Cow<'_, str> {
         let output_len: usize = {
             let mut escaper = MarkdownEscaper::new();
-            s.bytes().map(|byte| escaper.next(byte).output_len()).sum()
+            s.chars().map(|c| escaper.next(c).output_len(c)).sum()
         };
 
         if output_len == s.len() {
@@ -685,7 +703,7 @@ impl Markdown {
         let mut escaper = MarkdownEscaper::new();
         let mut output = String::with_capacity(output_len);
         for c in s.chars() {
-            escaper.next(c as u8).write_to(c, &mut output);
+            escaper.next(c).write_to(c, &mut output);
         }
         output.into()
     }
@@ -1075,6 +1093,7 @@ impl MarkdownElement {
             style,
             code_block_renderer: CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: WrapButtonVisibility::Hidden,
                 border: false,
             },
             on_url_click: None,
@@ -1893,11 +1912,18 @@ impl Element for MarkdownElement {
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
                                         .map(|mut code_block| {
-                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                            if is_wrapped {
+                                                code_block.w_full()
+                                            } else if let Some(scroll_handle) =
+                                                scroll_handle.as_ref()
+                                            {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
@@ -2136,10 +2162,14 @@ impl Element for MarkdownElement {
 
                         if let CodeBlockRenderer::Default {
                             copy_button_visibility,
+                            wrap_button_visibility,
                             ..
                         } = &self.code_block_renderer
-                            && *copy_button_visibility != CopyButtonVisibility::Hidden
+                            && (*copy_button_visibility != CopyButtonVisibility::Hidden
+                                || *wrap_button_visibility != WrapButtonVisibility::Hidden)
                         {
+                            let copy_button_visibility = *copy_button_visibility;
+                            let wrap_button_visibility = *wrap_button_visibility;
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     &parsed_markdown.source()[range.clone()],
@@ -2148,28 +2178,48 @@ impl Element for MarkdownElement {
                                     ..content_range.end + range.start;
 
                                 let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .justify_end()
-                                        .when_else(
-                                            *copy_button_visibility
-                                                == CopyButtonVisibility::VisibleOnHover,
-                                            |this| {
-                                                this.top_0()
-                                                    .right_0()
-                                                    .visible_on_hover("code_block")
-                                            },
-                                            |this| this.top_1p5().right_1p5(),
-                                        )
-                                        .child(codeblock),
-                                )
+
+                                let any_hover = copy_button_visibility
+                                    == CopyButtonVisibility::VisibleOnHover
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::VisibleOnHover;
+                                let any_always = copy_button_visibility
+                                    == CopyButtonVisibility::AlwaysVisible
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::AlwaysVisible;
+                                let use_hover = any_hover && !any_always;
+
+                                let mut button_row = h_flex()
+                                    .gap_0p5()
+                                    .absolute()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .when_else(
+                                        use_hover,
+                                        |this| {
+                                            this.top_1().right_1().visible_on_hover("code_block")
+                                        },
+                                        |this| this.top_1p5().right_1p5(),
+                                    );
+
+                                if wrap_button_visibility != WrapButtonVisibility::Hidden {
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+                                    button_row = button_row.child(render_wrap_code_block_button(
+                                        range.start,
+                                        is_wrapped,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                if copy_button_visibility != CopyButtonVisibility::Hidden {
+                                    button_row = button_row.child(render_copy_code_block_button(
+                                        range.end,
+                                        code,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                el.child(button_row)
                             });
                         }
 
@@ -2418,6 +2468,29 @@ fn apply_heading_style(
     }
 
     heading
+}
+
+fn render_wrap_code_block_button(
+    id: usize,
+    is_wrapped: bool,
+    markdown: Entity<Markdown>,
+) -> impl IntoElement {
+    let (icon, tooltip) = if is_wrapped {
+        (IconName::TextUnwrap, "Unwrap Content")
+    } else {
+        (IconName::TextWrap, "Wrap Content")
+    };
+
+    IconButton::new(("wrap-code-block", id), icon)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text(tooltip))
+        .on_click(move |_event, _window, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.toggle_code_block_wrap(id);
+                cx.notify();
+            });
+        })
 }
 
 fn render_copy_code_block_button(
@@ -3436,6 +3509,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -3931,6 +4005,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_escape_non_ascii() {
+        // Cyrillic characters should not have backslashes added before them,
+        // but ASCII punctuation should still be escaped.
+        assert_eq!(Markdown::escape("Привет, мир"), r"Привет\, мир");
+        // Test with markdown special characters mixed in
+        assert_eq!(Markdown::escape("Привет, *мир*"), r"Привет\, \*мир\*");
+        // Test with the exact example from the issue (single quotes are also ASCII punctuation)
+        assert_eq!(
+            Markdown::escape("Отсутствует пробел справа от ','"),
+            r"Отсутствует пробел справа от \'\,\'"
+        );
+        // Test more non-ASCII scripts
+        assert_eq!(
+            Markdown::escape("こんにちは *world*"),
+            r"こんにちは \*world\*"
+        );
+        assert_eq!(Markdown::escape("العربيّة [link]"), r"العربيّة \[link\]");
+        assert_eq!(Markdown::escape("Ελληνικά _text_"), r"Ελληνικά \_text\_");
+        assert_eq!(Markdown::escape("עברית `code`"), r"עברית \`code\`");
+        // Non-ASCII followed by ASCII punctuation
+        assert_eq!(Markdown::escape("Test: тест"), r"Test\: тест");
+    }
+
     fn has_code_block(markdown: &str) -> bool {
         let parsed_data = parse_markdown_with_options(markdown, false, false);
         parsed_data
@@ -3959,12 +4057,12 @@ mod tests {
         ];
         for input in cases {
             let mut escaper = MarkdownEscaper::new();
-            let precomputed: usize = input.bytes().map(|b| escaper.next(b).output_len()).sum();
+            let precomputed: usize = input.chars().map(|c| escaper.next(c).output_len(c)).sum();
 
             let mut escaper = MarkdownEscaper::new();
             let mut output = String::new();
             for c in input.chars() {
-                escaper.next(c as u8).write_to(c, &mut output);
+                escaper.next(c).write_to(c, &mut output);
             }
 
             assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);

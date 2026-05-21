@@ -126,7 +126,7 @@ impl LspInstaller for VtslsLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -135,21 +135,44 @@ impl LspInstaller for VtslsLspAdapter {
         async move {
             let server_path = container_dir.join(Self::SERVER_PATH);
 
-            let typescript_version = latest_version.typescript_version.to_string();
-            let server_version = latest_version.server_version.to_string();
+            node.npm_install_latest_packages(
+                &container_dir,
+                &[Self::PACKAGE_NAME, Self::TYPESCRIPT_PACKAGE_NAME],
+            )
+            .await?;
 
-            let mut packages_to_install = Vec::new();
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: typescript_server_binary_arguments(&server_path),
+            })
+        }
+    }
+
+    fn check_if_version_installed(
+        &self,
+        version: &Self::BinaryVersion,
+        container_dir: &PathBuf,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Option<LanguageServerBinary>> + use<> {
+        let node = self.node.clone();
+        let typescript_version = version.typescript_version.clone();
+        let server_version = version.server_version.clone();
+        let container_dir = container_dir.clone();
+
+        async move {
+            let server_path = container_dir.join(Self::SERVER_PATH);
 
             if node
                 .should_install_npm_package(
                     Self::PACKAGE_NAME,
                     &server_path,
                     &container_dir,
-                    VersionStrategy::Latest(&latest_version.server_version),
+                    VersionStrategy::Latest(&server_version),
                 )
                 .await
             {
-                packages_to_install.push((Self::PACKAGE_NAME, server_version.as_str()));
+                return None;
             }
 
             if node
@@ -157,19 +180,15 @@ impl LspInstaller for VtslsLspAdapter {
                     Self::TYPESCRIPT_PACKAGE_NAME,
                     &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
                     &container_dir,
-                    VersionStrategy::Latest(&latest_version.typescript_version),
+                    VersionStrategy::Latest(&typescript_version),
                 )
                 .await
             {
-                packages_to_install
-                    .push((Self::TYPESCRIPT_PACKAGE_NAME, typescript_version.as_str()));
+                return None;
             }
 
-            node.npm_install_packages(&container_dir, &packages_to_install)
-                .await?;
-
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
+            Some(LanguageServerBinary {
+                path: node.binary_path().await.ok()?,
                 env: None,
                 arguments: typescript_server_binary_arguments(&server_path),
             })

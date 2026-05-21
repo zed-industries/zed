@@ -83,7 +83,7 @@ mod tests {
         let project = prompt_store::ProjectContext::default();
         let template = SystemPromptTemplate {
             project: &project,
-            available_tools: vec!["echo".into(), "update_plan".into()],
+            available_tools: vec!["echo".into(), "update_plan".into(), "update_title".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
@@ -94,6 +94,7 @@ mod tests {
         assert!(rendered.contains("Today's Date: 2026-01-01"));
         assert!(rendered.contains("## Fixing Diagnostics"));
         assert!(rendered.contains("## Planning"));
+        assert!(rendered.contains("## Session Title"));
         assert!(rendered.contains("test-model"));
     }
 

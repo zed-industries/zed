@@ -30,6 +30,8 @@ For example,
 - You use $12 of incremental tokens in the month of February, with the first $10 spent on February 15. You'll receive an invoice for $10 on February 15.
 - On March 1, you receive an invoice for $12: $10 (March Pro subscription) and $2 in leftover token spend, since your usage didn't cross the $10 threshold.
 
+For high-volume users, the threshold automatically scales up over time to keep invoicing manageable, so subsequent invoices may trigger at larger increments rather than every $10.
+
 ### Payment failures {#payment-failures}
 
 If payment of an invoice fails, Zed will block usage of our hosted models until the payment is complete. Email [billing-support@zed.dev](mailto:billing-support@zed.dev) for assistance.
