@@ -1178,7 +1178,7 @@ SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentIn
 
 struct PolychromeSprite {
     uint order;
-    uint pad;
+    uint filter;
     uint grayscale;
     float opacity;
     Bounds bounds;

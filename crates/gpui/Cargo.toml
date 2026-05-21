@@ -188,6 +188,10 @@ name = "image"
 path = "examples/image/image.rs"
 
 [[example]]
+name = "image_filter"
+path = "examples/image_filter.rs"
+
+[[example]]
 name = "input"
 path = "examples/input.rs"
 

@@ -7,9 +7,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, ImageFilter, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -124,6 +124,8 @@ pub(crate) struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+    polychrome_linear_sampler: metal::SamplerState,
+    polychrome_nearest_sampler: metal::SamplerState,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
@@ -310,6 +312,16 @@ impl MetalRenderer {
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let polychrome_linear_sampler = build_sampler_state(
+            &device,
+            metal::MTLSamplerMinMagFilter::Linear,
+            "polychrome_linear_sampler",
+        );
+        let polychrome_nearest_sampler = build_sampler_state(
+            &device,
+            metal::MTLSamplerMinMagFilter::Nearest,
+            "polychrome_nearest_sampler",
+        );
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -339,6 +351,8 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            polychrome_linear_sampler,
+            polychrome_nearest_sampler,
             surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
@@ -826,15 +840,19 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => self
-                    .draw_polychrome_sprites(
-                        texture_id,
-                        &scene.polychrome_sprites[range],
-                        instance_buffer,
-                        &mut instance_offset,
-                        viewport_size,
-                        command_encoder,
-                    ),
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    filter,
+                    range,
+                } => self.draw_polychrome_sprites(
+                    texture_id,
+                    filter,
+                    &scene.polychrome_sprites[range],
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range],
                     instance_buffer,
@@ -1310,6 +1328,7 @@ impl MetalRenderer {
     fn draw_polychrome_sprites(
         &self,
         texture_id: AtlasTextureId,
+        filter: ImageFilter,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -1353,6 +1372,11 @@ impl MetalRenderer {
             *instance_offset as u64,
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
+        let sampler = match filter {
+            ImageFilter::Linear => &self.polychrome_linear_sampler,
+            ImageFilter::Nearest => &self.polychrome_nearest_sampler,
+        };
+        command_encoder.set_fragment_sampler_state(SpriteSamplerIndex::Atlas as u64, Some(sampler));
 
         let sprite_bytes_len = mem::size_of_val(sprites);
         let buffer_contents =
@@ -1542,6 +1566,18 @@ fn build_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
+fn build_sampler_state(
+    device: &metal::DeviceRef,
+    filter: metal::MTLSamplerMinMagFilter,
+    label: &str,
+) -> metal::SamplerState {
+    let descriptor = metal::SamplerDescriptor::new();
+    descriptor.set_label(label);
+    descriptor.set_min_filter(filter);
+    descriptor.set_mag_filter(filter);
+    device.new_sampler(&descriptor)
+}
+
 fn build_path_sprite_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
@@ -1648,6 +1684,11 @@ enum SpriteInputIndex {
     ViewportSize = 2,
     AtlasTextureSize = 3,
     AtlasTexture = 4,
+}
+
+#[repr(C)]
+enum SpriteSamplerIndex {
+    Atlas = 0,
 }
 
 #[repr(C)]

@@ -698,10 +698,9 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
 fragment float4 polychrome_sprite_fragment(
     PolychromeSpriteFragmentInput input [[stage_in]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
-    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
+    sampler atlas_texture_sampler [[sampler(SpriteSamplerIndex_Atlas)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
-  constexpr sampler atlas_texture_sampler(mag_filter::linear,
-                                          min_filter::linear);
   float4 sample =
       atlas_texture.sample(atlas_texture_sampler, input.tile_position);
   float distance =

@@ -413,7 +413,9 @@ impl<'a> Iterator for BatchIterator<'a> {
                 })
             }
             PrimitiveKind::PolychromeSprite => {
-                let texture_id = self.polychrome_sprites_iter.peek().unwrap().tile.texture_id;
+                let first = self.polychrome_sprites_iter.peek().unwrap();
+                let texture_id = first.tile.texture_id;
+                let filter = first.filter;
                 let sprites_start = self.polychrome_sprites_start;
                 let mut sprites_end = sprites_start + 1;
                 self.polychrome_sprites_iter.next();
@@ -422,6 +424,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                     .next_if(|sprite| {
                         (sprite.order, batch_kind) < max_order_and_kind
                             && sprite.tile.texture_id == texture_id
+                            && sprite.filter == filter
                     })
                     .is_some()
                 {
@@ -430,6 +433,7 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.polychrome_sprites_start = sprites_end;
                 Some(PrimitiveBatch::PolychromeSprites {
                     texture_id,
+                    filter,
                     range: sprites_start..sprites_end,
                 })
             }
@@ -476,9 +480,22 @@ pub enum PrimitiveBatch {
     },
     PolychromeSprites {
         texture_id: AtlasTextureId,
+        filter: ImageFilter,
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+}
+
+/// How an atlas texture is sampled when its source pixels don't map 1:1 to
+/// destination pixels.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default)]
+#[repr(C)]
+pub enum ImageFilter {
+    /// Bilinear filtering
+    #[default]
+    Linear = 0,
+    /// Nearest-neighbor sampling
+    Nearest = 1,
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -695,7 +712,7 @@ impl From<SubpixelSprite> for Primitive {
 #[expect(missing_docs)]
 pub struct PolychromeSprite {
     pub order: DrawOrder,
-    pub pad: u32,
+    pub filter: ImageFilter,
     pub grayscale: bool,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
