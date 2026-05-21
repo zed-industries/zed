@@ -298,6 +298,8 @@ pub struct ResponseSummary {
     pub usage: Option<ResponseUsage>,
     #[serde(default)]
     pub output: Vec<ResponseOutputItem>,
+    #[serde(default)]
+    pub service_tier: Option<crate::ServiceTier>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
