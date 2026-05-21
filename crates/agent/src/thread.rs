@@ -665,8 +665,10 @@ pub trait ThreadEnvironment {
     fn create_terminal(
         &self,
         command: String,
+        extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>>;
 

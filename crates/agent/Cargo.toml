@@ -65,6 +65,7 @@ streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
 telemetry.workspace = true
+tempfile.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
@@ -99,7 +100,6 @@ project = { workspace = true, "features" = ["test-support"] }
 rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
-tempfile.workspace = true
 
 theme = { workspace = true, "features" = ["test-support"] }
 

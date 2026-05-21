@@ -200,8 +200,10 @@ impl crate::ThreadEnvironment for FakeThreadEnvironment {
     fn create_terminal(
         &self,
         _command: String,
+        _extra_env: Vec<acp::EnvVariable>,
         _cwd: Option<std::path::PathBuf>,
         _output_byte_limit: Option<u64>,
+        _sandbox_wrap: Option<acp_thread::SandboxWrap>,
         _cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
         self.terminal_creations.fetch_add(1, Ordering::SeqCst);
@@ -242,8 +244,10 @@ impl crate::ThreadEnvironment for MultiTerminalEnvironment {
     fn create_terminal(
         &self,
         _command: String,
+        _extra_env: Vec<acp::EnvVariable>,
         _cwd: Option<std::path::PathBuf>,
         _output_byte_limit: Option<u64>,
+        _sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn crate::TerminalHandle>>> {
         let handle = Rc::new(cx.update(|cx| FakeTerminalHandle::new_never_exits(cx)));
@@ -320,6 +324,7 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: Some(5),
+                ..Default::default()
             }),
             event_stream,
             cx,
@@ -387,6 +392,7 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                ..Default::default()
             }),
             event_stream,
             cx,
@@ -4892,6 +4898,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "rm -rf /".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -4944,6 +4951,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -5002,6 +5010,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "sudo rm file".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -5049,6 +5058,7 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
