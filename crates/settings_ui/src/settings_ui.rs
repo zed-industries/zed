@@ -42,7 +42,8 @@ use ui::{
 
 use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::{
-    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, client_side_decorations,
+    AppState, MultiWorkspace, OpenOptions, OpenVisible, Workspace, WorkspaceSettings,
+    client_side_decorations,
 };
 use zed_actions::{OpenProjectSettings, OpenSettings, OpenSettingsAt};
 
@@ -500,11 +501,12 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
         .add_basic_renderer::<settings::CompletionDetailAlignment>(render_dropdown)
+        .add_basic_renderer::<settings::CompletionMenuItemKind>(render_dropdown)
         .add_basic_renderer::<settings::DiffViewStyle>(render_dropdown)
         .add_basic_renderer::<settings::AlternateScroll>(render_dropdown)
         .add_basic_renderer::<settings::TerminalBlink>(render_dropdown)
         .add_basic_renderer::<settings::CursorShapeContent>(render_dropdown)
-        .add_basic_renderer::<settings::EditPredictionPromptFormat>(render_dropdown)
+        .add_basic_renderer::<settings::EditPredictionPromptFormatContent>(render_dropdown)
         .add_basic_renderer::<settings::EditPredictionDataCollectionChoice>(render_dropdown)
         .add_basic_renderer::<f32>(render_editable_number_field)
         .add_basic_renderer::<u32>(render_editable_number_field)
@@ -661,7 +663,10 @@ pub fn open_settings_editor(
         let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
             Ok(val) if val == "server" => gpui::WindowDecorations::Server,
             Ok(val) if val == "client" => gpui::WindowDecorations::Client,
-            _ => gpui::WindowDecorations::Client,
+            _ => match WorkspaceSettings::get_global(cx).window_decorations {
+                settings::WindowDecorations::Server => gpui::WindowDecorations::Server,
+                settings::WindowDecorations::Client => gpui::WindowDecorations::Client,
+            },
         };
 
         cx.open_window(
@@ -763,6 +768,7 @@ pub struct SettingsWindow {
     list_state: ListState,
     shown_errors: HashSet<String>,
     pub(crate) regex_validation_error: Option<String>,
+    last_copied_link_path: Option<&'static str>,
 }
 
 struct SearchDocument {
@@ -1035,6 +1041,7 @@ impl SettingsPageItem {
                             sub_page_link.title.clone(),
                             sub_page_link.json_path,
                             false,
+                            settings_window,
                             cx,
                         )),
                 )
@@ -1228,6 +1235,7 @@ fn render_settings_item(
                 setting_item.description,
                 setting_item.field.json_path(),
                 sub_field,
+                settings_window,
                 cx,
             ))
         })
@@ -1237,16 +1245,13 @@ fn render_settings_item_link(
     id: impl Into<ElementId>,
     json_path: Option<&'static str>,
     sub_field: bool,
+    settings_window: &SettingsWindow,
     cx: &mut Context<'_, SettingsWindow>,
 ) -> impl IntoElement {
-    let clipboard_has_link = cx
-        .read_from_clipboard()
-        .and_then(|entry| entry.text())
-        .map_or(false, |maybe_url| {
-            json_path.is_some() && maybe_url.strip_prefix("zed://settings/") == json_path
-        });
+    let copied_link_matches =
+        json_path.is_some() && json_path == settings_window.last_copied_link_path;
 
-    let (link_icon, link_icon_color) = if clipboard_has_link {
+    let (link_icon, link_icon_color) = if copied_link_matches {
         (IconName::Check, Color::Success)
     } else {
         (IconName::Link, Color::Muted)
@@ -1271,9 +1276,10 @@ fn render_settings_item_link(
                 .shape(IconButtonShape::Square)
                 .tooltip(Tooltip::text("Copy Link"))
                 .when_some(json_path, |this, path| {
-                    this.on_click(cx.listener(move |_, _, _, cx| {
+                    this.on_click(cx.listener(move |this, _, _, cx| {
                         let link = format!("zed://settings/{}", path);
                         cx.write_to_clipboard(ClipboardItem::new_string(link));
+                        this.last_copied_link_path = Some(path);
                         cx.notify();
                     }))
                 }),
@@ -1685,6 +1691,7 @@ impl SettingsWindow {
             shown_errors: HashSet::default(),
             regex_validation_error: None,
             list_state,
+            last_copied_link_path: None,
         };
 
         this.fetch_files(window, cx);
@@ -1979,11 +1986,14 @@ impl SettingsWindow {
                 async move {
                     let query_lower = query.to_lowercase();
                     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
+                    if query_words.is_empty() {
+                        return Vec::new();
+                    }
                     search_index
                         .documents
                         .iter()
                         .filter(|doc| {
-                            query_words.iter().any(|query_word| {
+                            query_words.iter().all(|query_word| {
                                 doc.words
                                     .iter()
                                     .any(|doc_word| doc_word.starts_with(query_word))
@@ -2996,19 +3006,26 @@ impl SettingsWindow {
     }
 
     fn render_sub_page_breadcrumbs(&self) -> impl IntoElement {
+        let scope_name: SharedString = self
+            .display_name(&self.current_file)
+            .unwrap_or_else(|| self.current_file.setting_type().to_string())
+            .into();
+
         h_flex().min_w_0().gap_1().overflow_x_hidden().children(
             itertools::intersperse(
-                std::iter::once(self.current_page().title.into()).chain(
-                    self.sub_page_stack
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(index, page)| {
-                            (index == 0)
-                                .then(|| page.section_header.clone())
-                                .into_iter()
-                                .chain(std::iter::once(page.link.title.clone()))
-                        }),
-                ),
+                std::iter::once(scope_name)
+                    .chain(std::iter::once(self.current_page().title.into()))
+                    .chain(
+                        self.sub_page_stack
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(index, page)| {
+                                (index == 0)
+                                    .then(|| page.section_header.clone())
+                                    .into_iter()
+                                    .chain(std::iter::once(page.link.title.clone()))
+                            }),
+                    ),
                 "/".into(),
             )
             .map(|item| Label::new(item).color(Color::Muted)),
@@ -3344,6 +3361,65 @@ impl SettingsWindow {
                 .into_any_element()
         }
 
+        let mut restricted_banner = gpui::Empty.into_any_element();
+        if let SettingsUiFile::Project((worktree_id, _)) = &self.current_file {
+            let worktree_id = *worktree_id;
+            let is_restricted = all_projects(self.original_window.as_ref(), cx)
+                .find(|project| project.read(cx).worktree_for_id(worktree_id, cx).is_some())
+                .map(|project| {
+                    let worktree_store = project.read(cx).worktree_store();
+                    project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                        &worktree_store,
+                        cx,
+                    )
+                })
+                .unwrap_or(false);
+
+            if is_restricted {
+                let original_window = self.original_window;
+                restricted_banner = Banner::new()
+                    .severity(Severity::Warning)
+                    .child(
+                        v_flex()
+                            .my_0p5()
+                            .gap_0p5()
+                            .child(Label::new("Restricted Mode"))
+                            .child(
+                                Label::new(
+                                    "This project is in restricted mode. Some project settings may not apply.",
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .action_slot(
+                        div().pr_2().pb_1().child(
+                            Button::new("manage-trust", "Manage Trust")
+                                .style(ButtonStyle::Tinted(ui::TintColor::Warning))
+                                .on_click(cx.listener(move |_this, _, window, cx| {
+                                    if let Some(original_window) = original_window {
+                                        original_window
+                                            .update(cx, |multi_workspace, window, cx| {
+                                                multi_workspace
+                                                    .workspace()
+                                                    .update(cx, |workspace, cx| {
+                                                        workspace
+                                                            .show_worktree_trust_security_modal(
+                                                                true, window, cx,
+                                                            );
+                                                    });
+                                            })
+                                            .log_err();
+                                    }
+                                    // Close the settings window
+                                    window.remove_window();
+                                })),
+                        ),
+                    )
+                    .into_any_element();
+            }
+        }
+
         v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
@@ -3434,7 +3510,8 @@ impl SettingsWindow {
                     .px_8()
                     .gap_2()
                     .child(page_header)
-                    .child(warning_banner),
+                    .child(warning_banner)
+                    .child(restricted_banner),
             )
             .child(
                 div()
@@ -4472,6 +4549,7 @@ pub mod test {
                 list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
                 shown_errors: HashSet::default(),
                 regex_validation_error: None,
+                last_copied_link_path: None,
             }
         }
     }
@@ -4597,6 +4675,7 @@ pub mod test {
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(0.0)),
             shown_errors: HashSet::default(),
             regex_validation_error: None,
+            last_copied_link_path: None,
         };
 
         settings_window.build_filter_table();

@@ -195,6 +195,19 @@ pub fn path_ends_with(base: &Path, suffix: &Path) -> bool {
     strip_path_suffix(base, suffix).is_some()
 }
 
+/// Case-insensitive ASCII comparison of a path component to a literal
+/// folder name. macOS and Windows use case-insensitive filesystems by
+/// default, so a path like `.ZED/settings.json` resolves to the same
+/// inode as the lowercase form. A case-sensitive `==` check would miss
+/// those and let a malicious settings author bypass classifiers with
+/// unusual casing. Callers should restrict `name` to ASCII; for ASCII
+/// inputs `eq_ignore_ascii_case` is safe and stable across platforms.
+pub fn component_matches_ignore_ascii_case(component: &OsStr, name: &str) -> bool {
+    component
+        .to_str()
+        .is_some_and(|s| s.eq_ignore_ascii_case(name))
+}
+
 pub fn strip_path_suffix<'a>(base: &'a Path, suffix: &Path) -> Option<&'a Path> {
     if let Some(remainder) = base
         .as_os_str()

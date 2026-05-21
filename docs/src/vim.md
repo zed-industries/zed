@@ -30,7 +30,7 @@ There are four types of features in vim mode that use Zed's core functionality, 
 
 When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
-If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
+If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command {#action workspace::ToggleVimMode}.
 
 > **Note**: This command toggles the following property in your user settings:
 >
@@ -536,6 +536,17 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
   "bindings": {
     "s": "vim::PushSneak",
     "shift-s": "vim::PushSneakBackward"
+  }
+}
+```
+
+The Helix-style jump-to-word action shows jump labels at visible word starts. It has no default binding in Vim mode, but you can enable it by adding a keybinding to your keymap. This example uses `g w`, which matches the default Helix binding, but overrides Vim mode's default rewrap binding.
+
+```json [keymap]
+{
+  "context": "vim_mode == normal || vim_mode == visual",
+  "bindings": {
+    "g w": "vim::HelixJumpToWord"
   }
 }
 ```

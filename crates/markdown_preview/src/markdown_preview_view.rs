@@ -20,7 +20,7 @@ use markdown::{
 };
 use project::Project;
 use project::search::SearchQuery;
-use settings::Settings;
+use settings::{SeedQuerySetting, Settings};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
@@ -623,6 +623,7 @@ impl MarkdownPreviewView {
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             })
             .scroll_handle(self.scroll_handle.clone())
@@ -975,6 +976,16 @@ impl Item for MarkdownPreviewView {
             .unwrap_or_else(|| Task::ready(Ok(())))
     }
 
+    fn reload(
+        &mut self,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        // The preview is not the owner of the source editor's buffer, so force-closing it should not discard editor changes.
+        Task::ready(Ok(()))
+    }
+
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
 
     fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
@@ -1010,7 +1021,9 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(bg_color)
             .child(
                 div()
@@ -1098,7 +1111,7 @@ impl SearchableItem for MarkdownPreviewView {
 
     fn query_suggestion(
         &mut self,
-        _ignore_settings: bool,
+        _seed_query_override: Option<SeedQuerySetting>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
@@ -1350,6 +1363,92 @@ mod tests {
                 .load(path!("/dir/todo.md").as_ref())
                 .await
                 .unwrap(),
+            "- [x] Finish work\n"
+        );
+    }
+
+    #[gpui::test]
+    async fn force_closing_preview_preserves_source_editor_changes(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "todo.md": "- [ ] Finish work\n"
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir/todo.md"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        let (preview, editor) = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let editor: Entity<Editor> = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .unwrap();
+
+                let preview = workspace.update(cx, |workspace, cx| {
+                    let preview = MarkdownPreviewView::create_markdown_view(
+                        workspace,
+                        editor.clone(),
+                        window,
+                        cx,
+                    );
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview.clone()), true, true, None, window, cx)
+                    });
+                    preview
+                });
+
+                (preview, editor)
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let view_handle = preview.downgrade();
+                assert!(preview.read(cx).focus_handle.contains_focused(window, cx));
+                MarkdownPreviewView::apply_checkbox_toggle_to_editor(&editor, 2..5, true, cx);
+                MarkdownPreviewView::refresh_preview(view_handle, window, cx);
+            })
+            .unwrap();
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
+            "- [x] Finish work\n"
+        );
+
+        let close_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.close_item_by_id(preview.entity_id(), SaveIntent::Skip, window, cx)
+                    })
+                })
+            })
+            .unwrap();
+
+        close_task.await.unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            editor.read_with(cx, |editor, cx| editor.buffer().read(cx).read(cx).text()),
             "- [x] Finish work\n"
         );
     }

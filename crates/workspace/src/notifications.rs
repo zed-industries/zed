@@ -402,6 +402,7 @@ impl Render for LanguageServerPrompt {
                             .text_size(TextSize::Small.rems(cx))
                             .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                 copy_button_visibility: CopyButtonVisibility::Hidden,
+                                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                 border: false,
                             })
                             .on_url_click(|link, _, cx| cx.open_url(&link)),

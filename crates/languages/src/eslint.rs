@@ -17,6 +17,7 @@ use settings::SettingsLocation;
 use smol::{fs, stream::StreamExt};
 use std::{
     ffi::OsString,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -99,60 +100,63 @@ impl LspInstaller for EsLintLspAdapter {
         })
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let destination_path = Self::build_destination_path(&container_dir);
-        let server_path = destination_path.join(Self::SERVER_PATH);
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        let delegate = delegate.clone();
+        let node = self.node.clone();
 
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |_| true).await;
+        async move {
+            let destination_path = Self::build_destination_path(&container_dir);
+            let server_path = destination_path.join(Self::SERVER_PATH);
 
-            download_server_binary(
-                &*delegate.http_client(),
-                &version.url,
-                None,
-                &destination_path,
-                Self::GITHUB_ASSET_KIND,
-            )
-            .await?;
+            if fs::metadata(&server_path).await.is_err() {
+                remove_matching(&container_dir, |_| true).await;
 
-            let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.context("missing first file")??;
-            let repo_root = destination_path.join("vscode-eslint");
-            fs::rename(first.path(), &repo_root).await?;
-
-            #[cfg(target_os = "windows")]
-            {
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("client").join("src").join("shared"),
+                download_server_binary(
+                    &*delegate.http_client(),
+                    &version.url,
+                    None,
+                    &destination_path,
+                    Self::GITHUB_ASSET_KIND,
                 )
                 .await?;
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("server").join("src").join("shared"),
-                )
-                .await?;
+
+                let mut dir = fs::read_dir(&destination_path).await?;
+                let first = dir.next().await.context("missing first file")??;
+                let repo_root = destination_path.join("vscode-eslint");
+                fs::rename(first.path(), &repo_root).await?;
+
+                #[cfg(target_os = "windows")]
+                {
+                    handle_symlink(
+                        repo_root.join("$shared"),
+                        repo_root.join("client").join("src").join("shared"),
+                    )
+                    .await?;
+                    handle_symlink(
+                        repo_root.join("$shared"),
+                        repo_root.join("server").join("src").join("shared"),
+                    )
+                    .await?;
+                }
+
+                node.run_npm_subcommand(Some(&repo_root), "install", &[])
+                    .await?;
+
+                node.run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
+                    .await?;
             }
 
-            self.node
-                .run_npm_subcommand(Some(&repo_root), "install", &[])
-                .await?;
-
-            self.node
-                .run_npm_subcommand(Some(&repo_root), "run-script", &["compile"])
-                .await?;
+            Ok(LanguageServerBinary {
+                path: node.binary_path().await?,
+                env: None,
+                arguments: eslint_server_binary_arguments(&server_path),
+            })
         }
-
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
     }
 
     async fn cached_server_binary(
@@ -254,7 +258,9 @@ impl LspAdapter for EsLintLspAdapter {
                 "mode": "auto"
             },
             "workspaceFolder": {
-                "uri": worktree_root,
+                "uri": Uri::from_file_path(worktree_root)
+                    .map(|uri| uri.as_str().to_owned())
+                    .unwrap_or_default(),
                 "name": worktree_root.file_name()
                     .unwrap_or(worktree_root.as_os_str())
                     .to_string_lossy(),

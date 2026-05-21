@@ -96,6 +96,23 @@ pub struct InitialGraphCommitData {
     pub ref_names: Vec<SharedString>,
 }
 
+impl InitialGraphCommitData {
+    pub fn tag_names(&self) -> Vec<&str> {
+        self.ref_names
+            .iter()
+            .filter_map(|ref_name| {
+                let tag_name = ref_name.strip_prefix("tag: ")?;
+
+                if tag_name.is_empty() {
+                    return None;
+                }
+
+                Some(tag_name)
+            })
+            .collect()
+    }
+}
+
 struct CommitDataRequest {
     sha: Oid,
     response_tx: oneshot::Sender<Result<CommitData>>,
@@ -3398,8 +3415,12 @@ impl GitBinary {
     {
         let mut command = new_command(&self.git_binary_path);
         command.current_dir(&self.working_directory);
+        // Disabled to stop malicious actors from running arbitrary commands via fsmonitor hooks
         command.args(["-c", "core.fsmonitor=false"]);
+        // Prepended signature lines would corrupt our --format parsers.
+        command.args(["-c", "log.showSignature=false"]);
         command.arg("--no-optional-locks");
+        // Internal commands must be non-interactive so background tasks never block on user input.
         command.arg("--no-pager");
 
         if !self.is_trusted {
@@ -3678,6 +3699,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_initial_graph_commit_data_tag_names() {
+        let commit = InitialGraphCommitData {
+            sha: Oid::from_bytes(&[0; 20]).unwrap(),
+            parents: SmallVec::new(),
+            ref_names: vec![
+                SharedString::from("HEAD -> main"),
+                SharedString::from("origin/main"),
+                SharedString::from("tag: v1.0.0"),
+                SharedString::from("tag: v1.1.0"),
+                SharedString::from("tag: "),
+                SharedString::from("refs/heads/feature"),
+            ],
+        };
+
+        assert_eq!(commit.tag_names(), ["v1.0.0", "v1.1.0"]);
+    }
+
     #[gpui::test]
     async fn test_build_command_untrusted_includes_both_safety_args(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
@@ -3776,6 +3815,51 @@ mod tests {
         assert!(
             !output.status.success(),
             "hooksPath should NOT be overridden for trusted repos"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_build_command_disables_log_show_signature(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        git2::Repository::init(dir.path()).unwrap();
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+        let output = git
+            .build_command(&["config", "--get", "log.showSignature"])
+            .output()
+            .await
+            .expect("git config should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            "false",
+            "log.showSignature should be disabled for trusted repos"
+        );
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            false,
+        );
+        let output = git
+            .build_command(&["config", "--get", "log.showSignature"])
+            .output()
+            .await
+            .expect("git config should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            "false",
+            "log.showSignature should be disabled for untrusted repos"
         );
     }
 
