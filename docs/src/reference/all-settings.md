@@ -101,6 +101,7 @@ Non-negative `float` values
 ## Allow Rewrap
 
 - Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
 
@@ -135,6 +136,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 ## Auto Indent
 
 - Description: Whether indentation should be adjusted based on context while typing. This can be specified on a per-language basis.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `auto_indent`
 - Default: `true`
 
@@ -144,7 +146,8 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 ## Auto Indent On Paste
 
-- Description: Whether indentation of pasted content should be adjusted based on the context
+- Description: Whether indentation of pasted content should be adjusted based on the context.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `auto_indent_on_paste`
 - Default: `true`
 
@@ -642,6 +645,7 @@ List of `string` values.
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `edit_predictions_disabled_in`
 - Default: `[]`
 
@@ -1623,7 +1627,7 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Enable Language Server
 
-- Description: Whether or not to use language servers to provide code intelligence.
+- Description: Whether or not to use language servers to provide code intelligence. Note: this setting can be [overridden per language](#languages).
 - Setting: `enable_language_server`
 - Default: `true`
 
@@ -1633,7 +1637,7 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Ensure Final Newline On Save
 
-- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end.
+- Description: Removes any lines containing only whitespace at the end of the file and ensures just one newline at the end. Note: this setting can be [overridden per language](#languages).
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
@@ -1643,7 +1647,7 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 ## Line Ending
 
-- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
+- Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis. Note: this setting can be [overridden per language](#languages).
 - Setting: `line_ending`
 - Default: `detect`
 
@@ -1714,12 +1718,21 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 ## Extend Comment On Newline
 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `extend_comment_on_newline`
 - Default: `true`
 
 **Options**
 
 `boolean` values
+
+## Extend List On Newline
+
+- Description: Whether to start a new line with a list symbol when a previous line is a list element as well.
+  Note: this setting can be [overridden per language](#languages).
+  Currently only works for Markdown.
+- Setting: `extend_list_on_newline`
+- Default: `true`
 
 ## Status Bar
 
@@ -1744,6 +1757,20 @@ There is an experimental setting that completely hides the status bar. This caus
   "experimental.show": false
 }
 ```
+
+## Language Servers
+
+- Description: The list of language servers to use (or disable). Note: this setting can be [overridden per language](#languages).
+- Setting: `language_servers`
+- Default: `["..."]`
+
+**Options**
+
+This array should consist of language server IDs, as well as the following
+special tokens:
+
+- `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
+- `"..."` - A placeholder to refer to the **rest** of the registered language servers for the currently language.
 
 ## LSP
 
@@ -1885,7 +1912,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ## Format On Save
 
-- Description: Whether or not to perform a buffer format before saving.
+- Description: Whether or not to perform a buffer format before saving. Note: this setting can be [overridden per language](#languages).
 - Setting: `format_on_save`
 - Default: `on`
 
@@ -1909,7 +1936,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ## Formatter
 
-- Description: How to perform a buffer format.
+- Description: How to perform a buffer format. Note: this setting can be [overridden per language](#languages).
 - Setting: `formatter`
 - Default: `auto`
 
@@ -1991,7 +2018,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 ## Auto close
 
-- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters.
+- Description: Whether to automatically add matching closing characters when typing opening parenthesis, bracket, brace, single or double quote characters. Note: this setting can be [overridden per language](#languages).
 - Setting: `use_autoclose`
 - Default: `true`
 
@@ -2001,7 +2028,7 @@ If any of the formatters fails, the subsequent ones will still be executed.
 
 ## Always Treat Brackets As Autoclosed
 
-- Description: Controls how the editor handles the autoclosed characters.
+- Description: Controls how the editor handles the autoclosed characters. Note: this setting can be [overridden per language](#languages).
 - Setting: `always_treat_brackets_as_autoclosed`
 - Default: `false`
 
@@ -2472,7 +2499,7 @@ Example:
 
 ## Hard Tabs
 
-- Description: Whether to indent lines using tab characters or multiple spaces.
+- Description: Whether to indent lines using tab characters or multiple spaces. Note: this setting can be [overridden per language](#languages).
 - Setting: `hard_tabs`
 - Default: `false`
 
@@ -2493,6 +2520,7 @@ Example:
 ## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `indent_guides`
 - Default:
 
@@ -2685,6 +2713,17 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
+## Indent List On Tab
+
+- Description: Whether to indent list items when pressing tab after a list marker. Currently only works for Markdown.
+  Note: this setting can be [overridden per language](#languages).
+- Setting: `indent_list_on_tab`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Image Viewer
 
 - Description: Settings for image viewer functionality
@@ -2732,6 +2771,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 ## Inlay hints
 
 - Description: Configuration for displaying extra text with hints in the editor.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `inlay_hints`
 - Default:
 
@@ -2861,7 +2901,250 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - Description: Configuration for specific languages.
 - Setting: `languages`
-- Default: `null`
+- <details><summary>Default:</summary>
+
+  ```json [settings]
+  "languages": {
+    "Astro": {
+      "language_servers": ["astro-language-server", "..."],
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-astro"],
+      },
+    },
+    "Blade": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "C": {
+      "format_on_save": "off",
+      "use_on_type_format": false,
+      "prettier": {
+        "allowed": false,
+      },
+    },
+    "C++": {
+      "format_on_save": "off",
+      "use_on_type_format": false,
+      "prettier": {
+        "allowed": false,
+      },
+    },
+    "CSharp": {
+      "language_servers": ["roslyn", "!omnisharp", "..."],
+    },
+    "CSS": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "Dart": {
+      "tab_size": 2,
+    },
+    "Diff": {
+      "show_edit_predictions": false,
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false,
+    },
+    "EEx": {
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
+    },
+    "Elixir": {
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
+    },
+    "Elm": {
+      "tab_size": 4,
+    },
+    "Erlang": {
+      "language_servers": ["erlang-ls", "!elp", "..."],
+    },
+    "Git Commit": {
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "preferred_line_length": 72,
+    },
+    "Go": {
+      "hard_tabs": true,
+      "code_actions_on_format": {
+        "source.organizeImports": true,
+      },
+      "debuggers": ["Delve"],
+    },
+    "GraphQL": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "HEEx": {
+      "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
+    },
+    "HTML": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "HTML+ERB": {
+      "language_servers": ["herb", "!ruby-lsp", "..."],
+    },
+    "Java": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-java"],
+      },
+    },
+    "JavaScript": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "JSON": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "JSONC": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "JS+ERB": {
+      "language_servers": ["!ruby-lsp", "..."],
+    },
+    "Kotlin": {
+      "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."],
+    },
+    "LaTeX": {
+      "formatter": "language_server",
+      "language_servers": ["texlab", "..."],
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"],
+      },
+    },
+    "Markdown": {
+      "format_on_save": "off",
+      "use_on_type_format": false,
+      "remove_trailing_whitespace_on_save": false,
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled",
+      },
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "PHP": {
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-php"],
+        "parser": "php",
+      },
+    },
+    "Plain Text": {
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled",
+      },
+    },
+    "Proto": {
+      "language_servers": ["buf", "!protols", "!protobuf-language-server", "..."],
+    },
+    "Python": {
+      "code_actions_on_format": {
+        "source.organizeImports.ruff": true,
+      },
+      "formatter": {
+        "language_server": {
+          "name": "ruff",
+        },
+      },
+      "debuggers": ["Debugpy"],
+      "language_servers": ["basedpyright", "ruff", "!ty", "!pyrefly", "!pyright", "!pylsp", "..."],
+    },
+    "Ruby": {
+      "language_servers": [
+        "solargraph",
+        "!ruby-lsp",
+        "!rubocop",
+        "!sorbet",
+        "!steep",
+        "!kanayago",
+        "!fuzzy-ruby-server",
+        "...",
+      ],
+    },
+    "Rust": {
+      "debuggers": ["CodeLLDB"],
+    },
+    "SCSS": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "Starlark": {
+      "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
+    },
+    "Svelte": {
+      "language_servers": ["svelte-language-server", "..."],
+      "prettier": {
+        "allowed": true,
+        "plugins": ["prettier-plugin-svelte"],
+      },
+    },
+    "TSX": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "Twig": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "TypeScript": {
+      "language_servers": ["!typescript-language-server", "vtsls", "..."],
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "language_servers": ["!slang", "..."],
+      "use_on_type_format": false,
+    },
+    "Vue.js": {
+      "language_servers": ["vue-language-server", "vtsls", "..."],
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "XML": {
+      "prettier": {
+        "allowed": true,
+        "plugins": ["@prettier/plugin-xml"],
+      },
+    },
+    "YAML": {
+      "prettier": {
+        "allowed": true,
+      },
+    },
+    "YAML+ERB": {
+      "language_servers": ["!ruby-lsp", "..."],
+    },
+    "Zig": {
+      "language_servers": ["zls", "..."],
+    },
+  }
+  ```
+
+  </details>
 
 **Options**
 
@@ -2898,33 +3181,48 @@ The following settings can be overridden for each specific language:
 - [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
-- [`use_autoclose`](#use-autoclose)
+- [`use_autoclose`](#auto-close)
 - [`always_treat_brackets_as_autoclosed`](#always-treat-brackets-as-autoclosed)
+- [`show_wrap_guides`](#show-wrap-guides)
+- [`wrap_guides`](#wrap-guides-vertical-rulers)
+- [`indent_guides`](#indent-guides)
+- [`prettier`](#prettier)
+- [`language_servers`](#language-servers)
+- [`document_folding_ranges`](#lsp-folding-ranges)
+- [`document_symbols`](#lsp-document-symbols)
+- [`allow_rewrap`](#allow-rewrap)
+- [`edit_predictions_disabled_in`](#edit-predictions-disabled-in)
+- [`extend_comment_on_newline`](#extend-comment-on-newline)
+- [`extend_list_on_newline`](#extend-list-on-newline)
+- [`indent_list_on_tab`](#indent-list-on-tab)
+- [`inlay_hints`](#inlay-hints)
+- [`use_auto_surround`](#use-auto-surround)
+- [`use_on_type_format`](#use-on-type-format)
+- [`auto_indent`](#auto-indent)
+- [`auto_indent_on_paste`](#auto-indent-on-paste)
+- [`code_actions_on_format`](#code-actions-on-format)
+- [`linked_edits`](#linked-edits)
+- [`tasks`](#tasks)
+- [`show_completions_on_input`](#show-completions-on-input)
+- [`completions`](#completions)
+- [`debuggers`](#debuggers)
+- [`word_diff_enabled`](#word-diff-enabled)
+- [`colorize_brackets`](#colorize-brackets)
 
 These values take in the same options as the root-level settings with the same name.
 
-### Document Symbols
+## Debuggers
 
-- Description: Controls the source of document symbols used for outlines and breadcrumbs.
-- Setting: `document_symbols`
-- Default: `off`
+- Description: What debuggers are preferred by default for all languages.
+  Note: this setting can be [overridden per language](#languages).
+- Setting: `debuggers`
+- Default: `[]`
 
-**Options**
-
-- `"off"`: Use tree-sitter queries to compute document symbols (default)
-- `"on"`: Use the language server's `textDocument/documentSymbol` LSP response. When enabled, tree-sitter is not used for document symbols
-
-LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar.
-
-Example:
+**Examples**
 
 ```json [settings]
 {
-  "languages": {
-    "TypeScript": {
-      "document_symbols": "on"
-    }
-  }
+  "debuggers": ["Delve"]
 }
 ```
 
@@ -2984,6 +3282,7 @@ Configuration for various AI model providers including API URLs and authenticati
 ## Linked Edits
 
 - Description: Whether to perform linked edits of associated ranges, if the language server supports it. For example, when editing opening `<html>` tag, the contents of the closing `</html>` tag will be edited as well.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `linked_edits`
 - Default: `true`
 
@@ -3198,12 +3497,41 @@ Examples:
 }
 ```
 
+## Prettier
+
+- Description: Zed's Prettier integration settings.
+  Note: this setting can be [overridden per language](#languages).
+- Setting: `prettier`
+- Default:
+
+```json [settings]
+{
+  "prettier": {
+    "allowed": false,
+    "plugins": [],
+    "parser": ""
+  }
+}
+```
+
+**Options**
+
+- `"allowed"`: Enables or disables formatting with Prettier.
+- `"plugins"`: A list of plugins which `prettier` should use.
+
+The rest of the options are only applied if the bundled prettier instance is used.
+
+- `"tabWidth"`: The `prettier` [`tabWidth`](https://prettier.io/docs/options#tab-width) option. If unset [`"tab_size"`](#tab-size) is used as a backup.
+- `"printWidth"`: The `prettier` [`printWidth`](https://prettier.io/docs/options#print-width) option. If unset [`"preferred_line_length"`](#preferred-line-length) is used as a backup.
+- `"useTabs"`: The `prettier` [`useTabs`](https://prettier.io/docs/options#tabs) option. If unset [`"hard_tabs"`](#hard-tabs) is used as a backup.
+
+Any other elements in the object is forwarded to `prettier` as options if the bundled prettier is used - see `prettier`s [options documentation](https://prettier.io/docs/options).
+
 ## Preview tabs
 
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -3357,7 +3685,7 @@ Examples:
 
 ## Preferred Line Length
 
-- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled.
+- Description: The column at which to soft-wrap lines, for buffers where soft-wrap is enabled. Note: this setting can be [overridden per language](#languages).
 - Setting: `preferred_line_length`
 - Default: `80`
 
@@ -3439,7 +3767,7 @@ List of `string` glob patterns
 
 ## Remove Trailing Whitespace On Save
 
-- Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it.
+- Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it. Note: this setting can be [overridden per language](#languages).
 - Setting: `remove_trailing_whitespace_on_save`
 - Default: `true`
 
@@ -3674,7 +4002,7 @@ Non-negative `integer` values
 
 ## Semantic Tokens
 
-- Description: Controls how semantic tokens from language servers are used for syntax highlighting.
+- Description: Controls how semantic tokens from language servers are used for syntax highlighting. Note: this setting can be [overridden per language](#languages).
 - Setting: `semantic_tokens`
 - Default: `off`
 
@@ -3709,6 +4037,7 @@ May require language server restart to properly apply.
 ## LSP Folding Ranges
 
 - Description: Controls whether folding ranges from language servers are used instead of tree-sitter and indent-based folding. Tree-sitter and indent-based folding is the default; it is used as a fallback when LSP folding data is not returned or this setting is turned off.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `document_folding_ranges`
 - Default: `off`
 
@@ -3740,6 +4069,7 @@ To enable LSP folding ranges for a specific language:
 ## LSP Document Symbols
 
 - Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `document_symbols`
 - Default: `off`
 
@@ -3756,7 +4086,7 @@ To enable LSP document symbols globally:
 }
 ```
 
-To enable LSP document symbols for a specific language:
+LSP document symbols can provide more accurate symbols for complex language features (e.g., generic types, macros, decorators) that tree-sitter may not handle well. Use this when your language server provides better symbol information than the tree-sitter grammar. To enable LSP document symbols for a specific language:
 
 ```json [settings]
 {
@@ -3794,9 +4124,31 @@ Examples:
 
 `boolean` values
 
+## Code Actions On Format
+
+- Description: Which code actions to run in case [`format_on_save`](#format-on-save) is triggered. These run before formatters.
+  Note: this setting can be [overridden per language](#languages).
+- Setting: `code_actions_on_format`
+- Default: `{}`
+
+**Options**
+
+`records` with `boolean` values.
+
+**Examples**
+
+```json [settings]
+{
+  "code_actions_on_format": {
+    "source.organizeImports": true
+  }
+}
+```
+
 ## Completions
 
-- Description: Controls how completions are processed for this language.
+- Description: Controls how completions are processed for the current language.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `completions`
 - Default:
 
@@ -3871,6 +4223,7 @@ Positive integer values
 ## Show Completions On Input
 
 - Description: Whether or not to show completions as you type.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `show_completions_on_input`
 - Default: `true`
 
@@ -3890,7 +4243,7 @@ Positive integer values
 
 ## Show Edit Predictions
 
-- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`.
+- Description: Whether to show edit predictions as you type or manually by triggering `editor::ShowEditPrediction`. Note: this setting can be [overridden per language](#languages).
 - Setting: `show_edit_predictions`
 - Default: `true`
 
@@ -3900,7 +4253,7 @@ Positive integer values
 
 ## Show Whitespaces
 
-- Description: Whether or not to render whitespace characters in the editor.
+- Description: Whether or not to render whitespace characters in the editor. Note: this setting can be [overridden per language](#languages).
 - Setting: `show_whitespaces`
 - Default: `selection`
 
@@ -3913,7 +4266,7 @@ Positive integer values
 
 ## Whitespace Map
 
-- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled. Note: this setting can be [overridden per language](#languages).
 - Setting: `whitespace_map`
 - Default:
 
@@ -3926,9 +4279,16 @@ Positive integer values
 }
 ```
 
+## Word Diff Enabled
+
+- Description: Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.
+  Note: this setting can be [overridden per language](#languages).
+- Setting: `word_diff_enabled`
+- Default: `true`
+
 ## Soft Wrap
 
-- Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
+- Description: Whether or not to automatically wrap lines of text to fit editor / preferred width. Note: this setting can be [overridden per language](#languages).
 - Setting: `soft_wrap`
 - Default: `none`
 
@@ -3941,7 +4301,7 @@ Positive integer values
 
 ## Show Wrap Guides
 
-- Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting.
+- Description: Whether to show wrap guides (vertical rulers) in the editor. Setting this to true will show a guide at the 'preferred_line_length' value if 'soft_wrap' is set to 'preferred_line_length', and will show any additional guides as specified by the 'wrap_guides' setting. Note: this setting can be [overridden per language](#languages).
 - Setting: `show_wrap_guides`
 - Default: `true`
 
@@ -3951,7 +4311,8 @@ Positive integer values
 
 ## Use On Type Format
 
-- Description: Whether to use additional LSP queries to format (and amend) the code after every "trigger" symbol input, defined by LSP server capabilities
+- Description: Whether to use additional LSP queries to format (and amend) the code after every "trigger" symbol input, defined by LSP server capabilities.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `use_on_type_format`
 - Default: `true`
 
@@ -3962,6 +4323,7 @@ Positive integer values
 ## Use Auto Surround
 
 - Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `use_auto_surround`
 - Default: `true`
 
@@ -4001,7 +4363,7 @@ List of `integer` column numbers
 
 ## Tab Size
 
-- Description: The number of spaces to use for each tab character.
+- Description: The number of spaces to use for each tab character. Note: this setting can be [overridden per language](#languages).
 - Setting: `tab_size`
 - Default: `4`
 
@@ -4011,7 +4373,8 @@ List of `integer` column numbers
 
 ## Tasks
 
-- Description: Configuration for tasks that can be run within Zed
+- Description: Configuration for tasks that can be run within Zed.
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `tasks`
 - Default:
 
@@ -5446,6 +5809,7 @@ You can define these in user or project settings; project settings are merged on
 ## Colorize Brackets
 
 - Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
+  Note: this setting can be [overridden per language](#languages).
 - Setting: `colorize_brackets`
 - Default: `false`
 
