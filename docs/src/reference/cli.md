@@ -126,6 +126,62 @@ Print Zed's version and exit:
 zed --version
 ```
 
+### `--completions <SHELL>`
+
+Generate shell completions for the `zed` CLI:
+
+#### Bash
+
+Add to `~/.bashrc`:
+
+```bash
+eval "$(zed --completions bash)"
+```
+
+#### Elvish
+
+Add to `~/.config/elvish/rc.elv`:
+
+```elvish
+set edit:completion:arg-completer[zed] = { |@args|
+    eval (zed --completions elvish | slurp)
+    $edit:completion:arg-completer[zed] $@args
+}
+```
+
+#### Fish
+
+Add to `~/.config/fish/config.fish`:
+
+```fish
+zed --completions fish | source
+```
+
+#### Nushell
+
+Add to `~/.config/nushell/config.nu`:
+
+```nu
+mkdir ($nu.data-dir | path join "vendor/autoload")
+^zed --completions nushell | save --force ($nu.data-dir | path join "vendor/autoload/zed.nu")
+```
+
+#### Powershell
+
+Add to `$PROFILE`:
+
+```powershell
+(&zed --completions powershell) | Out-String | Invoke-Expression
+```
+
+#### Zsh
+
+Add to `~/.zshrc`:
+
+```zsh
+eval "$(zed --completions zsh)"
+```
+
 ### `--uninstall`
 
 Uninstall Zed and remove all related files (macOS and Linux only):
