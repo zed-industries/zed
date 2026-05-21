@@ -5139,9 +5139,9 @@ impl EditorElement {
                     }
                     None => {
                         if available_below > min_height {
-                            (false, min_height)
+                            (false, cmp::min(max_height, available_below))
                         } else if available_above > min_height {
-                            (true, min_height)
+                            (true, cmp::min(max_height, available_above))
                         } else if available_above > available_below {
                             (true, available_above)
                         } else {
