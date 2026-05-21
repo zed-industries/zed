@@ -3,7 +3,7 @@ use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
     edit_prediction_tests::FakeEditPredictionDelegate,
-    element::{StickyHeader, header_jump_data},
+    header::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
     runnables::RunnableTasks,
     scroll::scroll_amount::ScrollAmount,

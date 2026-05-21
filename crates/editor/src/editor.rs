@@ -25,6 +25,7 @@ mod element;
 mod fold;
 mod folding_ranges;
 mod git;
+mod header;
 mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
