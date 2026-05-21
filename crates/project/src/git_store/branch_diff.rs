@@ -392,6 +392,7 @@ impl BranchDiff {
                     &self.diff_base,
                     file.diff_type,
                     file.branch_diff,
+                    file.repo_path.clone(),
                     project_path,
                     repo.clone(),
                     cx,
@@ -411,10 +412,25 @@ impl BranchDiff {
         diff_base: &DiffBase,
         diff_type: DiffType,
         branch_diff: Option<git::status::TreeDiffStatus>,
+        repo_path: RepoPath,
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
         cx: &Context<'_, Project>,
     ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        // The Staged filter shows the git index as a read-only snapshot rather
+        // than the live worktree buffer, so later worktree edits cannot leak in
+        // (see A8). It builds its own file-less buffer instead of opening the
+        // worktree file.
+        if branch_diff.is_none() && matches!(diff_type, DiffType::HeadToIndex) {
+            return cx.spawn(async move |project, cx| {
+                project
+                    .update(cx, |project, cx| {
+                        project.open_staged_index_snapshot(repo, repo_path, cx)
+                    })?
+                    .await
+            });
+        }
+
         let use_unstaged_review_diff = matches!(diff_base, DiffBase::Unstaged);
         let task = cx.spawn(async move |project, cx| {
             let buffer = project

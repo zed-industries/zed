@@ -51,7 +51,8 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Language, LanguageRegistry,
+    Buffer, BufferEvent, Capability, DiskState, Language, LanguageRegistry, ReplicaId, Rope,
+    TextBuffer,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -95,6 +96,60 @@ use worktree::{
 };
 use zeroize::Zeroize;
 
+/// A synthetic [`language::File`] for the read-only Staged index snapshot. The
+/// snapshot buffer is built from git-index content rather than a worktree file,
+/// so it reports a `Historic` disk state and is never registered in the buffer
+/// store. The real repo path it carries lets the diff view render it like an
+/// ordinary file (icon, parent path, breadcrumbs, detected language) instead of
+/// a bare file-less buffer.
+struct StagedIndexBlob {
+    path: RepoPath,
+    worktree_id: WorktreeId,
+}
+
+impl language::File for StagedIndexBlob {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        DiskState::Historic { was_deleted: false }
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::local()
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
+        self.path.as_ref()
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.path.as_std_path().to_path_buf()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
+        let path: &Arc<RelPath> = self.path.as_ref();
+        path.file_name().unwrap_or_else(|| path.as_unix_str())
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _cx: &App) -> language::proto::File {
+        unimplemented!("staged index snapshot files are local-only")
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+
+    fn can_open(&self) -> bool {
+        true
+    }
+}
+
 pub struct GitStore {
     state: GitStoreState,
     buffer_store: Entity<BufferStore>,
@@ -106,6 +161,11 @@ pub struct GitStore {
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
+    /// Maps a read-only staged index-snapshot buffer (which is not registered in
+    /// `buffer_store`, so the usual buffer->repo resolution can't find it) to the
+    /// repository and path its inline unstage writes target.
+    /// See [`Self::open_staged_index_snapshot`].
+    index_snapshot_repos: HashMap<BufferId, (WeakEntity<Repository>, RepoPath)>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -645,6 +705,7 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            index_snapshot_repos: HashMap::default(),
         }
     }
 
@@ -915,6 +976,128 @@ impl GitStore {
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn open_staged_index_snapshot(
+        &mut self,
+        repo: Entity<Repository>,
+        repo_path: RepoPath,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        cx.spawn(async move |this, cx| {
+            let (head_text, index_text) = repo
+                .update(cx, |repo, cx| {
+                    repo.load_index_and_head_text(repo_path.clone(), cx)
+                })
+                .await?;
+            let index_text: Arc<str> = index_text.unwrap_or_default().into();
+
+            // Resolve the worktree this repo path belongs to so the synthetic
+            // file reports a real location (used for the file icon, breadcrumbs,
+            // and "open the file to edit").
+            let worktree_id = repo
+                .read_with(cx, |repo, cx| {
+                    repo.repo_path_to_project_path(&repo_path, cx)
+                        .map(|project_path| project_path.worktree_id)
+                })
+                .context("staged snapshot repo path is not in any worktree")?;
+            let file = Arc::new(StagedIndexBlob {
+                path: repo_path.clone(),
+                worktree_id,
+            }) as Arc<dyn language::File>;
+
+            // Normalize line endings once (as a worktree buffer would) and reuse
+            // the resulting rope for both language detection and the buffer, so
+            // the index content isn't materialized as a rope twice.
+            let mut index_string = index_text.to_string();
+            let line_ending = text::LineEnding::detect(&index_string);
+            text::LineEnding::normalize(&mut index_string);
+            let index_rope = Rope::from(index_string);
+
+            // Detect the language from the synthetic file's path and content so the
+            // staged diff highlights syntax (and the diff base texts highlight)
+            // exactly like the unstaged view.
+            let language =
+                cx.update(|cx| language_registry.language_for_file(&file, Some(&index_rope), cx));
+            let language = if let Some(language) = language {
+                language_registry
+                    .load_language(&language)
+                    .await
+                    .ok()
+                    .and_then(|loaded| loaded.log_err())
+            } else {
+                None
+            };
+
+            // The displayed buffer *is* the git index content: a read-only buffer
+            // carrying a synthetic `Historic` file so the diff view renders it
+            // like an ordinary file, while later worktree edits cannot leak into
+            // the staged view.
+            let buffer_language = language.clone();
+            let buffer = cx.new(|cx| {
+                let text_buffer = TextBuffer::new_normalized(
+                    ReplicaId::LOCAL,
+                    cx.entity_id().as_non_zero_u64().into(),
+                    line_ending,
+                    index_rope,
+                );
+                let mut buffer = Buffer::build(text_buffer, Some(file), Capability::ReadWrite);
+                buffer.set_language_async(buffer_language, cx);
+                buffer.set_capability(Capability::ReadOnly, cx);
+                buffer
+            });
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+            // Primary diff: HEAD (base) vs the index (buffer) -> exactly the
+            // staged changes.
+            let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(
+                    head_text.map(Arc::<str>::from),
+                    language.clone(),
+                    buffer_snapshot.text.clone(),
+                    cx,
+                )
+            })
+            .await?;
+
+            // Secondary diff: index (base) vs index (buffer) -> zero hunks. This
+            // marks every primary hunk `NoSecondaryHunk` (unstage-able) and,
+            // because the buffer *is* the index, gives `stage_or_unstage_hunks`
+            // an identity buffer<->index mapping so unstaging a hunk reverts that
+            // region of the index toward HEAD.
+            let secondary_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+            secondary_diff
+                .update(cx, |secondary_diff, cx| {
+                    secondary_diff.set_base_text(
+                        Some(index_text),
+                        language,
+                        buffer_snapshot.text.clone(),
+                        cx,
+                    )
+                })
+                .await?;
+            diff.update(cx, |diff, _| diff.set_secondary_diff(secondary_diff));
+
+            // The index buffer is not registered in the buffer store, so the
+            // usual buffer->repo resolution in `on_buffer_diff_event` can't find
+            // it. Record the repo/path here and route this diff's staging writes
+            // through a dedicated handler.
+            this.update(cx, |this, cx| {
+                this.index_snapshot_repos
+                    .insert(buffer_id, (repo.downgrade(), repo_path.clone()));
+                cx.subscribe(&diff, Self::on_index_snapshot_diff_event)
+                    .detach();
+                cx.observe_release(&buffer, move |this, _buffer, _cx| {
+                    this.index_snapshot_repos.remove(&buffer_id);
+                })
+                .detach();
+            })?;
+
+            Ok((buffer, diff))
+        })
     }
 
     pub fn open_staged_diff(
@@ -2001,30 +2184,77 @@ impl GitStore {
                     diff_state.hunk_staging_operation_count
                 });
                 if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
-                    let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.as_unix_str());
-                        repo.spawn_set_index_text_job(
-                            path,
-                            new_index_text,
-                            Some(hunk_staging_operation_count),
-                            cx,
-                        )
-                    });
-                    let diff = diff.downgrade();
-                    cx.spawn(async move |this, cx| {
-                        if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                            diff.update(cx, |diff, cx| {
-                                diff.clear_pending_hunks(cx);
-                            })
-                            .ok();
-                            this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
-                                .ok();
-                        }
-                    })
-                    .detach();
+                    log::debug!("hunks changed for {}", path.as_unix_str());
+                    Self::write_hunk_staging_to_index(
+                        diff,
+                        repo,
+                        path,
+                        new_index_text,
+                        Some(hunk_staging_operation_count),
+                        cx,
+                    );
                 }
             }
         }
+    }
+
+    /// Staging writes for the read-only staged index snapshot. The snapshot
+    /// buffer is not registered in the buffer store, so [`Self::on_buffer_diff_event`]'s
+    /// buffer->repo->path resolution (via `buffer.project_path`) would silently
+    /// skip the write; resolve the repo/path from [`Self::index_snapshot_repos`]
+    /// instead.
+    fn on_index_snapshot_diff_event(
+        &mut self,
+        diff: Entity<buffer_diff::BufferDiff>,
+        event: &BufferDiffEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event else {
+            return;
+        };
+        let buffer_id = diff.read(cx).buffer_id;
+        let Some((repo, repo_path)) = self.index_snapshot_repos.get(&buffer_id) else {
+            return;
+        };
+        let Some(repo) = repo.upgrade() else {
+            return;
+        };
+        let repo_path = repo_path.clone();
+        let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
+        log::debug!("staged snapshot hunks changed for {}", repo_path.as_unix_str());
+        Self::write_hunk_staging_to_index(diff, repo, repo_path, new_index_text, None, cx);
+    }
+
+    /// Spawns the git-index write for a hunk stage/unstage and, on failure,
+    /// rolls the pending hunks back and surfaces the error to the UI. Shared by
+    /// the registered-buffer ([`Self::on_buffer_diff_event`]) and read-only
+    /// staged-snapshot ([`Self::on_index_snapshot_diff_event`]) write paths,
+    /// which differ only in how they resolve the repository and path.
+    fn write_hunk_staging_to_index(
+        diff: Entity<buffer_diff::BufferDiff>,
+        repo: Entity<Repository>,
+        repo_path: RepoPath,
+        new_index_text: Option<String>,
+        hunk_staging_operation_count: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let recv = repo.update(cx, |repo, cx| {
+            repo.spawn_set_index_text_job(
+                repo_path,
+                new_index_text,
+                hunk_staging_operation_count,
+                cx,
+            )
+        });
+        let diff = diff.downgrade();
+        cx.spawn(async move |this, cx| {
+            if let Ok(Err(error)) = cx.background_spawn(recv).await {
+                diff.update(cx, |diff, cx| diff.clear_pending_hunks(cx)).ok();
+                this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     fn local_worktree_git_repos_changed(
@@ -2090,9 +2320,15 @@ impl GitStore {
         buffer_id: BufferId,
         cx: &App,
     ) -> Option<(Entity<Repository>, RepoPath)> {
-        let buffer = self.buffer_store.read(cx).get(buffer_id)?;
-        let project_path = buffer.read(cx).project_path(cx)?;
-        self.repository_and_path_for_project_path(&project_path, cx)
+        if let Some(buffer) = self.buffer_store.read(cx).get(buffer_id)
+            && let Some(project_path) = buffer.read(cx).project_path(cx)
+        {
+            return self.repository_and_path_for_project_path(&project_path, cx);
+        }
+        // The read-only staged index snapshot is synthetic and unregistered in the
+        // buffer store, so resolve its repo/path from the snapshot map instead.
+        let (repo, repo_path) = self.index_snapshot_repos.get(&buffer_id)?;
+        Some((repo.upgrade()?, repo_path.clone()))
     }
 
     pub fn repository_and_path_for_project_path(
@@ -8187,6 +8423,36 @@ impl Repository {
             }
         });
 
+        cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
+    }
+
+    /// Loads the `HEAD` and index contents for a path directly, keyed by
+    /// `repo_path` rather than a buffer. Used to build the read-only staged
+    /// index snapshot, which has no live worktree buffer to key off of.
+    /// Returns `(head_text, index_text)`.
+    fn load_index_and_head_text(
+        &mut self,
+        repo_path: RepoPath,
+        cx: &App,
+    ) -> Task<Result<(Option<String>, Option<String>)>> {
+        let rx = self.send_job(
+            "load_index_and_head_text",
+            None,
+            move |state, _| async move {
+                match state {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        let head = backend.load_committed_text(repo_path.clone()).await;
+                        let index = backend.load_index_text(repo_path).await;
+                        anyhow::Ok((head, index))
+                    }
+                    RepositoryState::Remote(_) => {
+                        anyhow::bail!(
+                            "staged index snapshot is not yet supported for remote projects"
+                        )
+                    }
+                }
+            },
+        );
         cx.spawn(|_: &mut AsyncApp| async move { rx.await? })
     }
 

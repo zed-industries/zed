@@ -28,7 +28,7 @@ mod environment;
 use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
-use git::repository::get_git_committer;
+use git::repository::{RepoPath, get_git_committer};
 use git_store::{Repository, RepositoryId};
 pub mod search_history;
 pub mod yarn;
@@ -3250,6 +3250,25 @@ impl Project {
         }
         self.git_store.update(cx, |git_store, cx| {
             git_store.open_uncommitted_diff(buffer, cx)
+        })
+    }
+
+    /// Opens a read-only snapshot of the git index for the given path, diffed
+    /// against `HEAD`. Unlike [`Self::open_staged_diff`], the returned buffer is
+    /// a file-less snapshot of the index content (not the live worktree
+    /// buffer), so later worktree edits cannot leak into the staged view.
+    pub fn open_staged_index_snapshot(
+        &mut self,
+        repo: Entity<Repository>,
+        repo_path: RepoPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        let language_registry = self.languages().clone();
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.open_staged_index_snapshot(repo, repo_path, language_registry, cx)
         })
     }
 

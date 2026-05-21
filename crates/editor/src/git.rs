@@ -1422,7 +1422,12 @@ impl Editor {
         cx: &mut App,
     ) -> Option<()> {
         let project = self.project()?;
-        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
+        // The read-only staged index snapshot isn't registered in the project
+        // buffer store, so fall back to the multibuffer's own copy.
+        let buffer = project
+            .read(cx)
+            .buffer_for_id(buffer_id, cx)
+            .or_else(|| self.buffer.read(cx).buffer(buffer_id))?;
         let diff = self.buffer.read(cx).diff_for(buffer_id)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
         let file_exists = buffer_snapshot

@@ -9102,6 +9102,299 @@ async fn test_staged_diff_for_partially_staged_buffer(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn test_staged_index_snapshot_shows_index_not_worktree(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    // HEAD, index, and worktree all differ. The Staged snapshot must show the
+    // index content as a read-only buffer, never the worktree edit.
+    let committed_contents = "one\ntwo\nthree\nfour\nfive\n";
+    let staged_contents = "one\nTWO STAGED\nthree\nfour\nfive\n";
+    let file_contents = "one\nTWO STAGED\nthree\nFOUR UNSTAGED\nfive\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": file_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (buffer, diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo, repo_path("file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // The displayed buffer is the index content — read-only, and crucially not
+    // the worktree's "FOUR UNSTAGED" edit.
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), staged_contents);
+        assert_eq!(buffer.capability(), language::Capability::ReadOnly);
+    });
+
+    // HEAD -> index diff: exactly the staged hunk, marked unstage-able
+    // (NoSecondaryHunk), since there is no worktree side in this view.
+    diff.update(cx, |diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO STAGED\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_index_snapshot_buffer_carries_file_for_diff_view(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    // The Staged snapshot buffer must carry a synthetic File for its repo path so
+    // the diff view renders it like a real file (icon, path, breadcrumbs, and a
+    // detected language for syntax highlighting) rather than as a bare file-less
+    // buffer. The file's disk state is `Historic` because the content comes from
+    // the git index, not a savable worktree file.
+    let committed_contents = "fn main() {}\n";
+    let staged_contents = "fn main() {\n    let value = 1;\n}\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "main.rs": staged_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("main.rs", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("main.rs", staged_contents.into())]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (buffer, _diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo, repo_path("main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, cx| {
+        let file = buffer
+            .file()
+            .expect("staged snapshot buffer carries a synthetic file");
+        assert_eq!(file.path().as_unix_str(), "main.rs");
+        assert!(
+            matches!(file.disk_state(), language::DiskState::Historic { .. }),
+            "git-index content must report a Historic disk state, not a savable worktree file",
+        );
+        // The buffer resolves its own header path from the file, so the header no
+        // longer needs the file-less path_key fallback that A8 added.
+        assert_eq!(
+            buffer.snapshot().resolve_file_path(false, cx).as_deref(),
+            Some("main.rs"),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_index_snapshot_buffer_has_detected_language(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // The Staged snapshot must detect a language from its repo path so the diff
+    // view highlights syntax exactly like the Unstaged view does.
+    let committed_contents = "fn main() {}\n";
+    let staged_contents = "fn main() {\n    let value = 1;\n}\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "main.rs": staged_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("main.rs", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("main.rs", staged_contents.into())]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (buffer, _diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo, repo_path("main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.language().map(|language| language.name()),
+            Some("Rust".into()),
+            "staged snapshot of a .rs file should detect the Rust language for highlighting",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_index_snapshot_file_resolves_to_its_repo_path(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // The buffer header's per-file stage/unstage control (and "open the file to
+    // edit") locate the underlying file by resolving the synthetic file's
+    // worktree_id + path back to a repo path, so that round-trip must hold.
+    let committed_contents = "one\ntwo\nthree\n";
+    let staged_contents = "one\nTWO STAGED\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": staged_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("file.txt", staged_contents.into())]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (buffer, _diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo.clone(), repo_path("file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let file = buffer
+        .read_with(cx, |buffer, _| buffer.file().cloned())
+        .expect("staged snapshot buffer carries a synthetic file");
+    let resolved = repo.read_with(cx, |repo, cx| {
+        let project_path = ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        };
+        repo.project_path_to_repo_path(&project_path, cx)
+    });
+    assert_eq!(resolved, Some(repo_path("file.txt")));
+}
+
+#[gpui::test]
+async fn test_staged_index_snapshot_unstage_writes_the_index(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Fully-staged file: HEAD differs from index, worktree matches index.
+    let committed_contents = "one\ntwo\nthree\n";
+    let staged_contents = "one\nTWO STAGED\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "file.txt": staged_contents,
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", committed_contents.into())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("file.txt", staged_contents.into())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    cx.run_until_parked();
+    let repo = project
+        .read_with(cx, |project, cx| project.active_repository(cx))
+        .expect("active repository");
+
+    let (buffer, diff) = project
+        .update(cx, |project, cx| {
+            project.open_staged_index_snapshot(repo, repo_path("file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let staged_hunk = diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).next().unwrap()
+    });
+    // Unstaging the hunk reverts that region of the index toward HEAD.
+    diff.update(cx, |diff, cx| {
+        diff.stage_or_unstage_hunks(false, &[staged_hunk], &snapshot, false, cx);
+    });
+    cx.run_until_parked();
+
+    let index_contents = fs
+        .with_git_state(Path::new("/dir/.git"), false, |state| {
+            state.index_contents.get(&repo_path("file.txt")).cloned()
+        })
+        .unwrap();
+    assert_eq!(index_contents.as_deref(), Some(committed_contents));
+}
+
+#[gpui::test]
 async fn test_staged_diff_marks_overlapping_hunk_unstageable(cx: &mut gpui::TestAppContext) {
     use DiffHunkSecondaryStatus::*;
     init_test(cx);

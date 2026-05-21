@@ -25,7 +25,7 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, DiskState, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     Project, ProjectPath,
@@ -614,17 +614,36 @@ impl ProjectDiff {
             editor.rhs_editor().clone()
         });
 
-        rhs_editor.update(cx, |editor, _| match diff_base {
-            DiffBase::Head | DiffBase::Staged | DiffBase::Unstaged => {
-                editor.unregister_addon::<BranchDiffAddon>();
-                if editor.addon::<GitPanelAddon>().is_none() {
-                    editor.register_addon(GitPanelAddon { workspace });
+        rhs_editor.update(cx, |editor, _| {
+            // The Staged view shows read-only index snapshots. Opening an excerpt
+            // should open the editable worktree file rather than the snapshot
+            // buffer, so delegate the open to ProjectDiff (story 38).
+            editor.set_delegate_open_excerpts(matches!(diff_base, DiffBase::Staged));
+
+            match diff_base {
+                DiffBase::Head | DiffBase::Unstaged => {
+                    editor.unregister_addon::<BranchDiffAddon>();
+                    if editor.addon::<GitPanelAddon>().is_none() {
+                        editor.register_addon(GitPanelAddon { workspace });
+                    }
                 }
-            }
-            DiffBase::Merge { .. } => {
-                editor.unregister_addon::<GitPanelAddon>();
-                if editor.addon::<BranchDiffAddon>().is_none() {
-                    editor.register_addon(BranchDiffAddon { branch_diff });
+                DiffBase::Staged => {
+                    // The staged snapshot buffers are synthetic and unregistered,
+                    // so `project.status_for_buffer_id` can't supply the header
+                    // status badge; BranchDiffAddon resolves it from the snapshot
+                    // map. GitPanelAddon still renders the stage/unstage controls.
+                    if editor.addon::<GitPanelAddon>().is_none() {
+                        editor.register_addon(GitPanelAddon { workspace });
+                    }
+                    if editor.addon::<BranchDiffAddon>().is_none() {
+                        editor.register_addon(BranchDiffAddon { branch_diff });
+                    }
+                }
+                DiffBase::Merge { .. } => {
+                    editor.unregister_addon::<GitPanelAddon>();
+                    if editor.addon::<BranchDiffAddon>().is_none() {
+                        editor.register_addon(BranchDiffAddon { branch_diff });
+                    }
                 }
             }
         });
@@ -679,11 +698,39 @@ impl ProjectDiff {
         let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
         let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
 
-        let file = buffer.read(cx).file()?;
-        Some(ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
+        // A real worktree file's path is already worktree-relative. The Staged
+        // snapshot's synthetic file (`Historic` disk state) instead carries a
+        // repo path, which only equals the worktree-relative path when the repo
+        // and worktree roots coincide, so resolve it through the git store.
+        if let Some(file) = buffer.read(cx).file()
+            && !matches!(file.disk_state(), DiskState::Historic { .. })
+        {
+            return Some(ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            });
+        }
+
+        self.worktree_project_path_for_buffer(text_anchor.buffer_id, cx)
+    }
+
+    /// Resolves an excerpt buffer to the worktree `ProjectPath` it represents.
+    /// The Staged view's index snapshot buffer is not registered in the project
+    /// buffer store and carries a repo path, so resolve it through the git store
+    /// (which maps the synthetic buffer to its repository and repo path) instead
+    /// of trusting the synthetic file's path as worktree-relative.
+    fn worktree_project_path_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<ProjectPath> {
+        let (repo, repo_path) = self
+            .project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)?;
+        repo.read(cx).repo_path_to_project_path(&repo_path, cx)
     }
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -829,6 +876,29 @@ impl ProjectDiff {
                 self._task = cx.spawn_in(window, async move |this, cx| {
                     Self::refresh(this, RefreshReason::EditorSaved, cx).await
                 });
+            }
+            EditorEvent::OpenExcerptsRequested {
+                selections_by_buffer,
+                ..
+            } => {
+                // Reached only for the Staged view, whose read-only index
+                // snapshot delegates its open. Open the editable worktree file
+                // instead of the snapshot buffer (story 38).
+                let project_paths: Vec<ProjectPath> = selections_by_buffer
+                    .keys()
+                    .filter_map(|buffer_id| {
+                        self.worktree_project_path_for_buffer(*buffer_id, cx)
+                    })
+                    .collect();
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        for project_path in project_paths {
+                            workspace
+                                .open_path(project_path, None, true, window, cx)
+                                .detach_and_log_err(cx);
+                        }
+                    })
+                    .ok();
             }
             _ => {}
         }
@@ -2070,9 +2140,9 @@ mod tests {
     use collections::HashMap;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use git::status::{TrackedStatus, UnmergedStatus, UnmergedStatusCode};
-    use gpui::TestAppContext;
-    use project::FakeFs;
+    use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::{FakeFs, Fs};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
     use std::{path::Path, sync::Arc};
@@ -2220,6 +2290,21 @@ mod tests {
         diff.update(cx, |diff, cx| {
             diff.branch_diff.update(cx, |branch_diff, cx| {
                 branch_diff.set_diff_base(DiffBase::Staged, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Staged registers both: GitPanelAddon for the stage/unstage header
+        // controls, and BranchDiffAddon to supply the status badge for the
+        // synthetic (unregistered) snapshot buffers.
+        assert!(cx.update(|_, cx| project_diff_editor_has_addon::<GitPanelAddon>(&diff, cx)));
+        assert!(cx.update(|_, cx| project_diff_editor_has_addon::<BranchDiffAddon>(&diff, cx)));
+
+        // Switching away from Staged removes BranchDiffAddon again; Head/Unstaged
+        // resolve status from the real worktree buffers via the project.
+        diff.update(cx, |diff, cx| {
+            diff.branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.set_diff_base(DiffBase::Head, cx);
             });
         });
         cx.run_until_parked();
@@ -2505,6 +2590,699 @@ mod tests {
             toolbar.read_with(cx, |toolbar, cx| toolbar.selected_diff_filter(cx)),
             Some(DiffFilter::Staged)
         );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_shows_read_only_index_snapshot_without_worktree_leak(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // HEAD, index, and worktree all differ. The Staged filter must display
+        // the git index as a read-only snapshot, never the worktree's unstaged
+        // edit.
+        let committed_contents = "one\ntwo\nthree\nfour\nfive\n";
+        let staged_contents = "one\nTWO STAGED\nthree\nfour\nfive\n";
+        let worktree_contents = "one\nTWO STAGED\nthree\nFOUR UNSTAGED\nfive\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": worktree_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let staged_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("staged diff should display the file")
+        });
+
+        // The displayed buffer *is* the index content (read-only) — not the
+        // worktree, so the unstaged "FOUR UNSTAGED" edit is absent.
+        staged_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), staged_contents);
+            assert_eq!(buffer.capability(), Capability::ReadOnly);
+        });
+
+        // The editor itself stays writable so the inline stage/unstage hunk
+        // controls still render; only the index buffer is read-only.
+        diff.read_with(cx, |diff, cx| {
+            assert!(!diff.editor.read(cx).rhs_editor().read(cx).read_only(cx));
+        });
+
+        // Editing the worktree out of band must not leak into the staged view.
+        fs.save(
+            path!("/project/file.txt").as_ref(),
+            &"one\nTWO STAGED\nthree\nFOUR UNSTAGED\nSIX WORKTREE\n".into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let staged_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("staged diff should still display the file")
+        });
+        staged_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), staged_contents);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_shows_file_status_badge(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // A fully-staged modification: HEAD differs from the index, and the
+        // worktree matches the index. The staged header must surface the file's
+        // git status (Modified) just like the unstaged view, even though the
+        // snapshot buffer is synthetic and unregistered.
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let staged_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("staged diff should display the file")
+        });
+        let buffer_id = staged_buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let status = diff.read_with(cx, |diff, cx| {
+            diff.editor
+                .read(cx)
+                .rhs_editor()
+                .read(cx)
+                .status_for_buffer_id(buffer_id, cx)
+        });
+        assert_eq!(
+            status,
+            Some(FileStatus::Tracked(TrackedStatus {
+                index_status: StatusCode::Modified,
+                worktree_status: StatusCode::Unmodified,
+            })),
+            "staged snapshot header should show the file's staged git status",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_rejects_inline_text_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // A file with staged changes (index differs from HEAD).
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let staged_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("staged diff should display the file")
+        });
+
+        // Typing into the index excerpt is rejected by the per-buffer read-only
+        // capability, even though the editor itself is writable.
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        editor.update_in(cx, |editor, window, cx| {
+            let end = editor.buffer().read(cx).len(cx);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([end..end]);
+            });
+            editor.handle_input("X", window, cx);
+        });
+
+        staged_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), staged_contents);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_unstaged_filter_accepts_inline_text_edits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // A file with an unstaged worktree edit and nothing staged: it appears
+        // in the Unstaged filter as the live, editable worktree buffer.
+        let committed_contents = "one\ntwo\nthree\n";
+        let worktree_contents = "ONE WORKTREE\ntwo\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": worktree_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Unstaged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let worktree_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("unstaged diff should display the file")
+        });
+
+        // The Unstaged filter keeps the live worktree buffer, so it stays
+        // editable — the read-only scope is Staged-only.
+        worktree_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.capability(), Capability::ReadWrite);
+        });
+
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        editor.update_in(cx, |editor, window, cx| {
+            let end = editor.buffer().read(cx).len(cx);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([end..end]);
+            });
+            editor.handle_input("X", window, cx);
+        });
+
+        worktree_buffer.read_with(cx, |buffer, _| {
+            assert!(
+                buffer.text().contains('X'),
+                "edit should be accepted, got {:?}",
+                buffer.text()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_reloads_when_index_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Partially-staged file: line 1 staged, line 2 only in the worktree.
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+        let restaged_contents = "one\nTWO STAGED\nTHREE STAGED\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": restaged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let staged_text = |diff: &Entity<ProjectDiff>, cx: &mut VisualTestContext| {
+            diff.read_with(cx, |diff, cx| {
+                diff.multibuffer
+                    .read(cx)
+                    .all_buffers()
+                    .into_iter()
+                    .next()
+                    .map(|buffer| buffer.read(cx).text())
+            })
+        };
+
+        assert_eq!(staged_text(&diff, cx).as_deref(), Some(staged_contents));
+
+        // Simulate `git add` of the second change directly against the index.
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", restaged_contents.into())],
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            staged_text(&diff, cx).as_deref(),
+            Some(restaged_contents),
+            "staged snapshot should reload after the index changes"
+        );
+
+        // Simulate `git reset`: the index matches HEAD, so the file leaves the
+        // Staged filter entirely.
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+        );
+        cx.run_until_parked();
+        assert!(
+            diff.read_with(cx, |diff, cx| diff.multibuffer.read(cx).is_empty()),
+            "fully-unstaged file should leave the Staged view"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_active_path_resolves_for_index_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        // The focused index excerpt is file-less; active_path must still resolve
+        // it to the worktree path via the excerpt's repo path, rather than
+        // returning None.
+        let active_path = diff.read_with(cx, |diff, cx| diff.active_path(cx));
+        assert_eq!(
+            active_path.map(|path| path.path),
+            Some(rel_path("file.txt").into_arc()),
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_save_and_reload_are_safe_noops(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        let index_buffer = diff.read_with(cx, |diff, cx| {
+            diff.multibuffer
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .expect("staged diff should display the file")
+        });
+
+        // Saving the diff is a no-op: the read-only index buffer is never dirty,
+        // so the file-less save path is not exercised and does not error.
+        let editor = diff.read_with(cx, |diff, cx| diff.editor.read(cx).rhs_editor().clone());
+        editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(SaveOptions::default(), project.clone(), window, cx)
+            })
+            .await
+            .expect("saving the staged diff should be a safe no-op");
+        cx.run_until_parked();
+
+        // Reloading the file-less index buffer is a no-op (there is no file to
+        // read), and must not error.
+        index_buffer
+            .update(cx, |buffer, cx| buffer.reload(cx))
+            .await
+            .ok();
+        cx.run_until_parked();
+
+        index_buffer.read_with(cx, |buffer, _| {
+            assert_eq!(buffer.text(), staged_contents);
+            assert_eq!(buffer.capability(), Capability::ReadOnly);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_inline_unstage_writes_the_index(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Fully-staged file: HEAD differs from index, worktree matches index.
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        // Open the Staged diff as the active item in the workspace so its editor
+        // paints and registers the staging actions (toggle_staged is registered
+        // during element paint, not at construction).
+        cx.focus(&workspace);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Staged, window, cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        // Unstage the hunk from the in-editor control. This must resolve the
+        // file-less index excerpt to its repo path and write the git index,
+        // reverting the hunk toward HEAD (stories 37/41).
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+        cx.dispatch_action(editor::actions::SelectAll);
+        cx.dispatch_action(ToggleStaged);
+        cx.run_until_parked();
+
+        let index_contents = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state
+                    .index_contents
+                    .get(&RepoPath::from_rel_path(rel_path("file.txt")))
+                    .cloned()
+            })
+            .unwrap();
+        assert_eq!(
+            index_contents.as_deref(),
+            Some(committed_contents),
+            "inline unstage must write the git index back toward HEAD"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_panel_unstage_writes_the_index(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Fully-staged file: HEAD differs from index, worktree matches index.
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, DiffBase::Staged, window, cx)
+        });
+        cx.run_until_parked();
+
+        // Unstage through the repository's explicit-`RepoPath` path -- the same
+        // path the git panel and section-header `-` control reach via
+        // `change_file_stage`. It must stay unaffected by the file-less index
+        // snapshot machinery (it never touches the override map).
+        let repository = project
+            .read_with(cx, |project, cx| {
+                project.git_store().read(cx).active_repository()
+            })
+            .expect("active repository");
+        repository
+            .update(cx, |repository, cx| {
+                repository.unstage_entries(vec![RepoPath::from_rel_path(rel_path("file.txt"))], cx)
+            })
+            .await
+            .expect("unstage entries");
+        cx.run_until_parked();
+
+        let index_contents = fs
+            .with_git_state(path!("/project/.git").as_ref(), false, |state| {
+                state
+                    .index_contents
+                    .get(&RepoPath::from_rel_path(rel_path("file.txt")))
+                    .cloned()
+            })
+            .unwrap();
+        assert_eq!(
+            index_contents.as_deref(),
+            Some(committed_contents),
+            "panel/header unstage must write the git index back toward HEAD"
+        );
+
+        // The open Staged snapshot stays consistent: once the index matches HEAD
+        // the file is fully unstaged and leaves the Staged view (story 39).
+        assert!(
+            diff.read_with(cx, |diff, cx| diff.multibuffer.read(cx).is_empty()),
+            "fully-unstaged file should leave the Staged view after a panel unstage"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_staged_filter_open_to_edit_opens_worktree_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Fully-staged file: HEAD differs from index, worktree matches index.
+        let committed_contents = "one\ntwo\nthree\n";
+        let staged_contents = "one\nTWO STAGED\nthree\n";
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": staged_contents,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", committed_contents.into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", staged_contents.into())],
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectDiff::deploy_at(workspace, None, DiffBase::Staged, window, cx);
+        });
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        let editor = item.read_with(cx, |item, cx| item.editor.read(cx).rhs_editor().clone());
+
+        // Activating a hunk in the read-only Staged view must open the actual,
+        // editable worktree file (story 38) -- not the file-less index snapshot
+        // -- so that subsequent edits land as unstaged changes.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor.open_excerpts(&editor::actions::OpenExcerpts, window, cx);
+        });
+        cx.run_until_parked();
+
+        let opened = workspace
+            .update(cx, |workspace, cx| workspace.active_item_as::<Editor>(cx))
+            .expect("activating a staged hunk should open an editable worktree editor");
+        opened.read_with(cx, |opened, cx| {
+            let buffer = opened
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("worktree file opens as a singleton buffer");
+            let buffer = buffer.read(cx);
+            assert!(
+                buffer.file().is_some(),
+                "opened worktree file must be backed by a file"
+            );
+            assert_eq!(
+                buffer.capability(),
+                Capability::ReadWrite,
+                "opened worktree file must be editable"
+            );
+        });
     }
 
     #[gpui::test]

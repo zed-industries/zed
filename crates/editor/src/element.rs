@@ -52,7 +52,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    HighlightedText, IndentGuideSettings, LanguageAwareStyling,
+    DiskState, HighlightedText, IndentGuideSettings, LanguageAwareStyling,
     language_settings::ShowWhitespaceSetting,
 };
 use markdown::Markdown;
@@ -8659,7 +8659,25 @@ pub(crate) fn render_buffer_header(
                                         )
                                     })
                                     .when(!buffer.capability.editable(), |el| {
-                                        el.child(Icon::new(IconName::FileLock).color(Color::Muted))
+                                        // Git-sourced (Historic) read-only buffers — like the
+                                        // Staged index snapshot — have an editable worktree
+                                        // counterpart, so point the reader at it.
+                                        let tooltip_text = if file.is_some_and(|file| {
+                                            matches!(file.disk_state(), DiskState::Historic { .. })
+                                        }) {
+                                            "Read-only — open the file to edit"
+                                        } else {
+                                            "Read-only"
+                                        };
+                                        el.child(
+                                            div()
+                                                .id("read-only-lock")
+                                                .child(
+                                                    Icon::new(IconName::FileLock)
+                                                        .color(Color::Muted),
+                                                )
+                                                .tooltip(Tooltip::text(tooltip_text)),
+                                        )
                                     })
                                     .when_some(breadcrumbs, |then, breadcrumbs| {
                                         let font = theme_settings::ThemeSettings::get_global(cx)
