@@ -604,12 +604,6 @@ impl Editor {
                 point_for_position.next_valid.to_point(snapshot),
                 Bias::Right,
             );
-            // The buffer-position window can include neighbouring inlays
-            // (e.g. a `::Type` hint after a closing paren and another hint just
-            // past it both pass the take_while when `clip_point` skips through
-            // a one-character source span between them). Use the actual mouse
-            // `hovered_offset` to pick the inlay whose rendered text is under
-            // the cursor.
             let hovered_hint = Self::visible_inlay_hints(self.display_map.read(cx))
                 .filter(|hint| snapshot.can_resolve(&hint.position))
                 .skip_while(|hint| {
