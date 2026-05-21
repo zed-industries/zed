@@ -6,7 +6,10 @@ first PoC build (A1–A6); A7 was added later after A5 landed and the
 staging-grouped section headers were observed to be inert outside the
 `+`/`-` button. A8 was added after the Staged filter was observed to be
 editable — edits leak into the staged view because it shows the live worktree
-buffer rather than the git index. A1–A8 are now done.
+buffer rather than the git index. A9 followed from review feedback (Staged view
+visual parity). A1–A9 are now done. A10 (section-aware discard/stash +
+section-header right-click menus, agreed in a /grill-me session 2026-05-21) is
+also done.
 
 ## Status legend
 
@@ -42,6 +45,7 @@ Initial build landed; A1–A8 done.
 - [x] A7 — section-header body click opens matching per-base `ProjectDiff`
 - [x] A8 — Staged filter is a read-only git-index snapshot (fixes the edit leak)
 - [x] A9 — Staged view visual parity: synthetic-file snapshot so it renders like the Unstaged view (syntax highlighting, file header/icon, status badge, read-only lock)
+- [x] A10 — section-aware discard/stash + section-header right-click menus (staging-grouped mode only)
 
 ## Followups (detailed checklists)
 
@@ -630,6 +634,162 @@ store" (the buffer carries a synthetic file post-A9).
       staged-file count and off the render thread, but wasteful — key a cache on
       `(repo_id, repo_path, head_oid, index_oid)` and reuse the entities when the
       index/HEAD blobs are unchanged. (Grammar load is already registry-cached.)
+
+### A10 — Section-aware discard/stash + section-header context menus (M2 + M4 + M5)
+
+User stories: 42–49. PRD: appendix A10. Agreed in a /grill-me session
+2026-05-21. **Done** — backend primitives, per-row discard, and the
+section-header right-click menus + bulk operations are all implemented and
+tested (135 git_ui lib tests pass; `./script/clippy -p git_ui -p git` clean).
+
+Today `git::RestoreFile` → `revert_selected` (`git_panel.rs:1863`) →
+`revert_entry` (`git_panel.rs:1951`) reverts a file fully to HEAD (unstage +
+`git checkout HEAD -- <path>`), discarding both sides regardless of the clicked
+section. Make the destructive/staging menu actions section-aware (VS Code-style),
+scoped to staging-grouped mode only; status-grouped mode + the panel kebab are
+untouched.
+
+**New git primitives (git → project/proto → git_ui):** — DONE (backend
+compiles across git/fs/proto/project).
+
+- [x] **Restore worktree from index** — `git checkout -- <paths>` (no commit).
+      `GitRepository::checkout_index_files` trait method + `RealGitRepository`
+      impl (`crates/git/src/repository.rs`); functional `FakeGitRepository` impl
+      (`crates/fs/src/fake_git_repo.rs` — restores worktree files from
+      `index_contents`, leaves untracked alone); proto `GitCheckoutIndexFiles`
+      (git.proto + zed.proto oneof field 453 + all three lists in proto.rs);
+      `project::Repository::checkout_index_files` wrapper +
+      `handle_checkout_index_files` host handler + registration
+      (`crates/project/src/git_store.rs`).
+- [x] **Stash staged only** — `git stash push --staged`. `stash_staged` trait
+      method + Real impl; functional Fake impl (resets index to HEAD for differing
+      paths, worktree untouched — does not model the stash list); proto
+      `GitStashStaged` (oneof field 454); `project::Repository::stash_staged`
+      wrapper + `handle_stash_staged` host handler + registration. ⚠️ Requires
+      **git ≥ 2.35** (Jan 2022) — no version gating exists today; raise as a
+      compatibility note for the team.
+
+**Per-row discard (`git_ui/src/git_panel.rs`):** — DONE (compiles).
+
+Approach note: `revert_entry` is **shared** by the bulk "Discard Tracked
+Changes" path (`restore_tracked_files`), which must stay revert-to-HEAD, so it
+was left as-is. Instead `perform_checkout` gained a `CheckoutSource { Head,
+Index }` param and `revert_selected` dispatches per-section to either the
+existing `revert_entry` (Head) or a new `discard_unstaged_entry` (Index).
+
+- [x] `deploy_entry_context_menu` — omit "Discard Changes" via
+      `.when(!is_staged_section, …)` when `entry.section == Section::Staged`.
+- [x] `revert_selected` — Staged → `show_hint_toast` + return (also covers the
+      backspace/delete keybinding); Unstaged → reworded prompt "Discard unstaged
+      changes to X?" then `discard_unstaged_entry`; else → existing `revert_entry`.
+- [x] `discard_unstaged_entry` — `FileStatus::Untracked` → trash (with the
+      "Trash X?" prompt); otherwise `perform_checkout(.., CheckoutSource::Index)`
+      = `git checkout -- <file>` restoring the worktree from the index.
+- [x] `perform_checkout` parameterized with `CheckoutSource`; both existing
+      callers (`revert_entry`, `restore_tracked_files`) pass `Head`.
+- [x] `show_hint_toast` helper — brief auto-hiding `workspace::Toast`.
+- [x] **Gotcha (validated by test):** the project `checkout_index_files` wrapper
+      must **not** use the optimistic `pending_op::GitStatus::Reverted` tracking
+      that `checkout_files` uses. A finished `Reverted` op makes the panel skip
+      the file entirely (`git_panel.rs:4238-4245`), which is correct for a full
+      revert-to-HEAD but wrong here — a partially-staged file's Staged row would
+      vanish. The wrapper uses a plain `send_job` (no optimistic op); status
+      updates on the next refresh. Caught by
+      `test_discard_unstaged_row_restores_worktree_from_index` (RED until fixed).
+- [x] **Tests (per-row core)** in `crates/git_ui/src/git_panel.rs`, all passing,
+      via `build_staging_grouped_git_panel` fixture (explicit HEAD/index/worktree
+      contents; the fake derives status):
+      - `test_discard_unstaged_row_restores_worktree_from_index` — partial file,
+        worktree restored to index, Staged row preserved, Unstaged row gone.
+      - `test_discard_unstaged_row_of_staged_new_file_restores_not_trashes` —
+        staged-add + further edit: restored from index, not trashed.
+      - `test_discard_unstaged_row_of_untracked_file_trashes_it` — untracked
+        Unstaged row trashed (answers the "Trash?" prompt).
+      - `test_discard_on_staged_row_is_noop` — Staged-row discard leaves the
+        worktree and both rows untouched.
+
+**Section-header right-click menus (`git_ui/src/git_panel.rs`):** — DONE.
+
+Two new `git::` actions (`StashStaged`, `DiscardAllUnstaged`) declared in
+`crates/git/src/git.rs`, imported and registered as panel `on_action` handlers
+(staging-mode menus only; no keybindings, kebab unchanged → story 49).
+
+- [x] `render_list_header` — added `.when(!section_context_menu_items(..).is_empty())`
+      `→ on_mouse_down(MouseButton::Right)` deploying `deploy_section_context_menu`;
+      gated to Staged/Unstaged in staging-grouped mode (the helper returns empty
+      for Conflicts + all status-grouped headers). A separate `weak_for_menu`
+      clone is taken before the A7 `.when_some(body-click)` consumes `weak`. The
+      A7 body left-click and the `+`/`-` button (its own `cx.stop_propagation()`)
+      are independent listeners and keep working.
+- [x] `deploy_section_context_menu(section, position, …)` — reads `group_by`,
+      bails when `section_context_menu_items` is empty, else builds a
+      `ContextMenu` mapping each `SectionMenuItem` to its label+action via
+      `section_menu_item_label_and_action`: Staged → "Unstage All"
+      (`UnstageAll`) + "Stash Staged Changes" (`StashStaged`); Unstaged →
+      "Stage All" (`StageAll`) + "Discard All Unstaged Changes"
+      (`DiscardAllUnstaged`). "Unstage All"/"Stage All" reuse the existing
+      repo-wide actions — semantically equivalent since the Staged section *is*
+      every staged file (and Unstaged *is* every unstaged/untracked file).
+- [x] **Discard All Unstaged Changes** handler (`discard_all_unstaged`) —
+      partitions the Unstaged-section entries into untracked
+      (`matches!(status, FileStatus::Untracked)`) vs tracked, shows one
+      confirmation naming both counts (`discard_all_unstaged_prompt_message`),
+      then restores the tracked side from the index via
+      `perform_checkout(.., CheckoutSource::Index)` and trashes the untracked
+      side via `project.delete_file`. Staged side untouched.
+- [x] **Stash Staged Changes** handler (`stash_staged_changes`) — mirrors
+      `stash_all`, calling `repo.stash_staged(cx)`.
+- [x] **Menu-content is data, not buried in the builder.** `SectionMenuItem`
+      enum + pure `section_context_menu_items(group_by, section)` decide the
+      menu, so the contents are unit-testable without reaching into the
+      (private) `ContextMenu` item list — same constraint/precedent as A6.
+
+**Tests (fake-repo, external-behavior style):** — DONE. Built TDD, one
+RED→GREEN vertical slice per behavior (no horizontal "all tests then all impl").
+
+- [x] Partial file: discard Unstaged row → worktree matches index, Unstaged row
+      gone / Staged row stays. `test_discard_unstaged_row_restores_worktree_from_index`
+      (per-row core, prior session).
+- [x] Discard untracked Unstaged row → trashed
+      (`test_discard_unstaged_row_of_untracked_file_trashes_it`); discard
+      staged-new-with-edits Unstaged row → restored from index, **not** trashed
+      (`test_discard_unstaged_row_of_staged_new_file_restores_not_trashes`).
+- [x] Staged-row discard keypress → no index/worktree change + hint toast:
+      `test_discard_on_staged_row_is_noop`.
+- [x] Stash Staged → staged hunks leave the index (Staged section empties),
+      worktree + unstaged side intact:
+      `test_stash_staged_changes_empties_staged_section_keeping_worktree`.
+      ⚠️ "a stash entry is created" is **not** asserted — the `FakeGitRepository`
+      models `stash --staged` as an index reset and does not maintain a stash
+      list. The observable index/worktree/section effects are asserted instead.
+- [x] Header menus (content): Staged → [Unstage All, Stash Staged]; Unstaged →
+      [Stage All, Discard All Unstaged]; Conflicts → none; status-grouped → none.
+      `test_section_context_menu_items_are_section_appropriate` (pure helper).
+      Wiring: `test_right_click_section_header_deploys_menu_for_staging_sections`
+      (deploy sets `context_menu` for Staged/Unstaged, leaves it unset for
+      Conflicts). The live `ContextMenu` item list is private (A6 constraint), so
+      content is asserted on the helper that drives it, wiring on the deploy.
+- [x] Discard All Unstaged → confirmation names counts
+      (`test_discard_all_unstaged_prompt_message_names_both_counts`, pure);
+      tracked restored + untracked trashed + section empty + staged side intact
+      (`test_discard_all_unstaged_clears_unstaged_section_preserving_staged`);
+      cancel is a no-op (`test_discard_all_unstaged_cancellation_is_a_noop`).
+- [x] Regression: status-grouped per-row discard still reverts to HEAD — the
+      existing `test_discard_prompt_escapes_markdown_in_file_name` (default/
+      status-grouped) asserts the revert-to-HEAD prompt wording ("Are you sure
+      you want to discard changes to …?"), which only fires when
+      `revert_selected`'s `entry.section` branch lands on the Head path; it would
+      change wording if the section-aware branch leaked into status-grouped mode.
+      Kebab menu (`git_panel_context_menu`) is untouched.
+
+**Not covered (acceptable for the PoC):** the per-row Staged menu "omits Discard
+Changes" assertion (private `ContextMenu` items; the `.when(!is_staged_section)`
+guard is exercised behaviorally by the backspace no-op test) and a live
+simulated-right-click on the rendered header (the deploy logic + the shared
+`section_context_menu_items` gate are both tested directly).
+
+**Dependency:** M4 (`(section, repo_path)` key, Staged/Unstaged variants) and the
+staging-grouped section headers (A2/A7). Independent of A8/A9.
 
 ## Cross-cutting tasks
 
