@@ -1117,6 +1117,7 @@ fn initialize_settings(
                             paths::settings_file(),
                             e
                         ),
+                        worktree_id: None,
                     })
                     .log_err();
             } else {

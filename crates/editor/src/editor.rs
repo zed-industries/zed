@@ -1852,7 +1852,7 @@ impl Editor {
                 project,
                 window,
                 |editor, _, event, window, cx| match event {
-                    project::Event::RefreshCodeLens => {
+                    project::Event::RefreshCodeLens { .. } => {
                         editor.refresh_code_lenses(None, window, cx);
                     }
                     project::Event::RefreshInlayHints {
@@ -1959,7 +1959,7 @@ impl Editor {
                         }
                     }
 
-                    project::Event::WorkspaceEditApplied(transaction) => {
+                    project::Event::WorkspaceEditApplied { transaction, .. } => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };

@@ -446,7 +446,7 @@ pub enum Event {
     },
     Toast {
         notification_id: SharedString,
-        message: String,
+        message: SharedString,
         /// Optional link to display as a button in the toast.
         link: Option<ToastLink>,
     },
@@ -500,12 +500,17 @@ pub enum Event {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
-    RefreshCodeLens,
+    RefreshCodeLens {
+        server_id: LanguageServerId,
+    },
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
-    WorkspaceEditApplied(ProjectTransaction),
+    WorkspaceEditApplied {
+        server_id: LanguageServerId,
+        transaction: ProjectTransaction,
+    },
     AgentLocationChanged,
     BufferEdited,
 }
@@ -4284,41 +4289,99 @@ impl Project {
         }
     }
 
+    fn owns_lsp_event(&self, event: &LspStoreEvent, cx: &App) -> bool {
+        match event {
+            LspStoreEvent::LanguageServerAdded(_, _, worktree_id) => {
+                self.language_server_belongs_to_us(*worktree_id, cx)
+            }
+            LspStoreEvent::LanguageServerRemoved(server_id)
+            | LspStoreEvent::LanguageServerLog(server_id, _, _)
+            | LspStoreEvent::RefreshInlayHints { server_id, .. }
+            | LspStoreEvent::RefreshSemanticTokens { server_id, .. }
+            | LspStoreEvent::RefreshCodeLens { server_id }
+            | LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id }
+            | LspStoreEvent::WorkspaceEditApplied { server_id, .. }
+            | LspStoreEvent::ApplyWorkspaceEditRequested { server_id, .. } => {
+                self.language_servers.contains(server_id)
+            }
+            LspStoreEvent::LanguageServerUpdate {
+                language_server_id,
+                message,
+                ..
+            } => {
+                if !self.language_servers.contains(language_server_id) {
+                    return false;
+                }
+                if let proto::update_language_server::Variant::RegisteredForBuffer(update) = message
+                {
+                    let Ok(buffer_id) = BufferId::new(update.buffer_id) else {
+                        return false;
+                    };
+                    self.buffers.contains(&buffer_id)
+                } else {
+                    true
+                }
+            }
+            LspStoreEvent::LanguageServerPrompt(prompt) => {
+                self.language_servers.contains(&prompt.language_server_id)
+            }
+            LspStoreEvent::LanguageDetected { buffer, .. } => {
+                self.buffers.contains(&buffer.read(cx).remote_id())
+            }
+            LspStoreEvent::Notification { worktree_id, .. }
+            | LspStoreEvent::DiagnosticsSummariesUpdated { worktree_id, .. } => {
+                self.owns_worktree_id(*worktree_id, cx)
+            }
+            LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
+                self.language_servers.contains(server_id)
+                    && paths
+                        .iter()
+                        .any(|path| self.owns_worktree_id(path.worktree_id, cx))
+            }
+            LspStoreEvent::DiskBasedDiagnosticsStarted { language_server_id }
+            | LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
+                self.language_servers.contains(language_server_id)
+            }
+            LspStoreEvent::SnippetEdit {
+                buffer_id,
+                most_recent_edit,
+                ..
+            } => {
+                self.buffers.contains(buffer_id)
+                    && most_recent_edit.replica_id == self.replica_id(cx)
+            }
+        }
+    }
+
     fn on_lsp_store_event(
         &mut self,
         _: Entity<LspStore>,
         event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
-        // Ownership tracking. Run regardless of share state.
-        match event {
-            LspStoreEvent::LanguageServerAdded(server_id, _, worktree_id) => {
-                if self.language_server_belongs_to_us(*worktree_id, cx) {
-                    self.language_servers.insert(*server_id);
-                }
-            }
-            LspStoreEvent::LanguageServerRemoved(server_id) => {
-                self.language_servers.remove(server_id);
-            }
-            _ => {}
+        if !self.owns_lsp_event(event, cx) {
+            return;
         }
 
         match event {
             LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
                 cx.emit(Event::DiagnosticsUpdated {
-                    paths: paths.clone(),
+                    paths: paths
+                        .iter()
+                        .filter(|path| self.owns_worktree_id(path.worktree_id, cx))
+                        .cloned()
+                        .collect(),
                     language_server_id: *server_id,
                 })
             }
             LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => {
+                self.language_servers.insert(*server_id);
+
                 cx.emit(Event::LanguageServerAdded(
                     *server_id,
                     name.clone(),
                     *worktree_id,
                 ));
-                if !self.language_servers.contains(server_id) {
-                    return;
-                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     let lsp_store = self.lsp_store(cx).read(cx);
                     if let Some(capabilities) = lsp_store.lsp_server_capabilities.get(server_id) {
@@ -4338,6 +4401,7 @@ impl Project {
                 }
             }
             LspStoreEvent::LanguageServerRemoved(server_id) => {
+                self.language_servers.remove(server_id);
                 cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
@@ -4360,9 +4424,6 @@ impl Project {
                     server_id: *server_id,
                     request_id: *request_id,
                 });
-                if !self.language_servers.contains(server_id) {
-                    return;
-                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshInlayHints {
@@ -4381,9 +4442,6 @@ impl Project {
                     server_id: *server_id,
                     request_id: *request_id,
                 });
-                if !self.language_servers.contains(server_id) {
-                    return;
-                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshSemanticTokens {
@@ -4394,20 +4452,20 @@ impl Project {
                         .log_err();
                 }
             }
-            LspStoreEvent::RefreshCodeLens => {
-                cx.emit(Event::RefreshCodeLens);
+            LspStoreEvent::RefreshCodeLens { server_id } => {
+                cx.emit(Event::RefreshCodeLens {
+                    server_id: *server_id,
+                });
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::RefreshCodeLens {
                             project_id: *remote_id,
+                            server_id: server_id.to_proto(),
                         })
                         .log_err();
                 }
             }
             LspStoreEvent::PullWorkspaceDiagnosticsRequested { server_id } => {
-                if !self.language_servers.contains(server_id) {
-                    return;
-                }
                 if let ProjectClientState::Shared { remote_id } = &self.client_state {
                     self.collab_client
                         .send(proto::PullWorkspaceDiagnostics {
@@ -4525,7 +4583,10 @@ impl Project {
                     _ => (),
                 }
             }
-            LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
+            LspStoreEvent::Notification {
+                message,
+                worktree_id: _,
+            } => cx.emit(Event::Toast {
                 notification_id: "lsp".into(),
                 message: message.clone(),
                 link: None,
@@ -4539,9 +4600,13 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
-            LspStoreEvent::WorkspaceEditApplied(transaction) => {
-                cx.emit(Event::WorkspaceEditApplied(transaction.clone()))
-            }
+            LspStoreEvent::WorkspaceEditApplied {
+                server_id,
+                transaction,
+            } => cx.emit(Event::WorkspaceEditApplied {
+                server_id: *server_id,
+                transaction: transaction.clone(),
+            }),
             LspStoreEvent::ApplyWorkspaceEditRequested {
                 server_id,
                 params,
@@ -4638,7 +4703,7 @@ impl Project {
                     cx.emit(Event::Toast {
                         notification_id: format!("local-settings-{path:?}").into(),
                         link: None,
-                        message,
+                        message: message.into(),
                     });
                 }
                 Ok(path) => {
@@ -4663,7 +4728,7 @@ impl Project {
                             label: "Open Tasks Documentation",
                             url: "https://zed.dev/docs/tasks",
                         }),
-                        message,
+                        message: message.into(),
                     });
                 }
                 Ok(path) => {
@@ -4686,7 +4751,7 @@ impl Project {
                     cx.emit(Event::Toast {
                         notification_id: format!("local-debug-scenarios-{path:?}").into(),
                         link: None,
-                        message,
+                        message: message.into(),
                     });
                 }
                 Ok(path) => {
@@ -7044,10 +7109,16 @@ impl Project {
         envelope: TypedEnvelope<proto::Toast>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |_, cx| {
+        this.update(&mut cx, |this, cx| {
+            if let Some(worktree_id) = envelope.payload.worktree_id {
+                let worktree_id = WorktreeId::from_proto(worktree_id);
+                if !this.owns_worktree_id(worktree_id, cx) {
+                    return Ok(());
+                }
+            }
             cx.emit(Event::Toast {
                 notification_id: envelope.payload.notification_id.into(),
-                message: envelope.payload.message,
+                message: envelope.payload.message.into(),
                 link: None,
             });
             Ok(())
@@ -7072,6 +7143,7 @@ impl Project {
         this.update(&mut cx, |_, cx| {
             cx.emit(Event::LanguageServerPrompt(
                 LanguageServerPromptRequest::new(
+                    LanguageServerId::from_proto(envelope.payload.server_id),
                     proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
                     envelope.payload.message,
                     actions.clone(),
@@ -8544,6 +8616,7 @@ impl<'a> Iterator for PathMatchCandidateSetNucleoIter<'a> {
 
 impl EventEmitter<Event> for Project {}
 impl EventEmitter<GitEvent> for Project {}
+impl EventEmitter<LspStoreEvent> for Project {}
 
 impl PeerBufferAccess for Project {
     fn create_buffer_for_peer(

@@ -1417,12 +1417,12 @@ async fn test_dap_store_notification_scoped_by_session_id(cx: &mut TestAppContex
         let b_messages = b_messages.clone();
         let sub_a = cx.subscribe(&project_a, move |_, event: &Event, _| {
             if let Event::Toast { message, .. } = event {
-                a_messages.borrow_mut().push(message.clone());
+                a_messages.borrow_mut().push(message.to_string());
             }
         });
         let sub_b = cx.subscribe(&project_b, move |_, event: &Event, _| {
             if let Event::Toast { message, .. } = event {
-                b_messages.borrow_mut().push(message.clone());
+                b_messages.borrow_mut().push(message.to_string());
             }
         });
         (sub_a, sub_b)

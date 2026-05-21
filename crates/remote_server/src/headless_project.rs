@@ -724,12 +724,16 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
-            LspStoreEvent::Notification(message) => {
+            LspStoreEvent::Notification {
+                message,
+                worktree_id,
+            } => {
                 self.session
                     .send(proto::Toast {
                         project_id: REMOTE_SERVER_PROJECT_ID,
                         notification_id: "lsp".to_string(),
-                        message: message.clone(),
+                        message: message.clone().into(),
+                        worktree_id: Some(worktree_id.to_proto()),
                     })
                     .log_err();
             }
@@ -757,10 +761,11 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
-            LspStoreEvent::RefreshCodeLens => {
+            LspStoreEvent::RefreshCodeLens { server_id } => {
                 self.session
                     .send(proto::RefreshCodeLens {
                         project_id: REMOTE_SERVER_PROJECT_ID,
+                        server_id: server_id.to_proto(),
                     })
                     .log_err();
             }
@@ -789,6 +794,7 @@ impl HeadlessProject {
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 let request = self.session.request(proto::LanguageServerPromptRequest {
                     project_id: REMOTE_SERVER_PROJECT_ID,
+                    server_id: prompt.language_server_id.to_proto(),
                     actions: prompt
                         .actions
                         .iter()

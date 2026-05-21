@@ -71,6 +71,8 @@ fn flatten_cache(lens: &HashMap<LanguageServerId, CodeLensActions>) -> CodeLensA
 }
 
 impl LspStore {
+    // todo(lsp): Make this a per-server invalidation
+    // this would have to change how editor refetches the data as well
     pub(super) fn invalidate_code_lens(&mut self) {
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.code_lens = None;
@@ -399,12 +401,13 @@ impl LspStore {
 
     pub(super) async fn handle_refresh_code_lens(
         lsp_store: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshCodeLens>,
+        envelope: TypedEnvelope<proto::RefreshCodeLens>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.server_id);
         lsp_store.update(&mut cx, |lsp_store, cx| {
             lsp_store.invalidate_code_lens();
-            cx.emit(LspStoreEvent::RefreshCodeLens);
+            cx.emit(LspStoreEvent::RefreshCodeLens { server_id });
         });
         Ok(proto::Ack {})
     }

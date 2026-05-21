@@ -615,7 +615,7 @@ impl GitBlame {
                             log::error!("failed to get git blame data: {all_errors}");
                             cx.emit(project::Event::Toast {
                                 notification_id: "git-blame".into(),
-                                message: all_errors,
+                                message: all_errors.into(),
                                 link: None,
                             });
                         } else {
@@ -694,6 +694,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
     use text::BufferId;
+    use ui::SharedString;
     use unindent::Unindent as _;
     use util::{RandomCharIter, path};
 
@@ -783,8 +784,9 @@ mod tests {
             event,
             project::Event::Toast {
                 notification_id: "git-blame".into(),
-                message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
-                    .to_string(),
+                message: SharedString::new_static(
+                    "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
+                ),
                 link: None
             }
         );

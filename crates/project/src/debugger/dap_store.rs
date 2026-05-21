@@ -70,7 +70,7 @@ pub enum DapStoreEvent {
     /// surfaces it).
     Notification {
         session_id: Option<SessionId>,
-        message: String,
+        message: SharedString,
     },
     RemoteHasInitialized,
     /// A streaming log message produced while resolving a debug adapter binary

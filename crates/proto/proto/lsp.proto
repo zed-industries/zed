@@ -513,6 +513,7 @@ message GetCodeLensResponse {
 
 message RefreshCodeLens {
   uint64 project_id = 1;
+  uint64 server_id = 2;
 }
 
 message MarkupContent {
@@ -782,6 +783,7 @@ message LanguageServerPromptRequest {
   string message = 5;
   repeated string actions = 6;
   string lsp_name = 7;
+  uint64 server_id = 8;
 }
 
 message LanguageServerPromptResponse {

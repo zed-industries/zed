@@ -1085,7 +1085,7 @@ impl LocalLspStore {
                     async move {
                         this.update(&mut cx, |this, cx| {
                             this.invalidate_code_lens();
-                            cx.emit(LspStoreEvent::RefreshCodeLens);
+                            cx.emit(LspStoreEvent::RefreshCodeLens { server_id });
                         })?;
                         Ok(())
                     }
@@ -1157,6 +1157,7 @@ impl LocalLspStore {
                             _ => PromptLevel::Info,
                         };
                         let request = LanguageServerPromptRequest::new(
+                            server_id,
                             level,
                             params.message,
                             actions,
@@ -1202,8 +1203,14 @@ impl LocalLspStore {
                         lsp::MessageType::WARNING => PromptLevel::Warning,
                         _ => PromptLevel::Info,
                     };
-                    let request =
-                        LanguageServerPromptRequest::new(level, params.message, vec![], name, tx);
+                    let request = LanguageServerPromptRequest::new(
+                        server_id,
+                        level,
+                        params.message,
+                        vec![],
+                        name,
+                        tx,
+                    );
 
                     let _ = this.update(&mut cx, |_, cx| {
                         cx.emit(LspStoreEvent::LanguageServerPrompt(request));
@@ -3533,7 +3540,10 @@ impl LocalLspStore {
         .log_err();
         this.update(cx, |this, cx| {
             if let Some(transaction) = transaction {
-                cx.emit(LspStoreEvent::WorkspaceEditApplied(transaction.clone()));
+                cx.emit(LspStoreEvent::WorkspaceEditApplied {
+                    server_id,
+                    transaction: transaction.clone(),
+                });
 
                 this.as_local_mut()
                     .unwrap()
@@ -4034,7 +4044,7 @@ impl BufferLspData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum LspStoreEvent {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
@@ -4049,7 +4059,10 @@ pub enum LspStoreEvent {
         buffer: Entity<Buffer>,
         new_language: Option<Arc<Language>>,
     },
-    Notification(String),
+    Notification {
+        message: SharedString,
+        worktree_id: WorktreeId,
+    },
     RefreshInlayHints {
         server_id: LanguageServerId,
         request_id: Option<usize>,
@@ -4058,7 +4071,9 @@ pub enum LspStoreEvent {
         server_id: LanguageServerId,
         request_id: Option<usize>,
     },
-    RefreshCodeLens,
+    RefreshCodeLens {
+        server_id: LanguageServerId,
+    },
     DiagnosticsUpdated {
         server_id: LanguageServerId,
         paths: Vec<ProjectPath>,
@@ -4089,7 +4104,10 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
-    WorkspaceEditApplied(ProjectTransaction),
+    WorkspaceEditApplied {
+        server_id: LanguageServerId,
+        transaction: ProjectTransaction,
+    },
     /// A language server requested an `applyEdit`. The listener
     /// (`Project` / `HeadlessProject`) supplies its `active_entry` to
     /// `LocalLspStore::on_lsp_workspace_edit` and sends the resulting
@@ -13929,6 +13947,7 @@ struct LspBufferSnapshot {
 #[derive(Clone, Debug)]
 pub struct LanguageServerPromptRequest {
     pub id: usize,
+    pub language_server_id: LanguageServerId,
     pub level: PromptLevel,
     pub message: String,
     pub actions: Vec<MessageActionItem>,
@@ -13938,6 +13957,7 @@ pub struct LanguageServerPromptRequest {
 
 impl LanguageServerPromptRequest {
     pub fn new(
+        language_server_id: LanguageServerId,
         level: PromptLevel,
         message: String,
         actions: Vec<MessageActionItem>,
@@ -13947,6 +13967,7 @@ impl LanguageServerPromptRequest {
         let id = NEXT_PROMPT_REQUEST_ID.fetch_add(1, atomic::Ordering::AcqRel);
         LanguageServerPromptRequest {
             id,
+            language_server_id,
             level,
             message,
             actions,
@@ -13970,7 +13991,7 @@ impl LanguageServerPromptRequest {
         lsp_name: String,
     ) -> Self {
         let (tx, _rx) = async_channel::unbounded();
-        LanguageServerPromptRequest::new(level, message, actions, lsp_name, tx)
+        LanguageServerPromptRequest::new(LanguageServerId(0), level, message, actions, lsp_name, tx)
     }
 }
 impl PartialEq for LanguageServerPromptRequest {
@@ -14403,7 +14424,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     fn show_notification(&self, message: &str, cx: &mut App) {
         self.lsp_store
             .update(cx, |_, cx| {
-                cx.emit(LspStoreEvent::Notification(message.to_owned()))
+                cx.emit(LspStoreEvent::Notification {
+                    message: message.into(),
+                    worktree_id: self.worktree_id(),
+                })
             })
             .ok();
     }

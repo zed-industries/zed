@@ -1885,7 +1885,8 @@ impl ProjectPanel {
                                                 "to show it in the panel"
                                             ),
                                             abs_path
-                                        ),
+                                        )
+                                        .into(),
                                         link: None,
                                     })
                                 });

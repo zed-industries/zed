@@ -491,7 +491,8 @@ impl RunningMode {
                                 2 => " and 1 other path".into(),
                                 n => format!(" and {} other paths", n - 1),
                             }
-                        );
+                        )
+                        .into();
                         cx.emit(super::dap_store::DapStoreEvent::Notification {
                             session_id: Some(owning_session_id),
                             message,
