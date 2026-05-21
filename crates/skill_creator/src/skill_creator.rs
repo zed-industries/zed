@@ -545,9 +545,7 @@ impl SkillCreator {
         };
 
         let selected_label = h_flex()
-            .min_w_0()
-            .w_full()
-            .child(Label::new(selected_label).truncate())
+            .child(Label::new(selected_label))
             .into_any_element();
 
         let weak = cx.weak_entity();
@@ -585,13 +583,11 @@ impl SkillCreator {
                     .child(Label::new(scope_hint).color(Color::Muted)),
             )
             .child(
-                div().w_1_3().min_w_0().child(
-                    DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
-                        .tab_index(SCOPE_FIELD_TAB_INDEX)
-                        .style(DropdownStyle::Outlined)
-                        .trigger_size(ButtonSize::Medium)
-                        .full_width(true),
-                ),
+                DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
+                    .tab_index(SCOPE_FIELD_TAB_INDEX)
+                    .style(DropdownStyle::Outlined)
+                    .trigger_size(ButtonSize::Medium)
+                    .full_width(false),
             )
     }
 
