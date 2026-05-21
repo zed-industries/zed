@@ -1599,12 +1599,12 @@ impl GitGraph {
                             (!ranges.is_empty()).then_some(ranges)
                         })
                         .unwrap_or_default();
-                    HighlightedLabel::from_ranges(subject.clone(), highlight_ranges)
+                    HighlightedLabel::from_ranges(subject, highlight_ranges)
                         .when(!is_selected, |c| c.color(Color::Muted))
                         .truncate()
                         .into_any_element()
                 } else {
-                    column_label(subject.clone())
+                    column_label(subject)
                 };
 
                 vec![
@@ -1614,30 +1614,34 @@ impl GitGraph {
                         .when(!has_context_menu, |this| {
                             if let CommitDataState::Loaded(commit_data) = &data {
                                 let sha = commit.data.sha.to_string();
-                                let remote_url = repository.read(cx).default_remote_url();
-                                let provider_registry =
-                                    GitHostingProviderRegistry::default_global(cx);
-                                let commit_details = CommitDetails {
-                                    sha: sha.clone().into(),
-                                    author_name: commit_data.author_name.clone(),
-                                    author_email: commit_data.author_email.clone(),
-                                    commit_time: OffsetDateTime::from_unix_timestamp(
-                                        commit_data.commit_timestamp,
-                                    )
-                                    .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                                    message: Some(ParsedCommitMessage::parse(
-                                        sha,
-                                        commit_data.message.to_string(),
-                                        remote_url.as_deref(),
-                                        Some(provider_registry),
-                                    )),
-                                };
+                                let author_name = commit_data.author_name.clone();
+                                let author_email = commit_data.author_email.clone();
+                                let message = commit_data.message.clone();
+                                let commit_timestamp = commit_data.commit_timestamp;
                                 let workspace = self.workspace.clone();
                                 let repository = repository.clone();
                                 this.hoverable_tooltip(move |_window, cx| {
+                                    let remote_url = repository.read(cx).default_remote_url();
+                                    let provider_registry =
+                                        GitHostingProviderRegistry::default_global(cx);
+                                    let commit_details = CommitDetails {
+                                        sha: sha.clone().into(),
+                                        author_name: author_name.clone(),
+                                        author_email: author_email.clone(),
+                                        commit_time: OffsetDateTime::from_unix_timestamp(
+                                            commit_timestamp,
+                                        )
+                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                                        message: Some(ParsedCommitMessage::parse(
+                                            sha.clone(),
+                                            message.to_string(),
+                                            remote_url.as_deref(),
+                                            Some(provider_registry),
+                                        )),
+                                    };
                                     cx.new(|cx| {
                                         CommitTooltip::new(
-                                            commit_details.clone(),
+                                            commit_details,
                                             repository.clone(),
                                             workspace.clone(),
                                             cx,
