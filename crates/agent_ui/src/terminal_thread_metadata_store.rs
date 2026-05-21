@@ -10,6 +10,7 @@ use db::{
     },
     sqlez_macros::sql,
 };
+use futures::{FutureExt, future::Shared};
 use gpui::{AppContext as _, Entity, Global, Task};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString};
@@ -69,6 +70,7 @@ pub struct TerminalThreadMetadataStore {
     terminals: HashMap<TerminalId, TerminalThreadMetadata>,
     terminals_by_paths: HashMap<PathList, HashSet<TerminalId>>,
     terminals_by_main_paths: HashMap<PathList, HashSet<TerminalId>>,
+    reload_task: Option<Shared<Task<()>>>,
     pending_terminal_ops_tx: async_channel::Sender<DbOperation>,
     _db_operations_task: Task<()>,
 }
@@ -123,6 +125,12 @@ impl TerminalThreadMetadataStore {
 
     pub fn entries(&self) -> impl Iterator<Item = &TerminalThreadMetadata> + '_ {
         self.terminals.values()
+    }
+
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task
+            .clone()
+            .unwrap_or_else(|| Task::ready(()).shared())
     }
 
     pub fn entries_for_path<'a>(
@@ -312,6 +320,7 @@ impl TerminalThreadMetadataStore {
             terminals: HashMap::default(),
             terminals_by_paths: HashMap::default(),
             terminals_by_main_paths: HashMap::default(),
+            reload_task: None,
             pending_terminal_ops_tx: tx,
             _db_operations_task,
         };
@@ -332,30 +341,32 @@ impl TerminalThreadMetadataStore {
 
     fn reload(&mut self, cx: &mut Context<Self>) {
         let db = self.db.clone();
-        cx.spawn(async move |this, cx| {
-            let rows = cx
-                .background_spawn(async move {
-                    db.list()
-                        .context("Failed to fetch terminal thread metadata")
+        self.reload_task = Some(
+            cx.spawn(async move |this, cx| {
+                let rows = cx
+                    .background_spawn(async move {
+                        db.list()
+                            .context("Failed to fetch terminal thread metadata")
+                    })
+                    .await
+                    .log_err()
+                    .unwrap_or_default();
+
+                this.update(cx, |this, cx| {
+                    this.terminals.clear();
+                    this.terminals_by_paths.clear();
+                    this.terminals_by_main_paths.clear();
+
+                    for row in rows {
+                        this.cache_terminal_metadata(row);
+                    }
+
+                    cx.notify();
                 })
-                .await
-                .log_err()
-                .unwrap_or_default();
-
-            this.update(cx, |this, cx| {
-                this.terminals.clear();
-                this.terminals_by_paths.clear();
-                this.terminals_by_main_paths.clear();
-
-                for row in rows {
-                    this.cache_terminal_metadata(row);
-                }
-
-                cx.notify();
+                .ok();
             })
-            .ok();
-        })
-        .detach();
+            .shared(),
+        );
     }
 }
 

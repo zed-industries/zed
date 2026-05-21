@@ -1134,7 +1134,7 @@ impl MessageEditor {
                         (text_anchor, mention_text.len())
                     });
 
-                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                    let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                         text_anchor,
                         content_len,
                         crease_text.into(),
@@ -1181,8 +1181,14 @@ impl MessageEditor {
                         })
                         .shared();
 
-                    self.mention_set.update(cx, |mention_set, _cx| {
-                        mention_set.insert_mention(crease_id, mention_uri.clone(), mention_task)
+                    self.mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(
+                            crease_id,
+                            mention_uri.clone(),
+                            mention_task,
+                            crease_entity,
+                            cx,
+                        )
                     });
                 }
             }
@@ -1241,7 +1247,7 @@ impl MessageEditor {
                     let http_client = workspace.read(cx).client().http_client();
 
                     for (anchor, content_len, mention_uri) in all_mentions {
-                        let Some((crease_id, tx)) = insert_crease_for_mention(
+                        let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                             snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                             content_len,
                             mention_uri.name().into(),
@@ -1271,8 +1277,14 @@ impl MessageEditor {
                             .spawn(async move |_, _| task.await.map_err(|e| e.to_string()))
                             .shared();
 
-                        self.mention_set.update(cx, |mention_set, _cx| {
-                            mention_set.insert_mention(crease_id, mention_uri.clone(), task.clone())
+                        self.mention_set.update(cx, |mention_set, cx| {
+                            mention_set.insert_mention(
+                                crease_id,
+                                mention_uri.clone(),
+                                task.clone(),
+                                crease_entity,
+                                cx,
+                            )
                         });
 
                         // Drop the tx after inserting to signal the crease is ready
@@ -1463,7 +1475,7 @@ impl MessageEditor {
                         (text_anchor, mention_text.len())
                     });
 
-                    let Some((crease_id, tx)) = insert_crease_for_mention(
+                    let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                         text_anchor,
                         content_len,
                         mention_uri.name().into(),
@@ -1488,8 +1500,14 @@ impl MessageEditor {
                         .spawn(async move |_cx| confirm_task.await.map_err(|e| e.to_string()))
                         .shared();
 
-                    mention_set.update(cx, |mention_set, _| {
-                        mention_set.insert_mention(crease_id, mention_uri, mention_task);
+                    mention_set.update(cx, |mention_set, cx| {
+                        mention_set.insert_mention(
+                            crease_id,
+                            mention_uri,
+                            mention_task,
+                            crease_entity,
+                            cx,
+                        );
                     });
                 })
             })
@@ -1744,7 +1762,7 @@ impl MessageEditor {
         for (range, mention_uri, mention) in mentions {
             let adjusted_start = insertion_start + range.start;
             let anchor = snapshot.anchor_before(MultiBufferOffset(adjusted_start));
-            let Some((crease_id, tx)) = insert_crease_for_mention(
+            let Some((crease_id, tx, crease_entity)) = insert_crease_for_mention(
                 snapshot.anchor_to_buffer_anchor(anchor).unwrap().0,
                 range.end - range.start,
                 mention_uri.name().into(),
@@ -1761,11 +1779,13 @@ impl MessageEditor {
             };
             drop(tx);
 
-            self.mention_set.update(cx, |mention_set, _cx| {
+            self.mention_set.update(cx, |mention_set, cx| {
                 mention_set.insert_mention(
                     crease_id,
                     mention_uri.clone(),
                     Task::ready(Ok(mention)).shared(),
+                    crease_entity,
+                    cx,
                 )
             });
         }
@@ -4349,7 +4369,7 @@ mod tests {
                     "line 3\nline 4\n".to_string(),
                 ),
             ] {
-                let Some((crease_id, tx)) = insert_crease_for_mention(
+                let Some((crease_id, tx, _crease_entity)) = insert_crease_for_mention(
                     snapshot
                         .anchor_to_buffer_anchor(
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
@@ -4371,7 +4391,7 @@ mod tests {
                 };
                 drop(tx);
 
-                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                message_editor.mention_set.update(cx, |mention_set, cx| {
                     mention_set.insert_mention(
                         crease_id,
                         uri,
@@ -4380,6 +4400,8 @@ mod tests {
                             tracked_buffers: Vec::new(),
                         }))
                         .shared(),
+                        None,
+                        cx,
                     );
                 });
             }
@@ -4508,7 +4530,7 @@ mod tests {
                     "line 3\nline 4\n".to_string(),
                 ),
             ] {
-                let Some((crease_id, tx)) = insert_crease_for_mention(
+                let Some((crease_id, tx, _crease_entity)) = insert_crease_for_mention(
                     snapshot
                         .anchor_to_buffer_anchor(
                             snapshot.anchor_before(MultiBufferOffset(range.start)),
@@ -4530,7 +4552,7 @@ mod tests {
                 };
                 drop(tx);
 
-                message_editor.mention_set.update(cx, |mention_set, _cx| {
+                message_editor.mention_set.update(cx, |mention_set, cx| {
                     mention_set.insert_mention(
                         crease_id,
                         uri,
@@ -4539,6 +4561,8 @@ mod tests {
                             tracked_buffers: Vec::new(),
                         }))
                         .shared(),
+                        None,
+                        cx,
                     );
                 });
             }
