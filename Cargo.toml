@@ -172,6 +172,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
+    "crates/sandbox",
     "crates/skill_creator",
     "crates/scheduler",
     "crates/schema_generator",
@@ -435,6 +436,7 @@ rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 skill_creator = { path = "crates/skill_creator" }
 scheduler = { path = "crates/scheduler" }
+sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 sidebar = { path = "crates/sidebar" }
