@@ -468,6 +468,12 @@ actions!(
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
+    /// If set, pre-fills the file finder's query with this string.
+    #[serde(default)]
+    pub initial_query: Option<String>,
+    /// If set, overrides the `include_ignored` setting for this invocation.
+    #[serde(default)]
+    pub include_ignored: Option<bool>,
 }
 
 /// Opens a new terminal in the center.

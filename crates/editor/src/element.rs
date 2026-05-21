@@ -98,7 +98,7 @@ use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{
     CollaboratorId, ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel,
-    Workspace,
+    ToggleFileFinder, Workspace,
     item::{Item, ItemBufferKind},
 };
 
@@ -8154,6 +8154,14 @@ pub fn render_breadcrumb_text(
 
     let element = h_flex().flex_grow().text_ui(cx);
 
+    let editor = active_item
+        .downcast::<Editor>()
+        .map(|editor| editor.downgrade());
+
+    let file_path_segment = (!multibuffer_header && editor.is_some() && !segments.is_empty())
+        .then(|| segments.remove(0));
+    let has_symbol_segments = !segments.is_empty();
+
     let prefix_end_ix = cmp::min(segments.len(), MAX_SEGMENTS / 2);
     let suffix_start_ix = cmp::max(
         prefix_end_ix,
@@ -8170,7 +8178,7 @@ pub fn render_breadcrumb_text(
         );
     }
 
-    let highlighted_segments = segments.into_iter().enumerate().map(|(index, segment)| {
+    let base_text_style = {
         let mut text_style = window.text_style();
         if let Some(font) = &breadcrumb_font {
             text_style.font_family = font.family.clone();
@@ -8179,17 +8187,12 @@ pub fn render_breadcrumb_text(
             text_style.font_weight = font.weight;
         }
         text_style.color = Color::Muted.color(cx);
+        text_style
+    };
 
-        if index == 0
-            && !workspace::TabBarSettings::get_global(cx).show
-            && active_item.is_dirty(cx)
-            && let Some(styled_element) = apply_dirty_filename_style(&segment, &text_style, cx)
-        {
-            return styled_element;
-        }
-
+    let highlighted_segments = segments.into_iter().map(|segment| {
         StyledText::new(segment.text.replace('\n', " "))
-            .with_default_highlights(&text_style, segment.highlights)
+            .with_default_highlights(&base_text_style, segment.highlights)
             .into_any()
     });
 
@@ -8212,84 +8215,129 @@ pub fn render_breadcrumb_text(
         breadcrumbs_stack
     };
 
-    let editor = active_item
-        .downcast::<Editor>()
-        .map(|editor| editor.downgrade());
-
-    let has_project_path = active_item.project_path(cx).is_some();
-
     match editor {
-        Some(editor) => element
-            .id("breadcrumb_container")
-            .when(!multibuffer_header, |this| this.overflow_x_scroll())
-            .child(
-                ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs)
-                    .when(multibuffer_header, |this| {
-                        this.style(ButtonStyle::Transparent)
-                    })
-                    .when(!multibuffer_header, |this| {
-                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+        Some(editor) => {
+            let has_project_path = active_item.project_path(cx).is_some();
+            let file_path_button = file_path_segment.map(|segment| {
+                let label = if !workspace::TabBarSettings::get_global(cx).show
+                    && active_item.is_dirty(cx)
+                    && let Some(dirty_styled) =
+                        apply_dirty_filename_style(&segment, &base_text_style, cx)
+                {
+                    dirty_styled
+                } else {
+                    StyledText::new(segment.text.replace('\n', " "))
+                        .with_default_highlights(&base_text_style, segment.highlights)
+                        .into_any()
+                };
 
-                        this.tooltip(Tooltip::element(move |_window, cx| {
-                            v_flex()
-                                .gap_1()
-                                .child(
+                ButtonLike::new("breadcrumb-file-path")
+                    .child(label)
+                    .tooltip(Tooltip::element(move |_window, cx| {
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .justify_between()
+                                    .child(Label::new("Find files in this folder")),
+                            )
+                            .when(has_project_path, |this| {
+                                this.child(
                                     h_flex()
                                         .gap_1()
                                         .justify_between()
-                                        .child(Label::new("Show Symbol Outline"))
-                                        .child(ui::KeyBinding::for_action_in(
-                                            &zed_actions::outline::ToggleOutline,
-                                            &focus_handle,
-                                            cx,
-                                        )),
+                                        .pt_1()
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .child(Label::new("Right-Click to Copy Path")),
                                 )
-                                .when(has_project_path, |this| {
-                                    this.child(
-                                        h_flex()
-                                            .gap_1()
-                                            .justify_between()
-                                            .pt_1()
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border_variant)
-                                            .child(Label::new("Right-Click to Copy Path")),
-                                    )
-                                })
-                                .into_any_element()
-                        }))
-                        .on_click({
+                            })
+                            .into_any_element()
+                    }))
+                    .when(has_project_path, |this| {
+                        this.on_right_click({
                             let editor = editor.clone();
-                            move |_, window, cx| {
-                                if let Some((editor, callback)) = editor
-                                    .upgrade()
-                                    .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
-                                {
-                                    callback(editor.to_any_view(), window, cx);
+                            move |_, _, cx| {
+                                if let Some(abs_path) = editor.upgrade().and_then(|editor| {
+                                    editor.update(cx, |editor, cx| editor.target_file_abs_path(cx))
+                                }) {
+                                    if let Some(path_str) = abs_path.to_str() {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            path_str.to_string(),
+                                        ));
+                                    }
                                 }
                             }
                         })
-                        .when(has_project_path, |this| {
-                            this.on_right_click({
+                    })
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_, window, cx| {
+                            let Some(workspace) = editor
+                                .upgrade()
+                                .and_then(|editor| editor.read(cx).workspace())
+                            else {
+                                return;
+                            };
+                            let focus_handle = workspace.read(cx).focus_handle(cx);
+                            let action = ToggleFileFinder {
+                                separate_history: false,
+                                initial_query: Some(segment.text.to_string()),
+                                include_ignored: Some(true),
+                            };
+                            focus_handle.dispatch_action(&action, window, cx);
+                        }
+                    })
+            });
+            element
+                .id("breadcrumb_container")
+                .when(!multibuffer_header, |this| this.overflow_x_scroll())
+                .when_some(file_path_button, |this, button| {
+                    this.child(button).when(has_symbol_segments, |this| {
+                        this.child(Label::new("›").color(Color::Placeholder))
+                    })
+                })
+                .child(
+                    ButtonLike::new("toggle outline view")
+                        .child(breadcrumbs)
+                        .when(multibuffer_header, |this| {
+                            this.style(ButtonStyle::Transparent)
+                        })
+                        .when(!multibuffer_header, |this| {
+                            let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+
+                            this.tooltip(Tooltip::element(move |_window, cx| {
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .justify_between()
+                                            .child(Label::new("Show Symbol Outline"))
+                                            .child(ui::KeyBinding::for_action_in(
+                                                &zed_actions::outline::ToggleOutline,
+                                                &focus_handle,
+                                                cx,
+                                            )),
+                                    )
+                                    .into_any_element()
+                            }))
+                            .on_click({
                                 let editor = editor.clone();
-                                move |_, _, cx| {
-                                    if let Some(abs_path) = editor.upgrade().and_then(|editor| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.target_file_abs_path(cx)
-                                        })
-                                    }) {
-                                        if let Some(path_str) = abs_path.to_str() {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                path_str.to_string(),
-                                            ));
-                                        }
+                                move |_, window, cx| {
+                                    if let Some((editor, callback)) = editor
+                                        .upgrade()
+                                        .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                    {
+                                        callback(editor.to_any_view(), window, cx);
                                     }
                                 }
                             })
-                        })
-                    }),
-            )
-            .into_any_element(),
+                        }),
+                )
+                .into_any_element()
+        }
         None => element
             .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()

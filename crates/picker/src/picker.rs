@@ -285,14 +285,32 @@ impl<D: PickerDelegate> Picker<D> {
     /// The picker allows the user to perform search items by text.
     /// If `PickerDelegate::render_match` can return items with different heights, use `Picker::list`.
     pub fn uniform_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::uniform_list_with_query(delegate, None, window, cx)
+    }
+
+    /// Like [`Picker::uniform_list`], but pre-fills the search query.
+    pub fn uniform_list_with_query(
+        delegate: D,
+        initial_query: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(window, cx),
+            initial_query,
             Self::on_input_editor_event,
             window,
             cx,
         );
 
-        Self::new(delegate, ContainerKind::UniformList, head, window, cx)
+        Self::new(
+            delegate,
+            ContainerKind::UniformList,
+            head,
+            initial_query,
+            window,
+            cx,
+        )
     }
 
     /// A picker, which displays its matches using `gpui::uniform_list`, all matches should have the same height.
@@ -304,7 +322,7 @@ impl<D: PickerDelegate> Picker<D> {
     ) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, window, cx);
 
-        Self::new(delegate, ContainerKind::UniformList, head, window, cx)
+        Self::new(delegate, ContainerKind::UniformList, head, None, window, cx)
     }
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
@@ -313,7 +331,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn nonsearchable_list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::empty(Self::on_empty_head_blur, window, cx);
 
-        Self::new(delegate, ContainerKind::List, head, window, cx)
+        Self::new(delegate, ContainerKind::List, head, None, window, cx)
     }
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
@@ -322,18 +340,20 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(window, cx),
+            None,
             Self::on_input_editor_event,
             window,
             cx,
         );
 
-        Self::new(delegate, ContainerKind::List, head, window, cx)
+        Self::new(delegate, ContainerKind::List, head, None, window, cx)
     }
 
     fn new(
         delegate: D,
         container: ContainerKind,
         head: Head,
+        initial_query: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -352,10 +372,11 @@ impl<D: PickerDelegate> Picker<D> {
             picker_bounds: Rc::new(Cell::new(None)),
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
         };
-        this.update_matches("".to_string(), window, cx);
+        let initial_query = initial_query.unwrap_or_default().to_string();
+        this.update_matches(initial_query.clone(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
         this.delegate
-            .finalize_update_matches("".to_string(), Duration::from_millis(4), window, cx);
+            .finalize_update_matches(initial_query, Duration::from_millis(4), window, cx);
         this
     }
 
