@@ -50,6 +50,12 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactedThreadContext {
+    pub covered_message_count: usize,
+    pub summary: SharedString,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
@@ -81,6 +87,8 @@ pub struct DbThread {
     pub draft_prompt: Option<Vec<acp::ContentBlock>>,
     #[serde(default)]
     pub ui_scroll_position: Option<SerializedScrollPosition>,
+    #[serde(default)]
+    pub compacted_context: Option<CompactedThreadContext>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -130,6 +138,7 @@ impl SharedThread {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            compacted_context: None,
         }
     }
 
@@ -309,6 +318,7 @@ impl DbThread {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            compacted_context: None,
         })
     }
 }
@@ -694,6 +704,7 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            compacted_context: None,
         }
     }
 
@@ -899,6 +910,39 @@ mod tests {
 
         let threads = database.list_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
+    }
+
+    #[test]
+    fn test_compacted_context_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.compacted_context.is_none(),
+            "Legacy threads without compacted_context field should default to None"
+        );
+    }
+
+    #[test]
+    fn test_compacted_context_roundtrips_json() {
+        let mut thread = make_thread(
+            "Thread With Compacted Context",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.compacted_context = Some(CompactedThreadContext {
+            covered_message_count: 7,
+            summary: "summary".into(),
+        });
+
+        let json = serde_json::to_vec(&thread).expect("serialize thread");
+        let deserialized: DbThread = serde_json::from_slice(&json).expect("deserialize thread");
+
+        assert_eq!(deserialized.compacted_context, thread.compacted_context);
     }
 
     #[test]

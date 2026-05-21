@@ -1,6 +1,7 @@
 use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
-    DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
+    CompactedThreadContext, DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool,
+    FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
@@ -108,6 +109,10 @@ impl std::fmt::Display for PromptId {
 
 pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
+const COMPACTED_CONTEXT_RECENT_MESSAGE_COUNT: usize = 4;
+const PROACTIVE_COMPACTION_INPUT_THRESHOLD: f64 = 0.85;
+const COMPACTION_UNAVAILABLE_MESSAGE: &str = "This request is too large for the selected model, even after compacting older conversation history. Reduce the latest attachment, diff, or tool output and try again.";
+const COMPACT_THREAD_CONTEXT_PROMPT: &str = "Summarize the conversation history below so future model requests can continue from a compact context checkpoint. Preserve the user goal and constraints, files touched or discussed, commands run and outcomes, decisions and rejected approaches, tool outcomes, and unresolved tasks. Do not copy raw huge logs or tool outputs unless essential; summarize them concisely. Return only the summary.";
 
 #[derive(Debug, Clone)]
 enum RetryStrategy {
@@ -961,6 +966,10 @@ pub struct Thread {
     title_generation_failed: bool,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
+    compacted_context: Option<CompactedThreadContext>,
+    pending_compaction: Option<Shared<Task<Result<CompactedThreadContext, Arc<anyhow::Error>>>>>,
+    last_compaction_retry_prompt_id: Option<PromptId>,
+    pending_proactive_compaction: bool,
     messages: Vec<Message>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
@@ -1093,6 +1102,10 @@ impl Thread {
             title_generation_failed: false,
             pending_summary_generation: None,
             summary: None,
+            compacted_context: None,
+            pending_compaction: None,
+            last_compaction_retry_prompt_id: None,
+            pending_proactive_compaction: false,
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
@@ -1398,6 +1411,10 @@ impl Thread {
             title_generation_failed: false,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
+            compacted_context: db_thread.compacted_context,
+            pending_compaction: None,
+            last_compaction_retry_prompt_id: None,
+            pending_proactive_compaction: false,
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
@@ -1441,6 +1458,7 @@ impl Thread {
             updated_at: self.updated_at,
             detailed_summary: self.summary.clone(),
             initial_project_snapshot: None,
+            compacted_context: self.compacted_context.clone(),
             cumulative_token_usage: self.cumulative_token_usage,
             request_token_usage: self.request_token_usage.clone(),
             model: self.model.as_ref().map(|model| DbLanguageModel {
@@ -1773,6 +1791,13 @@ impl Thread {
 
         self.request_token_usage
             .insert(last_user_message.id.clone(), update);
+        if let Some(model) = self.model.as_ref()
+            && model.max_token_count() > 0
+            && (total_input_tokens(update) as f64 / model.max_token_count() as f64)
+                >= PROACTIVE_COMPACTION_INPUT_THRESHOLD
+        {
+            self.pending_proactive_compaction = true;
+        }
         cx.emit(TokenUsageUpdated(self.latest_token_usage()));
         cx.notify();
     }
@@ -1795,6 +1820,13 @@ impl Thread {
                 }
                 Message::Agent(_) | Message::Resume => {}
             }
+        }
+        if self
+            .compacted_context
+            .as_ref()
+            .is_some_and(|context| position < context.covered_message_count)
+        {
+            self.clear_compacted_context();
         }
         self.clear_summary();
         cx.notify();
@@ -2194,6 +2226,13 @@ impl Thread {
             }
 
             if let Some(error) = error {
+                if matches!(&error, LanguageModelCompletionError::PromptTooLarge { .. }) {
+                    if Self::compact_for_prompt_too_large_retry(this, event_stream, cx).await? {
+                        continue;
+                    }
+                    return Err(anyhow!(COMPACTION_UNAVAILABLE_MESSAGE));
+                }
+
                 attempt += 1;
                 let retry = this.update(cx, |this, cx| {
                     let user_store = this.user_store.read(cx);
@@ -2219,6 +2258,7 @@ impl Thread {
                     }
                 })?;
             } else if end_turn {
+                Self::run_pending_proactive_compaction(this, cx).await?;
                 return Ok(());
             } else {
                 let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
@@ -2772,6 +2812,299 @@ impl Thread {
         task
     }
 
+    fn select_compaction_boundary(&self) -> Option<usize> {
+        if self.messages.len() <= COMPACTED_CONTEXT_RECENT_MESSAGE_COUNT {
+            return None;
+        }
+
+        let mut boundary = self
+            .messages
+            .len()
+            .saturating_sub(COMPACTED_CONTEXT_RECENT_MESSAGE_COUNT);
+        while boundary > 0 && matches!(self.messages.get(boundary - 1), Some(Message::User(_))) {
+            boundary -= 1;
+        }
+
+        if boundary == 0 {
+            return None;
+        }
+
+        if self
+            .compacted_context
+            .as_ref()
+            .is_some_and(|context| boundary <= context.covered_message_count)
+        {
+            return None;
+        }
+
+        Some(boundary)
+    }
+
+    fn compact_thread_context(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Result<CompactedThreadContext, Arc<anyhow::Error>>>> {
+        if let Some(task) = self.pending_compaction.clone() {
+            return task;
+        }
+
+        let Some(boundary) = self.select_compaction_boundary() else {
+            return Task::ready(Err(Arc::new(anyhow!(COMPACTION_UNAVAILABLE_MESSAGE)))).shared();
+        };
+        let Some(model) = self
+            .summarization_model
+            .clone()
+            .or_else(|| self.model.clone())
+        else {
+            return Task::ready(Err(Arc::new(anyhow!(COMPACTION_UNAVAILABLE_MESSAGE)))).shared();
+        };
+
+        let previous_context = self.compacted_context.clone();
+        let start = previous_context
+            .as_ref()
+            .map_or(0, |context| context.covered_message_count);
+        let messages_to_compact = self.messages[start..boundary].to_vec();
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
+
+        let task = cx
+            .spawn(async move |this, cx| {
+                let summary = Self::generate_compacted_context_summary(
+                    model,
+                    previous_context.as_ref(),
+                    messages_to_compact,
+                    temperature,
+                    cx,
+                )
+                .await?;
+
+                let context = CompactedThreadContext {
+                    covered_message_count: boundary,
+                    summary,
+                };
+
+                this.update(cx, |this, cx| {
+                    this.compacted_context = Some(context.clone());
+                    this.pending_compaction = None;
+                    this.pending_proactive_compaction = false;
+                    cx.notify();
+                })
+                .map_err(|error| Arc::new(anyhow!(error)))?;
+
+                Ok(context)
+            })
+            .shared();
+        self.pending_compaction = Some(task.clone());
+        task
+    }
+
+    async fn generate_compacted_context_summary(
+        model: Arc<dyn LanguageModel>,
+        previous_context: Option<&CompactedThreadContext>,
+        messages_to_compact: Vec<Message>,
+        temperature: Option<f32>,
+        cx: &mut AsyncApp,
+    ) -> Result<SharedString, Arc<anyhow::Error>> {
+        let requests = Self::build_compaction_requests(
+            &model,
+            previous_context,
+            &messages_to_compact,
+            temperature,
+        );
+        let mut chunk_summaries = Vec::with_capacity(requests.len());
+
+        for request in requests {
+            chunk_summaries.push(Self::summarize_compaction_request(model.clone(), request, cx).await?);
+        }
+
+        if chunk_summaries.len() == 1 {
+            return Ok(chunk_summaries.remove(0));
+        }
+
+        let mut final_request = LanguageModelRequest {
+            intent: Some(CompletionIntent::ThreadContextSummarization),
+            temperature,
+            ..Default::default()
+        };
+        final_request.messages.push(LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![format!(
+                "{COMPACT_THREAD_CONTEXT_PROMPT}
+
+Combine these chunk summaries into one compact context checkpoint:
+
+{}",
+                chunk_summaries
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, summary)| format!("Chunk {}:
+{}", ix + 1, summary))
+                    .collect::<Vec<_>>()
+                    .join("
+
+")
+            )
+            .into()],
+            cache: false,
+            reasoning_details: None,
+        });
+
+        Self::summarize_compaction_request(model, final_request, cx).await
+    }
+
+    fn build_compaction_requests(
+        model: &Arc<dyn LanguageModel>,
+        previous_context: Option<&CompactedThreadContext>,
+        messages_to_compact: &[Message],
+        temperature: Option<f32>,
+    ) -> Vec<LanguageModelRequest> {
+        let max_tokens = model.max_token_count().max(1);
+        let max_estimated_tokens_per_chunk = ((max_tokens as f64) * 0.6) as usize;
+        let mut chunks = Vec::new();
+        let mut chunk = Vec::new();
+        let mut chunk_estimated_tokens = 0;
+
+        for message in messages_to_compact {
+            let message_tokens = Self::estimated_request_tokens(&message.to_request());
+            if !chunk.is_empty()
+                && chunk_estimated_tokens.saturating_add(message_tokens) > max_estimated_tokens_per_chunk
+            {
+                chunks.push(chunk);
+                chunk = Vec::new();
+                chunk_estimated_tokens = 0;
+            }
+            chunk.push(message.clone());
+            chunk_estimated_tokens = chunk_estimated_tokens.saturating_add(message_tokens);
+        }
+        if !chunk.is_empty() {
+            chunks.push(chunk);
+        }
+
+        chunks
+            .into_iter()
+            .map(|chunk| {
+                let mut request = LanguageModelRequest {
+                    intent: Some(CompletionIntent::ThreadContextSummarization),
+                    temperature,
+                    ..Default::default()
+                };
+                if let Some(previous_context) = previous_context {
+                    request.messages.push(LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![format!(
+                            "Previous compacted context checkpoint:
+{}",
+                            previous_context.summary
+                        )
+                        .into()],
+                        cache: false,
+                        reasoning_details: None,
+                    });
+                }
+                for message in chunk {
+                    request.messages.extend(message.to_request());
+                }
+                request.messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![COMPACT_THREAD_CONTEXT_PROMPT.into()],
+                    cache: false,
+                    reasoning_details: None,
+                });
+                request
+            })
+            .collect()
+    }
+
+    fn estimated_request_tokens(messages: &[LanguageModelRequestMessage]) -> usize {
+        messages
+            .iter()
+            .map(|message| message.string_contents().len().div_ceil(3))
+            .sum::<usize>()
+            .saturating_add(1024)
+    }
+
+    async fn summarize_compaction_request(
+        model: Arc<dyn LanguageModel>,
+        request: LanguageModelRequest,
+        cx: &mut AsyncApp,
+    ) -> Result<SharedString, Arc<anyhow::Error>> {
+        let mut summary = String::new();
+        let mut messages = model
+            .stream_completion(request, cx)
+            .await
+            .map_err(|error| Arc::new(anyhow!(error)))?;
+        while let Some(event) = messages.next().await {
+            match event.map_err(|error| Arc::new(anyhow!(error)))? {
+                LanguageModelCompletionEvent::Text(text) => summary.push_str(&text),
+                LanguageModelCompletionEvent::Stop(_) => break,
+                _ => {}
+            }
+        }
+
+        if summary.trim().is_empty() {
+            Err(Arc::new(anyhow!(COMPACTION_UNAVAILABLE_MESSAGE)))
+        } else {
+            Ok(summary.trim().to_string().into())
+        }
+    }
+
+    async fn compact_for_prompt_too_large_retry(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+    ) -> Result<bool> {
+        let task = this.update(cx, |this, cx| {
+            if this.last_compaction_retry_prompt_id.as_ref() == Some(&this.prompt_id) {
+                return None;
+            }
+            this.last_compaction_retry_prompt_id = Some(this.prompt_id.clone());
+            Some(this.compact_thread_context(cx))
+        })?;
+
+        let Some(task) = task else {
+            return Ok(false);
+        };
+
+        event_stream.send_retry(acp_thread::RetryStatus {
+            last_error: "Compacting conversation context…".into(),
+            attempt: 1,
+            max_attempts: 1,
+            started_at: Instant::now(),
+            duration: Duration::ZERO,
+        });
+
+        match task.await {
+            Ok(_) => Ok(true),
+            Err(error) => {
+                this.update(cx, |this, _cx| {
+                    this.pending_compaction = None;
+                })?;
+                Err(anyhow!("{error}"))
+            }
+        }
+    }
+
+    async fn run_pending_proactive_compaction(
+        this: &WeakEntity<Self>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let task = this.update(cx, |this, cx| {
+            if this.pending_proactive_compaction {
+                Some(this.compact_thread_context(cx))
+            } else {
+                None
+            }
+        })?;
+        if let Some(task) = task
+            && let Err(error) = task.await
+        {
+            this.update(cx, |this, _cx| {
+                this.pending_compaction = None;
+            })?;
+            log::debug!("Proactive thread context compaction skipped: {error:?}");
+        }
+        Ok(())
+    }
+
     pub fn generate_title(&mut self, cx: &mut Context<Self>) {
         self.title_generation_failed = false;
         let Some(model) = self.summarization_model.clone() else {
@@ -2852,6 +3185,13 @@ impl Thread {
     fn clear_summary(&mut self) {
         self.summary = None;
         self.pending_summary_generation = None;
+    }
+
+    fn clear_compacted_context(&mut self) {
+        self.compacted_context = None;
+        self.pending_compaction = None;
+        self.last_compaction_retry_prompt_id = None;
+        self.pending_proactive_compaction = false;
     }
 
     fn last_user_message(&self) -> Option<&UserMessage> {
@@ -3141,7 +3481,29 @@ impl Thread {
             cache: false,
             reasoning_details: None,
         }];
-        for message in &self.messages {
+
+        let persisted_messages = if let Some(context) = self.compacted_context.as_ref() {
+            messages.push(LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![format!(
+                    "<conversation_summary>
+The conversation before this point was compacted to fit the model context window.
+Preserve the user's goals, constraints, decisions, file paths, tool outcomes, and unresolved tasks from this summary.
+
+{}
+</conversation_summary>",
+                    context.summary
+                )
+                .into()],
+                cache: false,
+                reasoning_details: None,
+            });
+            &self.messages[context.covered_message_count.min(self.messages.len())..]
+        } else {
+            self.messages.as_slice()
+        };
+
+        for message in persisted_messages {
             messages.extend(message.to_request());
         }
 
@@ -4499,6 +4861,207 @@ mod tests {
             }
             subagents
         })
+    }
+
+    fn user_message(text: &str) -> Message {
+        Message::User(UserMessage {
+            id: UserMessageId::new(),
+            content: vec![UserMessageContent::Text(text.to_string())],
+        })
+    }
+
+    fn agent_message(text: &str) -> Message {
+        Message::Agent(AgentMessage {
+            content: vec![AgentMessageContent::Text(text.to_string())],
+            tool_results: IndexMap::default(),
+            reasoning_details: None,
+        })
+    }
+
+    fn request_text(messages: &[LanguageModelRequestMessage]) -> String {
+        messages
+            .iter()
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect::<Vec<_>>()
+            .join("
+")
+    }
+
+    #[gpui::test]
+    async fn build_request_messages_without_compaction_preserves_full_history(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages = vec![user_message("old user"), agent_message("old assistant")];
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                let text = request_text(&messages);
+
+                assert!(text.contains("old user"));
+                assert!(text.contains("old assistant"));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn build_request_messages_with_compaction_includes_summary_and_tail(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages = vec![
+                    user_message("old user"),
+                    agent_message("old assistant"),
+                    user_message("recent user"),
+                    agent_message("recent assistant"),
+                ];
+                thread.compacted_context = Some(CompactedThreadContext {
+                    covered_message_count: 2,
+                    summary: "summary of old messages".into(),
+                });
+
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                let text = request_text(&messages);
+
+                assert!(text.contains("summary of old messages"));
+                assert!(!text.contains("old user"));
+                assert!(!text.contains("old assistant"));
+                assert!(text.contains("recent user"));
+                assert!(text.contains("recent assistant"));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn build_request_messages_with_compaction_preserves_pending_message(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.messages = vec![
+                    user_message("old user"),
+                    agent_message("old assistant"),
+                    user_message("recent user"),
+                    agent_message("recent assistant"),
+                ];
+                thread.compacted_context = Some(CompactedThreadContext {
+                    covered_message_count: 2,
+                    summary: "summary of old messages".into(),
+                });
+                thread.pending_message = Some(AgentMessage {
+                    content: vec![AgentMessageContent::Text("pending assistant".to_string())],
+                    tool_results: IndexMap::default(),
+                    reasoning_details: None,
+                });
+
+                let messages = thread.build_request_messages(Vec::new(), cx);
+                let text = request_text(&messages);
+
+                assert!(text.contains("pending assistant"));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn select_compaction_boundary_keeps_recent_tail(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                thread.messages = vec![
+                    user_message("u1"),
+                    agent_message("a1"),
+                    user_message("u2"),
+                    agent_message("a2"),
+                    user_message("u3"),
+                    agent_message("a3"),
+                ];
+
+                assert_eq!(thread.select_compaction_boundary(), Some(2));
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn select_compaction_boundary_does_not_compact_latest_user_message(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, _cx| {
+                thread.messages = vec![
+                    user_message("u1"),
+                    agent_message("a1"),
+                    user_message("u2"),
+                    agent_message("a2"),
+                    user_message("latest"),
+                ];
+
+                assert_eq!(thread.select_compaction_boundary(), None);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn compact_thread_context_stores_summary_without_removing_messages(
+        cx: &mut TestAppContext,
+    ) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let summary_model = Arc::new(FakeLanguageModel::default());
+        let task = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model.clone()), cx);
+                thread.messages = vec![
+                    user_message("u1"),
+                    agent_message("a1"),
+                    user_message("u2"),
+                    agent_message("a2"),
+                    user_message("u3"),
+                    agent_message("a3"),
+                ];
+                thread.compact_thread_context(cx)
+            })
+        });
+
+        cx.run_until_parked();
+        summary_model.send_last_completion_stream_text_chunk("compacted summary");
+        summary_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        summary_model.end_last_completion_stream();
+
+        let context = task.await.expect("compaction should succeed");
+        assert_eq!(context.covered_message_count, 2);
+        assert_eq!(context.summary.as_ref(), "compacted summary");
+        cx.update(|cx| {
+            let thread = thread.read(cx);
+            assert_eq!(thread.messages.len(), 6);
+            assert_eq!(thread.compacted_context.as_ref(), Some(&context));
+        });
+    }
+
+    #[test]
+    fn chunked_compaction_splits_large_prefix_on_message_boundaries() {
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::default());
+        let messages = vec![
+            user_message(&"a".repeat(2_100_000)),
+            agent_message("first response"),
+            user_message(&"b".repeat(2_100_000)),
+        ];
+
+        let requests = Thread::build_compaction_requests(&model, None, &messages, None);
+
+        assert!(requests.len() > 1);
+        assert!(requests
+            .iter()
+            .all(|request| request.messages.len() >= 2));
     }
 
     struct ReplayImageTool;

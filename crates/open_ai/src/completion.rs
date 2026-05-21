@@ -863,14 +863,11 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => {
-                let message = response_failure_message(&response);
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
+                vec![Err(response_failure_completion_error(&response))]
             }
             ResponsesStreamEvent::Error { error }
             | ResponsesStreamEvent::GenericError { error } => {
-                vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_error_message(&error)
-                )))]
+                vec![Err(response_completion_error(&error))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
                 if summary_index > 0 {
@@ -1072,6 +1069,37 @@ fn normalize_response_message_phase(phase: &str) -> Option<&'static str> {
         RESPONSE_MESSAGE_PHASE_FINAL_ANSWER => Some(RESPONSE_MESSAGE_PHASE_FINAL_ANSWER),
         _ => None,
     }
+}
+
+fn response_failure_completion_error(response: &ResponsesSummary) -> LanguageModelCompletionError {
+    if let Some(error) = response.error.as_ref() {
+        return response_completion_error(error);
+    }
+
+    LanguageModelCompletionError::Other(anyhow!(response_failure_message(response)))
+}
+
+fn response_completion_error(error: &ResponseError) -> LanguageModelCompletionError {
+    if response_error_is_context_overflow(error) {
+        return LanguageModelCompletionError::PromptTooLarge { tokens: None };
+    }
+
+    LanguageModelCompletionError::Other(anyhow!(response_error_message(error)))
+}
+
+fn response_error_is_context_overflow(error: &ResponseError) -> bool {
+    let code = error.code.as_deref().unwrap_or_default().to_lowercase();
+    let message = error.message.to_lowercase();
+    [
+        "model_context_window_exceeded",
+        "context_length_exceeded",
+        "context window exceeded",
+        "context window was exceeded",
+        "context window has been exceeded",
+        "prompt is too long",
+    ]
+    .iter()
+    .any(|needle| code.contains(needle) || message.contains(needle))
 }
 
 fn response_failure_message(response: &ResponsesSummary) -> String {
@@ -2094,6 +2122,67 @@ mod tests {
             error.to_string(),
             "server_error: The model failed to generate a response."
         );
+    }
+
+    #[test]
+    fn responses_failed_context_window_exceeded_maps_to_prompt_too_large() {
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
+            response: ResponseSummary {
+                status: Some("failed".into()),
+                error: Some(ResponseError {
+                    code: Some("model_context_window_exceeded".into()),
+                    message: "The context window was exceeded.".into(),
+                    param: None,
+                }),
+                ..Default::default()
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+    }
+
+    #[test]
+    fn responses_error_context_length_exceeded_maps_to_prompt_too_large() {
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(ResponsesStreamEvent::Error {
+            error: ResponseError {
+                code: Some("context_length_exceeded".into()),
+                message: "The prompt is too long.".into(),
+                param: None,
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
+    }
+
+    #[test]
+    fn responses_generic_error_context_window_exceeded_maps_to_prompt_too_large() {
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(ResponsesStreamEvent::GenericError {
+            error: ResponseError {
+                code: None,
+                message: "context window exceeded".into(),
+                param: None,
+            },
+        });
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+        ));
     }
 
     #[test]

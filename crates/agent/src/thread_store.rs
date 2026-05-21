@@ -167,6 +167,7 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            compacted_context: None,
         }
     }
 
