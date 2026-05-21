@@ -302,6 +302,12 @@ enum ListEntry {
     },
     Thread(ThreadEntry),
     Terminal(TerminalEntry),
+    RecentThreadsToggle {
+        key: ProjectGroupKey,
+        hidden_count: usize,
+        expanded: bool,
+        hidden_entries: Vec<ListEntry>,
+    },
 }
 
 #[derive(Clone)]
@@ -327,7 +333,7 @@ impl ActivatableEntry {
                 metadata: terminal.metadata.clone(),
                 workspace: terminal.workspace.clone(),
             }),
-            ListEntry::ProjectHeader { .. } => None,
+            ListEntry::ProjectHeader { .. } | ListEntry::RecentThreadsToggle { .. } => None,
         }
     }
 
@@ -369,7 +375,9 @@ impl ListEntry {
     fn session_id(&self) -> Option<&acp::SessionId> {
         match self {
             ListEntry::Thread(thread_entry) => thread_entry.metadata.session_id.as_ref(),
-            ListEntry::Terminal(_) | ListEntry::ProjectHeader { .. } => None,
+            ListEntry::Terminal(_)
+            | ListEntry::ProjectHeader { .. }
+            | ListEntry::RecentThreadsToggle { .. } => None,
         }
     }
 
@@ -390,6 +398,7 @@ impl ListEntry {
             ListEntry::ProjectHeader { key, .. } => multi_workspace
                 .workspaces_for_project_group(key, cx)
                 .unwrap_or_default(),
+            ListEntry::RecentThreadsToggle { .. } => Vec::new(),
         }
     }
 }
@@ -645,6 +654,7 @@ pub struct Sidebar {
     /// background data changes. Used to sort the thread switcher popup.
     thread_last_accessed: HashMap<ThreadId, DateTime<Utc>>,
     terminal_last_accessed: HashMap<TerminalId, DateTime<Utc>>,
+    expanded_recent_thread_groups: HashSet<ProjectGroupKey>,
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
@@ -753,6 +763,7 @@ impl Sidebar {
 
             thread_last_accessed: HashMap::new(),
             terminal_last_accessed: HashMap::new(),
+            expanded_recent_thread_groups: HashSet::new(),
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
@@ -1690,6 +1701,8 @@ impl Sidebar {
                     continue;
                 }
 
+                let row_entries = Self::entries_by_display_time(matched_terminals, matched_threads);
+
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
@@ -1701,14 +1714,33 @@ impl Sidebar {
                     has_threads,
                 });
 
-                Self::push_entries_by_display_time(
+                Self::push_entries(
                     &mut entries,
-                    matched_terminals,
-                    matched_threads,
+                    row_entries,
+                    None,
                     &mut current_session_ids,
                     &mut current_thread_ids,
                 );
             } else {
+                let row_entries = if is_collapsed {
+                    Vec::new()
+                } else {
+                    Self::entries_by_display_time(terminals, threads)
+                };
+                let recent_thread_limit = AgentSettings::get_global(cx).sidebar_recent_thread_limit;
+                let recent_threads_expanded =
+                    self.expanded_recent_thread_groups.contains(group_key);
+                let overflow_thread_count = row_entries.len().saturating_sub(recent_thread_limit);
+                let hidden_entries = (!recent_threads_expanded)
+                    .then(|| {
+                        row_entries
+                            .iter()
+                            .skip(recent_thread_limit)
+                            .cloned()
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
@@ -1724,13 +1756,22 @@ impl Sidebar {
                     continue;
                 }
 
-                Self::push_entries_by_display_time(
+                Self::push_entries(
                     &mut entries,
-                    terminals,
-                    threads,
+                    row_entries,
+                    (!recent_threads_expanded).then_some(recent_thread_limit),
                     &mut current_session_ids,
                     &mut current_thread_ids,
                 );
+
+                if overflow_thread_count > 0 {
+                    entries.push(ListEntry::RecentThreadsToggle {
+                        key: group_key.clone(),
+                        hidden_count: overflow_thread_count,
+                        expanded: recent_threads_expanded,
+                        hidden_entries,
+                    });
+                }
             }
         }
 
@@ -1888,6 +1929,19 @@ impl Sidebar {
             ListEntry::Terminal(terminal) => {
                 self.render_terminal(ix, terminal, is_active, is_selected, cx)
             }
+            ListEntry::RecentThreadsToggle {
+                key,
+                hidden_count,
+                expanded,
+                ..
+            } => self.render_recent_threads_toggle(
+                ix,
+                key,
+                *hidden_count,
+                *expanded,
+                is_selected,
+                cx,
+            ),
         };
 
         if is_group_header_after_first {
@@ -1900,6 +1954,71 @@ impl Sidebar {
         } else {
             rendered
         }
+    }
+
+    fn toggle_recent_threads_expanded(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) {
+        if self.expanded_recent_thread_groups.remove(key) {
+            self.selection = None;
+        } else {
+            self.expanded_recent_thread_groups.insert(key.clone());
+        }
+        self.update_entries(cx);
+    }
+
+    fn render_recent_threads_toggle(
+        &self,
+        ix: usize,
+        key: &ProjectGroupKey,
+        hidden_count: usize,
+        expanded: bool,
+        is_focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let icon = if expanded {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        };
+        let tooltip = if expanded {
+            "Show fewer recent threads".to_string()
+        } else if hidden_count == 1 {
+            "Show 1 more recent thread".to_string()
+        } else {
+            format!("Show {hidden_count} more recent threads")
+        };
+        let color = cx.theme().colors();
+        let key = key.clone();
+
+        h_flex()
+            .id(SharedString::from(format!(
+                "recent-threads-toggle-row-{ix}"
+            )))
+            .w_full()
+            .px_2()
+            .pt_1()
+            .pb_1p5()
+            .border_1()
+            .map(|this| {
+                if is_focused {
+                    this.border_color(color.border_focused)
+                } else {
+                    this.border_color(gpui::transparent_black())
+                }
+            })
+            .child(
+                IconButton::new(
+                    SharedString::from(format!("recent-threads-toggle-{ix}")),
+                    icon,
+                )
+                .full_width()
+                .style(ButtonStyle::Outlined)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text(tooltip))
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.toggle_recent_threads_expanded(&key, cx);
+                })),
+            )
+            .into_any_element()
     }
 
     fn render_remote_project_icon(
@@ -2784,6 +2903,10 @@ impl Sidebar {
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, false, window, cx);
             }
+            ListEntry::RecentThreadsToggle { key, .. } => {
+                let key = key.clone();
+                self.toggle_recent_threads_expanded(&key, cx);
+            }
         }
     }
 
@@ -3329,7 +3452,11 @@ impl Sidebar {
                     self.update_entries(cx);
                 }
             }
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => {
+            Some(
+                ListEntry::Thread(_)
+                | ListEntry::Terminal(_)
+                | ListEntry::RecentThreadsToggle { .. },
+            ) => {
                 for i in (0..ix).rev() {
                     if let Some(ListEntry::ProjectHeader { key, .. }) = self.contents.entries.get(i)
                     {
@@ -3356,7 +3483,11 @@ impl Sidebar {
         // Find the group header for the current selection.
         let header_ix = match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { .. }) => Some(ix),
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => (0..ix).rev().find(|&i| {
+            Some(
+                ListEntry::Thread(_)
+                | ListEntry::Terminal(_)
+                | ListEntry::RecentThreadsToggle { .. },
+            ) => (0..ix).rev().find(|&i| {
                 matches!(
                     self.contents.entries.get(i),
                     Some(ListEntry::ProjectHeader { .. })
@@ -4865,34 +4996,49 @@ impl Sidebar {
         metadata.interacted_at.unwrap_or(metadata.updated_at)
     }
 
-    fn push_entries_by_display_time(
-        entries: &mut Vec<ListEntry>,
+    fn entries_by_display_time(
         terminals: Vec<TerminalEntry>,
         threads: Vec<ThreadEntry>,
-        current_session_ids: &mut HashSet<acp::SessionId>,
-        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
-    ) {
+    ) -> Vec<ListEntry> {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
                 ListEntry::Thread(thread) => Sidebar::thread_display_time(&thread.metadata),
                 ListEntry::Terminal(terminal) => terminal.metadata.created_at,
-                ListEntry::ProjectHeader { .. } => unreachable!(),
+                ListEntry::ProjectHeader { .. } | ListEntry::RecentThreadsToggle { .. } => {
+                    unreachable!()
+                }
             }
         }
 
-        let row_entries = terminals
+        terminals
             .into_iter()
             .map(ListEntry::Terminal)
             .chain(threads.into_iter().map(ListEntry::Thread))
-            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)));
+            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)))
+            .collect()
+    }
 
-        for entry in row_entries {
+    fn push_entries(
+        entries: &mut Vec<ListEntry>,
+        row_entries: Vec<ListEntry>,
+        visible_limit: Option<usize>,
+        current_session_ids: &mut HashSet<acp::SessionId>,
+        current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+    ) {
+        let visible_count = visible_limit
+            .map(|limit| limit.min(row_entries.len()))
+            .unwrap_or(row_entries.len());
+
+        for entry in &row_entries {
             if let ListEntry::Thread(thread) = &entry {
                 if let Some(session_id) = &thread.metadata.session_id {
                     current_session_ids.insert(session_id.clone());
                 }
                 current_thread_ids.insert(thread.metadata.thread_id);
             }
+        }
+
+        for entry in row_entries.into_iter().take(visible_count) {
             entries.push(entry);
         }
     }
@@ -4921,86 +5067,115 @@ impl Sidebar {
         sort_time(left).cmp(&sort_time(right)).reverse()
     }
 
+    fn switcher_entry_from_list_entry(
+        &self,
+        entry: &ListEntry,
+        project_name: Option<SharedString>,
+        project_key: Option<&ProjectGroupKey>,
+        cx: &App,
+    ) -> Option<ThreadSwitcherEntry> {
+        match entry {
+            ListEntry::Thread(thread) => {
+                let workspace = match &thread.workspace {
+                    ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
+                    ThreadEntryWorkspace::Closed { .. } => project_key.and_then(|key| {
+                        self.multi_workspace.upgrade().and_then(|mw| {
+                            mw.read(cx).workspace_for_paths(
+                                key.path_list(),
+                                key.host().as_ref(),
+                                cx,
+                            )
+                        })
+                    }),
+                }?;
+                let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
+                let timestamp: SharedString =
+                    format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
+                        .into();
+                Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
+                    title: thread.metadata.display_title(),
+                    icon: thread.icon,
+                    icon_from_external_svg: thread.icon_from_external_svg.clone(),
+                    status: thread.status,
+                    metadata: thread.metadata.clone(),
+                    workspace,
+                    project_name,
+                    worktrees: thread
+                        .worktrees
+                        .iter()
+                        .cloned()
+                        .map(|mut wt| {
+                            wt.highlight_positions = Vec::new();
+                            wt
+                        })
+                        .collect(),
+                    diff_stats: thread.diff_stats,
+                    is_draft: thread.is_draft,
+                    is_title_generating: thread.is_title_generating,
+                    notified,
+                    timestamp,
+                }))
+            }
+            ListEntry::Terminal(terminal) => {
+                let timestamp: SharedString =
+                    format_history_entry_timestamp(terminal.metadata.created_at).into();
+                Some(ThreadSwitcherEntry::Terminal(ThreadSwitcherTerminalEntry {
+                    metadata: terminal.metadata.clone(),
+                    workspace: terminal.workspace.clone(),
+                    project_name,
+                    worktrees: terminal
+                        .worktrees
+                        .iter()
+                        .cloned()
+                        .map(|mut wt| {
+                            wt.highlight_positions = Vec::new();
+                            wt
+                        })
+                        .collect(),
+                    notified: self
+                        .contents
+                        .is_terminal_notified(terminal.metadata.terminal_id),
+                    timestamp,
+                }))
+            }
+            ListEntry::ProjectHeader { .. } | ListEntry::RecentThreadsToggle { .. } => None,
+        }
+    }
+
     fn mru_entries_for_switcher(&self, cx: &App) -> Vec<ThreadSwitcherEntry> {
         let mut current_header_label: Option<SharedString> = None;
         let mut current_header_key: Option<ProjectGroupKey> = None;
-        let mut entries: Vec<ThreadSwitcherEntry> = self
-            .contents
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
+        let mut entries: Vec<ThreadSwitcherEntry> = Vec::new();
+        for entry in &self.contents.entries {
+            match entry {
                 ListEntry::ProjectHeader { label, key, .. } => {
                     current_header_label = Some(label.clone());
                     current_header_key = Some(key.clone());
-                    None
                 }
-                ListEntry::Thread(thread) => {
-                    let workspace = match &thread.workspace {
-                        ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
-                        ThreadEntryWorkspace::Closed { .. } => {
-                            current_header_key.as_ref().and_then(|key| {
-                                self.multi_workspace.upgrade().and_then(|mw| {
-                                    mw.read(cx).workspace_for_paths(
-                                        key.path_list(),
-                                        key.host().as_ref(),
-                                        cx,
-                                    )
-                                })
-                            })
+                ListEntry::RecentThreadsToggle { hidden_entries, .. } => {
+                    for hidden_entry in hidden_entries {
+                        if let Some(entry) = self.switcher_entry_from_list_entry(
+                            hidden_entry,
+                            current_header_label.clone(),
+                            current_header_key.as_ref(),
+                            cx,
+                        ) {
+                            entries.push(entry);
                         }
-                    }?;
-                    let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
-                    let timestamp: SharedString =
-                        format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
-                            .into();
-                    Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
-                        title: thread.metadata.display_title(),
-                        icon: thread.icon,
-                        icon_from_external_svg: thread.icon_from_external_svg.clone(),
-                        status: thread.status,
-                        metadata: thread.metadata.clone(),
-                        workspace,
-                        project_name: current_header_label.clone(),
-                        worktrees: thread
-                            .worktrees
-                            .iter()
-                            .cloned()
-                            .map(|mut wt| {
-                                wt.highlight_positions = Vec::new();
-                                wt
-                            })
-                            .collect(),
-                        diff_stats: thread.diff_stats,
-                        is_draft: thread.is_draft,
-                        is_title_generating: thread.is_title_generating,
-                        notified,
-                        timestamp,
-                    }))
+                    }
                 }
-                ListEntry::Terminal(terminal) => {
-                    let timestamp: SharedString =
-                        format_history_entry_timestamp(terminal.metadata.created_at).into();
-                    Some(ThreadSwitcherEntry::Terminal(ThreadSwitcherTerminalEntry {
-                        metadata: terminal.metadata.clone(),
-                        workspace: terminal.workspace.clone(),
-                        project_name: current_header_label.clone(),
-                        worktrees: terminal
-                            .worktrees
-                            .iter()
-                            .cloned()
-                            .map(|mut wt| {
-                                wt.highlight_positions = Vec::new();
-                                wt
-                            })
-                            .collect(),
-                        notified: self
-                            .contents
-                            .is_terminal_notified(terminal.metadata.terminal_id),
-                        timestamp,
-                    }))
+                ListEntry::Thread(_) | ListEntry::Terminal(_) => {
+                    if let Some(entry) = self.switcher_entry_from_list_entry(
+                        entry,
+                        current_header_label.clone(),
+                        current_header_key.as_ref(),
+                        cx,
+                    ) {
+                        entries.push(entry);
+                    }
                 }
-            })
-            .collect();
+            }
+        }
 
         entries.sort_by(|a, b| self.switcher_entry_cmp(a, b));
 
@@ -5982,14 +6157,16 @@ impl Sidebar {
         let ix = self.selection?;
         match self.contents.entries.get(ix) {
             Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
-            Some(ListEntry::Thread(_) | ListEntry::Terminal(_)) => {
-                (0..ix)
-                    .rev()
-                    .find_map(|i| match self.contents.entries.get(i) {
-                        Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
-                        _ => None,
-                    })
-            }
+            Some(
+                ListEntry::Thread(_)
+                | ListEntry::Terminal(_)
+                | ListEntry::RecentThreadsToggle { .. },
+            ) => (0..ix)
+                .rev()
+                .find_map(|i| match self.contents.entries.get(i) {
+                    Some(ListEntry::ProjectHeader { key, .. }) => Some(key.clone()),
+                    _ => None,
+                }),
             _ => None,
         }
     }
@@ -6171,7 +6348,7 @@ impl Sidebar {
                 let workspace = terminal.workspace.clone();
                 self.activate_terminal_entry(metadata, workspace, true, window, cx);
             }
-            ListEntry::ProjectHeader { .. } => {}
+            ListEntry::ProjectHeader { .. } | ListEntry::RecentThreadsToggle { .. } => {}
         }
     }
 

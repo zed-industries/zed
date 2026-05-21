@@ -832,6 +832,7 @@ mod tests {
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
             sidebar_side: Default::default(),
+            sidebar_recent_thread_limit: 10,
             thinking_display: Default::default(),
         };
 

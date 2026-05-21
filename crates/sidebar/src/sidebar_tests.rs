@@ -184,6 +184,7 @@ fn assert_remote_project_integration_sidebar_state(
                     terminal.metadata.title
                 );
             }
+            ListEntry::RecentThreadsToggle { .. } => {}
         }
     }
 
@@ -599,6 +600,14 @@ fn visible_entries_as_strings(
                         let worktree = format_linked_worktree_chips(&terminal.worktrees);
                         format!("  {title}{worktree}{selected}")
                     }
+                    ListEntry::RecentThreadsToggle {
+                        hidden_count,
+                        expanded,
+                        ..
+                    } => {
+                        let icon = if *expanded { "^" } else { "v" };
+                        format!("  {icon} {hidden_count} more threads{selected}")
+                    }
                 }
             })
             .collect()
@@ -643,6 +652,90 @@ async fn test_serialization_round_trip(cx: &mut TestAppContext) {
 
     assert_eq!(width1, width2);
     assert_eq!(width1, px(420.0));
+}
+
+#[gpui::test]
+async fn test_recent_thread_limit_collapses_sidebar_rows(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    cx.update(|_window, cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                sidebar_recent_thread_limit: 3,
+                ..AgentSettings::get_global(cx).clone()
+            },
+            cx,
+        );
+    });
+    save_n_test_threads(8, &project, cx).await;
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .filter(|entry| matches!(entry, ListEntry::Thread(_)))
+                .count(),
+            3
+        );
+        assert!(sidebar.contents.entries.iter().any(|entry| matches!(
+            entry,
+            ListEntry::RecentThreadsToggle {
+                hidden_count: 5,
+                expanded: false,
+                ..
+            }
+        )));
+        assert_eq!(
+            sidebar
+                .mru_entries_for_switcher(_cx)
+                .iter()
+                .filter(|entry| matches!(entry, ThreadSwitcherEntry::Thread(_)))
+                .count(),
+            8
+        );
+    });
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar
+            .expanded_recent_thread_groups
+            .insert(project_group_key.clone());
+        sidebar.update_entries(cx);
+    });
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert_eq!(
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .filter(|entry| matches!(entry, ListEntry::Thread(_)))
+                .count(),
+            8
+        );
+        assert!(sidebar.contents.entries.iter().any(|entry| matches!(
+            entry,
+            ListEntry::RecentThreadsToggle {
+                hidden_count: 5,
+                expanded: true,
+                ..
+            }
+        )));
+        assert_eq!(
+            sidebar
+                .mru_entries_for_switcher(_cx)
+                .iter()
+                .filter(|entry| matches!(entry, ThreadSwitcherEntry::Thread(_)))
+                .count(),
+            8
+        );
+    });
 }
 
 #[gpui::test]
@@ -6644,6 +6737,7 @@ async fn test_clicking_worktree_thread_does_not_briefly_render_as_separate_proje
                         terminal.metadata.title
                     );
                 }
+                ListEntry::RecentThreadsToggle { .. } => {}
             }
         }
 

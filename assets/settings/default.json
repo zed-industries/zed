@@ -1019,6 +1019,10 @@
     "flexible": true,
     // Where to position the threads sidebar. Can be 'left' or 'right'.
     "sidebar_side": "left",
+    // Number of recent thread rows to show for each project in the threads sidebar before collapsing them behind "View all".
+    //
+    // Default: 10
+    "sidebar_recent_thread_limit": 10,
     // Default width when the agent panel is docked to the left or right.
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.

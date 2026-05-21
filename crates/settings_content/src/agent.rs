@@ -94,6 +94,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: left
     pub sidebar_side: Option<SidebarDockPosition>,
+    /// Number of recent thread rows to show per project in the threads sidebar before collapsing.
+    ///
+    /// Default: 10
+    pub sidebar_recent_thread_limit: Option<usize>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640

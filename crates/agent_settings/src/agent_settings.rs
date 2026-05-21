@@ -140,6 +140,7 @@ pub struct AgentSettings {
     pub dock: DockPosition,
     pub flexible: bool,
     pub sidebar_side: SidebarDockPosition,
+    pub sidebar_recent_thread_limit: usize,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub max_content_width: Option<Pixels>,
@@ -632,6 +633,7 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
+            sidebar_recent_thread_limit: agent.sidebar_recent_thread_limit.unwrap(),
             default_width: px(agent.default_width.unwrap()),
             default_height: px(agent.default_height.unwrap()),
             max_content_width: if agent.limit_content_width.unwrap() {

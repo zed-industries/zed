@@ -7449,7 +7449,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 3] {
+    fn general_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7473,6 +7473,28 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Recent Threads Visible",
+                description: "Number of recent thread rows to show per project in the threads sidebar before showing a View All control.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.sidebar_recent_thread_limit"),
+                    pick: |settings_content| {
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .sidebar_recent_thread_limit
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .agent
+                            .get_or_insert_default()
+                            .sidebar_recent_thread_limit = value;
                     },
                 }),
                 metadata: None,
