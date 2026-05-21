@@ -496,11 +496,47 @@ impl Inventory {
                 }
             })
             .map(|(task_source_kind, resolved_task)| {
-                (
-                    task_source_kind.clone(),
-                    resolved_task.clone(),
-                    post_inc(&mut lru_score),
-                )
+                let kind = task_source_kind.clone();
+                let id_base = kind.to_id_base();
+                let task = &resolved_task.original_task();
+                let reresolved = if let TaskSourceKind::Worktree { id, .. } = &kind {
+                    None.or_else(|| {
+                        let (_, _, item_context) =
+                            task_contexts.active_item_context.as_ref().filter(
+                                |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
+                            )?;
+                        task.resolve_task(&id_base, item_context)
+                    })
+                    .or_else(|| {
+                        let (_, worktree_context) = task_contexts
+                            .active_worktree_context
+                            .as_ref()
+                            .filter(|(worktree_id, _)| id == worktree_id)?;
+                        task.resolve_task(&id_base, worktree_context)
+                    })
+                    .or_else(|| {
+                        let worktree_context = task_contexts
+                            .other_worktree_contexts
+                            .iter()
+                            .find(|(worktree_id, _)| worktree_id == id)
+                            .map(|(_, context)| context)?;
+                        task.resolve_task(&id_base, worktree_context)
+                    })
+                } else {
+                    None.or_else(|| {
+                        let (_, _, item_context) =
+                            task_contexts.active_item_context.as_ref()?;
+                        task.resolve_task(&id_base, item_context)
+                    })
+                    .or_else(|| {
+                        let (_, worktree_context) =
+                            task_contexts.active_worktree_context.as_ref()?;
+                        task.resolve_task(&id_base, worktree_context)
+                    })
+                }
+                .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
+                .unwrap_or_else(|| resolved_task.clone());
+                (kind, reresolved, post_inc(&mut lru_score))
             })
             .sorted_unstable_by(task_lru_comparator)
             .map(|(kind, task, _)| (kind, task))
