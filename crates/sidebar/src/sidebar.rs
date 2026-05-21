@@ -17,8 +17,8 @@ use agent_ui::threads_archive_view::{
 };
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
-    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewThread,
-    TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
+    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
+    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
     import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
@@ -105,6 +105,12 @@ enum SerializedSidebarView {
     ThreadList,
     #[serde(alias = "Archive")]
     History,
+}
+
+#[derive(Clone, Copy)]
+enum NewEntryTarget {
+    LastCreatedKind,
+    Terminal,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -1130,6 +1136,7 @@ impl Sidebar {
     fn open_workspace_and_create_entry(
         &mut self,
         project_group_key: &ProjectGroupKey,
+        target: NewEntryTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1158,8 +1165,9 @@ impl Sidebar {
 
         cx.spawn_in(window, async move |this, cx| {
             let workspace = task.await?;
-            this.update_in(cx, |this, window, cx| {
-                this.create_new_entry(&workspace, window, cx);
+            this.update_in(cx, |this, window, cx| match target {
+                NewEntryTarget::LastCreatedKind => this.create_new_entry(&workspace, window, cx),
+                NewEntryTarget::Terminal => this.create_new_terminal(&workspace, window, cx),
             })?;
             anyhow::Ok(())
         })
@@ -2092,7 +2100,12 @@ impl Sidebar {
                                 if let Some(workspace) = this.workspace_for_group(&key, cx) {
                                     this.create_new_entry(&workspace, window, cx);
                                 } else {
-                                    this.open_workspace_and_create_entry(&key, window, cx);
+                                    this.open_workspace_and_create_entry(
+                                        &key,
+                                        NewEntryTarget::LastCreatedKind,
+                                        window,
+                                        cx,
+                                    );
                                 }
                             },
                         ))
@@ -5578,10 +5591,36 @@ impl Sidebar {
             if let Some(workspace) = self.workspace_for_group(&key, cx) {
                 self.create_new_entry(&workspace, window, cx);
             } else {
-                self.open_workspace_and_create_entry(&key, window, cx);
+                self.open_workspace_and_create_entry(
+                    &key,
+                    NewEntryTarget::LastCreatedKind,
+                    window,
+                    cx,
+                );
             }
         } else if let Some(workspace) = self.active_workspace(cx) {
             self.create_new_entry(&workspace, window, cx);
+        }
+    }
+
+    fn new_terminal_thread(
+        &mut self,
+        _: &NewTerminalThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+
+        if let Some(key) = self.selected_group_key() {
+            self.set_group_expanded(&key, true, cx);
+            self.selection = None;
+            if let Some(workspace) = self.workspace_for_group(&key, cx) {
+                self.create_new_terminal(&workspace, window, cx);
+            } else {
+                self.open_workspace_and_create_entry(&key, NewEntryTarget::Terminal, window, cx);
+            }
+        } else if let Some(workspace) = self.active_workspace(cx) {
+            self.create_new_terminal(&workspace, window, cx);
         }
     }
 
@@ -6794,6 +6833,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::archive_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
+            .on_action(cx.listener(Self::new_terminal_thread))
             .on_action(cx.listener(Self::toggle_archive))
             .on_action(cx.listener(Self::focus_sidebar_filter))
             .on_action(cx.listener(Self::on_toggle_thread_switcher))
