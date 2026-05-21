@@ -34,9 +34,9 @@ use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
 use git::{Amend, Commit, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
-    StashAll, StashApply, StashPop, ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll,
-    parse_git_remote_url,
+    DiscardAllUnstaged, ExpandCommitEditor, GitHostingProviderRegistry, GitRemote,
+    RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop, StashStaged,
+    ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll, parse_git_remote_url,
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AsyncApp, AsyncWindowContext, Bounds, ClickEvent, DismissEvent,
@@ -378,6 +378,16 @@ pub enum Section {
     New,
     Staged,
     Unstaged,
+}
+
+/// What a checkout restores the worktree (and index) to.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum CheckoutSource {
+    /// `git checkout HEAD -- <paths>`: discard both staged and unstaged changes.
+    Head,
+    /// `git checkout -- <paths>`: discard only unstaged changes, restoring the
+    /// worktree from the index and preserving staged content.
+    Index,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
@@ -887,6 +897,65 @@ fn header_body_target_diff_base(group_by: GitPanelGroupBy, section: Section) -> 
         (GitPanelGroupBy::Staging, Section::Staged) => Some(DiffBase::Staged),
         (GitPanelGroupBy::Staging, Section::Unstaged) => Some(DiffBase::Unstaged),
         _ => None,
+    }
+}
+
+/// A bulk action offered by a section-header right-click menu (staging-grouped
+/// mode). Kept as data so the menu contents are unit-testable without reaching
+/// into the (private) `ContextMenu` item list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SectionMenuItem {
+    UnstageAll,
+    StashStaged,
+    StageAll,
+    DiscardAllUnstaged,
+}
+
+/// The bulk actions for a section header's right-click menu (VS Code-style):
+/// only the Staged and Unstaged headers in staging-grouped mode have one.
+/// Returns a `&'static` slice so `render_list_header` can gate the right-click
+/// handler on `!…is_empty()` without allocating on every render.
+fn section_context_menu_items(
+    group_by: GitPanelGroupBy,
+    section: Section,
+) -> &'static [SectionMenuItem] {
+    use SectionMenuItem::*;
+    match (group_by, section) {
+        (GitPanelGroupBy::Staging, Section::Staged) => &[UnstageAll, StashStaged],
+        (GitPanelGroupBy::Staging, Section::Unstaged) => &[StageAll, DiscardAllUnstaged],
+        _ => &[],
+    }
+}
+
+fn section_menu_item_label_and_action(item: SectionMenuItem) -> (&'static str, Box<dyn Action>) {
+    match item {
+        SectionMenuItem::UnstageAll => ("Unstage All", UnstageAll.boxed_clone()),
+        SectionMenuItem::StashStaged => ("Stash Staged Changes", StashStaged.boxed_clone()),
+        SectionMenuItem::StageAll => ("Stage All", StageAll.boxed_clone()),
+        SectionMenuItem::DiscardAllUnstaged => {
+            ("Discard All Unstaged Changes", DiscardAllUnstaged.boxed_clone())
+        }
+    }
+}
+
+/// The single confirmation shown for "Discard All Unstaged Changes". It names
+/// both the tracked-restore and untracked-trash counts so the user knows the
+/// section will be cleared.
+fn discard_all_unstaged_prompt_message(tracked: usize, untracked: usize) -> String {
+    fn files(count: usize) -> &'static str {
+        if count == 1 { "file" } else { "files" }
+    }
+    match (tracked, untracked) {
+        (tracked, 0) => format!(
+            "Discard unstaged changes to {tracked} {}?",
+            files(tracked)
+        ),
+        (0, untracked) => format!("Trash {untracked} untracked {}?", files(untracked)),
+        (tracked, untracked) => format!(
+            "Discard unstaged changes to {tracked} tracked {} and trash {untracked} untracked {}?",
+            files(tracked),
+            files(untracked),
+        ),
     }
 }
 
@@ -1870,22 +1939,34 @@ impl GitPanel {
         maybe!({
             let list_entry = self.entries.get(self.selected_entry?)?.clone();
             let entry = list_entry.status_entry()?.to_owned();
+
+            // In staging-grouped mode discard is section-aware: the Staged side
+            // offers no discard (only unstage), and the Unstaged side discards
+            // only the unstaged changes (restore the worktree from the index).
+            // Status-grouped rows (Tracked / New) and Conflicts keep the
+            // revert-to-HEAD behavior via `revert_entry`.
+            if entry.section == Section::Staged {
+                self.show_hint_toast("Unstage the file before discarding its changes.", cx);
+                return Some(());
+            }
+            let discard_unstaged_only = entry.section == Section::Unstaged;
+
             let skip_prompt = action.skip_prompt || entry.status.is_created();
 
             let prompt = if skip_prompt {
                 Task::ready(Ok(0))
             } else {
+                let display = entry.repo_path.display(path_style);
+                let file_name =
+                    MarkdownInlineCode(entry.repo_path.file_name().unwrap_or(display.as_ref()));
+                let message = if discard_unstaged_only {
+                    format!("Discard unstaged changes to {}?", file_name)
+                } else {
+                    format!("Are you sure you want to discard changes to {}?", file_name)
+                };
                 let prompt = window.prompt(
                     PromptLevel::Warning,
-                    &format!(
-                        "Are you sure you want to discard changes to {}?",
-                        MarkdownInlineCode(
-                            entry
-                                .repo_path
-                                .file_name()
-                                .unwrap_or(entry.repo_path.display(path_style).as_ref())
-                        ),
-                    ),
+                    &message,
                     None,
                     &["Discard Changes", "Cancel"],
                     cx,
@@ -1901,7 +1982,11 @@ impl GitPanel {
                     }
 
                     this.update_in(cx, |this, window, cx| {
-                        this.revert_entry(&entry, window, cx);
+                        if discard_unstaged_only {
+                            this.discard_unstaged_entry(&entry, window, cx);
+                        } else {
+                            this.revert_entry(&entry, window, cx);
+                        }
                     })?;
 
                     Ok(())
@@ -1959,7 +2044,6 @@ impl GitPanel {
             let path = active_repo
                 .read(cx)
                 .repo_path_to_project_path(&entry.repo_path, cx)?;
-            let workspace = self.workspace.clone();
 
             if entry.status.staging().has_staged() {
                 self.change_file_stage(false, vec![entry.clone()], cx);
@@ -1967,38 +2051,156 @@ impl GitPanel {
             let filename = path.path.file_name()?.to_string();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], window, cx);
+                self.perform_checkout(vec![entry.clone()], CheckoutSource::Head, window, cx);
             } else {
-                let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
-                cx.spawn_in(window, async move |_, cx| {
-                    match prompt.await? {
-                        TrashCancel::Trash => {}
-                        TrashCancel::Cancel => return Ok(()),
-                    }
-                    let task = workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .update(cx, |project, cx| project.delete_file(path, true, cx))
-                    })?;
-                    if let Some(task) = task {
-                        task.await?;
-                    }
-                    Ok(())
-                })
-                .detach_and_prompt_err(
-                    "Failed to trash file",
-                    window,
-                    cx,
-                    |e, _, _| Some(format!("{e}")),
-                );
+                self.trash_untracked_file(path, filename, window, cx);
             }
             Some(())
         });
     }
 
+    /// Prompts to move an untracked file to the system trash, deleting it only
+    /// if the user confirms. Shared by the per-row discard paths for
+    /// created/untracked files (`revert_entry`, `discard_unstaged_entry`).
+    fn trash_untracked_file(
+        &mut self,
+        path: ProjectPath,
+        filename: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
+        cx.spawn_in(window, async move |_, cx| {
+            match prompt.await? {
+                TrashCancel::Trash => {}
+                TrashCancel::Cancel => return Ok(()),
+            }
+            let task = workspace.update(cx, |workspace, cx| {
+                workspace
+                    .project()
+                    .update(cx, |project, cx| project.delete_file(path, true, cx))
+            })?;
+            if let Some(task) = task {
+                task.await?;
+            }
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to trash file", window, cx, |e, _, _| {
+            Some(format!("{e}"))
+        });
+    }
+
+    /// Discards only the *unstaged* changes for an Unstaged-section row: a
+    /// tracked file's worktree is restored from the index (`git checkout --`),
+    /// preserving any staged hunks; a truly untracked file has nothing in the
+    /// index to restore to, so it is trashed.
+    fn discard_unstaged_entry(
+        &mut self,
+        entry: &GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let active_repo = self.active_repository.clone()?;
+            let path = active_repo
+                .read(cx)
+                .repo_path_to_project_path(&entry.repo_path, cx)?;
+
+            if matches!(entry.status, FileStatus::Untracked) {
+                let filename = path.path.file_name()?.to_string();
+                self.trash_untracked_file(path, filename, window, cx);
+            } else {
+                self.perform_checkout(vec![entry.clone()], CheckoutSource::Index, window, cx);
+            }
+            Some(())
+        });
+    }
+
+    /// Clears the whole Unstaged section: restores every tracked-unstaged file
+    /// from the index (`git checkout -- <file>`, preserving staged hunks) and
+    /// trashes every untracked file, behind one confirmation that names both
+    /// counts. Offered from the Unstaged section-header context menu only
+    /// (staging-grouped mode).
+    fn discard_all_unstaged(
+        &mut self,
+        _: &DiscardAllUnstaged,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_repo) = self.active_repository.clone() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+
+        let (untracked, tracked): (Vec<_>, Vec<_>) = self
+            .entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|entry| entry.section == Section::Unstaged)
+            .cloned()
+            .partition(|entry| matches!(entry.status, FileStatus::Untracked));
+
+        if tracked.is_empty() && untracked.is_empty() {
+            return;
+        }
+
+        let message = discard_all_unstaged_prompt_message(tracked.len(), untracked.len());
+        let prompt = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            None,
+            &["Discard", "Cancel"],
+            cx,
+        );
+
+        cx.spawn_in(window, async move |this, cx| {
+            if prompt.await? != 0 {
+                return anyhow::Ok(());
+            }
+
+            // Restore tracked-unstaged files from the index (preserving staged
+            // hunks). `perform_checkout` detaches its own task internally.
+            if !tracked.is_empty() {
+                this.update_in(cx, |this, window, cx| {
+                    this.perform_checkout(tracked, CheckoutSource::Index, window, cx);
+                })?;
+            }
+
+            // Trash untracked files — they have no index content to restore to.
+            if !untracked.is_empty() {
+                let tasks = workspace.update(cx, |workspace, cx| {
+                    untracked
+                        .iter()
+                        .filter_map(|entry| {
+                            workspace.project().update(cx, |project, cx| {
+                                let project_path = active_repo
+                                    .read(cx)
+                                    .repo_path_to_project_path(&entry.repo_path, cx)?;
+                                project.delete_file(project_path, true, cx)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })?;
+                for task in tasks {
+                    task.await?;
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_prompt_err(
+            "Failed to discard unstaged changes",
+            window,
+            cx,
+            |e, _, _| Some(format!("{e}")),
+        );
+    }
+
     fn perform_checkout(
         &mut self,
         entries: Vec<GitStatusEntry>,
+        source: CheckoutSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2026,14 +2228,14 @@ impl GitPanel {
 
             this.update_in(cx, |this, window, cx| {
                 let task = active_repository.update(cx, |repo, cx| {
-                    repo.checkout_files(
-                        "HEAD",
-                        entries
-                            .into_iter()
-                            .map(|entries| entries.repo_path)
-                            .collect(),
-                        cx,
-                    )
+                    let paths = entries
+                        .into_iter()
+                        .map(|entries| entries.repo_path)
+                        .collect();
+                    match source {
+                        CheckoutSource::Head => repo.checkout_files("HEAD", paths, cx),
+                        CheckoutSource::Index => repo.checkout_index_files(paths, cx),
+                    }
                 });
                 this.update_visible_entries(window, cx);
                 cx.notify();
@@ -2114,7 +2316,7 @@ impl GitPanel {
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
                 this.update_in(cx, |this, window, cx| {
-                    this.perform_checkout(entries, window, cx);
+                    this.perform_checkout(entries, CheckoutSource::Head, window, cx);
                 })
                 .ok();
             }
@@ -2590,6 +2792,35 @@ impl GitPanel {
                     cx.notify();
                 })
             }
+        })
+        .detach();
+    }
+
+    /// Stashes only the staged changes (`git stash push --staged`), leaving the
+    /// worktree and unstaged changes intact. Offered from the Staged
+    /// section-header context menu (staging-grouped mode).
+    pub fn stash_staged_changes(
+        &mut self,
+        _: &StashStaged,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn(async move |this, cx| {
+            let stash_task = active_repository
+                .update(cx, |repo, cx| repo.stash_staged(cx))
+                .await;
+            this.update(cx, |this, cx| {
+                stash_task
+                    .map_err(|e| {
+                        this.show_error_toast("stash", e, cx);
+                    })
+                    .ok();
+                cx.notify();
+            })
         })
         .detach();
     }
@@ -4457,6 +4688,22 @@ impl GitPanel {
         show_error_toast(workspace, action, e, cx)
     }
 
+    /// Shows a brief, auto-hiding informational toast (e.g. why discard did
+    /// nothing on a Staged-section row).
+    fn show_hint_toast(&self, message: impl Into<std::borrow::Cow<'static, str>>, cx: &mut App) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        struct GitPanelHintToast;
+        workspace.update(cx, |workspace, cx| {
+            workspace.show_toast(
+                workspace::Toast::new(NotificationId::unique::<GitPanelHintToast>(), message)
+                    .autohide(),
+                cx,
+            );
+        });
+    }
+
     fn show_git_job_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.as_ref() else {
             let workspace = self.workspace.clone();
@@ -6316,6 +6563,7 @@ impl GitPanel {
         let section = header.header;
         let header_entry = GitListEntry::Header(GitHeaderEntry { header: section });
         let weak = cx.weak_entity();
+        let weak_for_menu = weak.clone();
         let group_by = GitPanelSettings::get_global(cx).group_by;
         let staging_affordance = Self::staging_affordance_for_section(
             section,
@@ -6415,6 +6663,30 @@ impl GitPanel {
                     })
                 },
             )
+            // Right-click opens the section's bulk-action menu (staging-grouped
+            // Staged/Unstaged only). The `+`/`-` button and the body left-click
+            // are independent listeners and keep working.
+            .when(
+                !section_context_menu_items(group_by, section).is_empty(),
+                |row| {
+                    row.on_mouse_down(
+                        MouseButton::Right,
+                        move |event: &MouseDownEvent, window, cx| {
+                            weak_for_menu
+                                .update(cx, |this, cx| {
+                                    this.deploy_section_context_menu(
+                                        section,
+                                        event.position,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            cx.stop_propagation();
+                        },
+                    )
+                },
+            )
             .into_any_element()
     }
 
@@ -6457,12 +6729,17 @@ impl GitPanel {
         } else {
             "Discard Changes"
         };
+        let is_staged_section = entry.section == Section::Staged;
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
             let is_created = entry.status.is_created();
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                // Discard is unavailable on Staged-section rows — only unstage is
+                // offered there; the user discards from the Unstaged row.
+                .when(!is_staged_section, |context_menu| {
+                    context_menu.action(restore_title, git::RestoreFile::default().boxed_clone())
+                })
                 .action_disabled_when(
                     !is_created,
                     "Add to .gitignore",
@@ -6478,6 +6755,34 @@ impl GitPanel {
                 })
         });
         self.selected_entry = Some(ix);
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
+    /// Right-click menu for a section header: VS Code-style bulk actions scoped
+    /// to the section. Only the Staged and Unstaged headers in staging-grouped
+    /// mode have a menu; for any other header `section_context_menu_items` is
+    /// empty and this is a no-op.
+    fn deploy_section_context_menu(
+        &mut self,
+        section: Section,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let group_by = GitPanelSettings::get_global(cx).group_by;
+        let items = section_context_menu_items(group_by, section);
+        if items.is_empty() {
+            return;
+        }
+        let focus_handle = self.focus_handle.clone();
+        let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
+            let mut context_menu = context_menu.context(focus_handle);
+            for item in items {
+                let (label, action) = section_menu_item_label_and_action(*item);
+                context_menu = context_menu.action(label, action);
+            }
+            context_menu
+        });
         self.set_context_menu(context_menu, position, window, cx);
     }
 
@@ -7288,6 +7593,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::add_to_gitignore))
                     .on_action(cx.listener(Self::clean_all))
+                    .on_action(cx.listener(Self::discard_all_unstaged))
+                    .on_action(cx.listener(Self::stash_staged_changes))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
                     .on_action(cx.listener(Self::stash_pop))
@@ -8633,6 +8940,452 @@ mod tests {
         assert_eq!(
             message,
             "Are you sure you want to discard changes to `__somefile__`?"
+        );
+    }
+
+    /// Builds a staging-grouped panel over a fake repo with explicit
+    /// HEAD/index/worktree contents, so discard behaviour can be exercised
+    /// end-to-end (the fake derives status from the three contents).
+    async fn build_staging_grouped_git_panel(
+        cx: &mut TestAppContext,
+        project_tree: serde_json::Value,
+        head: &[(&str, String)],
+        index: &[(&str, String)],
+    ) -> (
+        Arc<FakeFs>,
+        Entity<Project>,
+        Entity<GitPanel>,
+        VisualTestContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "project": project_tree }))
+            .await;
+        fs.set_head_for_repo(Path::new(path!("/root/project/.git")), head, "deadbeef");
+        fs.set_index_for_repo(Path::new(path!("/root/project/.git")), index);
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .expect("workspace should exist");
+        let mut visual_cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        visual_cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(&mut visual_cx, GitPanel::new);
+        refresh_git_panel_entries(&project, &panel, &mut visual_cx).await;
+        (fs, project, panel, visual_cx)
+    }
+
+    fn unstaged_row(panel: &Entity<GitPanel>, file: &str, cx: &VisualTestContext) -> usize {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .entry_by_key(&GitPanelEntryKey {
+                    section: Section::Unstaged,
+                    repo_path: repo_path(file),
+                })
+                .unwrap_or_else(|| panic!("{file} should have an Unstaged row"))
+        })
+    }
+
+    fn has_row(panel: &Entity<GitPanel>, section: Section, file: &str, cx: &VisualTestContext) -> bool {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .entry_by_key(&GitPanelEntryKey {
+                    section,
+                    repo_path: repo_path(file),
+                })
+                .is_some()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_discard_unstaged_row_restores_worktree_from_index(cx: &mut TestAppContext) {
+        // partial.rs: HEAD empty, index has 3 staged lines, worktree adds a 4th
+        // (unstaged) line. Discarding the Unstaged row must restore the worktree
+        // to the index — dropping the 4th line — while preserving the staged
+        // lines (the Staged row stays, the Unstaged row disappears).
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "partial.rs": "a\nb\nc\nd\n" }),
+            &[("partial.rs", String::new())],
+            &[("partial.rs", "a\nb\nc\n".into())],
+        )
+        .await;
+
+        let unstaged_ix = unstaged_row(&panel, "partial.rs", &cx);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.revert_selected(&git::RestoreFile { skip_prompt: true }, window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        let worktree =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/partial.rs")).unwrap())
+                .unwrap();
+        assert_eq!(worktree, "a\nb\nc\n", "worktree should be restored to the index");
+        assert!(
+            !has_row(&panel, Section::Unstaged, "partial.rs", &cx),
+            "Unstaged row should disappear once unstaged changes are discarded"
+        );
+        assert!(
+            has_row(&panel, Section::Staged, "partial.rs", &cx),
+            "Staged row should remain — staged hunks are preserved"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_discard_unstaged_row_of_staged_new_file_restores_not_trashes(
+        cx: &mut TestAppContext,
+    ) {
+        // new.rs is a staged addition ("new\n") with a further unstaged edit
+        // ("new\nmore\n"). is_created() is true, but the file has content in the
+        // index, so discarding its Unstaged row must RESTORE from the index, not
+        // trash the file.
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "base.txt": "base\n", "new.rs": "new\nmore\n" }),
+            &[("base.txt", "base\n".into())],
+            &[("base.txt", "base\n".into()), ("new.rs", "new\n".into())],
+        )
+        .await;
+
+        let unstaged_ix = unstaged_row(&panel, "new.rs", &cx);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.revert_selected(&git::RestoreFile { skip_prompt: true }, window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        let worktree =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/new.rs")).unwrap()).unwrap();
+        assert_eq!(worktree, "new\n", "file restored to staged content, not trashed");
+        assert!(!has_row(&panel, Section::Unstaged, "new.rs", &cx));
+        assert!(
+            has_row(&panel, Section::Staged, "new.rs", &cx),
+            "the staged addition must be preserved"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_discard_unstaged_row_of_untracked_file_trashes_it(cx: &mut TestAppContext) {
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "base.txt": "base\n", "untracked.rs": "untracked\n" }),
+            &[("base.txt", "base\n".into())],
+            &[("base.txt", "base\n".into())],
+        )
+        .await;
+
+        let unstaged_ix = unstaged_row(&panel, "untracked.rs", &cx);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.revert_selected(&git::RestoreFile { skip_prompt: true }, window, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Trash");
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        assert!(
+            fs.read_file_sync(path!("/root/project/untracked.rs")).is_err(),
+            "untracked file should be trashed"
+        );
+        assert!(!has_row(&panel, Section::Unstaged, "untracked.rs", &cx));
+    }
+
+    #[gpui::test]
+    async fn test_discard_on_staged_row_is_noop(cx: &mut TestAppContext) {
+        // Discard on a Staged-section row must do nothing — no worktree/index
+        // change, both rows preserved (the user is told to unstage first).
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "partial.rs": "a\nb\nc\nd\n" }),
+            &[("partial.rs", String::new())],
+            &[("partial.rs", "a\nb\nc\n".into())],
+        )
+        .await;
+
+        let staged_ix = panel.read_with(&cx, |panel, _| {
+            panel
+                .entry_by_key(&GitPanelEntryKey {
+                    section: Section::Staged,
+                    repo_path: repo_path("partial.rs"),
+                })
+                .expect("partial.rs should have a Staged row")
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.revert_selected(&git::RestoreFile { skip_prompt: true }, window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        let worktree =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/partial.rs")).unwrap())
+                .unwrap();
+        assert_eq!(
+            worktree, "a\nb\nc\nd\n",
+            "discard on a Staged row must not touch the worktree"
+        );
+        assert!(has_row(&panel, Section::Staged, "partial.rs", &cx));
+        assert!(has_row(&panel, Section::Unstaged, "partial.rs", &cx));
+    }
+
+    fn section_row_count(
+        panel: &Entity<GitPanel>,
+        section: Section,
+        cx: &VisualTestContext,
+    ) -> usize {
+        panel.read_with(cx, |panel, _| {
+            panel
+                .entries
+                .iter()
+                .filter_map(|entry| entry.status_entry())
+                .filter(|entry| entry.section == section)
+                .count()
+        })
+    }
+
+    fn unstaged_section_row_count(panel: &Entity<GitPanel>, cx: &VisualTestContext) -> usize {
+        section_row_count(panel, Section::Unstaged, cx)
+    }
+
+    #[gpui::test]
+    async fn test_discard_all_unstaged_clears_unstaged_section_preserving_staged(
+        cx: &mut TestAppContext,
+    ) {
+        // The Unstaged section holds a partial file's unstaged side (tracked,
+        // also staged) and an untracked file; a staged-only file sits in the
+        // Staged section with no unstaged side. "Discard All Unstaged" must
+        // restore the tracked file from the index, trash the untracked file,
+        // and leave the staged side untouched (the partial file's staged hunks
+        // and the staged-only file both survive).
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({
+                ".git": {},
+                "partial.rs": "a\nb\nc\nd\n",
+                "untracked.rs": "u\n",
+                "stagedonly.rs": "S\n",
+            }),
+            &[
+                ("partial.rs", String::new()),
+                ("stagedonly.rs", String::new()),
+            ],
+            &[
+                ("partial.rs", "a\nb\nc\n".into()),
+                ("stagedonly.rs", "S\n".into()),
+            ],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.discard_all_unstaged(&DiscardAllUnstaged, window, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Discard");
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        let partial =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/partial.rs")).unwrap())
+                .unwrap();
+        assert_eq!(partial, "a\nb\nc\n", "tracked file restored from the index");
+        assert!(
+            fs.read_file_sync(path!("/root/project/untracked.rs")).is_err(),
+            "untracked file should be trashed"
+        );
+        let staged_only =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/stagedonly.rs")).unwrap())
+                .unwrap();
+        assert_eq!(staged_only, "S\n", "staged-only file must be untouched");
+
+        assert_eq!(
+            unstaged_section_row_count(&panel, &cx),
+            0,
+            "the Unstaged section should end empty"
+        );
+        assert!(
+            has_row(&panel, Section::Staged, "partial.rs", &cx),
+            "the partial file's staged hunks must be preserved"
+        );
+        assert!(
+            has_row(&panel, Section::Staged, "stagedonly.rs", &cx),
+            "the staged-only file must be preserved"
+        );
+    }
+
+    #[test]
+    fn test_discard_all_unstaged_prompt_message_names_both_counts() {
+        assert_eq!(
+            discard_all_unstaged_prompt_message(2, 3),
+            "Discard unstaged changes to 2 tracked files and trash 3 untracked files?",
+            "both sides present → the confirmation names both counts"
+        );
+        assert_eq!(
+            discard_all_unstaged_prompt_message(1, 1),
+            "Discard unstaged changes to 1 tracked file and trash 1 untracked file?",
+            "singular agreement"
+        );
+        assert_eq!(
+            discard_all_unstaged_prompt_message(2, 0),
+            "Discard unstaged changes to 2 files?",
+            "tracked only"
+        );
+        assert_eq!(
+            discard_all_unstaged_prompt_message(0, 3),
+            "Trash 3 untracked files?",
+            "untracked only"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_discard_all_unstaged_cancellation_is_a_noop(cx: &mut TestAppContext) {
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "partial.rs": "a\nb\nc\nd\n", "untracked.rs": "u\n" }),
+            &[("partial.rs", String::new())],
+            &[("partial.rs", "a\nb\nc\n".into())],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.discard_all_unstaged(&DiscardAllUnstaged, window, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_prompt_answer("Cancel");
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        let partial =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/partial.rs")).unwrap())
+                .unwrap();
+        assert_eq!(
+            partial, "a\nb\nc\nd\n",
+            "cancel must not restore the worktree"
+        );
+        assert!(
+            fs.read_file_sync(path!("/root/project/untracked.rs")).is_ok(),
+            "cancel must not trash the untracked file"
+        );
+        assert!(has_row(&panel, Section::Unstaged, "partial.rs", &cx));
+        assert!(has_row(&panel, Section::Unstaged, "untracked.rs", &cx));
+    }
+
+    #[test]
+    fn test_section_context_menu_items_are_section_appropriate() {
+        use GitPanelGroupBy::*;
+        use SectionMenuItem::*;
+        // Staged header → Unstage All + Stash Staged (no discard).
+        assert_eq!(
+            section_context_menu_items(Staging, Section::Staged),
+            [UnstageAll, StashStaged].as_slice()
+        );
+        // Unstaged header → Stage All + Discard All Unstaged (no stash).
+        assert_eq!(
+            section_context_menu_items(Staging, Section::Unstaged),
+            [StageAll, DiscardAllUnstaged].as_slice()
+        );
+        // Conflicts header in staging-grouped mode → no menu.
+        assert!(section_context_menu_items(Staging, Section::Conflict).is_empty());
+        // Every status-grouped header → no menu (rework is staging-mode only).
+        assert!(section_context_menu_items(Status, Section::Tracked).is_empty());
+        assert!(section_context_menu_items(Status, Section::New).is_empty());
+        assert!(section_context_menu_items(Status, Section::Conflict).is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_right_click_section_header_deploys_menu_for_staging_sections(
+        cx: &mut TestAppContext,
+    ) {
+        // partial.rs is both staged and unstaged, so the panel renders both a
+        // Staged and an Unstaged header.
+        let (_fs, _project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "partial.rs": "a\nb\nc\nd\n" }),
+            &[("partial.rs", String::new())],
+            &[("partial.rs", "a\nb\nc\n".into())],
+        )
+        .await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.deploy_section_context_menu(Section::Staged, Point::default(), window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _| panel.context_menu.is_some()),
+            "right-clicking the Staged header should open a context menu"
+        );
+
+        panel.update_in(&mut cx, |panel, _, _| panel.context_menu = None);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.deploy_section_context_menu(Section::Unstaged, Point::default(), window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _| panel.context_menu.is_some()),
+            "right-clicking the Unstaged header should open a context menu"
+        );
+
+        panel.update_in(&mut cx, |panel, _, _| panel.context_menu = None);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.deploy_section_context_menu(Section::Conflict, Point::default(), window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _| panel.context_menu.is_none()),
+            "the Conflicts header should not open a section context menu"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_stash_staged_changes_empties_staged_section_keeping_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        // staged.rs has a staged modification (HEAD "old", index/worktree "new").
+        // dirty.rs has an unstaged-only modification. "Stash Staged Changes"
+        // must remove the staged hunks from the index (emptying the Staged
+        // section) while leaving both worktrees — and the unstaged side —
+        // untouched.
+        let (fs, project, panel, mut cx) = build_staging_grouped_git_panel(
+            cx,
+            json!({ ".git": {}, "staged.rs": "new\n", "dirty.rs": "x\ny\n" }),
+            &[("staged.rs", "old\n".into()), ("dirty.rs", "x\n".into())],
+            &[("staged.rs", "new\n".into()), ("dirty.rs", "x\n".into())],
+        )
+        .await;
+
+        assert!(
+            has_row(&panel, Section::Staged, "staged.rs", &cx),
+            "precondition: staged.rs starts staged"
+        );
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.stash_staged_changes(&StashStaged, window, cx);
+        });
+        refresh_git_panel_entries(&project, &panel, &mut cx).await;
+
+        assert_eq!(
+            section_row_count(&panel, Section::Staged, &cx),
+            0,
+            "the Staged section should be empty after stashing the staged side"
+        );
+        let staged_worktree =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/staged.rs")).unwrap())
+                .unwrap();
+        assert_eq!(
+            staged_worktree, "new\n",
+            "the worktree content must be left intact"
+        );
+        let dirty_worktree =
+            String::from_utf8(fs.read_file_sync(path!("/root/project/dirty.rs")).unwrap())
+                .unwrap();
+        assert_eq!(
+            dirty_worktree, "x\ny\n",
+            "the unstaged side must be left intact"
         );
     }
 

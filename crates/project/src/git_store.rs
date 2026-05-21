@@ -741,6 +741,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
+        client.add_entity_request_handler(Self::handle_checkout_index_files);
+        client.add_entity_request_handler(Self::handle_stash_staged);
         client.add_entity_request_handler(Self::handle_open_commit_message_buffer);
         client.add_entity_request_handler(Self::handle_set_index_text);
         client.add_entity_request_handler(Self::handle_askpass);
@@ -2742,6 +2744,23 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_stash_staged(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitStashStaged>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_staged(cx)
+            })
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_stash_pop(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::StashPop>,
@@ -3613,6 +3632,28 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.checkout_files(&envelope.payload.commit, paths, cx)
+            })
+            .await?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_checkout_index_files(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutIndexFiles>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let paths = envelope
+            .payload
+            .paths
+            .iter()
+            .map(|s| RepoPath::from_proto(s))
+            .collect::<Result<Vec<_>>>()?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.checkout_index_files(paths, cx)
             })
             .await?;
         Ok(proto::Ack {})
@@ -5517,6 +5558,53 @@ impl Repository {
         )
     }
 
+    /// Restores the given paths in the worktree to match the index
+    /// (`git checkout -- <paths>`), discarding only the unstaged changes and
+    /// leaving any staged content in the index untouched.
+    ///
+    /// Unlike [`checkout_files`], this does **not** use the optimistic
+    /// `GitStatus::Reverted` pending op: that op tells the panel a file is fully
+    /// reverted and hides it, but here a partially-staged file must remain (its
+    /// staged side survives). The file's status updates on the next status
+    /// refresh instead.
+    pub fn checkout_index_files(
+        &mut self,
+        paths: Vec<RepoPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(
+                    "checkout_index_files",
+                    Some("git checkout --".into()),
+                    move |git_repo, _cx| async move {
+                        match git_repo {
+                            RepositoryState::Local(LocalRepositoryState {
+                                backend,
+                                environment,
+                                ..
+                            }) => backend.checkout_index_files(paths, environment.clone()).await,
+                            RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                                client
+                                    .request(proto::GitCheckoutIndexFiles {
+                                        project_id: project_id.0,
+                                        repository_id: id.to_proto(),
+                                        paths: paths.into_iter().map(|p| p.to_proto()).collect(),
+                                    })
+                                    .await?;
+                                Ok(())
+                            }
+                        }
+                    },
+                )
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
     pub fn reset(
         &mut self,
         commit: String,
@@ -6610,6 +6698,37 @@ impl Repository {
                                         .into_iter()
                                         .map(|repo_path| repo_path.to_proto())
                                         .collect(),
+                                })
+                                .await?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    /// Stashes only the staged changes (`git stash push --staged`), leaving the
+    /// worktree and unstaged changes intact.
+    pub fn stash_staged(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job("stash_staged", None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local(LocalRepositoryState {
+                            backend,
+                            environment,
+                            ..
+                        }) => backend.stash_staged(environment).await,
+                        RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                            client
+                                .request(proto::GitStashStaged {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
                                 })
                                 .await?;
                             Ok(())

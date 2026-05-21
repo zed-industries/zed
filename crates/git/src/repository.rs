@@ -841,6 +841,16 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Restores the given paths in the worktree to match the index
+    /// (`git checkout -- <paths>`), discarding unstaged changes while leaving any
+    /// staged content in the index untouched. Used to discard only the unstaged
+    /// side of a partially-staged file.
+    fn checkout_index_files(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
@@ -894,6 +904,10 @@ pub trait GitRepository: Send + Sync {
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    /// Stashes only the staged changes (`git stash push --staged`), leaving the
+    /// worktree and unstaged changes intact. Requires git >= 2.35.
+    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
 
     fn stash_pop(
         &self,
@@ -1470,6 +1484,34 @@ impl GitRepository for RealGitRepository {
             anyhow::ensure!(
                 output.status.success(),
                 "Failed to checkout files:\n{}",
+                String::from_utf8_lossy(&output.stderr),
+            );
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn checkout_index_files(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+        async move {
+            if paths.is_empty() {
+                return Ok(());
+            }
+
+            let git = git_binary?;
+            let output = git
+                .build_command(&["checkout", "--"])
+                .envs(env.iter())
+                .args(paths.iter().map(|path| path.as_unix_str()))
+                .output()
+                .await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to restore files from index:\n{}",
                 String::from_utf8_lossy(&output.stderr),
             );
             Ok(())
@@ -2246,6 +2288,29 @@ impl GitRepository for RealGitRepository {
                 anyhow::ensure!(
                     output.status.success(),
                     "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_staged(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let git = git_binary?;
+                // `--staged` stashes only the index (staged) changes, leaving the
+                // worktree and unstaged changes in place. Requires git >= 2.35.
+                let output = git
+                    .build_command(&["stash", "push", "--quiet", "--staged"])
+                    .envs(env.iter())
+                    .output()
+                    .await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash staged changes:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())

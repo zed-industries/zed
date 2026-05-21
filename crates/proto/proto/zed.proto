@@ -298,6 +298,8 @@ message Envelope {
     GitReset git_reset = 301;
     GitCommitDetails git_commit_details = 302;
     GitCheckoutFiles git_checkout_files = 303;
+    GitCheckoutIndexFiles git_checkout_index_files = 453;
+    GitStashStaged git_stash_staged = 454; // current max
 
     Push push = 304;
     Fetch fetch = 305;
@@ -484,7 +486,7 @@ message Envelope {
     SearchCommits search_commits = 449;
     SearchCommitsResponse search_commits_response = 450;
     GetInitialGraphData get_initial_graph_data = 451;
-    GetInitialGraphDataResponse get_initial_graph_data_response = 452; // current max
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
   }
 
   reserved 87 to 88;

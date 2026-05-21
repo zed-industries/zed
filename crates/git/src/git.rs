@@ -68,6 +68,12 @@ actions!(
         RestoreTrackedFiles,
         /// Moves all untracked files to trash.
         TrashUntrackedFiles,
+        /// Stashes only the staged changes (`git stash push --staged`), leaving
+        /// the working tree and unstaged changes intact.
+        StashStaged,
+        /// Discards all unstaged changes: restores tracked files from the index
+        /// and trashes untracked files, clearing the Unstaged section.
+        DiscardAllUnstaged,
         /// Undoes the last commit, keeping changes in the working directory.
         Uncommit,
         /// Pushes commits to the remote repository.

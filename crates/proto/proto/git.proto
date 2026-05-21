@@ -315,6 +315,20 @@ message GitCheckoutFiles {
   repeated string paths = 5;
 }
 
+// Restore the given paths in the worktree to match the index
+// (`git checkout -- <paths>`), discarding unstaged changes.
+message GitCheckoutIndexFiles {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  repeated string paths = 3;
+}
+
+// Stash only the staged changes (`git stash push --staged`).
+message GitStashStaged {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
 // Move to `git.proto` once collab's min version is >=0.171.0.
 message StatusEntry {
   string repo_path = 1;

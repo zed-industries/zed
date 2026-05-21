@@ -342,6 +342,43 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn checkout_index_files(
+        &self,
+        paths: Vec<RepoPath>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            // Snapshot the index content for each requested path.
+            let index_contents = self
+                .with_state_async(false, move |state| {
+                    Ok(paths
+                        .into_iter()
+                        .map(|path| {
+                            let content = state.index_contents.get(&path).cloned();
+                            (path, content)
+                        })
+                        .collect::<Vec<_>>())
+                })
+                .await?;
+
+            // Restore each path's worktree file to its index content, discarding
+            // unstaged changes. Paths absent from the index (untracked) are left
+            // alone — the caller trashes those separately.
+            for (path, content) in index_contents {
+                let Some(content) = content else { continue };
+                let abs_path = self
+                    .dot_git_path
+                    .parent()
+                    .unwrap()
+                    .join(&path.as_std_path());
+                self.fs
+                    .save(&abs_path, &Rope::from(content.as_str()), LineEnding::Unix)
+                    .await?;
+            }
+            Ok(())
+        })
+    }
+
     fn path(&self) -> PathBuf {
         self.repository_dir_path.clone()
     }
@@ -996,6 +1033,33 @@ impl GitRepository for FakeGitRepository {
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
+    }
+
+    fn stash_staged(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            // Simulate stashing only the staged side: reset the index to HEAD for
+            // every path whose index differs from HEAD, leaving the worktree
+            // untouched. The fake does not model the stash list itself.
+            let paths: HashSet<RepoPath> = state
+                .index_contents
+                .keys()
+                .chain(state.head_contents.keys())
+                .cloned()
+                .collect();
+            for path in paths {
+                if state.index_contents.get(&path) != state.head_contents.get(&path) {
+                    match state.head_contents.get(&path) {
+                        Some(content) => {
+                            state.index_contents.insert(path, content.clone());
+                        }
+                        None => {
+                            state.index_contents.remove(&path);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 
     fn stash_pop(
