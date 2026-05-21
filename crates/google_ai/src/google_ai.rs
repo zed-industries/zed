@@ -273,7 +273,7 @@ pub struct ThinkingConfig {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "UPPERCASE")]
 pub enum ThinkingLevel {
     Minimal,
     Low,
