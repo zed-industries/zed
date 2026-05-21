@@ -147,6 +147,8 @@ fn display_point_range_to_offset_range(
 #[cfg(test)]
 mod tests {
     use db::indoc;
+    use gpui::{AppContext, UpdateGlobal};
+    use settings::SettingsStore;
 
     use crate::{state::Mode, test::VimTestContext};
 
@@ -307,6 +309,52 @@ mod tests {
             indoc! {"
             H«äˇ»llo
             H«aˇ»llo"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_duplication_softwrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.enable_helix();
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.soft_wrap =
+                    Some(settings::SoftWrap::Bounded);
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .preferred_line_length = Some(8);
+            });
+        });
+
+        cx.set_state(
+            indoc! {"
+            The quick brown
+            foˇx jumps over the
+            lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("C");
+
+        cx.assert_state(
+            indoc! {"
+            The quick brown
+            foˇx jumps over the
+            laˇzy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("alt-C");
+
+        cx.assert_state(
+            indoc! {"
+            Thˇe quick brown
+            foˇx jumps over the
+            laˇzy dog."},
             Mode::HelixNormal,
         );
     }
