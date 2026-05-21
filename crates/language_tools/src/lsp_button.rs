@@ -854,10 +854,11 @@ impl LspButton {
             );
         }
 
-        let lsp_store_subscription =
-            cx.subscribe_in(&lsp_store, window, |lsp_button, _, e, window, cx| {
-                lsp_button.on_lsp_store_event(e, window, cx)
-            });
+        let lsp_store_subscription = cx.subscribe_in(
+            workspace.project(),
+            window,
+            |lsp_button, _, e, window, cx| lsp_button.on_lsp_store_event(e, window, cx),
+        );
 
         let server_state = cx.new(|_| LanguageServerState {
             workspace: workspace.weak_handle(),
@@ -905,8 +906,6 @@ impl LspButton {
         };
         let mut updated = false;
 
-        // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
-        // Also, we do not get "LSP removed" events so LSPs are never removed.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
