@@ -264,7 +264,19 @@ pub struct UsageMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
-    pub thinking_budget: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_budget: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_level: Option<ThinkingLevel>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum ThinkingLevel {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -352,12 +364,16 @@ pub struct SafetyRating {
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -469,6 +485,8 @@ pub enum Model {
     Gemini31FlashLite,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
+    #[serde(rename = "gemini-3.5-flash")]
+    Gemini35Flash,
     #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
     Gemini31Pro,
     #[serde(rename = "gemini-3.5-flash")]
@@ -496,6 +514,7 @@ impl Model {
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
+            Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Custom { name, .. } => name,
@@ -508,6 +527,7 @@ impl Model {
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
+            Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Custom { name, .. } => name,
@@ -521,6 +541,7 @@ impl Model {
             Self::Gemini25Pro => "Gemini 2.5 Pro",
             Self::Gemini31FlashLite => "Gemini 3.1 Flash Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
+            Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Gemini31Pro => "Gemini 3.1 Pro",
             Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Custom {
@@ -575,6 +596,9 @@ impl Model {
             Self::Gemini3Flash => GoogleModelMode::Default,
             Self::Gemini35Flash => GoogleModelMode::Default,
             Self::Gemini31FlashLite => GoogleModelMode::Default,
+            Self::Gemini35Flash => GoogleModelMode::Thinking {
+                budget_tokens: None,
+            },
             Self::Gemini31Pro => GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
@@ -600,6 +624,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: Some("test_signature".to_string()),
         };
@@ -617,6 +642,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: None,
         };
@@ -666,6 +692,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value", "nested": {"key": "val"}}),
+                id: None,
             },
             thought_signature: Some("round_trip_signature".to_string()),
         };
@@ -684,6 +711,7 @@ mod tests {
             function_call: FunctionCall {
                 name: "test_function".to_string(),
                 args: json!({"arg": "value"}),
+                id: None,
             },
             thought_signature: Some("".to_string()),
         };
