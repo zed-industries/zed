@@ -65,6 +65,7 @@ pub fn into_google(
                         function_call: crate::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
+                            id: Some(tool_use.id.to_string()),
                         },
                         thought_signature,
                     })]
@@ -99,6 +100,7 @@ pub fn into_google(
                             response: serde_json::json!({
                                 "output": output
                             }),
+                            id: Some(tool_result.tool_use_id.to_string()),
                         },
                     })];
                     parts.extend(images.into_iter().map(Part::InlineDataPart));
@@ -147,10 +149,30 @@ pub fn into_google(
             candidate_count: Some(1),
             stop_sequences: Some(request.stop),
             max_output_tokens: None,
-            temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
+            temperature: request.temperature.map(|t| t as f64),
             thinking_config: match (request.thinking_allowed, mode) {
                 (true, GoogleModelMode::Thinking { budget_tokens }) => {
-                    budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
+                    let effort = request.thinking_effort.as_deref().map(|s| s.to_lowercase());
+                    let thinking_level = match effort.as_deref() {
+                        Some("high") => Some(crate::ThinkingLevel::High),
+                        Some("medium") => Some(crate::ThinkingLevel::Medium),
+                        Some("low") => Some(crate::ThinkingLevel::Low),
+                        Some("minimal") => Some(crate::ThinkingLevel::Minimal),
+                        _ => None,
+                    };
+
+                    Some(ThinkingConfig {
+                        thinking_budget: budget_tokens,
+                        thinking_level,
+                    })
+                    .filter(
+                        |ThinkingConfig {
+                             thinking_budget,
+                             thinking_level,
+                         }| {
+                            thinking_level.is_some() || thinking_budget.is_some()
+                        },
+                    )
                 }
                 _ => None,
             },
@@ -272,10 +294,14 @@ impl GoogleEventMapper {
                         Part::FunctionCallPart(function_call_part) => {
                             wants_to_use_tool = true;
                             let name: Arc<str> = function_call_part.function_call.name.into();
-                            let next_tool_id =
-                                TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
                             let id: LanguageModelToolUseId =
-                                format!("{}-{}", name, next_tool_id).into();
+                                if let Some(ref call_id) = function_call_part.function_call.id {
+                                    call_id.clone().into()
+                                } else {
+                                    let next_tool_id =
+                                        TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
+                                    format!("{}-{}", name, next_tool_id).into()
+                                };
 
                             // Normalize empty string signatures to None
                             let thought_signature = function_call_part
@@ -370,6 +396,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some("test_signature_123".to_string()),
                     })],
@@ -410,6 +437,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: None,
                     })],
@@ -446,6 +474,7 @@ mod tests {
                         function_call: FunctionCall {
                             name: "test_function".to_string(),
                             args: json!({"arg": "value"}),
+                            id: None,
                         },
                         thought_signature: Some("".to_string()),
                     })],
