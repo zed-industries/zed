@@ -166,17 +166,24 @@ pub enum Role {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Part {
-    TextPart(TextPart),
-    InlineDataPart(InlineDataPart),
     FunctionCallPart(FunctionCallPart),
     FunctionResponsePart(FunctionResponsePart),
-    ThoughtPart(ThoughtPart),
+    InlineDataPart(InlineDataPart),
+    TextPart(TextPart),
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextPart {
     pub text: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub thought: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -206,13 +213,6 @@ pub struct FunctionCallPart {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThoughtPart {
-    pub thought: bool,
-    pub thought_signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -261,22 +261,54 @@ pub struct UsageMetadata {
     pub total_token_count: Option<u64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_budget: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thinking_level: Option<ThinkingLevel>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_thoughts: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThinkingLevel {
     Minimal,
     Low,
     Medium,
     High,
+}
+
+impl ThinkingLevel {
+    pub fn from_effort(effort: &str) -> Option<Self> {
+        match effort.to_lowercase().as_str() {
+            "minimal" => Some(Self::Minimal),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -579,6 +611,50 @@ impl Model {
         true
     }
 
+    pub fn supports_thinking(&self) -> bool {
+        matches!(
+            self,
+            Self::Gemini25FlashLite
+                | Self::Gemini25Flash
+                | Self::Gemini25Pro
+                | Self::Gemini31FlashLite
+                | Self::Gemini3Flash
+                | Self::Gemini35Flash
+                | Self::Gemini31Pro
+                | Self::Custom {
+                    mode: GoogleModelMode::Thinking { .. },
+                    ..
+                }
+        )
+    }
+
+    pub fn supported_thinking_levels(&self) -> &'static [ThinkingLevel] {
+        match self {
+            Self::Gemini31FlashLite | Self::Gemini3Flash | Self::Gemini35Flash => &[
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ],
+            Self::Gemini31Pro => &[
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High,
+            ],
+            _ => &[],
+        }
+    }
+
+    pub fn default_thinking_level(&self) -> Option<ThinkingLevel> {
+        match self {
+            Self::Gemini31FlashLite => Some(ThinkingLevel::Minimal),
+            Self::Gemini3Flash => Some(ThinkingLevel::High),
+            Self::Gemini35Flash => Some(ThinkingLevel::Medium),
+            Self::Gemini31Pro => Some(ThinkingLevel::High),
+            _ => None,
+        }
+    }
+
     pub fn mode(&self) -> GoogleModelMode {
         match self {
             Self::Gemini25FlashLite | Self::Gemini25Flash | Self::Gemini25Pro => {
@@ -588,12 +664,10 @@ impl Model {
                     budget_tokens: None,
                 }
             }
-            Self::Gemini3Flash => GoogleModelMode::Default,
-            Self::Gemini31FlashLite => GoogleModelMode::Default,
-            Self::Gemini35Flash => GoogleModelMode::Thinking {
-                budget_tokens: None,
-            },
-            Self::Gemini31Pro => GoogleModelMode::Thinking {
+            Self::Gemini31FlashLite
+            | Self::Gemini3Flash
+            | Self::Gemini35Flash
+            | Self::Gemini31Pro => GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
             Self::Custom { mode, .. } => *mode,
