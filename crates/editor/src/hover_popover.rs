@@ -2326,71 +2326,98 @@ mod tests {
             );
         });
 
-        // Hover in the middle of the first inlay's rendered text.
-        let hover_position = cx.update_editor(|editor, window, cx| {
-            let snapshot = editor.snapshot(window, cx);
-            let inlay_start = MultiBufferOffset(first_hint_offset).to_display_point(&snapshot);
-            let exact_unclipped = DisplayPoint::new(
-                inlay_start.row(),
-                inlay_start.column() + (first_label.len() as u32 / 2),
-            );
-            let previous_valid = snapshot.clip_point(exact_unclipped, Bias::Left);
-            let next_valid = snapshot.clip_point(exact_unclipped, Bias::Right);
-            let nearest_valid = if previous_valid == next_valid {
-                previous_valid
-            } else {
-                match snapshot.inlay_bias_at(exact_unclipped) {
-                    Some(Bias::Left) => next_valid,
-                    Some(Bias::Right) => previous_valid,
-                    None => previous_valid,
+        async fn assert_hovered_inlay(
+            cx: &mut EditorLspTestContext,
+            hint_offset: usize,
+            label_len: u32,
+            expected_tooltip: &str,
+            expected_inlay_id: InlayId,
+        ) {
+            let hover_position = cx.update_editor(|editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                let inlay_start = MultiBufferOffset(hint_offset).to_display_point(&snapshot);
+                let exact_unclipped =
+                    DisplayPoint::new(inlay_start.row(), inlay_start.column() + label_len / 2);
+                let previous_valid = snapshot.clip_point(exact_unclipped, Bias::Left);
+                let next_valid = snapshot.clip_point(exact_unclipped, Bias::Right);
+                let nearest_valid = if previous_valid == next_valid {
+                    previous_valid
+                } else {
+                    match snapshot.inlay_bias_at(exact_unclipped) {
+                        Some(Bias::Left) => next_valid,
+                        Some(Bias::Right) => previous_valid,
+                        None => previous_valid,
+                    }
+                };
+                PointForPosition {
+                    previous_valid,
+                    next_valid,
+                    nearest_valid,
+                    exact_unclipped,
+                    column_overshoot_after_line_end: 0,
                 }
-            };
-            PointForPosition {
-                previous_valid,
-                next_valid,
-                nearest_valid,
-                exact_unclipped,
-                column_overshoot_after_line_end: 0,
-            }
-        });
-        cx.update_editor(|editor, window, cx| {
-            editor.update_inlay_link_and_hover_points(
-                &editor.snapshot(window, cx),
-                hover_position,
-                None,
-                true,
-                false,
-                window,
-                cx,
-            );
-        });
-        cx.background_executor
-            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
-        cx.background_executor.run_until_parked();
+            });
+            cx.update_editor(|editor, window, cx| {
+                editor.hover_state = HoverState::default();
+                editor.update_inlay_link_and_hover_points(
+                    &editor.snapshot(window, cx),
+                    hover_position,
+                    None,
+                    true,
+                    false,
+                    window,
+                    cx,
+                );
+            });
+            cx.background_executor
+                .advance_clock(Duration::from_millis(get_hover_popover_delay(cx) + 100));
+            cx.background_executor.run_until_parked();
 
-        cx.update_editor(|editor, _, cx| {
-            let hover_state = &editor.hover_state;
-            assert_eq!(
-                hover_state.info_popovers.len(),
-                1,
-                "expected exactly one popover",
-            );
-            let popover = hover_state.info_popovers.first().unwrap();
-            assert_eq!(
-                popover.get_rendered_text(cx),
-                "Foo",
-                "popover content should match the first inlay (the one under the cursor), \
-                 not the adjacent inlay one source character past it",
-            );
-            let RangeInEditor::Inlay(highlight) = &popover.symbol_range else {
-                panic!("expected an inlay popover, got {:?}", popover.symbol_range);
-            };
-            assert_eq!(
-                highlight.inlay,
-                InlayId::Hint(0),
-                "popover should reference the first inlay",
-            );
-        });
+            cx.update_editor(|editor, _, cx| {
+                let hover_state = &editor.hover_state;
+                assert_eq!(
+                    hover_state.info_popovers.len(),
+                    1,
+                    "expected exactly one popover for inlay {expected_inlay_id:?}",
+                );
+                let popover = hover_state.info_popovers.first().unwrap();
+                assert_eq!(
+                    popover.get_rendered_text(cx),
+                    expected_tooltip,
+                    "popover content should match the inlay under the cursor, \
+                     not the adjacent inlay one source character away",
+                );
+                let RangeInEditor::Inlay(highlight) = &popover.symbol_range else {
+                    panic!("expected an inlay popover, got {:?}", popover.symbol_range);
+                };
+                assert_eq!(
+                    highlight.inlay, expected_inlay_id,
+                    "popover should reference the hovered inlay",
+                );
+            });
+        }
+
+        // Hover the first inlay (`::Foo`): the buffer-position window also covers
+        // the second hint past `;`, so the hovered-offset filter must pick the first.
+        assert_hovered_inlay(
+            &mut cx,
+            first_hint_offset,
+            first_label.len() as u32,
+            "Foo",
+            InlayId::Hint(0),
+        )
+        .await;
+
+        // Symmetric check: hover the second inlay (`::Bar`) and verify the filter
+        // picks the second hint despite the first hint also being in range.
+        assert_hovered_inlay(
+            &mut cx,
+            second_hint_offset,
+            second_label.len() as u32,
+            "Bar",
+            InlayId::Hint(1),
+        )
+        .await;
     }
 
     #[test]
