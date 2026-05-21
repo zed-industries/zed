@@ -121,80 +121,73 @@ impl ActivityIndicator {
             })
             .detach();
 
-            cx.subscribe(
-                &project.read(cx).lsp_store(cx),
-                |activity_indicator, _, event, cx| {
-                    if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
-                        if let proto::update_language_server::Variant::StatusUpdate(status_update) =
-                            message
-                        {
-                            let Some(name) = name.clone() else {
-                                return;
-                            };
-                            let status = match &status_update.status {
-                                Some(proto::status_update::Status::Binary(binary_status)) => {
-                                    if let Some(binary_status) =
-                                        proto::ServerBinaryStatus::from_i32(*binary_status)
-                                    {
-                                        let binary_status = match binary_status {
-                                            proto::ServerBinaryStatus::None => BinaryStatus::None,
-                                            proto::ServerBinaryStatus::CheckingForUpdate => {
-                                                BinaryStatus::CheckingForUpdate
-                                            }
-                                            proto::ServerBinaryStatus::Downloading => {
-                                                BinaryStatus::Downloading
-                                            }
-                                            proto::ServerBinaryStatus::Starting => {
-                                                BinaryStatus::Starting
-                                            }
-                                            proto::ServerBinaryStatus::Stopping => {
-                                                BinaryStatus::Stopping
-                                            }
-                                            proto::ServerBinaryStatus::Stopped => {
-                                                BinaryStatus::Stopped
-                                            }
-                                            proto::ServerBinaryStatus::Failed => {
-                                                let Some(error) = status_update.message.clone()
-                                                else {
-                                                    return;
-                                                };
-                                                BinaryStatus::Failed { error }
-                                            }
-                                        };
-                                        LanguageServerStatusUpdate::Binary(binary_status)
-                                    } else {
-                                        return;
-                                    }
+            cx.subscribe(&project, |activity_indicator, _, event, cx| {
+                if let LspStoreEvent::LanguageServerUpdate { name, message, .. } = event {
+                    if let proto::update_language_server::Variant::StatusUpdate(status_update) =
+                        message
+                    {
+                        let Some(name) = name.clone() else {
+                            return;
+                        };
+                        let status = match &status_update.status {
+                            Some(proto::status_update::Status::Binary(binary_status)) => {
+                                if let Some(binary_status) =
+                                    proto::ServerBinaryStatus::from_i32(*binary_status)
+                                {
+                                    let binary_status = match binary_status {
+                                        proto::ServerBinaryStatus::None => BinaryStatus::None,
+                                        proto::ServerBinaryStatus::CheckingForUpdate => {
+                                            BinaryStatus::CheckingForUpdate
+                                        }
+                                        proto::ServerBinaryStatus::Downloading => {
+                                            BinaryStatus::Downloading
+                                        }
+                                        proto::ServerBinaryStatus::Starting => {
+                                            BinaryStatus::Starting
+                                        }
+                                        proto::ServerBinaryStatus::Stopping => {
+                                            BinaryStatus::Stopping
+                                        }
+                                        proto::ServerBinaryStatus::Stopped => BinaryStatus::Stopped,
+                                        proto::ServerBinaryStatus::Failed => {
+                                            let Some(error) = status_update.message.clone() else {
+                                                return;
+                                            };
+                                            BinaryStatus::Failed { error }
+                                        }
+                                    };
+                                    LanguageServerStatusUpdate::Binary(binary_status)
+                                } else {
+                                    return;
                                 }
-                                Some(proto::status_update::Status::Health(health_status)) => {
-                                    if let Some(health) =
-                                        proto::ServerHealth::from_i32(*health_status)
-                                    {
-                                        let health = match health {
-                                            proto::ServerHealth::Ok => ServerHealth::Ok,
-                                            proto::ServerHealth::Warning => ServerHealth::Warning,
-                                            proto::ServerHealth::Error => ServerHealth::Error,
-                                        };
-                                        LanguageServerStatusUpdate::Health(
-                                            health,
-                                            status_update.message.clone().map(SharedString::from),
-                                        )
-                                    } else {
-                                        return;
-                                    }
+                            }
+                            Some(proto::status_update::Status::Health(health_status)) => {
+                                if let Some(health) = proto::ServerHealth::from_i32(*health_status)
+                                {
+                                    let health = match health {
+                                        proto::ServerHealth::Ok => ServerHealth::Ok,
+                                        proto::ServerHealth::Warning => ServerHealth::Warning,
+                                        proto::ServerHealth::Error => ServerHealth::Error,
+                                    };
+                                    LanguageServerStatusUpdate::Health(
+                                        health,
+                                        status_update.message.clone().map(SharedString::from),
+                                    )
+                                } else {
+                                    return;
                                 }
-                                None => return,
-                            };
+                            }
+                            None => return,
+                        };
 
-                            activity_indicator.statuses.retain(|s| s.name != name);
-                            activity_indicator
-                                .statuses
-                                .push(ServerStatus { name, status });
-                        }
-                        cx.notify()
+                        activity_indicator.statuses.retain(|s| s.name != name);
+                        activity_indicator
+                            .statuses
+                            .push(ServerStatus { name, status });
                     }
-                },
-            )
+                    cx.notify()
+                }
+            })
             .detach();
 
             cx.subscribe(
