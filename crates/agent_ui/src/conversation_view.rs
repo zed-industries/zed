@@ -3262,6 +3262,9 @@ impl AgentCodeSpanResolver {
                     Some(line) => MentionUri::Selection {
                         abs_path: Some(abs_path),
                         line_range: line..=line,
+                        column: path_with_position
+                            .column
+                            .map(|column| column.saturating_sub(1)),
                     },
                     None => MentionUri::File { abs_path },
                 };
@@ -3500,6 +3503,19 @@ pub(crate) mod tests {
             MentionUri::Selection {
                 abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
                 line_range: 9..=9,
+                column: None,
+            }
+        );
+
+        let uri = cx
+            .update(|cx| resolver.try_resolve("src/main.rs:10:5", cx))
+            .expect("expected worktree-relative file path with row and column to resolve");
+        assert_eq!(
+            MentionUri::parse(&uri, PathStyle::local()).unwrap(),
+            MentionUri::Selection {
+                abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
+                line_range: 9..=9,
+                column: Some(4),
             }
         );
 
@@ -3531,6 +3547,7 @@ pub(crate) mod tests {
             MentionUri::Selection {
                 abs_path: Some(PathBuf::from(util::path!("/project/src/main.rs"))),
                 line_range: 9..=9,
+                column: None,
             }
         );
     }

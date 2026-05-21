@@ -1,6 +1,7 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema as acp;
@@ -9382,39 +9383,27 @@ pub(crate) fn open_link(
                 abs_path: path,
                 line_range,
                 ..
+            } => {
+                open_abs_path_at_point(
+                    workspace,
+                    path,
+                    Point::new(*line_range.start(), 0),
+                    window,
+                    cx,
+                );
             }
-            | MentionUri::Selection {
+            MentionUri::Selection {
                 abs_path: Some(path),
                 line_range,
+                column,
             } => {
-                let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(path, cx))
-                else {
-                    return;
-                };
-
-                let item = workspace.open_path(path, None, true, window, cx);
-                window
-                    .spawn(cx, async move |cx| {
-                        let Some(editor) = item.await?.downcast::<Editor>() else {
-                            return Ok(());
-                        };
-                        let range =
-                            Point::new(*line_range.start(), 0)..Point::new(*line_range.start(), 0);
-                        editor
-                            .update_in(cx, |editor, window, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::center()),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges(vec![range]),
-                                );
-                            })
-                            .ok();
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
+                open_abs_path_at_point(
+                    workspace,
+                    path,
+                    Point::new(*line_range.start(), column.unwrap_or(0)),
+                    window,
+                    cx,
+                );
             }
             MentionUri::Selection { abs_path: None, .. } => {}
             MentionUri::Thread { id, name } => {
