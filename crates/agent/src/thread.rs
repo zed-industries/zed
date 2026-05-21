@@ -2826,7 +2826,18 @@ impl Thread {
         }
 
         if boundary == 0 {
-            return None;
+            boundary = self
+                .messages
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find_map(|(ix, _)| {
+                    if matches!(self.messages.get(ix - 1), Some(Message::User(_))) {
+                        None
+                    } else {
+                        Some(ix)
+                    }
+                })?;
         }
 
         if self
@@ -5004,7 +5015,7 @@ mod tests {
                     user_message("latest"),
                 ];
 
-                assert_eq!(thread.select_compaction_boundary(), None);
+                assert_eq!(thread.select_compaction_boundary(), Some(2));
             });
         });
     }
