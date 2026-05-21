@@ -4309,6 +4309,18 @@ impl Project {
                 message,
                 ..
             } => {
+                if let proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
+                    status: Some(proto::status_update::Status::Binary(_)),
+                    ..
+                }) = message
+                {
+                    debug_assert!(
+                        *language_server_id == LanguageServerId(0)
+                            || self.language_servers.contains(language_server_id),
+                        "binary status updates should carry the sentinel id or a known server id"
+                    );
+                    return true;
+                }
                 if !self.language_servers.contains(language_server_id) {
                     return false;
                 }
