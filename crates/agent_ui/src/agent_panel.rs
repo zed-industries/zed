@@ -4716,7 +4716,7 @@ impl AgentPanel {
         conversation_view.update(cx, |conversation_view, cx| {
             if let Some(thread) = conversation_view.as_native_thread(cx) {
                 thread.update(cx, |thread, cx| {
-                    if !thread.is_generating_title() {
+                    if thread.can_generate_title(cx) {
                         thread.generate_title(cx);
                         cx.notify();
                     }
@@ -4752,7 +4752,9 @@ impl AgentPanel {
             conversation_view.as_ref().is_some_and(|conversation_view| {
                 let conversation_view = conversation_view.read(cx);
                 conversation_view.has_user_submitted_prompt(cx)
-                    && conversation_view.as_native_thread(cx).is_some()
+                    && conversation_view
+                        .as_native_thread(cx)
+                        .is_some_and(|thread| thread.read(cx).can_generate_title(cx))
             });
 
         let has_auth_methods = match &self.base_view {
