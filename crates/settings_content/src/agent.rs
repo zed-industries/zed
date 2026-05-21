@@ -151,7 +151,7 @@ pub struct AgentSettingsContent {
     pub play_sound_when_agent_done: Option<PlaySoundWhenAgentDone>,
     /// Whether to display agent edits in single-file editors in addition to the review multibuffer pane.
     ///
-    /// Default: true
+    /// Default: false
     pub single_file_review: Option<bool>,
     /// Additional parameters for language model requests. When making a request
     /// to a model, parameters will be taken from the last entry in this list
@@ -523,46 +523,8 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
-    Extension {
-        /// Additional environment variables to pass to the agent.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        env: HashMap<String, String>,
-        /// The default mode to use for this agent.
-        ///
-        /// Note: Not only all agents support modes.
-        ///
-        /// Default: None
-        default_mode: Option<String>,
-        /// The default model to use for this agent.
-        ///
-        /// This should be the model ID as reported by the agent.
-        ///
-        /// Default: None
-        default_model: Option<String>,
-        /// The favorite models for this agent.
-        ///
-        /// These are the model IDs as reported by the agent.
-        ///
-        /// Default: []
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        favorite_models: Vec<String>,
-        /// Default values for session config options.
-        ///
-        /// This is a map from config option ID to value ID.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
-        /// Favorited values for session config options.
-        ///
-        /// This is a map from config option ID to a list of favorited value IDs.
-        ///
-        /// Default: {}
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        favorite_config_option_values: HashMap<String, Vec<String>>,
-    },
+    // Used for the ACP extension migration
+    #[serde(alias = "extension")]
     Registry {
         /// Additional environment variables to pass to the agent.
         ///
