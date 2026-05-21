@@ -5235,15 +5235,10 @@ impl AgentPanel {
             }));
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
+        let constrain_left_to_content_width =
+            matches!(mode, ToolbarMode::EmptyThread | ToolbarMode::ActiveThread);
 
-        let base_container = h_flex()
-            .size_full()
-            .when(
-                matches!(mode, ToolbarMode::EmptyThread | ToolbarMode::ActiveThread),
-                |this| this.when_some(max_content_width, |this, max_w| this.max_w(max_w).mx_auto()),
-            )
-            .flex_none()
-            .justify_between();
+        let base_container = h_flex().size_full().flex_none().justify_between();
 
         let toolbar_content = if can_create_entries && matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
@@ -5296,7 +5291,12 @@ impl AgentPanel {
             base_container
                 .child(
                     h_flex()
-                        .size_full()
+                        .h_full()
+                        .flex_1()
+                        .min_w_0()
+                        .when(constrain_left_to_content_width, |this| {
+                            this.when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                        })
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
                         .child(agent_selector_menu),
@@ -5339,6 +5339,9 @@ impl AgentPanel {
                         .h_full()
                         .flex_1()
                         .min_w_0()
+                        .when(constrain_left_to_content_width, |this| {
+                            this.when_some(max_content_width, |this, max_w| this.max_w(max_w))
+                        })
                         .overflow_hidden()
                         .gap(DynamicSpacing::Base04.rems(cx))
                         .pl(DynamicSpacing::Base04.rems(cx))
