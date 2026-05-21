@@ -17,7 +17,7 @@ use gpui::{
 };
 use language::{Buffer, Capability, DiagnosticEntry, DiagnosticEntryRef, Point};
 use project::{
-    DiagnosticSummary, Event, Project, ProjectItem, ProjectPath,
+    DiagnosticSummary, LspStoreEvent, Project, ProjectItem, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
 };
 use settings::Settings;
@@ -94,16 +94,16 @@ impl BufferDiagnosticsEditor {
         let project_event_subscription = cx.subscribe_in(
             &project_handle,
             window,
-            |buffer_diagnostics_editor, _project, event, window, cx| match event {
-                Event::DiskBasedDiagnosticsStarted { .. } => {
+            |buffer_diagnostics_editor, _project, event: &LspStoreEvent, window, cx| match event {
+                LspStoreEvent::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
-                Event::DiskBasedDiagnosticsFinished { .. } => {
+                LspStoreEvent::DiskBasedDiagnosticsFinished { .. } => {
                     buffer_diagnostics_editor.update_all_excerpts(window, cx);
                 }
-                Event::DiagnosticsUpdated {
+                LspStoreEvent::DiagnosticsUpdated {
                     paths,
-                    language_server_id,
+                    server_id: language_server_id,
                 } => {
                     // When diagnostics have been updated, the
                     // `BufferDiagnosticsEditor` should update its state only if

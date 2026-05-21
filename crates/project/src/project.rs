@@ -4556,7 +4556,11 @@ impl Project {
                     _ => (),
                 }
             }
-            LspStoreEvent::Notification { .. } => cx.emit(event.clone()),
+            LspStoreEvent::Notification { message, .. } => cx.emit(Event::Toast {
+                notification_id: "lsp".into(),
+                message: message.clone(),
+                link: None,
+            }),
             LspStoreEvent::SnippetEdit { .. } => cx.emit(event.clone()),
             LspStoreEvent::WorkspaceEditApplied { .. } => cx.emit(event.clone()),
             LspStoreEvent::ApplyWorkspaceEditRequested {

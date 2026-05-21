@@ -19,7 +19,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
 use num_format::{Locale, ToFormattedString};
-use project::DirectoryLister;
+use project::{DirectoryLister, LspStoreEvent};
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
@@ -167,11 +167,19 @@ pub fn init(cx: &mut App) {
                     .detach();
             });
 
-        cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
-            if let project::Event::LanguageNotFound(buffer) = event {
-                extension_suggest::suggest(buffer.clone(), window, cx);
-            }
-        })
+        cx.subscribe_in(
+            workspace.project(),
+            window,
+            |_, _, event: &LspStoreEvent, window, cx| {
+                if let LspStoreEvent::LanguageDetected {
+                    buffer,
+                    new_language: None,
+                } = event
+                {
+                    extension_suggest::suggest(buffer.clone(), window, cx);
+                }
+            },
+        )
         .detach();
     })
     .detach();

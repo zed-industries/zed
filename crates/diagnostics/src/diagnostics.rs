@@ -27,7 +27,7 @@ use language::{
     ToTreeSitterPoint,
 };
 use project::{
-    DiagnosticSummary, Project, ProjectPath,
+    DiagnosticSummary, LspStoreEvent, Project, ProjectPath,
     project_settings::{DiagnosticSeverity, ProjectSettings},
 };
 use settings::Settings;
@@ -175,11 +175,11 @@ impl ProjectDiagnosticsEditor {
         let project_event_subscription = cx.subscribe_in(
             &project_handle,
             window,
-            |this, _project, event, window, cx| match event {
-                project::Event::DiskBasedDiagnosticsStarted { .. } => {
+            |this, _project, event: &LspStoreEvent, window, cx| match event {
+                LspStoreEvent::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
-                project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
+                LspStoreEvent::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
                     this.close_diagnosticless_buffers(
                         cx,
@@ -187,8 +187,8 @@ impl ProjectDiagnosticsEditor {
                             || this.focus_handle.contains_focused(window, cx),
                     );
                 }
-                project::Event::DiagnosticsUpdated {
-                    language_server_id,
+                LspStoreEvent::DiagnosticsUpdated {
+                    server_id: language_server_id,
                     paths,
                 } => {
                     this.paths_to_update.extend(paths.clone());

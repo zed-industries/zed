@@ -41,7 +41,7 @@ use language::{
     File, OffsetRangeExt, Point, TextBufferSnapshot, ToOffset, ToPoint,
     language_settings::all_language_settings,
 };
-use project::{DisableAiSettings, Project, ProjectPath, WorktreeId};
+use project::{DisableAiSettings, LspStoreEvent, Project, ProjectPath, WorktreeId};
 use release_channel::AppVersion;
 use semver::Version;
 use serde::de::DeserializeOwned;
@@ -330,7 +330,7 @@ struct ProjectState {
     cancelled_predictions: HashSet<usize>,
     context: Entity<RelatedExcerptStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
-    _subscriptions: [gpui::Subscription; 2],
+    _subscriptions: [gpui::Subscription; 3],
     copilot: Option<Entity<Copilot>>,
 }
 
@@ -1137,6 +1137,7 @@ impl EditPredictionStore {
                 license_detection_watchers: HashMap::default(),
                 _subscriptions: [
                     cx.subscribe(&project, Self::handle_project_event),
+                    cx.subscribe(&project, Self::handle_lsp_store_event),
                     cx.observe_release(&project, move |this, _, cx| {
                         this.projects.remove(&entity_id);
                         cx.notify();
@@ -1248,16 +1249,23 @@ impl EditPredictionStore {
                     project_state.recent_paths.push_front(path);
                 }
             }
-            project::Event::DiagnosticsUpdated { .. } => {
-                if cx.has_flag::<EditPredictionJumpsFeatureFlag>() {
-                    self.refresh_prediction_from_diagnostics(
-                        project,
-                        DiagnosticSearchScope::Global,
-                        cx,
-                    );
-                }
-            }
             _ => (),
+        }
+    }
+
+    fn handle_lsp_store_event(
+        &mut self,
+        project: Entity<Project>,
+        event: &LspStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !is_ep_store_provider(all_language_settings(None, cx).edit_predictions.provider) {
+            return;
+        }
+        if let LspStoreEvent::DiagnosticsUpdated { .. } = event
+            && cx.has_flag::<EditPredictionJumpsFeatureFlag>()
+        {
+            self.refresh_prediction_from_diagnostics(project, DiagnosticSearchScope::Global, cx);
         }
     }
 

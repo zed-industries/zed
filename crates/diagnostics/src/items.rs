@@ -6,7 +6,10 @@ use gpui::{
     Task, WeakEntity, Window,
 };
 use language::Diagnostic;
-use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
+use project::{
+    LspStoreEvent,
+    project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings},
+};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
@@ -115,32 +118,35 @@ impl Render for DiagnosticIndicator {
 impl DiagnosticIndicator {
     pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
         let project = workspace.project();
-        cx.subscribe(project, |this, project, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsStarted { .. } => {
-                cx.notify();
-            }
+        cx.subscribe(
+            project,
+            |this, project, event: &LspStoreEvent, cx| match event {
+                LspStoreEvent::DiskBasedDiagnosticsStarted { .. } => {
+                    cx.notify();
+                }
 
-            project::Event::DiskBasedDiagnosticsFinished { .. }
-            | project::Event::LanguageServerRemoved(_) => {
-                this.summary = project.read(cx).diagnostic_summary(false, cx);
-                cx.notify();
-            }
+                LspStoreEvent::DiskBasedDiagnosticsFinished { .. }
+                | LspStoreEvent::LanguageServerRemoved(_) => {
+                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    cx.notify();
+                }
 
-            project::Event::DiagnosticsUpdated { .. } => {
-                this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(30))
-                        .await;
-                    this.update(cx, |this, cx| {
-                        this.summary = project.read(cx).diagnostic_summary(false, cx);
-                        cx.notify();
-                    })
-                    .log_err();
-                });
-            }
+                LspStoreEvent::DiagnosticsUpdated { .. } => {
+                    this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                            cx.notify();
+                        })
+                        .log_err();
+                    });
+                }
 
-            _ => {}
-        })
+                _ => {}
+            },
+        )
         .detach();
 
         Self {

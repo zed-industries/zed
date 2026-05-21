@@ -217,6 +217,13 @@ All known bystander accessors have been migrated:
 
 - [ ] Sweep `lsp_store.read`, `worktree_store.read`, `git_store.read`, etc. outside `project/` for unfiltered iterations. LSP indicator was one; almost certainly more.
 
+### Project re-emits `LspStoreEvent` migration follow-ups
+
+`Project::on_lsp_store_event` now re-emits `LspStoreEvent` (with ownership filtering via `owns_lsp_event`) instead of translating to `Project::Event::*` LSP variants. Two open items beyond the consumer migration itself:
+
+- [ ] `Project::handle_language_server_prompt_request` (RPC handler at `project.rs:~7083`) still emits `Event::LanguageServerPrompt`. When `Workspace` migrates its LSP prompt subscription from `Event::LanguageServerPrompt` to `LspStoreEvent::LanguageServerPrompt`, this collab RPC handler also needs to emit `LspStoreEvent::LanguageServerPrompt` so prompts from collab hosts stay reachable. Land both changes together.
+- [ ] Once Group B leaf consumers are migrated, audit whether the dead `Project::Event::*` LSP variants (`DiagnosticsUpdated`, `LanguageServerAdded`, `LanguageServerRemoved`, `LanguageServerLog`, `LanguageServerBufferRegistered`, `LanguageNotFound`, `RefreshInlayHints`, `RefreshSemanticTokens`, `RefreshCodeLens`, `LanguageServerPrompt`, `DiskBasedDiagnostics{Started,Finished}`, `SnippetEdit`, `WorkspaceEditApplied`) can be removed from the `Event` enum entirely.
+
 ---
 
 ## 5. Legwork / meta

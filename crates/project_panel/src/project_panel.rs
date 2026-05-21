@@ -33,8 +33,8 @@ use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
-    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitEvent, GitTraversal, Project, ProjectEntryId,
-    ProjectPath, Worktree, WorktreeId,
+    Entry, EntryKind, Fs, GitEntry, GitEntryRef, GitEvent, GitTraversal, LspStoreEvent, Project,
+    ProjectEntryId, ProjectPath, Worktree, WorktreeId,
     git_store::{RepositoryEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
 };
@@ -646,23 +646,6 @@ impl ProjectPanel {
                     project::Event::ActivateProjectPanel => {
                         cx.emit(PanelEvent::Activate);
                     }
-                    project::Event::DiskBasedDiagnosticsFinished { .. }
-                    | project::Event::DiagnosticsUpdated { .. } => {
-                        if ProjectPanelSettings::get_global(cx).show_diagnostics
-                            != ShowDiagnostics::Off
-                        {
-                            this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(30))
-                                    .await;
-                                this.update(cx, |this, cx| {
-                                    this.update_diagnostics(cx);
-                                    cx.notify();
-                                })
-                                .log_err();
-                            });
-                        }
-                    }
                     project::Event::WorktreeRemoved(id) => {
                         this.state.expanded_dir_ids.remove(id);
                         this.update_visible_entries(None, false, false, window, cx);
@@ -713,6 +696,27 @@ impl ProjectPanel {
                     _ => {}
                 },
             )
+            .detach();
+
+            cx.subscribe(&project, |this, _, event: &LspStoreEvent, cx| match event {
+                LspStoreEvent::DiskBasedDiagnosticsFinished { .. }
+                | LspStoreEvent::DiagnosticsUpdated { .. } => {
+                    if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
+                    {
+                        this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(30))
+                                .await;
+                            this.update(cx, |this, cx| {
+                                this.update_diagnostics(cx);
+                                cx.notify();
+                            })
+                            .log_err();
+                        });
+                    }
+                }
+                _ => {}
+            })
             .detach();
 
             let trash_action = [TypeId::of::<Trash>()];

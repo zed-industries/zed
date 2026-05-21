@@ -1,6 +1,7 @@
 use db::kvp::Dismissable;
 use editor::Editor;
 use gpui::{Context, EventEmitter, Subscription};
+use project::LspStoreEvent;
 use ui::{Banner, FluentBuilder as _, prelude::*};
 use workspace::{ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace};
 
@@ -16,13 +17,14 @@ impl Dismissable for BasedPyrightBanner {
 
 impl BasedPyrightBanner {
     pub fn new(workspace: &Workspace, cx: &mut Context<Self>) -> Self {
-        let subscription = cx.subscribe(workspace.project(), |this, _, event, _| {
-            if let project::Event::LanguageServerAdded(_, name, _) = event
-                && name == "basedpyright"
-            {
-                this.have_basedpyright = true;
-            }
-        });
+        let subscription =
+            cx.subscribe(workspace.project(), |this, _, event: &LspStoreEvent, _| {
+                if let LspStoreEvent::LanguageServerAdded(_, name, _) = event
+                    && name == "basedpyright"
+                {
+                    this.have_basedpyright = true;
+                }
+            });
         let dismissed = Self::dismissed(cx);
         Self {
             dismissed,

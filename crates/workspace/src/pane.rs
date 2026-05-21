@@ -27,7 +27,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Capability, DiagnosticSeverity};
 use parking_lot::Mutex;
-use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
+use project::{DirectoryLister, LspStoreEvent, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -736,12 +736,12 @@ impl Pane {
     fn project_events(
         &mut self,
         _project: Entity<Project>,
-        event: &project::Event,
+        event: &LspStoreEvent,
         cx: &mut Context<Self>,
     ) {
         match event {
-            project::Event::DiskBasedDiagnosticsFinished { .. }
-            | project::Event::DiagnosticsUpdated { .. } => {
+            LspStoreEvent::DiskBasedDiagnosticsFinished { .. }
+            | LspStoreEvent::DiagnosticsUpdated { .. } => {
                 if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
                     self.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
