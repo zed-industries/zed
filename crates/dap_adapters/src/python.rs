@@ -2,14 +2,15 @@ use crate::*;
 use anyhow::{Context as _, bail};
 use collections::HashMap;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use fs::RemoveOptions;
+use fs::{Fs, RemoveOptions};
 use futures::{StreamExt, TryStreamExt};
 use gpui::http_client::AsyncBody;
 use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
+use log::warn;
 use paths::debug_adapters_dir;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use smol::fs::File;
 use smol::io::AsyncReadExt;
 use smol::lock::OnceCell;
@@ -32,6 +33,67 @@ enum DebugpyLaunchMode<'a> {
 pub(crate) struct PythonDebugAdapter {
     base_venv_path: OnceCell<Result<Arc<Path>, String>>,
     debugpy_whl_base_path: OnceCell<Result<Arc<Path>, String>>,
+}
+
+// debugpy doesn't support envFile natively, so we intercept it and convert to an env object
+async fn handle_envs(
+    config: &mut Map<String, Value>,
+    cwd: Option<&Path>,
+    fs: Arc<dyn Fs>,
+) -> Option<()> {
+    let env_files = match config.get("envFile")? {
+        Value::Array(arr) => arr.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+        Value::String(s) => vec![Some(s.as_str())],
+        _ => return None,
+    };
+
+    let rebase_path = |path: PathBuf| {
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            cwd.map(|p| p.join(path))
+        }
+    };
+
+    let mut env_vars = HashMap::default();
+    for path in env_files {
+        let Some(path) = path
+            .and_then(|s| PathBuf::from_str(s).ok())
+            .and_then(rebase_path)
+        else {
+            continue;
+        };
+
+        if let Ok(file) = fs.open_sync(&path).await {
+            let file_envs: HashMap<String, String> = dotenvy::from_read_iter(file)
+                .filter_map(Result::ok)
+                .collect();
+            env_vars.extend(file_envs);
+        } else {
+            warn!("While starting Python debug session: failed to read env file {path:?}");
+        }
+    }
+
+    let mut env_obj: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    for (k, v) in env_vars {
+        env_obj.insert(k, Value::String(v));
+    }
+
+    // Explicit `env` values take precedence over envFile values
+    if let Some(existing_env) = config.get("env").and_then(|v| v.as_object()) {
+        for (k, v) in existing_env {
+            env_obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    if !env_obj.is_empty() {
+        config.insert("env".to_string(), Value::Object(env_obj));
+    }
+
+    // remove envFile now that it's been handled
+    config.remove("envFile");
+    Some(())
 }
 
 impl PythonDebugAdapter {
@@ -104,6 +166,9 @@ impl PythonDebugAdapter {
         if let Some(obj) = configuration.as_object_mut() {
             obj.entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+            let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from);
+            handle_envs(obj, cwd.as_deref(), delegate.fs().clone()).await;
         }
 
         Ok(StartDebuggingRequestArguments {
@@ -1132,5 +1197,70 @@ mod tests {
         assert_eq!(venv_args[1], "foo");
 
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
+    }
+
+    #[gpui::test]
+    async fn test_env_file_is_loaded_into_env_config(executor: gpui::BackgroundExecutor) {
+        let fs = fs::FakeFs::new(executor);
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                ".env": "IDE=zed\nLLM=claude\n"
+            }),
+        )
+        .await;
+
+        let mut config = serde_json::Map::new();
+        config.insert("envFile".to_string(), Value::String(".env".to_string()));
+
+        handle_envs(&mut config, Some(Path::new("/project")), fs).await;
+
+        assert!(
+            !config.contains_key("envFile"),
+            "envFile should be removed after processing"
+        );
+        let env = config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env should be set");
+        assert_eq!(env.get("IDE").and_then(|v| v.as_str()), Some("zed"));
+        assert_eq!(env.get("LLM").and_then(|v| v.as_str()), Some("claude"));
+    }
+
+    #[gpui::test]
+    async fn test_env_config_takes_precedence_over_env_file(executor: gpui::BackgroundExecutor) {
+        let fs = fs::FakeFs::new(executor);
+        fs.insert_tree(
+            "/project",
+            serde_json::json!({
+                // .env file suggests VS Code, but the explicit config overrides it with Zed
+                ".env": "IDE=vscode\nLLM=openai\n"
+            }),
+        )
+        .await;
+
+        let mut config = serde_json::Map::new();
+        config.insert("envFile".to_string(), Value::String(".env".to_string()));
+        config.insert(
+            "env".to_string(),
+            serde_json::json!({ "IDE": "zed", "LLM": "claude" }),
+        );
+
+        handle_envs(&mut config, Some(Path::new("/project")), fs).await;
+
+        let env = config
+            .get("env")
+            .and_then(|v| v.as_object())
+            .expect("env should be set");
+        assert_eq!(
+            env.get("IDE").and_then(|v| v.as_str()),
+            Some("zed"),
+            "explicit env should take precedence over envFile"
+        );
+        assert_eq!(
+            env.get("LLM").and_then(|v| v.as_str()),
+            Some("claude"),
+            "explicit env should take precedence over envFile"
+        );
     }
 }
