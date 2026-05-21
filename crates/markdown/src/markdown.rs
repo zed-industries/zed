@@ -1,4 +1,5 @@
 pub mod html;
+mod katex;
 mod mermaid;
 pub mod parser;
 mod path_range;
@@ -10,6 +11,10 @@ use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
 use language::LanguageName;
 
+use crate::katex::{
+    KatexRenderMode, KatexState, ParsedMarkdownKatexDiagram, cache_contents_for_rendered_formula,
+    extract_katex_diagrams, render_display_katex_diagram, render_inline_katex_diagram,
+};
 use log::Level;
 use mermaid::{
     MermaidState, ParsedMarkdownMermaidDiagram, extract_mermaid_diagrams, render_mermaid_diagram,
@@ -333,6 +338,7 @@ pub struct Markdown {
     options: MarkdownOptions,
     mermaid_state: MermaidState,
     mermaid_showing_code: HashSet<usize>,
+    katex_state: KatexState,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
@@ -346,7 +352,7 @@ pub struct Markdown {
 pub struct MarkdownOptions {
     pub parse_links_only: bool,
     pub parse_html: bool,
-    pub render_mermaid_diagrams: bool,
+    pub render_embedded_diagrams: bool,
     pub parse_heading_slugs: bool,
 }
 
@@ -513,6 +519,7 @@ impl Markdown {
             options,
             mermaid_state: MermaidState::default(),
             mermaid_showing_code: HashSet::default(),
+            katex_state: KatexState::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
@@ -561,12 +568,17 @@ impl Markdown {
     }
 
     /// Used in the agent panel to force a re-render when the theme changes
-    pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
-        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
-        {
-            self.mermaid_state.clear();
-            let parsed_markdown = self.parsed_markdown.clone();
-            self.mermaid_state.update(&parsed_markdown, cx);
+    pub fn invalidate_embedded_diagrams_caches(&mut self, cx: &mut Context<Self>) {
+        if self.options.render_embedded_diagrams {
+            let parsed_markdown = &self.parsed_markdown;
+            if !self.parsed_markdown.mermaid_diagrams.is_empty() {
+                self.mermaid_state.clear();
+                self.mermaid_state.update(parsed_markdown, cx);
+            }
+            if !self.parsed_markdown.katex_diagrams.is_empty() {
+                self.katex_state.clear();
+                self.katex_state.update(parsed_markdown, cx);
+            }
             cx.notify();
         }
     }
@@ -810,7 +822,7 @@ impl Markdown {
         let source = self.source.clone();
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
-        let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
+        let should_render_embedded_diagrams = self.options.render_embedded_diagrams;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
@@ -826,6 +838,7 @@ impl Markdown {
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
+                        katex_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
                     },
@@ -842,10 +855,13 @@ impl Markdown {
             let html_blocks = parsed.html_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
-            let mermaid_diagrams = if should_render_mermaid_diagrams {
-                extract_mermaid_diagrams(&source, &events)
+            let (mermaid_diagrams, katex_diagrams) = if should_render_embedded_diagrams {
+                (
+                    extract_mermaid_diagrams(&source, &events),
+                    extract_katex_diagrams(&events),
+                )
             } else {
-                BTreeMap::default()
+                (BTreeMap::default(), BTreeMap::default())
             };
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
@@ -908,6 +924,7 @@ impl Markdown {
                     root_block_starts: Arc::from(root_block_starts),
                     html_blocks,
                     mermaid_diagrams,
+                    katex_diagrams,
                     heading_slugs,
                     footnote_definitions,
                 },
@@ -926,14 +943,17 @@ impl Markdown {
                 }) {
                     this.active_root_block = None;
                 }
-                if this.options.render_mermaid_diagrams {
-                    let parsed_markdown = this.parsed_markdown.clone();
+                if this.options.render_embedded_diagrams {
+                    // let parsed_markdown = this.parsed_markdown.clone();
+                    let parsed_markdown = &this.parsed_markdown;
                     this.mermaid_state.update(&parsed_markdown, cx);
                     this.mermaid_showing_code
                         .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
+                    this.katex_state.update(&parsed_markdown, cx);
                 } else {
                     this.mermaid_state.clear();
                     this.mermaid_showing_code.clear();
+                    this.katex_state.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1036,6 +1056,7 @@ pub struct ParsedMarkdown {
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    pub(crate) katex_diagrams: BTreeMap<usize, ParsedMarkdownKatexDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
 }
@@ -1239,7 +1260,7 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut heading = div().mt_4().mb_2();
-        heading = apply_heading_style(heading, level, self.style.heading_level_styles.as_ref());
+        let level_text_style = heading_text_style(level, self.style.heading_level_styles.as_ref());
 
         heading = match align {
             TextAlign::Center => heading.text_center(),
@@ -1248,8 +1269,10 @@ impl MarkdownElement {
         };
 
         let mut heading_style = self.style.heading.clone();
-        let heading_text_style = heading_style.text_style().clone();
+        let mut heading_text_style = heading_style.text_style().clone();
+        heading_text_style.refine(&level_text_style);
         heading.style().refine(&heading_style);
+        heading.style().text = level_text_style;
 
         builder.push_text_style(TextStyleRefinement {
             text_align: Some(align),
@@ -1696,14 +1719,22 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
         );
-        let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
+        let (
+            parsed_markdown,
+            images,
+            active_root_block,
+            render_embedded_diagrams,
+            mermaid_state,
+            katex_state,
+        ) = {
             let markdown = self.markdown.read(cx);
             (
                 markdown.parsed_markdown.clone(),
                 markdown.images_by_source_offset.clone(),
                 markdown.active_root_block,
-                markdown.options.render_mermaid_diagrams,
+                markdown.options.render_embedded_diagrams,
                 markdown.mermaid_state.clone(),
+                markdown.katex_state.clone(),
             )
         };
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
@@ -1823,7 +1854,7 @@ impl Element for MarkdownElement {
                             );
                         }
                         MarkdownTag::CodeBlock { kind, .. } => {
-                            if render_mermaid_diagrams
+                            if render_embedded_diagrams
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
@@ -2325,6 +2356,43 @@ impl Element for MarkdownElement {
                     builder.push_text(&format!("[{label}]"), range.clone());
                     builder.pop_text_style();
                 }
+                MarkdownEvent::InlineMath(_) | MarkdownEvent::DisplayMath(_) => {
+                    if render_embedded_diagrams
+                        && let Some(katex_diagram) =
+                            parsed_markdown.katex_diagrams.get(&range.start)
+                    {
+                        let contents = cache_contents_for_rendered_formula(
+                            katex_diagram,
+                            f32::from(builder.text_style().font_size.to_pixels(window.rem_size())),
+                            builder.text_style().color,
+                        );
+                        let source_range = katex_diagram.source_range.clone();
+                        let source = &parsed_markdown.source[source_range.clone()];
+                        if katex_state.should_show_source_text_for_contents(&contents) {
+                            self.markdown.update(cx, |markdown, cx| {
+                                markdown.katex_state.ensure_cached_contents(
+                                    katex_diagram.source_range.start,
+                                    &contents,
+                                    cx,
+                                );
+                            });
+                            builder.push_text(source, source_range);
+                        } else {
+                            match katex_diagram.mode {
+                                KatexRenderMode::Inline => builder.push_inline_sourced_element(
+                                    source_range,
+                                    render_inline_katex_diagram(&katex_state, &contents, source),
+                                ),
+                                KatexRenderMode::Display => builder.push_sourced_element(
+                                    source_range,
+                                    render_display_katex_diagram(&katex_state, &contents, source),
+                                ),
+                            }
+                        }
+                    } else {
+                        builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
+                    }
+                }
             }
         }
         if self.style.code_block_overflow_x_scroll {
@@ -2438,18 +2506,35 @@ fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>
         .into_any_element()
 }
 
-fn apply_heading_style(
-    mut heading: Div,
+fn heading_text_style(
     level: pulldown_cmark::HeadingLevel,
     custom_styles: Option<&HeadingLevelStyles>,
-) -> Div {
-    heading = match level {
-        pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
-        pulldown_cmark::HeadingLevel::H2 => heading.text_2xl(),
-        pulldown_cmark::HeadingLevel::H3 => heading.text_xl(),
-        pulldown_cmark::HeadingLevel::H4 => heading.text_lg(),
-        pulldown_cmark::HeadingLevel::H5 => heading.text_base(),
-        pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
+) -> TextStyleRefinement {
+    let mut text_style = match level {
+        pulldown_cmark::HeadingLevel::H1 => TextStyleRefinement {
+            font_size: Some(rems(1.875).into()),
+            ..Default::default()
+        },
+        pulldown_cmark::HeadingLevel::H2 => TextStyleRefinement {
+            font_size: Some(rems(1.5).into()),
+            ..Default::default()
+        },
+        pulldown_cmark::HeadingLevel::H3 => TextStyleRefinement {
+            font_size: Some(rems(1.25).into()),
+            ..Default::default()
+        },
+        pulldown_cmark::HeadingLevel::H4 => TextStyleRefinement {
+            font_size: Some(rems(1.125).into()),
+            ..Default::default()
+        },
+        pulldown_cmark::HeadingLevel::H5 => TextStyleRefinement {
+            font_size: Some(rems(1.0).into()),
+            ..Default::default()
+        },
+        pulldown_cmark::HeadingLevel::H6 => TextStyleRefinement {
+            font_size: Some(rems(0.875).into()),
+            ..Default::default()
+        },
     };
 
     if let Some(styles) = custom_styles {
@@ -2463,11 +2548,11 @@ fn apply_heading_style(
         };
 
         if let Some(style) = style_opt {
-            heading.style().text = style.clone();
+            text_style.refine(style);
         }
     }
 
-    heading
+    text_style
 }
 
 fn render_wrap_code_block_button(
@@ -2816,6 +2901,23 @@ impl MarkdownElementBuilder {
         }]);
     }
 
+    fn push_inline_sourced_element(
+        &mut self,
+        source_range: Range<usize>,
+        element: impl Into<AnyElement>,
+    ) {
+        self.modify_current_div(|div| div.flex().flex_wrap().items_center());
+        let anchor = self.render_source_anchor_with_text_style(source_range, self.text_style());
+        self.div_stack.last_mut().unwrap().extend([{
+            div()
+                .relative()
+                .flex_none()
+                .child(anchor)
+                .child(element.into())
+                .into_any_element()
+        }]);
+    }
+
     fn push_list(&mut self, bullet_index: Option<u64>) {
         self.list_stack.push(ListStackEntry { bullet_index });
     }
@@ -2963,7 +3065,14 @@ impl MarkdownElementBuilder {
     }
 
     fn render_source_anchor(&mut self, source_range: Range<usize>) -> AnyElement {
-        let mut text_style = self.base_text_style.clone();
+        self.render_source_anchor_with_text_style(source_range, self.base_text_style.clone())
+    }
+
+    fn render_source_anchor_with_text_style(
+        &mut self,
+        source_range: Range<usize>,
+        mut text_style: TextStyle,
+    ) -> AnyElement {
         text_style.color = Hsla::transparent_black();
         let text = "\u{200B}";
         let styled_text = StyledText::new(text).with_runs(vec![text_style.to_run(text.len())]);
@@ -3397,7 +3506,7 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{TestAppContext, VisualTestContext, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::Arc;
 
@@ -3510,6 +3619,22 @@ mod tests {
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
                         wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            },
+        );
+        rendered.text
+    }
+
+    fn draw_markdown(markdown: Entity<Markdown>, cx: &mut VisualTestContext) -> RenderedText {
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -4266,6 +4391,143 @@ mod tests {
         assert!(
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
+        );
+    }
+
+    #[gpui::test]
+    fn test_heading_inline_katex_cache_survives_unrelated_formula_edit(cx: &mut TestAppContext) {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "# Heading $x$\n\nBody $y$".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    render_embedded_diagrams: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let _ = draw_markdown(markdown.clone(), cx);
+
+        let (heading_x_contents, body_y_font_size) = markdown.read_with(cx, |markdown, _| {
+            let cached_contents = markdown
+                .katex_state
+                .cache
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            let body_y_font_size = cached_contents
+                .iter()
+                .find(|contents| {
+                    contents.contents.as_ref() == "y"
+                        && contents.mode == crate::katex::KatexRenderMode::Inline
+                })
+                .map(|contents| contents.font_size)
+                .expect("body inline katex should cache a body-size entry");
+            let heading_x_contents = cached_contents
+                .iter()
+                .filter(|contents| {
+                    contents.contents.as_ref() == "x"
+                        && contents.mode == crate::katex::KatexRenderMode::Inline
+                })
+                .max_by_key(|contents| contents.font_size)
+                .cloned()
+                .expect("heading inline katex should cache a heading-size entry");
+
+            (heading_x_contents, body_y_font_size)
+        });
+
+        assert!(
+            !markdown.read_with(cx, |markdown, _| markdown.katex_state.cache.contains_key(
+                &crate::katex::ParsedMarkdownKatexDiagramContents {
+                    contents: "x".into(),
+                    mode: crate::katex::KatexRenderMode::Inline,
+                    font_size: body_y_font_size,
+                    color: heading_x_contents.color,
+                }
+            )),
+            "heading-only katex should not create a redundant body-size cache entry"
+        );
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.replace("# Heading $x$\n\nBody $y^2$", cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            markdown.read_with(cx, |markdown, _| markdown
+                .katex_state
+                .cache
+                .contains_key(&heading_x_contents)),
+            "unrelated formula edits should not evict unchanged heading inline katex cache entries"
+        );
+    }
+
+    #[gpui::test]
+    fn test_heading_inline_katex_uses_heading_font_size(cx: &mut TestAppContext) {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                "# Heading $x$\n\nBody $x$".into(),
+                None,
+                None,
+                MarkdownOptions {
+                    render_embedded_diagrams: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        let _ = draw_markdown(markdown.clone(), cx);
+
+        let mut x_font_sizes = markdown.read_with(cx, |markdown, _| {
+            markdown
+                .katex_state
+                .cache
+                .keys()
+                .cloned()
+                .into_iter()
+                .filter(|contents| {
+                    contents.contents.as_ref() == "x"
+                        && contents.mode == crate::katex::KatexRenderMode::Inline
+                })
+                .map(|contents| contents.font_size)
+                .collect::<Vec<_>>()
+        });
+        x_font_sizes.sort_unstable();
+        x_font_sizes.dedup();
+
+        assert!(
+            x_font_sizes.len() == 2,
+            "expected exactly separate body and heading inline katex cache entries, got {x_font_sizes:?}"
+        );
+        assert!(
+            x_font_sizes.last() > x_font_sizes.first(),
+            "heading inline katex should use a larger font size than body inline katex, got {x_font_sizes:?}"
         );
     }
 }

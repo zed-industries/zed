@@ -772,7 +772,7 @@ impl ContentBlock {
                     Some(language_registry.clone()),
                     None,
                     MarkdownOptions {
-                        render_mermaid_diagrams: true,
+                        render_embedded_diagrams: true,
                         ..Default::default()
                     },
                     cx,
@@ -1405,7 +1405,7 @@ impl AcpThread {
         &self.entries
     }
 
-    pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
+    pub fn invalidate_embedded_diagrams_caches(&self, cx: &mut App) {
         for entry in &self.entries {
             let chunks = match entry {
                 AgentThreadEntry::AssistantMessage(message) => &message.chunks,
@@ -1418,7 +1418,7 @@ impl AcpThread {
                 };
                 if let Some(markdown) = block.markdown() {
                     markdown.update(cx, |markdown, cx| {
-                        markdown.invalidate_mermaid_cache(cx);
+                        markdown.invalidate_embedded_diagrams_caches(cx);
                     });
                 }
             }
