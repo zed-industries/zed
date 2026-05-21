@@ -13,11 +13,11 @@ use language::language_settings::{EditPredictionProvider, all_language_settings}
 use client::proto;
 use collections::HashSet;
 use editor::{Editor, EditorEvent};
-use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEntity, actions};
+use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, WeakEntity, actions};
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
-    LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
+    LspStoreEvent, Project, Worktree, lsp_store::log_store::GlobalLogStore,
     project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
 use settings::{Settings as _, SettingsStore};
@@ -49,7 +49,7 @@ pub struct LspButton {
 struct LanguageServerState {
     items: Vec<LspMenuItem>,
     workspace: WeakEntity<Workspace>,
-    lsp_store: WeakEntity<LspStore>,
+    project: Entity<Project>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
     process_memory_cache: Rc<RefCell<ProcessMemoryCache>>,
@@ -60,7 +60,7 @@ impl std::fmt::Debug for LanguageServerState {
         f.debug_struct("LanguageServerState")
             .field("items", &self.items)
             .field("workspace", &self.workspace)
-            .field("lsp_store", &self.lsp_store)
+            .field("project", &self.project)
             .field("active_editor", &self.active_editor)
             .field("language_servers", &self.language_servers)
             .finish_non_exhaustive()
@@ -260,24 +260,21 @@ impl LanguageServerState {
             );
         }
 
-        let server_metadata = self
-            .lsp_store
-            .update(cx, |lsp_store, _| {
-                lsp_store
-                    .language_server_statuses()
-                    .map(|(server_id, status)| {
+        let server_metadata = self.project.read_with(cx, |project, cx| {
+            project
+                .language_server_statuses(cx)
+                .map(|(server_id, status)| {
+                    (
+                        server_id,
                         (
-                            server_id,
-                            (
-                                status.server_readable_version.clone(),
-                                status.binary.as_ref().map(|b| b.path.clone()),
-                                status.process_id,
-                            ),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default();
+                            status.server_readable_version.clone(),
+                            status.binary.as_ref().map(|b| b.path.clone()),
+                            status.process_id,
+                        ),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
 
         let process_memory_cache = self.process_memory_cache.clone();
 
@@ -331,9 +328,8 @@ impl LanguageServerState {
             };
             let server_selector = server_info.server_selector();
             let is_remote = self
-                .lsp_store
-                .update(cx, |lsp_store, _| lsp_store.as_remote().is_some())
-                .unwrap_or(false);
+                .project
+                .read_with(cx, |project, cx| project.is_via_remote_server(cx));
             let has_logs = is_remote || lsp_logs.read(cx).has_server_logs(&server_selector);
 
             let (status_color, status_label) = server_info
@@ -390,7 +386,7 @@ impl LanguageServerState {
                     let message = message.clone();
                     let server_selector = server_selector.clone();
                     let workspace = self.workspace.clone();
-                    let lsp_store = self.lsp_store.clone();
+                    let project = self.project.clone();
                     let state = cx.entity().downgrade();
                     let can_stop = submenu_server_info.can_stop();
                     let process_memory_cache = process_memory_cache.clone();
@@ -475,7 +471,7 @@ impl LanguageServerState {
 
                         let state_for_restart = state.clone();
                         let workspace_for_restart = workspace.clone();
-                        let lsp_store_for_restart = lsp_store.clone();
+                        let project_for_restart = project.clone();
                         let server_name_for_restart = submenu_server_name.clone();
                         submenu = submenu.entry("Restart Server", None, move |_window, cx| {
                             let Some(workspace) = workspace_for_restart.upgrade() else {
@@ -548,38 +544,30 @@ impl LanguageServerState {
                                 .unwrap_or_default();
 
                             if !buffers.is_empty() {
-                                lsp_store_for_restart
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.restart_language_servers_for_buffers(
-                                            buffers,
-                                            HashSet::from_iter([LanguageServerSelector::Name(
-                                                server_name_for_restart.clone(),
-                                            )]),
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
+                                project_for_restart.update(cx, |project, cx| {
+                                    project.restart_language_servers_for_buffers(
+                                        buffers,
+                                        HashSet::from_iter([LanguageServerSelector::Name(
+                                            server_name_for_restart.clone(),
+                                        )]),
+                                        cx,
+                                    );
+                                });
                             }
                         });
 
                         if can_stop {
-                            let lsp_store_for_stop = lsp_store.clone();
+                            let project_for_stop = project.clone();
                             let server_selector_for_stop = server_selector.clone();
 
                             submenu = submenu.entry("Stop Server", None, move |_window, cx| {
-                                lsp_store_for_stop
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store
-                                            .stop_language_servers_for_buffers(
-                                                Vec::new(),
-                                                HashSet::from_iter([
-                                                    server_selector_for_stop.clone()
-                                                ]),
-                                                cx,
-                                            )
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
+                                project_for_stop.update(cx, |project, cx| {
+                                    project.stop_language_servers_for_buffers(
+                                        Vec::new(),
+                                        HashSet::from_iter([server_selector_for_stop.clone()]),
+                                        cx,
+                                    );
+                                });
                             });
                         }
 
@@ -842,9 +830,9 @@ impl LspButton {
                 }
             });
 
-        let lsp_store = workspace.project().read(cx).lsp_store(cx);
+        let project = workspace.project().clone();
         let mut language_servers = LanguageServers::default();
-        for (_, status) in lsp_store.read(cx).language_server_statuses() {
+        for (_, status) in project.read(cx).language_server_statuses(cx) {
             language_servers.binary_statuses.insert(
                 status.name.clone(),
                 LanguageServerBinaryStatus {
@@ -863,7 +851,7 @@ impl LspButton {
         let server_state = cx.new(|_| LanguageServerState {
             workspace: workspace.weak_handle(),
             items: Vec::new(),
-            lsp_store: lsp_store.downgrade(),
+            project: project.clone(),
             active_editor: None,
             language_servers,
             process_memory_cache: Rc::new(RefCell::new(ProcessMemoryCache::new())),
@@ -971,15 +959,11 @@ impl LspButton {
                 ..
             } => {
                 self.server_state.update(cx, |state, cx| {
-                    let Ok(worktree) = state.workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .read(cx)
+                    let worktree = state.project.read_with(cx, |project, cx| {
+                        project
                             .find_worktree(Path::new(&update.buffer_abs_path), cx)
                             .map(|(worktree, _)| worktree.downgrade())
-                    }) else {
-                        return;
-                    };
+                    });
                     let entry = state
                         .language_servers
                         .servers_per_buffer_abs_path
@@ -1052,25 +1036,20 @@ impl LspButton {
                     }
                 }
             }
-            state
-                .lsp_store
-                .update(cx, |lsp_store, cx| {
-                    for (server_id, status) in lsp_store.language_server_statuses() {
-                        if let Some(worktree) = status.worktree.and_then(|worktree_id| {
-                            lsp_store
-                                .worktree_store()
-                                .read(cx)
-                                .worktree_for_id(worktree_id, cx)
-                        }) {
-                            server_ids_to_worktrees.insert(server_id, worktree.clone());
-                            server_names_to_worktrees
-                                .entry(status.name.clone())
-                                .or_default()
-                                .insert((worktree, server_id));
-                        }
+            state.project.read_with(cx, |project, cx| {
+                for (server_id, status) in project.language_server_statuses(cx) {
+                    if let Some(worktree) = status
+                        .worktree
+                        .and_then(|worktree_id| project.worktree_for_id(worktree_id, cx))
+                    {
+                        server_ids_to_worktrees.insert(server_id, worktree.clone());
+                        server_names_to_worktrees
+                            .entry(status.name.clone())
+                            .or_default()
+                            .insert((worktree, server_id));
                     }
-                })
-                .ok();
+                }
+            });
 
             let mut servers_per_worktree = BTreeMap::<SharedString, Vec<ServerData>>::new();
             let mut servers_with_health_checks = HashSet::default();

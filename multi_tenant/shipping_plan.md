@@ -18,7 +18,7 @@ two-Project test.
 
 ### `crates/language_tools/`
 
-- [ ] Status-bar LSP indicator iterates shared `LspStore` — filter by `project.language_servers`.
+- [x] Status-bar LSP indicator iterates shared `LspStore` — fixed: `Project::language_server_statuses` now filters by Project-owned server ids, and `LspButton` reads/gates status state through its `Project` instead of the shared host `LspStore`. Regression test: `test_language_server_statuses_are_scoped_to_project` in `crates/project/tests/integration/multi_tenant.rs` verifies two Projects sharing one host `LspStore` each see only their own server status.
 
 ### `crates/project/src/lsp_store.rs`
 

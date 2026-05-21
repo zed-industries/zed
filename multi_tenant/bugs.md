@@ -79,6 +79,22 @@ one host `LspStore`, starts separate Rust servers for Project A and Project B,
 restarts all servers via Project A, and asserts Project B's server is not shut
 down.
 
+### LSP status-bar indicator iterates host-wide servers
+
+**Fixed:** `Project::language_server_statuses` now filters the shared host
+`LspStore` status list by `Project::language_servers`. `LspButton` keeps a weak
+`Project` handle instead of a weak `LspStore`, builds its menu/status metadata
+from the project-scoped status list, and gates direct LSP status/update events
+against the current project's accessible servers before updating button state.
+Individual restart/stop actions also route through the `Project` facade.
+
+Regression coverage:
+`test_language_server_statuses_are_scoped_to_project` in
+`crates/project/tests/integration/multi_tenant.rs` builds two Projects sharing
+one host `LspStore`, starts separate Rust servers for Project A and Project B,
+asserts the raw host store sees both server statuses, and asserts each
+`Project::language_server_statuses` view only contains its own server.
+
 ### `RepositoryUpdated(_, _, is_active)` bool now lies
 
 **Fixed:** `GitStoreEvent::RepositoryUpdated` now carries only
@@ -347,55 +363,6 @@ per-`Project` event handlers forward them.
 path-collection passes to buffers in `local.registered_buffers` for this
 `server_id` and/or `(worktree_id, rel_path)` entries whose worktree is in
 `local.lsp_tree.instances[server_id]`.
-
-### 8. LSP status-bar indicator iterates host-wide servers
-
-`crates/language_tools/src/lsp_button.rs`
-
-Three call sites iterate `lsp_store.read(cx).language_server_statuses()`
-(host-wide):
-
-- L228 (menu fill)
-- L804 (construction)
-- L1010 (refresh)
-
-The `on_lsp_store_event` at L848 already has a `// TODO` comment noting the
-problem:
-
-```rust
-// TODO `LspStore` is global and reports status from all language servers, even from the other windows.
-// Also, we do not get "LSP removed" events so LSPs are never removed.
-match e {
-    LspStoreEvent::LanguageServerUpdate { language_server_id, name, message: ... } => { ... }
-```
-
-The "Restart All / Stop All" buttons (`fill_menu` L258-68) call
-`lsp_store.restart_all_language_servers(cx)` / `stop_all_language_servers(cx)`
-directly on the host store — see bug 3.
-
-`Project` already maintains the per-tenant set
-(`crates/project/src/project.rs:302`):
-
-```rust
-language_servers: HashSet<LanguageServerId>,
-```
-
-populated on `LspStoreEvent::LanguageServerAdded` (gated by
-`self.language_server_belongs_to_us`, `project.rs:4212`) and cleared on
-`LanguageServerRemoved` (`project.rs:4217`).
-
-**Fix shape:**
-
-1. Add `Project::language_server_statuses(&self, cx) -> impl Iterator<Item = (LanguageServerId, &LanguageServerStatus)>`
-   that filters `lsp_store.language_server_statuses()` by
-   `self.language_servers.contains(server_id)`.
-2. Rewrite the three call sites in `lsp_button.rs` to use it.
-3. Gate `on_lsp_store_event` (L848) on
-   `project.read(cx).language_servers.contains(language_server_id)`. The
-   button currently only holds a `WeakEntity<LspStore>` — needs a
-   `WeakEntity<Project>` (or use the `Workspace` handle it already has).
-4. Replace the "Restart All" / "Stop All" handlers with `Project`-scoped
-   variants (see fix for bug 3).
 
 ### 9. `GitStore::forget_shared_diffs_for(peer)` wipes every Project's diffs
 
