@@ -2812,6 +2812,76 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn renamed_project_group_is_searchable_in_picker(cx: &mut TestAppContext) {
+        let (picker, cx) = build_picker(cx);
+        let key = project_group(0);
+
+        let save_name = cx.update(|_, cx| {
+            workspace::set_project_name_for_key(&key, Some("Customer API".to_string()), cx)
+        });
+        save_name.await.expect("custom project name should save");
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker
+                    .delegate
+                    .update_matches("Customer".to_string(), window, cx)
+            })
+            .await;
+
+        picker.update(cx, |picker, _| {
+            assert!(matches!(
+                picker.delegate.filtered_entries.as_slice(),
+                [
+                    ProjectPickerEntry::Header(title),
+                    ProjectPickerEntry::ProjectGroup(hit),
+                ] if title.as_ref() == "This Window" && hit.candidate_id == 0
+            ));
+        });
+
+        let save_name = cx.update(|_, cx| {
+            workspace::set_project_name_for_key(&key, Some("Billing API".to_string()), cx)
+        });
+        save_name.await.expect("renamed project name should save");
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker
+                    .delegate
+                    .update_matches("Customer".to_string(), window, cx)
+            })
+            .await;
+
+        picker.update(cx, |picker, _| {
+            assert!(
+                picker.delegate.filtered_entries.is_empty(),
+                "old project name should not match after rename"
+            );
+        });
+
+        picker
+            .update_in(cx, |picker, window, cx| {
+                picker
+                    .delegate
+                    .update_matches("Billing".to_string(), window, cx)
+            })
+            .await;
+
+        picker.update(cx, |picker, _| {
+            assert!(matches!(
+                picker.delegate.filtered_entries.as_slice(),
+                [
+                    ProjectPickerEntry::Header(title),
+                    ProjectPickerEntry::ProjectGroup(hit),
+                ] if title.as_ref() == "This Window" && hit.candidate_id == 0
+            ));
+        });
+
+        let clear_name = cx.update(|_, cx| workspace::set_project_name_for_key(&key, None, cx));
+        clear_name.await.expect("custom project name should clear");
+    }
+
+    #[gpui::test]
     fn deleting_top_recent_project_preserves_scroll_position(cx: &mut TestAppContext) {
         let target = FIRST_RECENT_PROJECT;
         let (picker, cx) = build_picker(cx);
