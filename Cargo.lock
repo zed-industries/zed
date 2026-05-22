@@ -20774,9 +20774,12 @@ name = "which_key"
 version = "0.1.0"
 dependencies = [
  "command_palette",
+ "db",
  "gpui",
+ "project",
  "serde",
  "settings",
+ "theme",
  "theme_settings",
  "ui",
  "util",

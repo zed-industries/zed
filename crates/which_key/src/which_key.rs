@@ -1,9 +1,11 @@
-//! Which-key support for Zed.
+//! Which-key and describe-key support for Zed.
 
+mod describe_key_modal;
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, Keystroke};
+use describe_key_modal::DescribeKeyModal;
+use gpui::{App, Keystroke, actions};
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
 use util::ResultExt;
@@ -11,13 +13,29 @@ use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
 use workspace::Workspace;
 
+actions!(
+    zed,
+    [
+        /// Captures the next keystroke and describes what action it would trigger.
+        DescribeKey
+    ]
+);
+
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
 
-    cx.observe_new(|_: &mut Workspace, window, cx| {
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
         };
+
+        workspace.register_action(|workspace, _: &DescribeKey, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                DescribeKeyModal::new(workspace_handle, window, cx)
+            });
+        });
+
         let mut timer = None;
         cx.observe_pending_input(window, move |workspace, window, cx| {
             if window.pending_input_keystrokes().is_none() {
