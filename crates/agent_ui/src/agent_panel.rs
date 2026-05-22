@@ -855,7 +855,12 @@ impl AgentTerminal {
         self.view.read(cx).custom_title().map(SharedString::from)
     }
 
-    fn report_started_terminal_program(&mut self, source: AgentThreadSource, cx: &App) {
+    fn report_started_terminal_program(
+        &mut self,
+        terminal_id: TerminalId,
+        source: AgentThreadSource,
+        cx: &App,
+    ) {
         let current_program = self
             .view
             .read(cx)
@@ -869,6 +874,7 @@ impl AgentTerminal {
             telemetry::event!(
                 "Agent Terminal Program Started",
                 agent = TERMINAL_AGENT_TELEMETRY_ID,
+                terminal_id = terminal_id.to_key_string(),
                 program = program,
                 source = source.as_str(),
                 side = crate::agent_sidebar_side(cx),
@@ -1920,7 +1926,7 @@ impl AgentPanel {
             self.pending_terminal_spawn = None;
         }
         terminal.refresh_metadata(cx);
-        terminal.report_started_terminal_program(source, cx);
+        terminal.report_started_terminal_program(terminal_id, source, cx);
         self.terminals.insert(terminal_id, terminal);
         self.persist_terminal_metadata(terminal_id, cx);
         self.emit_terminal_thread_started(source, cx);
@@ -2045,7 +2051,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
-            terminal.report_started_terminal_program(source, cx);
+            terminal.report_started_terminal_program(terminal_id, source, cx);
         }
     }
 
