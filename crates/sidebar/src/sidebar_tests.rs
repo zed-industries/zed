@@ -1303,6 +1303,49 @@ async fn test_keyboard_confirm_on_project_header_activates_project(cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_project_header_drop_reorders_project_groups(cx: &mut TestAppContext) {
+    let (fs, project_a) =
+        init_multi_project_test(&["/project-a", "/project-b", "/project-c"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    add_test_project("/project-c", &fs, &multi_workspace, cx).await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-c]", "v [project-b]", "v [project-a]",]
+    );
+
+    let keys = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.project_group_keys()
+    });
+    let project_c_key = keys[0].clone();
+    let project_a_key = keys[2].clone();
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        let dragged = DraggedProjectGroup {
+            key: project_a_key.clone(),
+            label: "project-a".into(),
+        };
+        sidebar.project_group_drop_target = Some(ProjectGroupDropTarget {
+            dragged_key: project_a_key.clone(),
+            target_key: project_c_key.clone(),
+            placement: ProjectGroupDropPlacement::Before,
+        });
+        sidebar.drop_project_group(&dragged, &project_c_key, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [project-a]", "v [project-c]", "v [project-b]",]
+    );
+}
+
+#[gpui::test]
 async fn test_keyboard_expand_and_collapse_selected_entry(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =

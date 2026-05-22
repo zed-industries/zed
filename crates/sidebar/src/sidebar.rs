@@ -27,9 +27,10 @@ use feature_flags::{
     AgentThreadWorktreeLabel, AgentThreadWorktreeLabelFlag, FeatureFlag, FeatureFlagAppExt as _,
 };
 use gpui::{
-    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
-    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
+    Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, DragMoveEvent, Entity,
+    EntityId, FocusHandle, Focusable, KeyContext, ListState, Modifiers, Pixels, Render,
+    SharedString, Task, TaskExt, WeakEntity, Window, WindowHandle, linear_color_stop,
+    linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -49,8 +50,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{
-    AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
+    AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider,
     HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
     Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
     prelude::*, render_modifiers,
@@ -309,6 +311,55 @@ enum ListEntry {
     },
     Thread(ThreadEntry),
     Terminal(TerminalEntry),
+}
+
+#[derive(Clone)]
+struct DraggedProjectGroup {
+    key: ProjectGroupKey,
+    label: SharedString,
+}
+
+struct DraggedProjectGroupView {
+    label: SharedString,
+    click_offset: gpui::Point<Pixels>,
+}
+
+impl Render for DraggedProjectGroupView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
+        h_flex()
+            .font(ui_font)
+            .pl(self.click_offset.x + px(12.))
+            .pt(self.click_offset.y + px(12.))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .py_1()
+                    .px_2()
+                    .rounded_lg()
+                    .bg(cx.theme().colors().background)
+                    .child(
+                        Icon::new(IconName::Folder)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new(self.label.clone()).truncate()),
+            )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProjectGroupDropPlacement {
+    Before,
+    After,
+}
+
+#[derive(Clone)]
+struct ProjectGroupDropTarget {
+    dragged_key: ProjectGroupKey,
+    target_key: ProjectGroupKey,
+    placement: ProjectGroupDropPlacement,
 }
 
 #[derive(Clone)]
@@ -664,6 +715,7 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
+    project_group_drop_target: Option<ProjectGroupDropTarget>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -773,6 +825,7 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
+            project_group_drop_target: None,
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -2037,12 +2090,13 @@ impl Sidebar {
         let key_for_disclosure = key.clone();
         let key_for_focus = key.clone();
 
+        let label_text = label.clone();
         let label = if highlight_positions.is_empty() {
-            Label::new(label.clone())
+            Label::new(label_text.clone())
                 .when(!is_active, |this| this.color(Color::Muted))
                 .into_any_element()
         } else {
-            HighlightedLabel::new(label.clone(), highlight_positions.to_vec())
+            HighlightedLabel::new(label_text.clone(), highlight_positions.to_vec())
                 .when(!is_active, |this| this.color(Color::Muted))
                 .into_any_element()
         };
@@ -2059,14 +2113,11 @@ impl Sidebar {
             .blend(color.element_background.opacity(0.2));
         let hover_solid = base_bg.blend(hover_base);
 
-        let group_name_for_gradient = group_name.clone();
-        let gradient_overlay = move || {
-            GradientFade::new(base_bg, hover_solid, hover_solid)
-                .width(px(64.0))
-                .right(px(-2.0))
-                .gradient_stop(0.75)
-                .group_name(group_name_for_gradient.clone())
-        };
+        let drop_placement = self
+            .project_group_drop_target
+            .as_ref()
+            .filter(|target| target.target_key == *key)
+            .map(|target| target.placement);
 
         let header = h_flex()
             .id(id)
@@ -2084,6 +2135,15 @@ impl Sidebar {
                     this.border_color(color.border_focused)
                 } else {
                     this.border_color(gpui::transparent_black())
+                }
+            })
+            .when_some(drop_placement, |this, placement| {
+                let this = this
+                    .border_color(color.drop_target_border)
+                    .bg(color.drop_target_background);
+                match placement {
+                    ProjectGroupDropPlacement::Before => this.border_t_2(),
+                    ProjectGroupDropPlacement::After => this.border_b_2(),
                 }
             })
             .hover(|s| s.bg(hover_solid))
@@ -2155,10 +2215,8 @@ impl Sidebar {
                             ),
                     ),
             )
-            .child(gradient_overlay())
             .child(
                 h_flex()
-                    .child(gradient_overlay())
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
@@ -2225,7 +2283,42 @@ impl Sidebar {
                 cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
                     this.activate_or_open_workspace_for_group(&key_for_focus, window, cx);
                 }),
-            );
+            )
+            .when(!is_sticky, |this| {
+                let dragged_project_group = DraggedProjectGroup {
+                    key: key.clone(),
+                    label: label_text.clone(),
+                };
+                let target_key_for_move = key.clone();
+                let target_key_for_drop = key.clone();
+
+                this.on_drag(
+                    dragged_project_group,
+                    |dragged, click_offset, _window, cx| {
+                        cx.new(|_| DraggedProjectGroupView {
+                            label: dragged.label.clone(),
+                            click_offset,
+                        })
+                    },
+                )
+                .on_drag_move::<DraggedProjectGroup>(cx.listener(
+                    move |this, event: &DragMoveEvent<DraggedProjectGroup>, _window, cx| {
+                        let dragged = event.drag(cx).clone();
+                        this.update_project_group_drop_target(
+                            &dragged,
+                            &target_key_for_move,
+                            event,
+                            cx,
+                        );
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |this, dragged: &DraggedProjectGroup, _window, cx| {
+                        this.drop_project_group(dragged, &target_key_for_drop, cx);
+                        cx.stop_propagation();
+                    },
+                ))
+            });
 
         if !is_collapsed && !has_threads {
             v_flex()
@@ -2726,6 +2819,108 @@ impl Sidebar {
     ) {
         let is_collapsed = self.is_group_collapsed(project_group_key, cx);
         self.set_group_expanded(project_group_key, is_collapsed, cx);
+        self.update_entries(cx);
+    }
+
+    fn update_project_group_drop_target(
+        &mut self,
+        dragged: &DraggedProjectGroup,
+        target_key: &ProjectGroupKey,
+        event: &DragMoveEvent<DraggedProjectGroup>,
+        cx: &mut Context<Self>,
+    ) {
+        if dragged.key == *target_key || !event.bounds.contains(&event.event.position) {
+            if self
+                .project_group_drop_target
+                .as_ref()
+                .is_some_and(|target| target.target_key == *target_key)
+            {
+                self.project_group_drop_target = None;
+                cx.notify();
+            }
+            return;
+        }
+
+        let midpoint_y = event.bounds.origin.y + event.bounds.size.height / 2.0;
+        let placement = if event.event.position.y < midpoint_y {
+            ProjectGroupDropPlacement::Before
+        } else {
+            ProjectGroupDropPlacement::After
+        };
+
+        let is_unchanged = self
+            .project_group_drop_target
+            .as_ref()
+            .is_some_and(|target| {
+                target.dragged_key == dragged.key
+                    && target.target_key == *target_key
+                    && target.placement == placement
+            });
+        if is_unchanged {
+            return;
+        }
+
+        self.project_group_drop_target = Some(ProjectGroupDropTarget {
+            dragged_key: dragged.key.clone(),
+            target_key: target_key.clone(),
+            placement,
+        });
+        cx.notify();
+    }
+
+    fn drop_project_group(
+        &mut self,
+        dragged: &DraggedProjectGroup,
+        target_key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) {
+        let drop_target = self.project_group_drop_target.take();
+        let placement = drop_target
+            .as_ref()
+            .filter(|target| target.dragged_key == dragged.key && target.target_key == *target_key)
+            .map_or(ProjectGroupDropPlacement::Before, |target| target.placement);
+
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            cx.notify();
+            return;
+        };
+
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            let keys = multi_workspace.project_group_keys();
+            let Some(source_index) = keys.iter().position(|key| key == &dragged.key) else {
+                return;
+            };
+            let Some(target_index) = keys.iter().position(|key| key == target_key) else {
+                return;
+            };
+            if source_index == target_index {
+                return;
+            }
+
+            let target_index_after_removal = match placement {
+                ProjectGroupDropPlacement::Before => {
+                    if source_index < target_index {
+                        target_index.saturating_sub(1)
+                    } else {
+                        target_index
+                    }
+                }
+                ProjectGroupDropPlacement::After => {
+                    if source_index < target_index {
+                        target_index
+                    } else {
+                        target_index + 1
+                    }
+                }
+            };
+
+            multi_workspace.move_project_group_to_index(
+                &dragged.key,
+                target_index_after_removal,
+                cx,
+            );
+        });
+
         self.update_entries(cx);
     }
 
