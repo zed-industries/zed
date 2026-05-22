@@ -285,6 +285,134 @@ async fn test_file_history_action_uses_focused_project_panel_selection(
 }
 
 #[gpui::test]
+async fn test_file_history_action_does_not_fall_back_to_editor_when_focused_project_panel_selection_has_no_git_repo(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test_with_git_ui(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        Path::new("/git-project"),
+        json!({
+            ".git": {},
+            "tracked.txt": "tracked",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        Path::new("/plain-project"),
+        json!({
+            "plain.txt": "plain",
+        }),
+    )
+    .await;
+
+    fs.set_graph_commits(
+        Path::new("/git-project/.git"),
+        vec![Arc::new(InitialGraphCommitData {
+            sha: Oid::from_bytes(&[1; 20]).unwrap(),
+            parents: smallvec![],
+            ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+        })],
+    );
+
+    let project = Project::test(
+        fs.clone(),
+        [Path::new("/git-project"), Path::new("/plain-project")],
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have active repository")
+    });
+    let editor_repo_path = RepoPath::new(&"tracked.txt").unwrap();
+    let editor_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&editor_repo_path, cx)
+        })
+        .expect("editor path should resolve");
+    let plain_worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktree_for_root_name("plain-project", cx)
+            .expect("plain worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let plain_project_path = ProjectPath {
+        worktree_id: plain_worktree_id,
+        path: rel_path("plain.txt").into(),
+    };
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+        multi_workspace.workspace().clone()
+    });
+    let project_panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    let editor_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(editor_path.clone(), cx)
+        })
+        .await
+        .expect("editor buffer should open");
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                editor_buffer.clone(),
+                [Default::default()..editor_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor =
+            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.select_path_for_test(plain_project_path.clone(), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.focus_handle(cx).focus(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(git::FileHistory), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(&*cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<git_ui::git_graph::GitGraph>(cx)
+                .count(),
+            0
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {

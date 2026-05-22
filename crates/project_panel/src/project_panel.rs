@@ -539,25 +539,30 @@ pub fn init(cx: &mut App) {
             if !panel.read(cx).focus_handle(cx).contains_focused(window, cx) {
                 return div;
             }
-            let Some(project_path) = panel.read(cx).selected_entry_project_path(cx) else {
+            if panel.read(cx).selected_entry_project_path(cx).is_none() {
                 return div;
-            };
-            let Some((repo_id, log_source)) =
-                git_ui::git_graph::resolve_file_history_target_from_project_path(
-                    workspace,
-                    &project_path,
-                    cx,
-                )
-            else {
-                return div;
-            };
-            let git_store = workspace.project().read(cx).git_store().clone();
+            }
             let workspace = workspace.weak_handle();
             div.capture_action(move |_: &git::FileHistory, window, cx| {
-                let git_store = git_store.clone();
-                let log_source = log_source.clone();
                 workspace
                     .update(cx, |workspace, cx| {
+                        let Some(panel) = workspace.panel::<ProjectPanel>(cx) else {
+                            return;
+                        };
+                        let Some(project_path) = panel.read(cx).selected_entry_project_path(cx)
+                        else {
+                            return;
+                        };
+                        let Some((repo_id, log_source)) =
+                            git_ui::git_graph::resolve_file_history_target_from_project_path(
+                                workspace,
+                                &project_path,
+                                cx,
+                            )
+                        else {
+                            return;
+                        };
+                        let git_store = workspace.project().read(cx).git_store().clone();
                         git_ui::git_graph::open_or_reuse_graph(
                             workspace, repo_id, git_store, log_source, None, window, cx,
                         );
