@@ -180,6 +180,7 @@ pub enum HighlightKey {
     MatchingBracket,
     NavigationOverlay(NavigationOverlayKey),
     PendingInput,
+    ProjectSearchPreview,
     ProjectSearchView,
     Rename,
     SearchWithinRange,

@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use anyhow::Context as _;
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use editor::{
     Anchor, BufferOffset, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer,
     PathKey, SelectionEffects,
@@ -433,7 +433,7 @@ pub struct ProjectSearch {
     excerpts: Entity<MultiBuffer>,
     pending_search: Option<Task<Option<()>>>,
     match_ranges: Vec<Range<Anchor>>,
-    deferred_files: HashMap<PathKey, DeferredFileState>,
+    deferred_files: BTreeMap<PathKey, DeferredFileState>,
     active_query: Option<SearchQuery>,
     last_search_query_text: Option<String>,
     search_id: usize,
@@ -526,7 +526,7 @@ impl ProjectSearch {
             excerpts,
             pending_search: Default::default(),
             match_ranges: Default::default(),
-            deferred_files: HashMap::default(),
+            deferred_files: BTreeMap::default(),
             active_query: None,
             last_search_query_text: None,
             search_id: 0,
@@ -1960,6 +1960,7 @@ impl ProjectSearchView {
             if preview_highlights.is_empty() {
                 self.results_editor.update(cx, |editor, cx| {
                     editor.clear_background_highlights(HighlightKey::ProjectSearchView, cx);
+                    editor.clear_background_highlights(HighlightKey::ProjectSearchPreview, cx);
                 });
             } else {
                 self.highlight_matches(&[], &preview_highlights, None, cx);
@@ -2024,26 +2025,23 @@ impl ProjectSearchView {
         active_index: Option<usize>,
         cx: &mut App,
     ) {
-        let active_count = match_ranges.len();
-        let mut combined: Vec<Range<Anchor>> =
-            Vec::with_capacity(match_ranges.len() + preview_highlights.len());
-        combined.extend(match_ranges.iter().cloned());
-        combined.extend(preview_highlights.iter().cloned());
         self.results_editor.update(cx, |editor, cx| {
             editor.highlight_background(
                 HighlightKey::ProjectSearchView,
-                &combined,
+                match_ranges,
                 move |index, theme| {
-                    if *index >= active_count {
-                        // Preview highlights never take the "active" color
-                        // because find-next never lands on them.
-                        theme.colors().search_match_background
-                    } else if active_index == Some(*index) {
+                    if active_index == Some(*index) {
                         theme.colors().search_active_match_background
                     } else {
                         theme.colors().search_match_background
                     }
                 },
+                cx,
+            );
+            editor.highlight_background(
+                HighlightKey::ProjectSearchPreview,
+                preview_highlights,
+                |_index, theme| theme.colors().search_match_background,
                 cx,
             );
         });
