@@ -7,7 +7,7 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
-use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated, UserAgentsMd};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -3607,12 +3607,10 @@ impl ThreadView {
 
         let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
 
-        let (user_rules_count, first_user_rules_id, project_rules_count, project_entry_ids) = self
+        let (project_rules_count, project_entry_ids) = self
             .as_native_thread(cx)
             .map(|thread| {
                 let project_context = thread.read(cx).project_context().read(cx);
-                let user_rules_count = project_context.user_rules.len();
-                let first_user_rules_id = project_context.user_rules.first().map(|r| r.uuid.0);
                 let project_entry_ids = project_context
                     .worktrees
                     .iter()
@@ -3620,14 +3618,13 @@ impl ThreadView {
                     .map(|rf| ProjectEntryId::from_usize(rf.project_entry_id))
                     .collect::<Vec<_>>();
                 let project_rules_count = project_entry_ids.len();
-                (
-                    user_rules_count,
-                    first_user_rules_id,
-                    project_rules_count,
-                    project_entry_ids,
-                )
+                (project_rules_count, project_entry_ids)
             })
             .unwrap_or_default();
+
+        let global_agents_md_loaded = UserAgentsMd::global(cx)
+            .and_then(|md| md.content())
+            .is_some();
 
         let workspace = self.workspace.clone();
 
@@ -3663,8 +3660,7 @@ impl ThreadView {
                     show_split,
                     cost_label,
                     separator_color: tooltip_separator_color,
-                    user_rules_count,
-                    first_user_rules_id,
+                    global_agents_md_loaded,
                     project_rules_count,
                     project_entry_ids,
                     workspace,
@@ -4340,8 +4336,7 @@ struct TokenUsageTooltip {
     show_split: bool,
     cost_label: Option<String>,
     separator_color: Color,
-    user_rules_count: usize,
-    first_user_rules_id: Option<uuid::Uuid>,
+    global_agents_md_loaded: bool,
     project_rules_count: usize,
     project_entry_ids: Vec<ProjectEntryId>,
     workspace: WeakEntity<Workspace>,
@@ -4359,8 +4354,7 @@ impl Render for TokenUsageTooltip {
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
         let cost_label = self.cost_label.clone();
-        let user_rules_count = self.user_rules_count;
-        let first_user_rules_id = self.first_user_rules_id;
+        let global_agents_md_loaded = self.global_agents_md_loaded;
         let project_rules_count = self.project_rules_count;
         let project_entry_ids = self.project_entry_ids.clone();
         let workspace = self.workspace.clone();
@@ -4423,7 +4417,7 @@ impl Render for TokenUsageTooltip {
                     )
                 })
                 .when(
-                    user_rules_count > 0 || project_rules_count > 0,
+                    global_agents_md_loaded || project_rules_count > 0,
                     move |this| {
                         this.child(
                             v_flex()
@@ -4441,26 +4435,39 @@ impl Render for TokenUsageTooltip {
                                 .child(
                                     v_flex()
                                         .mx_neg_1()
-                                        .when(user_rules_count > 0, move |this| {
-                                            this.child(
-                                                Button::new(
-                                                    "open-user-rules",
-                                                    format!("{} user rules", user_rules_count),
+                                        .when(global_agents_md_loaded, {
+                                            let workspace = workspace.clone();
+                                            move |this| {
+                                                this.child(
+                                                    Button::new(
+                                                        "open-global-agents-md",
+                                                        "1 global rule",
+                                                    )
+                                                    .end_icon(
+                                                        Icon::new(IconName::ArrowUpRight)
+                                                            .color(Color::Muted)
+                                                            .size(IconSize::XSmall),
+                                                    )
+                                                    .on_click(move |_, window, cx| {
+                                                        workspace
+                                                            .update(cx, |workspace, cx| {
+                                                                workspace
+                                                                    .open_abs_path(
+                                                                        paths::agents_file()
+                                                                            .clone(),
+                                                                        workspace::OpenOptions {
+                                                                            focus: Some(true),
+                                                                            ..Default::default()
+                                                                        },
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                            .log_err();
+                                                    }),
                                                 )
-                                                .end_icon(
-                                                    Icon::new(IconName::ArrowUpRight)
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
-                                                )
-                                                .on_click(move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(OpenRulesLibrary {
-                                                            prompt_to_select: first_user_rules_id,
-                                                        }),
-                                                        cx,
-                                                    );
-                                                }),
-                                            )
+                                            }
                                         })
                                         .when(project_rules_count > 0, move |this| {
                                             let workspace = workspace.clone();
