@@ -3248,7 +3248,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "gpui",
@@ -7358,40 +7357,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "git_graph"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-channel 2.5.0",
- "collections",
- "db",
- "editor",
- "fs",
- "git",
- "git_ui",
- "gpui",
- "language",
- "language_model",
- "menu",
- "picker",
- "project",
- "project_panel",
- "rand 0.9.4",
- "release_channel",
- "remote_connection",
- "search",
- "serde_json",
- "settings",
- "smallvec",
- "task",
- "theme",
- "theme_settings",
- "time",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "git_hosting_providers"
 version = "0.1.0"
 dependencies = [
@@ -7421,6 +7386,7 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "askpass",
+ "async-channel 2.5.0",
  "buffer_diff",
  "call",
  "collections",
@@ -7450,12 +7416,15 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "project_panel",
  "prompt_store",
  "proto",
  "rand 0.9.4",
+ "release_channel",
  "remote",
  "remote_connection",
  "schemars 1.0.4",
+ "search",
  "serde",
  "serde_json",
  "settings",
@@ -22538,7 +22507,6 @@ dependencies = [
  "fs",
  "futures 0.3.32",
  "git",
- "git_graph",
  "git_hosting_providers",
  "git_ui",
  "go_to_line",
