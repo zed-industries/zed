@@ -168,7 +168,7 @@ fn get_all_languages(extension_map: &HashMap<String, String>) -> Vec<(String, Ve
     }
 
     let mut result: Vec<_> = language_to_extensions.into_iter().collect();
-    result.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    result.sort_by_key(|res| res.0.to_lowercase());
     for (_, extensions) in &mut result {
         extensions.sort();
     }
@@ -380,7 +380,7 @@ pub fn run_filter_languages(
     if let Some(top_n) = args.show_top_excluded {
         if !excluded_extensions.is_empty() {
             let mut sorted: Vec<_> = excluded_extensions.into_iter().collect();
-            sorted.sort_by(|a, b| b.1.cmp(&a.1));
+            sorted.sort_by_key(|res| std::cmp::Reverse(res.1));
             eprintln!("\nTop {} excluded extensions:", top_n.min(sorted.len()));
             for (ext, count) in sorted.into_iter().take(top_n) {
                 eprintln!("  {:>6}  .{}", count, ext);
@@ -439,7 +439,7 @@ fn run_stats(input: &Path, extension_map: &HashMap<String, String>) -> Result<()
     }
 
     let mut sorted_counts: Vec<_> = language_counts.into_iter().collect();
-    sorted_counts.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted_counts.sort_by_key(|res| std::cmp::Reverse(res.1));
 
     println!("Language distribution ({} total examples):", total_count);
     println!();
@@ -452,7 +452,7 @@ fn run_stats(input: &Path, extension_map: &HashMap<String, String>) -> Result<()
         println!();
         println!("Unknown extensions:");
         let mut sorted_unknown: Vec<_> = unknown_extensions.into_iter().collect();
-        sorted_unknown.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted_unknown.sort_by_key(|res| std::cmp::Reverse(res.1));
         for (ext, count) in sorted_unknown.iter().take(30) {
             println!("  {:>6}  .{}", count, ext);
         }

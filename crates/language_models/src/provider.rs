@@ -10,8 +10,8 @@ pub mod ollama;
 pub mod open_ai;
 pub mod open_ai_compatible;
 pub mod open_router;
+pub mod openai_subscribed;
 pub mod opencode;
-mod util;
-pub mod vercel;
+
 pub mod vercel_ai_gateway;
 pub mod x_ai;

@@ -1,5 +1,5 @@
 use crate::AcpThread;
-use agent_client_protocol::{self as acp};
+use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
@@ -48,6 +48,10 @@ pub trait AgentConnection {
     fn agent_id(&self) -> AgentId;
 
     fn telemetry_id(&self) -> SharedString;
+
+    fn agent_version(&self) -> Option<SharedString> {
+        None
+    }
 
     fn new_session(
         self: Rc<Self>,
@@ -111,21 +115,34 @@ pub trait AgentConnection {
         self.supports_load_session() || self.supports_resume_session()
     }
 
+    /// Whether this agent supports additional session directories.
+    fn supports_session_additional_directories(&self) -> bool {
+        false
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn terminal_auth_task(
         &self,
         _method: &acp::AuthMethodId,
         _cx: &App,
-    ) -> Option<SpawnInTerminal> {
+    ) -> Option<Task<Result<SpawnInTerminal>>> {
         None
     }
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
+    fn supports_logout(&self) -> bool {
+        false
+    }
+
+    fn logout(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
+    }
+
     fn prompt(
         &self,
-        user_message_id: Option<UserMessageId>,
+        user_message_id: UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>>;
@@ -306,7 +323,7 @@ pub trait AgentSessionList {
         cx: &mut App,
     ) -> Task<Result<AgentSessionListResponse>>;
 
-    fn supports_delete(&self) -> bool {
+    fn supports_delete(&self, _cx: &App) -> bool {
         false
     }
 
@@ -318,7 +335,7 @@ pub trait AgentSessionList {
         Task::ready(Err(anyhow::anyhow!("delete_sessions not supported")))
     }
 
-    fn watch(&self, _cx: &mut App) -> Option<smol::channel::Receiver<SessionListUpdate>> {
+    fn watch(&self, _cx: &mut App) -> Option<async_channel::Receiver<SessionListUpdate>> {
         None
     }
 
@@ -637,6 +654,8 @@ mod test_support {
     use gpui::{AppContext as _, WeakEntity};
     use parking_lot::Mutex;
 
+    use crate::AuthorizationKind;
+
     use super::*;
 
     /// Creates a PNG image encoded as base64 for testing.
@@ -665,12 +684,30 @@ mod test_support {
         )
     }
 
+    /// Test-scoped counter for generating unique session IDs across all
+    /// `StubAgentConnection` instances within a test case. Set as a GPUI
+    /// global in test init so each case starts fresh.
+    pub struct StubSessionCounter(pub AtomicUsize);
+    impl gpui::Global for StubSessionCounter {}
+
+    impl StubSessionCounter {
+        pub fn next(cx: &App) -> usize {
+            cx.try_global::<Self>()
+                .map(|g| g.0.fetch_add(1, Ordering::SeqCst))
+                .unwrap_or_else(|| {
+                    static FALLBACK: AtomicUsize = AtomicUsize::new(0);
+                    FALLBACK.fetch_add(1, Ordering::SeqCst)
+                })
+        }
+    }
+
     #[derive(Clone)]
     pub struct StubAgentConnection {
         sessions: Arc<Mutex<HashMap<acp::SessionId, Session>>>,
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
         supports_load_session: bool,
+        supports_session_additional_directories: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -693,6 +730,7 @@ mod test_support {
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_load_session: false,
+                supports_session_additional_directories: false,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -712,6 +750,14 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_session_additional_directories(
+            mut self,
+            supports_session_additional_directories: bool,
+        ) -> Self {
+            self.supports_session_additional_directories = supports_session_additional_directories;
             self
         }
 
@@ -823,15 +869,17 @@ mod test_support {
             work_dirs: PathList,
             cx: &mut gpui::App,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            static NEXT_SESSION_ID: AtomicUsize = AtomicUsize::new(0);
-            let session_id =
-                acp::SessionId::new(NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst).to_string());
+            let session_id = acp::SessionId::new(StubSessionCounter::next(cx).to_string());
             let thread = self.create_session(session_id, project, work_dirs, None, cx);
             Task::ready(Ok(thread))
         }
 
         fn supports_load_session(&self) -> bool {
             self.supports_load_session
+        }
+
+        fn supports_session_additional_directories(&self) -> bool {
+            self.supports_session_additional_directories
         }
 
         fn load_session(
@@ -860,7 +908,7 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: Option<UserMessageId>,
+            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -896,6 +944,7 @@ mod test_support {
                                     thread.request_tool_call_authorization(
                                         tool_call.clone().into(),
                                         options.clone(),
+                                        AuthorizationKind::PermissionGrant,
                                         cx,
                                     )
                                 })??
@@ -939,7 +988,7 @@ mod test_support {
 
         fn truncate(
             &self,
-            _session_id: &agent_client_protocol::SessionId,
+            _session_id: &acp::SessionId,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionTruncate>> {
             Some(Rc::new(StubAgentSessionEditor))

@@ -14,7 +14,7 @@ use fs::Fs;
 use futures::StreamExt;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FutureExt as _,
-    ScreenCaptureSource, ScreenCaptureStream, Task, Timeout, WeakEntity,
+    ScreenCaptureSource, ScreenCaptureStream, Task, TaskExt, Timeout, WeakEntity,
 };
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
@@ -66,6 +66,8 @@ pub enum Event {
     RoomLeft {
         channel_id: Option<ChannelId>,
     },
+    LocalScreenShareStarted,
+    LocalScreenShareStopped,
 }
 
 pub struct Room {
@@ -678,7 +680,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(participant.user.id);
+                    .0 = Some(participant.user.legacy_id);
             }
         }
 
@@ -687,7 +689,7 @@ impl Room {
                 project_hosts_and_guest_counts
                     .entry(project.id)
                     .or_default()
-                    .0 = Some(user.id);
+                    .0 = Some(user.legacy_id);
             }
         }
 
@@ -900,7 +902,7 @@ impl Room {
 
                             if let Some(livekit_participants) = &livekit_participants
                                 && let Some(livekit_participant) = livekit_participants
-                                    .get(&ParticipantIdentity(user.id.to_string()))
+                                    .get(&ParticipantIdentity(user.legacy_id.to_string()))
                             {
                                 for publication in
                                     livekit_participant.track_publications().into_values()
@@ -933,6 +935,11 @@ impl Room {
                             for sid in participant.video_tracks.keys() {
                                 cx.emit(Event::RemoteVideoTrackUnsubscribed { sid: sid.clone() });
                             }
+                            if !participant.video_tracks.is_empty() {
+                                cx.emit(Event::RemoteVideoTracksChanged {
+                                    participant_id: participant.peer_id,
+                                });
+                            }
                             false
                         }
                     });
@@ -941,7 +948,7 @@ impl Room {
                 if let Some(pending_participants) = pending_participants.log_err() {
                     this.pending_participants = pending_participants;
                     for participant in &this.pending_participants {
-                        this.participant_user_ids.insert(participant.id);
+                        this.participant_user_ids.insert(participant.legacy_id);
                     }
                 }
 
@@ -1146,13 +1153,16 @@ impl Room {
         #[cfg(any(test, feature = "test-support"))]
         {
             for participant in self.remote_participants.values() {
-                assert!(self.participant_user_ids.contains(&participant.user.id));
-                assert_ne!(participant.user.id, self.client.user_id().unwrap());
+                assert!(
+                    self.participant_user_ids
+                        .contains(&participant.user.legacy_id)
+                );
+                assert_ne!(participant.user.legacy_id, self.client.user_id().unwrap());
             }
 
             for participant in &self.pending_participants {
-                assert!(self.participant_user_ids.contains(&participant.id));
-                assert_ne!(participant.id, self.client.user_id().unwrap());
+                assert!(self.participant_user_ids.contains(&participant.legacy_id));
+                assert_ne!(participant.legacy_id, self.client.user_id().unwrap());
             }
 
             assert_eq!(
@@ -1513,6 +1523,7 @@ impl Room {
                                 track_publication: publication,
                                 _stream: stream,
                             };
+                            cx.emit(Event::LocalScreenShareStarted);
                             cx.notify();
                         }
 
@@ -1674,6 +1685,7 @@ impl Room {
                     let sid = track_publication.sid();
                     cx.spawn(async move |_, cx| local_participant.unpublish_track(sid, cx).await)
                         .detach_and_log_err(cx);
+                    cx.emit(Event::LocalScreenShareStopped);
                     cx.notify();
                 }
 

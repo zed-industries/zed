@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use crate::Editor;
 use collections::{HashMap, HashSet};
-use gpui::AsyncApp;
+use futures::TryFutureExt;
 use gpui::{App, Entity, Task};
+use gpui::{AsyncApp, FutureExt};
 use language::Buffer;
 use language::Language;
 use lsp::LanguageServerId;
@@ -14,7 +15,6 @@ use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
-use smol::future::FutureExt as _;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
@@ -172,14 +172,10 @@ pub fn lsp_tasks(
             }
             lsp_tasks.into_iter().collect()
         })
-        .race({
-            // `lsp::DEFAULT_LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
-            let timer = cx.background_executor().timer(Duration::from_millis(200));
-            async move {
-                timer.await;
-                log::info!("Timed out waiting for LSP tasks");
-                Vec::new()
-            }
+        .with_timeout(Duration::from_millis(200), &cx.background_executor())
+        .unwrap_or_else(|_| {
+            log::debug!("Timed out waiting for LSP tasks");
+            Vec::new()
         })
         .await
     })

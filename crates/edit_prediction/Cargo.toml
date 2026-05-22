@@ -21,8 +21,9 @@ heapless.workspace = true
 buffer_diff.workspace = true
 client.workspace = true
 clock.workspace = true
+cloud_api_client.workspace = true
 cloud_api_types.workspace = true
-cloud_llm_client.workspace = true
+cloud_llm_client = { workspace = true, features = ["predict-edits"] }
 collections.workspace = true
 copilot.workspace = true
 copilot_ui.workspace = true
@@ -30,6 +31,7 @@ credentials_provider.workspace = true
 db.workspace = true
 edit_prediction_types.workspace = true
 edit_prediction_context.workspace = true
+edit_prediction_metrics.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -71,10 +73,14 @@ zeta_prompt.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["load-grammars"] }
+node_runtime.workspace = true
 clock = { workspace = true, features = ["test-support"] }
 cloud_llm_client = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
@@ -85,3 +91,11 @@ settings = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 
 zlog.workspace = true
+
+[[bench]]
+name = "kept_rate"
+harness = false
+
+[[bench]]
+name = "ts_error_count"
+harness = false

@@ -263,6 +263,7 @@
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
+      "g b": "vim::PushToggleBlockComments",
     },
   },
   {
@@ -319,6 +320,7 @@
       "a": ["vim::PushObject", { "around": true }],
       "g shift-r": ["vim::Paste", { "preserve_clipboard": true }],
       "g c": "vim::ToggleComments",
+      "g b": "vim::ToggleBlockComments",
       "g q": "vim::Rewrap",
       "g w": "vim::Rewrap",
       "g ?": "vim::ConvertToRot13",
@@ -416,7 +418,7 @@
     },
   },
   {
-    "context": "VimControl && vim_mode == helix_normal && !menu",
+    "context": "VimControl && vim_mode == helix_normal && !menu && !BufferSearchBar",
     "bindings": {
       "j": ["vim::Down", { "display_lines": true }],
       "down": ["vim::Down", { "display_lines": true }],
@@ -434,7 +436,7 @@
     },
   },
   {
-    "context": "vim_mode == helix_select && !menu",
+    "context": "vim_mode == helix_select && !menu && !BufferSearchBar",
     "bindings": {
       "escape": "vim::SwitchToHelixNormalMode",
     },
@@ -505,6 +507,7 @@
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
       "shift-h": "pane::ActivatePreviousItem", // not a helix default
+      "g w": "vim::HelixJumpToWord",
       "g .": "vim::HelixGotoLastModification",
       "g o": "editor::ToggleSelectedDiffHunks", // Zed specific
       "g shift-o": "git::ToggleStaged", // Zed specific
@@ -524,6 +527,7 @@
       "space w d": "pane::SplitDown", // not a helix default
 
       // Space mode
+      "space b": "tab_switcher::ToggleAll",
       "space f": "file_finder::Toggle",
       "space k": "editor::Hover",
       "space s": "outline::Toggle",
@@ -542,8 +546,8 @@
       "m": "vim::PushHelixMatch",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
+      "ctrl-s": "editor::SaveLocation",
       "g q": "vim::PushRewrap",
-      "g w": "vim::PushRewrap", // not a helix default & clashes with helix `goto_word`
     },
   },
   {
@@ -792,6 +796,12 @@
     },
   },
   {
+    "context": "vim_operator == gb",
+    "bindings": {
+      "c": "vim::CurrentLine",
+    },
+  },
+  {
     "context": "vim_operator == gR",
     "bindings": {
       "r": "vim::CurrentLine",
@@ -926,6 +936,14 @@
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
+      "space f": "file_finder::Toggle",
+      "space /": "pane::DeploySearch",
+      "space shift-s": "project_symbols::Toggle",
+      "space w h": "workspace::ActivatePaneLeft",
+      "space w j": "workspace::ActivatePaneDown",
+      "space w k": "workspace::ActivatePaneUp",
+      "space w l": "workspace::ActivatePaneRight",
+      "space w q": "pane::CloseActiveItem",
     },
   },
   {
@@ -1014,6 +1032,31 @@
     "context": "OutlinePanel && editing",
     "bindings": {
       "enter": "menu::Cancel",
+    },
+  },
+  {
+    "context": "GitGraph",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraph && !GitGraphSearchBar",
+    "bindings": {
+      "j": "vim::MenuSelectNext",
+      "k": "vim::MenuSelectPrevious",
+      "ctrl-d": "git_graph::ScrollDown",
+      "ctrl-u": "git_graph::ScrollUp",
+      "shift-g": "menu::SelectLast",
+      "g g": "menu::SelectFirst",
     },
   },
   {
@@ -1110,10 +1153,24 @@
   },
   {
     "context": "NotebookEditor > Editor && VimControl && vim_mode == normal",
-
     "bindings": {
       "j": "notebook::NotebookMoveDown",
       "k": "notebook::NotebookMoveUp",
+      "escape": "notebook::EnterCommandMode",
+    },
+  },
+  {
+    "context": "NotebookEditor && notebook_mode == command",
+    "bindings": {
+      "j": "menu::SelectNext",
+      "k": "menu::SelectPrevious",
+      "g g": "menu::SelectFirst",
+      "shift-g": "menu::SelectLast",
+      "i": "notebook::EnterEditMode",
+      "a": "notebook::EnterEditMode",
+      "enter": "notebook::EnterEditMode",
+      "shift-enter": "notebook::RunAndAdvance",
+      "ctrl-enter": "notebook::Run",
     },
   },
   {
@@ -1126,6 +1183,11 @@
       "g g": "menu::SelectFirst",
       "shift-g": "menu::SelectLast",
       "/": "agents_sidebar::FocusSidebarFilter",
+      "d d": "agent::RemoveSelectedThread",
+      "o": "agents_sidebar::NewThreadInGroup",
+      "shift-o": "agents_sidebar::NewThreadInGroup",
+      "] p": "multi_workspace::NextProject",
+      "[ p": "multi_workspace::PreviousProject",
       "z a": "editor::ToggleFold",
       "z c": "menu::SelectParent",
       "z o": "menu::SelectChild",
@@ -1141,6 +1203,20 @@
       "/": "vim::SwitchToInsertMode",
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

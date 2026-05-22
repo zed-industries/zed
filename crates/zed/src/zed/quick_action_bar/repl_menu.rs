@@ -1,4 +1,5 @@
 use gpui::ElementId;
+use gpui::TaskExt;
 use gpui::{AnyElement, Entity};
 use picker::Picker;
 use repl::{

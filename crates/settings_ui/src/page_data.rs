@@ -1,4 +1,3 @@
-use feature_flags::{AgentV2FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{Action as _, App};
 use itertools::Itertools as _;
 use settings::{
@@ -7,13 +6,14 @@ use settings::{
 };
 use std::sync::{Arc, OnceLock};
 use strum::{EnumMessage, IntoDiscriminant as _, VariantArray};
+use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -62,8 +62,8 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    vec![
-        general_page(),
+    let mut pages = vec![
+        general_page(cx),
         appearance_page(),
         keymap_page(),
         editor_page(),
@@ -77,37 +77,63 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-    ]
+    ];
+
+    use feature_flags::FeatureFlagAppExt as _;
+    if cx.is_staff() || cfg!(debug_assertions) {
+        pages.push(developer_page());
+    }
+
+    pages
 }
 
-fn general_page() -> SettingsPage {
-    fn general_settings_section() -> [SettingsPageItem; 8] {
-        [
-            SettingsPageItem::SectionHeader("General Settings"),
+fn developer_page() -> SettingsPage {
+    SettingsPage {
+        title: "Developer",
+        items: Box::new([
+            SettingsPageItem::SectionHeader("Feature Flags"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Feature Flags".into(),
+                r#type: Default::default(),
+                description: None,
+                json_path: Some("feature_flags"),
+                in_json: true,
+                files: USER,
+                render: crate::pages::render_feature_flags_page,
+            }),
+            SettingsPageItem::SectionHeader("Instrumentation"),
             SettingsPageItem::SettingItem(SettingItem {
-                files: PROJECT,
-                title: "Project Name",
-                description: "The displayed name of this project. If left empty, the root directory name will be displayed.",
+                title: "Performance Profiler",
+                description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
                 field: Box::new(SettingField {
-                    json_path: Some("project_name"),
+                    json_path: Some("instrumentation.performance_profiler.enabled"),
                     pick: |settings_content| {
                         settings_content
-                            .project
-                            .worktree
-                            .project_name
+                            .instrumentation
                             .as_ref()
-                            .or(DEFAULT_EMPTY_STRING)
+                            .and_then(|i| i.performance_profiler.as_ref())
+                            .and_then(|p| p.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
-                        settings_content.project.worktree.project_name =
-                            value.filter(|name| !name.is_empty());
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .instrumentation
+                            .get_or_insert_default()
+                            .performance_profiler
+                            .get_or_insert_default()
+                            .enabled = value;
                     },
                 }),
-                metadata: Some(Box::new(SettingsFieldMetadata {
-                    placeholder: Some("Project Name"),
-                    ..Default::default()
-                })),
+                metadata: None,
+                files: USER,
             }),
+        ]),
+    }
+}
+
+fn general_page(cx: &App) -> SettingsPage {
+    fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
+        vec![
+            SettingsPageItem::SectionHeader("General Settings"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "When Closing With No Tabs",
                 description: "What to do when using the 'close active item' action with no tabs.",
@@ -119,7 +145,7 @@ fn general_page() -> SettingsPage {
                             .when_closing_with_no_tabs
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.when_closing_with_no_tabs = value;
                     },
                 }),
@@ -134,7 +160,7 @@ fn general_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.on_last_window_closed.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.on_last_window_closed = value;
                     },
                 }),
@@ -149,7 +175,7 @@ fn general_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.use_system_path_prompts.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.use_system_path_prompts = value;
                     },
                 }),
@@ -162,7 +188,7 @@ fn general_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("use_system_prompts"),
                     pick: |settings_content| settings_content.workspace.use_system_prompts.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.use_system_prompts = value;
                     },
                 }),
@@ -175,7 +201,7 @@ fn general_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("redact_private_values"),
                     pick: |settings_content| settings_content.editor.redact_private_values.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.redact_private_values = value;
                     },
                 }),
@@ -191,13 +217,34 @@ fn general_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.project.worktree.private_files.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.worktree.private_files = value;
                         },
                     }
                     .unimplemented(),
                 ),
                 metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "CLI Default Open Behavior",
+                description: "How `zed <path>` opens directories when no flag is specified.",
+                field: Box::new(SettingField {
+                    json_path: Some("cli_default_open_behavior"),
+                    pick: |settings_content| {
+                        settings_content
+                            .workspace
+                            .cli_default_open_behavior
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.cli_default_open_behavior = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER,
             }),
         ]
@@ -216,7 +263,7 @@ fn general_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|session| session.trust_all_worktrees.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .session
                             .get_or_insert_default()
@@ -243,7 +290,7 @@ fn general_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|session| session.restore_unsaved_buffers.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .session
                             .get_or_insert_default()
@@ -259,7 +306,7 @@ fn general_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("restore_on_startup"),
                     pick: |settings_content| settings_content.workspace.restore_on_startup.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.restore_on_startup = value;
                     },
                 }),
@@ -280,7 +327,7 @@ fn general_page() -> SettingsPage {
                     SettingField {
                         json_path: Some("preview_channel_settings"),
                         pick: |settings_content| Some(settings_content),
-                        write: |_settings_content, _value| {},
+                        write: |_settings_content, _value, _| {},
                     }
                     .unimplemented(),
                 ),
@@ -294,7 +341,7 @@ fn general_page() -> SettingsPage {
                     SettingField {
                         json_path: Some("settings_profiles"),
                         pick: |settings_content| Some(settings_content),
-                        write: |_settings_content, _value| {},
+                        write: |_settings_content, _value, _| {},
                     }
                     .unimplemented(),
                 ),
@@ -317,7 +364,7 @@ fn general_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|telemetry| telemetry.diagnostics.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .telemetry
                             .get_or_insert_default()
@@ -338,7 +385,7 @@ fn general_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|telemetry| telemetry.metrics.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.telemetry.get_or_insert_default().metrics = value;
                     },
                 }),
@@ -357,7 +404,7 @@ fn general_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("auto_update"),
                     pick: |settings_content| settings_content.auto_update.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.auto_update = value;
                     },
                 }),
@@ -370,13 +417,15 @@ fn general_page() -> SettingsPage {
     SettingsPage {
         title: "General",
         items: concat_sections!(
-            general_settings_section(),
+            @vec,
+            general_settings_section(cx),
             security_section(),
             workspace_restoration_section(),
             scoped_settings_section(),
             privacy_section(),
             auto_update_section(),
-        ),
+        )
+        .into(),
     }
 }
 
@@ -399,7 +448,7 @@ fn appearance_page() -> SettingsPage {
                                     .as_ref()?
                                     .discriminant() as usize])
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, app: &App| {
                             let Some(value) = value else {
                                 settings_content.theme.theme = None;
                                 return;
@@ -413,7 +462,13 @@ fn appearance_page() -> SettingsPage {
                                             match mode {
                                                 theme_settings::ThemeAppearanceMode::Light => light.clone(),
                                                 theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::System => {
+                                                    if SystemAppearance::global(app).is_light() {
+                                                        light.clone()
+                                                    } else {
+                                                        dark.clone()
+                                                    }
+                                                }
                                             }
                                         },
                                     };
@@ -454,7 +509,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -482,7 +537,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -508,7 +563,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -534,7 +589,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -567,7 +622,7 @@ fn appearance_page() -> SettingsPage {
                                     .as_ref()?
                                     .discriminant() as usize])
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, app| {
                             let Some(value) = value else {
                                 settings_content.theme.icon_theme = None;
                                 return;
@@ -583,7 +638,13 @@ fn appearance_page() -> SettingsPage {
                                             match mode {
                                                 theme_settings::ThemeAppearanceMode::Light => light.clone(),
                                                 theme_settings::ThemeAppearanceMode::Dark => dark.clone(),
-                                                theme_settings::ThemeAppearanceMode::System => dark.clone(), // no cx, can't determine correct choice
+                                                theme_settings::ThemeAppearanceMode::System => {
+                                                    if SystemAppearance::global(app).is_light() {
+                                                        light.clone()
+                                                    } else {
+                                                        dark.clone()
+                                                    }
+                                                }
                                             }
                                         },
                                     };
@@ -624,7 +685,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -652,7 +713,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -678,7 +739,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -704,7 +765,7 @@ fn appearance_page() -> SettingsPage {
                                             _ => None
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -734,7 +795,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("buffer_font_family"),
                     pick: |settings_content| settings_content.theme.buffer_font_family.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.buffer_font_family = value;
                     },
                 }),
@@ -747,7 +808,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("buffer_font_size"),
                     pick: |settings_content| settings_content.theme.buffer_font_size.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.buffer_font_size = value;
                     },
                 }),
@@ -760,7 +821,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("buffer_font_weight"),
                     pick: |settings_content| settings_content.theme.buffer_font_weight.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.buffer_font_weight = value;
                     },
                 }),
@@ -784,7 +845,7 @@ fn appearance_page() -> SettingsPage {
                                     as usize],
                             )
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             let Some(value) = value else {
                                 settings_content.theme.buffer_line_height = None;
                                 return;
@@ -839,7 +900,7 @@ fn appearance_page() -> SettingsPage {
                                     Some(settings::BufferLineHeight::Custom(value)) => Some(value),
                                     _ => None,
                                 },
-                                write: |settings_content, value| {
+                                write: |settings_content, value, _| {
                                     let Some(value) = value else {
                                         return;
                                     };
@@ -866,7 +927,7 @@ fn appearance_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.theme.buffer_font_features.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.theme.buffer_font_features = value;
                         },
                     }
@@ -884,7 +945,7 @@ fn appearance_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.theme.buffer_font_fallbacks.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.theme.buffer_font_fallbacks = value;
                         },
                     }
@@ -904,7 +965,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("ui_font_family"),
                     pick: |settings_content| settings_content.theme.ui_font_family.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.ui_font_family = value;
                     },
                 }),
@@ -917,7 +978,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("ui_font_size"),
                     pick: |settings_content| settings_content.theme.ui_font_size.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.ui_font_size = value;
                     },
                 }),
@@ -930,7 +991,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("ui_font_weight"),
                     pick: |settings_content| settings_content.theme.ui_font_weight.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.ui_font_weight = value;
                     },
                 }),
@@ -945,7 +1006,7 @@ fn appearance_page() -> SettingsPage {
                     SettingField {
                         json_path: Some("ui_font_features"),
                         pick: |settings_content| settings_content.theme.ui_font_features.as_ref(),
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.theme.ui_font_features = value;
                         },
                     }
@@ -961,7 +1022,7 @@ fn appearance_page() -> SettingsPage {
                     SettingField {
                         json_path: Some("ui_font_fallbacks"),
                         pick: |settings_content| settings_content.theme.ui_font_fallbacks.as_ref(),
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.theme.ui_font_fallbacks = value;
                         },
                     }
@@ -987,7 +1048,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .or(settings_content.theme.ui_font_size.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.agent_ui_font_size = value;
                     },
                 }),
@@ -1006,7 +1067,7 @@ fn appearance_page() -> SettingsPage {
                             .as_ref()
                             .or(settings_content.theme.buffer_font_size.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.agent_buffer_font_size = value;
                     },
                 }),
@@ -1027,7 +1088,7 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.text_rendering_mode.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.text_rendering_mode = value;
                     },
                 }),
@@ -1046,7 +1107,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("multi_cursor_modifier"),
                     pick: |settings_content| settings_content.editor.multi_cursor_modifier.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.multi_cursor_modifier = value;
                     },
                 }),
@@ -1059,7 +1120,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("cursor_blink"),
                     pick: |settings_content| settings_content.editor.cursor_blink.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.cursor_blink = value;
                     },
                 }),
@@ -1072,7 +1133,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("cursor_shape"),
                     pick: |settings_content| settings_content.editor.cursor_shape.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.cursor_shape = value;
                     },
                 }),
@@ -1084,9 +1145,9 @@ fn appearance_page() -> SettingsPage {
                 description: "When to hide the mouse cursor.",
                 field: Box::new(SettingField {
                     json_path: Some("hide_mouse"),
-                    pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
-                    write: |settings_content, value| {
-                        settings_content.editor.hide_mouse = value;
+                    pick: |settings_content| settings_content.hide_mouse.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.hide_mouse = value;
                     },
                 }),
                 metadata: None,
@@ -1104,7 +1165,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("unnecessary_code_fade"),
                     pick: |settings_content| settings_content.theme.unnecessary_code_fade.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.theme.unnecessary_code_fade = value;
                     },
                 }),
@@ -1119,7 +1180,7 @@ fn appearance_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.current_line_highlight.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.current_line_highlight = value;
                     },
                 }),
@@ -1132,7 +1193,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("selection_highlight"),
                     pick: |settings_content| settings_content.editor.selection_highlight.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.selection_highlight = value;
                     },
                 }),
@@ -1145,7 +1206,7 @@ fn appearance_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("rounded_selection"),
                     pick: |settings_content| settings_content.editor.rounded_selection.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.rounded_selection = value;
                     },
                 }),
@@ -1163,7 +1224,7 @@ fn appearance_page() -> SettingsPage {
                             .minimum_contrast_for_highlights
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.minimum_contrast_for_highlights = value;
                     },
                 }),
@@ -1189,7 +1250,7 @@ fn appearance_page() -> SettingsPage {
                             .show_wrap_guides
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project
                             .all_languages
@@ -1215,7 +1276,7 @@ fn appearance_page() -> SettingsPage {
                                 .wrap_guides
                                 .as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.all_languages.defaults.wrap_guides = value;
                         },
                     }
@@ -1279,7 +1340,7 @@ fn keymap_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("base_keymap"),
                     pick: |settings_content| settings_content.base_keymap.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.base_keymap = value;
                     },
                 }),
@@ -1353,7 +1414,7 @@ fn editor_page() -> SettingsPage {
                                     as usize],
                             )
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             let Some(value) = value else {
                                 settings_content.workspace.autosave = None;
                                 return;
@@ -1409,7 +1470,7 @@ fn editor_page() -> SettingsPage {
                                     }) => Some(milliseconds),
                                     _ => None,
                                 },
-                                write: |settings_content, value| {
+                                write: |settings_content, value, _| {
                                     let Some(value) = value else {
                                         settings_content.workspace.autosave = None;
                                         return;
@@ -1446,7 +1507,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.which_key.get_or_insert_default().enabled = value;
                     },
                 }),
@@ -1464,7 +1525,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|settings| settings.delay_ms.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.which_key.get_or_insert_default().delay_ms = value;
                     },
                 }),
@@ -1485,7 +1546,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.double_click_in_multibuffer.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.double_click_in_multibuffer = value;
                     },
                 }),
@@ -1498,7 +1559,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("expand_excerpt_lines"),
                     pick: |settings_content| settings_content.editor.expand_excerpt_lines.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.expand_excerpt_lines = value;
                     },
                 }),
@@ -1511,7 +1572,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("excerpt_context_lines"),
                     pick: |settings_content| settings_content.editor.excerpt_context_lines.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.excerpt_context_lines = value;
                     },
                 }),
@@ -1531,7 +1592,7 @@ fn editor_page() -> SettingsPage {
                                 outline_panel.expand_outlines_with_depth.as_ref()
                             })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -1547,7 +1608,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("diff_view_style"),
                     pick: |settings_content| settings_content.editor.diff_view_style.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.diff_view_style = value;
                     },
                 }),
@@ -1562,7 +1623,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.minimum_split_diff_width.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.minimum_split_diff_width = value;
                     },
                 }),
@@ -1572,7 +1633,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn scrolling_section() -> [SettingsPageItem; 8] {
+    fn scrolling_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Scrolling"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1583,7 +1644,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.scroll_beyond_last_line.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.scroll_beyond_last_line = value;
                     },
                 }),
@@ -1598,7 +1659,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.vertical_scroll_margin.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.vertical_scroll_margin = value;
                     },
                 }),
@@ -1613,7 +1674,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.horizontal_scroll_margin.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.horizontal_scroll_margin = value;
                     },
                 }),
@@ -1626,8 +1687,21 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("scroll_sensitivity"),
                     pick: |settings_content| settings_content.editor.scroll_sensitivity.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.scroll_sensitivity = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Mouse Wheel Zoom",
+                description: "Whether to zoom the editor font size with the mouse wheel while holding the primary modifier key.",
+                field: Box::new(SettingField {
+                    json_path: Some("mouse_wheel_zoom"),
+                    pick: |settings_content| settings_content.editor.mouse_wheel_zoom.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.editor.mouse_wheel_zoom = value;
                     },
                 }),
                 metadata: None,
@@ -1641,7 +1715,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.fast_scroll_sensitivity.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.fast_scroll_sensitivity = value;
                     },
                 }),
@@ -1654,7 +1728,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("autoscroll_on_clicks"),
                     pick: |settings_content| settings_content.editor.autoscroll_on_clicks.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.autoscroll_on_clicks = value;
                     },
                 }),
@@ -1673,7 +1747,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|sticky_scroll| sticky_scroll.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .sticky_scroll
@@ -1696,7 +1770,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("auto_signature_help"),
                     pick: |settings_content| settings_content.editor.auto_signature_help.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.auto_signature_help = value;
                     },
                 }),
@@ -1714,7 +1788,7 @@ fn editor_page() -> SettingsPage {
                             .show_signature_help_after_edits
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.show_signature_help_after_edits = value;
                     },
                 }),
@@ -1727,7 +1801,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("snippet_sort_order"),
                     pick: |settings_content| settings_content.editor.snippet_sort_order.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.snippet_sort_order = value;
                     },
                 }),
@@ -1737,7 +1811,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn hover_popover_section() -> [SettingsPageItem; 3] {
+    fn hover_popover_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Hover Popover"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1746,7 +1820,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("hover_popover_enabled"),
                     pick: |settings_content| settings_content.editor.hover_popover_enabled.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.hover_popover_enabled = value;
                     },
                 }),
@@ -1758,10 +1832,39 @@ fn editor_page() -> SettingsPage {
                 title: "Delay",
                 description: "Time to wait in milliseconds before showing the informational hover box.",
                 field: Box::new(SettingField {
-                    json_path: Some("hover_popover_enabled"),
+                    json_path: Some("hover_popover_delay"),
                     pick: |settings_content| settings_content.editor.hover_popover_delay.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.hover_popover_delay = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sticky",
+                description: "Whether the hover popover sticks when the mouse moves toward it, allowing interaction with its contents.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_sticky"),
+                    pick: |settings_content| settings_content.editor.hover_popover_sticky.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.editor.hover_popover_sticky = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            // todo(settings ui): add units to this number input
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hiding Delay",
+                description: "Time to wait in milliseconds before hiding the hover popover after the mouse moves away.",
+                field: Box::new(SettingField {
+                    json_path: Some("hover_popover_hiding_delay"),
+                    pick: |settings_content| {
+                        settings_content.editor.hover_popover_hiding_delay.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.hover_popover_hiding_delay = value;
                     },
                 }),
                 metadata: None,
@@ -1785,7 +1888,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|drag_and_drop| drag_and_drop.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .drag_and_drop_selection
@@ -1808,7 +1911,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|drag_and_drop| drag_and_drop.delay.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .drag_and_drop_selection
@@ -1822,7 +1925,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn gutter_section() -> [SettingsPageItem; 8] {
+    fn gutter_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Gutter"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1837,7 +1940,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|gutter| gutter.line_numbers.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .gutter
@@ -1854,7 +1957,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("relative_line_numbers"),
                     pick: |settings_content| settings_content.editor.relative_line_numbers.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.relative_line_numbers = value;
                     },
                 }),
@@ -1873,7 +1976,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|gutter| gutter.runnables.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .gutter
@@ -1896,12 +1999,35 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|gutter| gutter.breakpoints.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .gutter
                             .get_or_insert_default()
                             .breakpoints = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Bookmarks",
+                description: "Show bookmarks in the gutter.",
+                field: Box::new(SettingField {
+                    json_path: Some("gutter.bookmarks"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .as_ref()
+                            .and_then(|gutter| gutter.bookmarks.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .gutter
+                            .get_or_insert_default()
+                            .bookmarks = value;
                     },
                 }),
                 metadata: None,
@@ -1919,7 +2045,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|gutter| gutter.folds.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.gutter.get_or_insert_default().folds = value;
                     },
                 }),
@@ -1938,7 +2064,7 @@ fn editor_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|gutter| gutter.min_line_number_digits.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .gutter
@@ -1955,7 +2081,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("inline_code_actions"),
                     pick: |settings_content| settings_content.editor.inline_code_actions.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.inline_code_actions = value;
                     },
                 }),
@@ -1976,7 +2102,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.scrollbar.as_ref()?.show.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -1995,7 +2121,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.scrollbar.as_ref()?.cursors.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2019,7 +2145,7 @@ fn editor_page() -> SettingsPage {
                             .git_diff
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2043,7 +2169,7 @@ fn editor_page() -> SettingsPage {
                             .search_results
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2067,7 +2193,7 @@ fn editor_page() -> SettingsPage {
                             .selected_text
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2091,7 +2217,7 @@ fn editor_page() -> SettingsPage {
                             .selected_symbol
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2115,7 +2241,7 @@ fn editor_page() -> SettingsPage {
                             .diagnostics
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2141,7 +2267,7 @@ fn editor_page() -> SettingsPage {
                             .horizontal
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2169,7 +2295,7 @@ fn editor_page() -> SettingsPage {
                             .vertical
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .scrollbar
@@ -2196,7 +2322,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.minimap.as_ref()?.show.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.minimap.get_or_insert_default().show = value;
                     },
                 }),
@@ -2216,7 +2342,7 @@ fn editor_page() -> SettingsPage {
                             .display_in
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .minimap
@@ -2235,7 +2361,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.minimap.as_ref()?.thumb.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .minimap
@@ -2259,7 +2385,7 @@ fn editor_page() -> SettingsPage {
                             .thumb_border
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .minimap
@@ -2283,7 +2409,7 @@ fn editor_page() -> SettingsPage {
                             .and_then(|minimap| minimap.current_line_highlight.as_ref())
                             .or(settings_content.editor.current_line_highlight.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .minimap
@@ -2307,7 +2433,7 @@ fn editor_page() -> SettingsPage {
                             .max_width_columns
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .minimap
@@ -2337,7 +2463,7 @@ fn editor_page() -> SettingsPage {
                             .breadcrumbs
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .toolbar
@@ -2361,7 +2487,7 @@ fn editor_page() -> SettingsPage {
                             .quick_actions
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .toolbar
@@ -2385,7 +2511,7 @@ fn editor_page() -> SettingsPage {
                             .selections_menu
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .toolbar
@@ -2409,7 +2535,7 @@ fn editor_page() -> SettingsPage {
                             .agent_review
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .toolbar
@@ -2433,7 +2559,7 @@ fn editor_page() -> SettingsPage {
                             .code_actions
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .toolbar
@@ -2447,7 +2573,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 13] {
+    fn vim_settings_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2456,7 +2582,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("vim.default_mode"),
                     pick: |settings_content| settings_content.vim.as_ref()?.default_mode.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.vim.get_or_insert_default().default_mode = value;
                     },
                 }),
@@ -2475,7 +2601,7 @@ fn editor_page() -> SettingsPage {
                             .toggle_relative_line_numbers
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2493,7 +2619,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.vim.as_ref()?.use_system_clipboard.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2511,7 +2637,7 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.vim.as_ref()?.use_smartcase_find.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2527,7 +2653,7 @@ fn editor_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("vim.gdefault"),
                     pick: |settings_content| settings_content.vim.as_ref()?.gdefault.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.vim.get_or_insert_default().gdefault = value;
                     },
                 }),
@@ -2546,7 +2672,7 @@ fn editor_page() -> SettingsPage {
                             .highlight_on_yank_duration
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2564,11 +2690,33 @@ fn editor_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.vim.as_ref()?.use_regex_search.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
                             .use_regex_search = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Edit Predictions in Normal Mode",
+                description: "Whether edit predictions are shown in normal mode. By default, edit predictions are only shown in insert and replace modes.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.show_edit_predictions_in_normal_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .vim
+                            .as_ref()?
+                            .show_edit_predictions_in_normal_mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .show_edit_predictions_in_normal_mode = value;
                     },
                 }),
                 metadata: None,
@@ -2588,7 +2736,7 @@ fn editor_page() -> SettingsPage {
                             .normal
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2614,7 +2762,7 @@ fn editor_page() -> SettingsPage {
                             .insert
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2640,7 +2788,7 @@ fn editor_page() -> SettingsPage {
                             .replace
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2666,7 +2814,7 @@ fn editor_page() -> SettingsPage {
                             .visual
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .vim
                             .get_or_insert_default()
@@ -2687,7 +2835,7 @@ fn editor_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.vim.as_ref()?.custom_digraphs.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.vim.get_or_insert_default().custom_digraphs = value;
                         },
                     }
@@ -2734,7 +2882,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.project.all_languages.file_types.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.all_languages.file_types = value;
                         },
                     }
@@ -2757,7 +2905,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.diagnostics_max_severity.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.diagnostics_max_severity = value;
                     },
                 }),
@@ -2776,7 +2924,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .include_warnings
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2806,7 +2954,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .enabled
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2832,7 +2980,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .update_debounce_ms
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2858,7 +3006,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .padding
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2884,7 +3032,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .min_column
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2916,7 +3064,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .enabled
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2943,7 +3091,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .debounce_ms
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -2969,7 +3117,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.lsp_highlight_debounce.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.lsp_highlight_debounce = value;
                     },
                 }),
@@ -3039,7 +3187,7 @@ fn search_and_files_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.search.as_ref()?.whole_word.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .search
@@ -3063,7 +3211,7 @@ fn search_and_files_page() -> SettingsPage {
                             .case_sensitive
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .search
@@ -3080,7 +3228,7 @@ fn search_and_files_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("use_smartcase_search"),
                     pick: |settings_content| settings_content.editor.use_smartcase_search.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.use_smartcase_search = value;
                     },
                 }),
@@ -3100,7 +3248,7 @@ fn search_and_files_page() -> SettingsPage {
                             .include_ignored
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .search
@@ -3119,7 +3267,7 @@ fn search_and_files_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.search.as_ref()?.regex.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.search.get_or_insert_default().regex = value;
                     },
                 }),
@@ -3132,7 +3280,7 @@ fn search_and_files_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("search_wrap"),
                     pick: |settings_content| settings_content.editor.search_wrap.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.search_wrap = value;
                     },
                 }),
@@ -3151,7 +3299,7 @@ fn search_and_files_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|search| search.center_on_match.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .search
@@ -3173,7 +3321,7 @@ fn search_and_files_page() -> SettingsPage {
                             .seed_search_query_from_cursor
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.seed_search_query_from_cursor = value;
                     },
                 }),
@@ -3199,7 +3347,7 @@ fn search_and_files_page() -> SettingsPage {
                             .include_ignored
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .file_finder
                             .get_or_insert_default()
@@ -3217,7 +3365,7 @@ fn search_and_files_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.file_finder.as_ref()?.file_icons.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .file_finder
                             .get_or_insert_default()
@@ -3239,7 +3387,7 @@ fn search_and_files_page() -> SettingsPage {
                             .modal_max_width
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .file_finder
                             .get_or_insert_default()
@@ -3261,7 +3409,7 @@ fn search_and_files_page() -> SettingsPage {
                             .skip_focus_for_active_in_search
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .file_finder
                             .get_or_insert_default()
@@ -3290,7 +3438,7 @@ fn search_and_files_page() -> SettingsPage {
                                 .file_scan_exclusions
                                 .as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.worktree.file_scan_exclusions = value;
                         },
                     }
@@ -3312,7 +3460,7 @@ fn search_and_files_page() -> SettingsPage {
                                 .file_scan_inclusions
                                 .as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.worktree.file_scan_inclusions = value;
                         },
                     }
@@ -3327,13 +3475,9 @@ fn search_and_files_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("scan_symlinks"),
                     pick: |settings_content| {
-                        settings_content
-                            .project
-                            .worktree
-                            .scan_symlinks
-                            .as_ref()
+                        settings_content.project.worktree.scan_symlinks.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.project.worktree.scan_symlinks = value;
                     },
                 }),
@@ -3348,7 +3492,7 @@ fn search_and_files_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.restore_on_file_reopen.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.restore_on_file_reopen = value;
                     },
                 }),
@@ -3363,7 +3507,7 @@ fn search_and_files_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.close_on_file_delete.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.close_on_file_delete = value;
                     },
                 }),
@@ -3380,7 +3524,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 10] {
+    fn status_bar_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3391,7 +3535,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.button.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -3413,7 +3557,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .active_language_button
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .status_bar
                             .get_or_insert_default()
@@ -3435,7 +3579,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .active_encoding_button
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .status_bar
                             .get_or_insert_default()
@@ -3457,11 +3601,33 @@ fn window_and_layout_page() -> SettingsPage {
                             .cursor_position_button
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .status_bar
                             .get_or_insert_default()
                             .cursor_position_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Endings Button",
+                description: "Show the active line endings button in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("status_bar.line_endings_button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .line_endings_button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .line_endings_button = value;
                     },
                 }),
                 metadata: None,
@@ -3473,7 +3639,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("terminal.button"),
                     pick: |settings_content| settings_content.terminal.as_ref()?.button.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().button = value;
                     },
                 }),
@@ -3486,7 +3652,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("diagnostics.button"),
                     pick: |settings_content| settings_content.diagnostics.as_ref()?.button.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.diagnostics.get_or_insert_default().button = value;
                     },
                 }),
@@ -3501,7 +3667,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.editor.search.as_ref()?.button.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .editor
                             .search
@@ -3518,7 +3684,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("debugger.button"),
                     pick: |settings_content| settings_content.debugger.as_ref()?.button.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.debugger.get_or_insert_default().button = value;
                     },
                 }),
@@ -3537,7 +3703,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_active_file
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .status_bar
                             .get_or_insert_default()
@@ -3554,22 +3720,22 @@ fn window_and_layout_page() -> SettingsPage {
         [
             SettingsPageItem::SectionHeader("Title Bar"),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Branch Icon",
-                description: "Show the branch icon beside branch switcher in the titlebar.",
+                title: "Show Branch Status Icon",
+                description: "Show git status indicators on the branch icon in the titlebar.",
                 field: Box::new(SettingField {
-                    json_path: Some("title_bar.show_branch_icon"),
+                    json_path: Some("title_bar.show_branch_status_icon"),
                     pick: |settings_content| {
                         settings_content
                             .title_bar
                             .as_ref()?
-                            .show_branch_icon
+                            .show_branch_status_icon
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
-                            .show_branch_icon = value;
+                            .show_branch_status_icon = value;
                     },
                 }),
                 metadata: None,
@@ -3587,7 +3753,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_branch_name
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3609,7 +3775,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_project_items
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3631,7 +3797,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_onboarding_banner
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3649,7 +3815,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.title_bar.as_ref()?.show_sign_in.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3667,7 +3833,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.title_bar.as_ref()?.show_user_menu.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3689,7 +3855,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_user_picture
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3707,7 +3873,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.title_bar.as_ref()?.show_menus.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .title_bar
                             .get_or_insert_default()
@@ -3736,7 +3902,7 @@ fn window_and_layout_page() -> SettingsPage {
                                     as usize],
                             )
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             let Some(value) = value else {
                                 settings_content
                                     .title_bar
@@ -3816,7 +3982,7 @@ fn window_and_layout_page() -> SettingsPage {
                                         }
                                         _ => DEFAULT_EMPTY_STRING,
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         settings_content
                                             .title_bar
                                             .get_or_insert_default()
@@ -3845,7 +4011,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("tab_bar.show"),
                     pick: |settings_content| settings_content.tab_bar.as_ref()?.show.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.tab_bar.get_or_insert_default().show = value;
                     },
                 }),
@@ -3858,7 +4024,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("tabs.git_status"),
                     pick: |settings_content| settings_content.tabs.as_ref()?.git_status.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.tabs.get_or_insert_default().git_status = value;
                     },
                 }),
@@ -3871,7 +4037,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("tabs.file_icons"),
                     pick: |settings_content| settings_content.tabs.as_ref()?.file_icons.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.tabs.get_or_insert_default().file_icons = value;
                     },
                 }),
@@ -3886,7 +4052,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.tabs.as_ref()?.close_position.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.tabs.get_or_insert_default().close_position = value;
                     },
                 }),
@@ -3903,7 +4069,7 @@ fn window_and_layout_page() -> SettingsPage {
                     SettingField {
                         json_path: Some("max_tabs"),
                         pick: |settings_content| settings_content.workspace.max_tabs.as_ref(),
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.workspace.max_tabs = value;
                         },
                     }
@@ -3923,7 +4089,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_nav_history_buttons
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tab_bar
                             .get_or_insert_default()
@@ -3945,7 +4111,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_tab_bar_buttons
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tab_bar
                             .get_or_insert_default()
@@ -3967,7 +4133,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .show_pinned_tabs_in_separate_row
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tab_bar
                             .get_or_insert_default()
@@ -3991,7 +4157,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.tabs.as_ref()?.activate_on_close.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tabs
                             .get_or_insert_default()
@@ -4009,7 +4175,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.tabs.as_ref()?.show_diagnostics.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tabs
                             .get_or_insert_default()
@@ -4027,7 +4193,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.tabs.as_ref()?.show_close_button.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .tabs
                             .get_or_insert_default()
@@ -4051,7 +4217,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.preview_tabs.as_ref()?.enabled.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4073,7 +4239,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_preview_from_project_panel
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4095,7 +4261,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_preview_from_file_finder
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4117,7 +4283,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_preview_from_multibuffer
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4139,7 +4305,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_preview_multibuffer_from_code_navigation
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4161,7 +4327,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_preview_file_from_code_navigation
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4183,7 +4349,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .enable_keep_preview_on_code_navigation
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .preview_tabs
                             .get_or_insert_default()
@@ -4205,7 +4371,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("bottom_dock_layout"),
                     pick: |settings_content| settings_content.workspace.bottom_dock_layout.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.bottom_dock_layout = value;
                     },
                 }),
@@ -4226,7 +4392,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .left_padding
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .centered_layout
@@ -4250,7 +4416,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .right_padding
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .centered_layout
@@ -4272,7 +4438,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|s| s.enabled.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .focus_follows_mouse
@@ -4295,7 +4461,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .as_ref()
                             .and_then(|s| s.debounce_ms.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .focus_follows_mouse
@@ -4321,7 +4487,7 @@ fn window_and_layout_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.workspace.use_system_window_tabs.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.use_system_window_tabs = value;
                     },
                 }),
@@ -4334,7 +4500,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("window_decorations"),
                     pick: |settings_content| settings_content.workspace.window_decorations.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.window_decorations = value;
                     },
                 }),
@@ -4360,7 +4526,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .inactive_opacity
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .active_pane_modifiers
@@ -4384,7 +4550,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .border_size
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .workspace
                             .active_pane_modifiers
@@ -4401,7 +4567,7 @@ fn window_and_layout_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("zoomed_padding"),
                     pick: |settings_content| settings_content.workspace.zoomed_padding.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.zoomed_padding = value;
                     },
                 }),
@@ -4425,7 +4591,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .pane_split_direction_vertical
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.pane_split_direction_vertical = value;
                     },
                 }),
@@ -4443,7 +4609,7 @@ fn window_and_layout_page() -> SettingsPage {
                             .pane_split_direction_horizontal
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.pane_split_direction_horizontal = value;
                     },
                 }),
@@ -4470,7 +4636,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 28] {
+    fn project_panel_section() -> [SettingsPageItem; 29] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4479,7 +4645,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("project_panel.dock"),
                     pick: |settings_content| settings_content.project_panel.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.project_panel.get_or_insert_default().dock = value;
                     },
                 }),
@@ -4498,7 +4664,7 @@ fn panels_page() -> SettingsPage {
                             .default_width
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4520,7 +4686,7 @@ fn panels_page() -> SettingsPage {
                             .hide_gitignore
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4542,7 +4708,7 @@ fn panels_page() -> SettingsPage {
                             .entry_spacing
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4560,7 +4726,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.file_icons.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4582,7 +4748,7 @@ fn panels_page() -> SettingsPage {
                             .folder_icons
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4600,7 +4766,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.git_status.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4622,7 +4788,7 @@ fn panels_page() -> SettingsPage {
                             .indent_size
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4644,7 +4810,7 @@ fn panels_page() -> SettingsPage {
                             .auto_reveal_entries
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4666,7 +4832,7 @@ fn panels_page() -> SettingsPage {
                             .starts_open
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4688,7 +4854,7 @@ fn panels_page() -> SettingsPage {
                             .auto_fold_dirs
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4710,7 +4876,7 @@ fn panels_page() -> SettingsPage {
                             .bold_folder_labels
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4736,7 +4902,7 @@ fn panels_page() -> SettingsPage {
                                 .as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4762,7 +4928,7 @@ fn panels_page() -> SettingsPage {
                             .horizontal_scroll
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4786,7 +4952,7 @@ fn panels_page() -> SettingsPage {
                             .show_diagnostics
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4808,7 +4974,7 @@ fn panels_page() -> SettingsPage {
                             .diagnostic_badges
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4830,7 +4996,7 @@ fn panels_page() -> SettingsPage {
                             .git_status_indicator
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4852,7 +5018,7 @@ fn panels_page() -> SettingsPage {
                             .sticky_scroll
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4877,7 +5043,7 @@ fn panels_page() -> SettingsPage {
                             .show
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4900,7 +5066,7 @@ fn panels_page() -> SettingsPage {
                             .drag_and_drop
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4918,7 +5084,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.hide_root.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4940,7 +5106,7 @@ fn panels_page() -> SettingsPage {
                             .hide_hidden
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -4958,12 +5124,30 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project_panel.as_ref()?.sort_mode.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
                             .sort_mode = value;
                     },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Sort Order",
+                description: "Whether to sort file and folder names case-sensitively in the project panel.",
+                field: Box::new(SettingField {
+                    pick: |settings_content| {
+                        settings_content.project_panel.as_ref()?.sort_order.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .sort_order = value;
+                    },
+                    json_path: Some("project_panel.sort_order"),
                 }),
                 metadata: None,
                 files: USER,
@@ -4982,7 +5166,7 @@ fn panels_page() -> SettingsPage {
                             .on_create
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -5008,7 +5192,7 @@ fn panels_page() -> SettingsPage {
                             .on_paste
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -5034,7 +5218,7 @@ fn panels_page() -> SettingsPage {
                             .on_drop
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
@@ -5055,7 +5239,7 @@ fn panels_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.project.worktree.hidden_files.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content.project.worktree.hidden_files = value;
                         },
                     }
@@ -5076,7 +5260,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("terminal.dock"),
                     pick: |settings_content| settings_content.terminal.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().dock = value;
                     },
                 }),
@@ -5089,7 +5273,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("terminal.flexible"),
                     pick: |settings_content| settings_content.terminal.as_ref()?.flexible.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().flexible = value;
                     },
                 }),
@@ -5108,7 +5292,7 @@ fn panels_page() -> SettingsPage {
                             .show_count_badge
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -5132,7 +5316,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.outline_panel.as_ref()?.button.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5148,7 +5332,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("outline_panel.dock"),
                     pick: |settings_content| settings_content.outline_panel.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.outline_panel.get_or_insert_default().dock = value;
                     },
                 }),
@@ -5167,7 +5351,7 @@ fn panels_page() -> SettingsPage {
                             .default_width
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5185,7 +5369,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.outline_panel.as_ref()?.file_icons.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5207,7 +5391,7 @@ fn panels_page() -> SettingsPage {
                             .folder_icons
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5225,7 +5409,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.outline_panel.as_ref()?.git_status.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5247,7 +5431,7 @@ fn panels_page() -> SettingsPage {
                             .indent_size
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5269,7 +5453,7 @@ fn panels_page() -> SettingsPage {
                             .auto_reveal_entries
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5291,7 +5475,7 @@ fn panels_page() -> SettingsPage {
                             .auto_fold_dirs
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5316,7 +5500,7 @@ fn panels_page() -> SettingsPage {
                             .show
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
@@ -5330,7 +5514,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 14] {
+    fn git_panel_section() -> [SettingsPageItem; 15] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5339,7 +5523,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.button"),
                     pick: |settings_content| settings_content.git_panel.as_ref()?.button.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git_panel.get_or_insert_default().button = value;
                     },
                 }),
@@ -5352,7 +5536,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git_panel.dock"),
                     pick: |settings_content| settings_content.git_panel.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git_panel.get_or_insert_default().dock = value;
                     },
                 }),
@@ -5367,7 +5551,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.default_width.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5385,7 +5569,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.status_style.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5407,7 +5591,7 @@ fn panels_page() -> SettingsPage {
                             .fallback_branch_name
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5425,7 +5609,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.sort_by_path.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5447,7 +5631,7 @@ fn panels_page() -> SettingsPage {
                             .collapse_untracked_diff
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5465,7 +5649,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.tree_view.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git_panel.get_or_insert_default().tree_view = value;
                     },
                 }),
@@ -5480,7 +5664,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.file_icons.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5498,7 +5682,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.folder_icons.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5516,7 +5700,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git_panel.as_ref()?.diff_stats.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5538,11 +5722,33 @@ fn panels_page() -> SettingsPage {
                             .show_count_badge
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
                             .show_count_badge = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Commit Title Max Length",
+                description: "Maximum length of the commit message title before a warning is shown. Set to 0 to disable.",
+                field: Box::new(SettingField {
+                    json_path: Some("git_panel.commit_title_max_length"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .commit_title_max_length
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .commit_title_max_length = value;
                     },
                 }),
                 metadata: None,
@@ -5564,7 +5770,7 @@ fn panels_page() -> SettingsPage {
                                 .as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
@@ -5588,98 +5794,8 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("debugger.dock"),
                     pick: |settings_content| settings_content.debugger.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.debugger.get_or_insert_default().dock = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
-    fn notification_panel_section() -> [SettingsPageItem; 5] {
-        [
-            SettingsPageItem::SectionHeader("Notification Panel"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Button",
-                description: "Show the notification panel button in the status bar.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.button"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .button
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .button = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Dock",
-                description: "Where to dock the notification panel.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.dock"),
-                    pick: |settings_content| {
-                        settings_content.notification_panel.as_ref()?.dock.as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .dock = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Notification Panel Default Width",
-                description: "Default width of the notification panel in pixels.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.default_width"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .default_width
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .default_width = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Show Count Badge",
-                description: "Show a badge on the notification panel icon with the count of unread notifications.",
-                field: Box::new(SettingField {
-                    json_path: Some("notification_panel.show_count_badge"),
-                    pick: |settings_content| {
-                        settings_content
-                            .notification_panel
-                            .as_ref()?
-                            .show_count_badge
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .notification_panel
-                            .get_or_insert_default()
-                            .show_count_badge = value;
                     },
                 }),
                 metadata: None,
@@ -5703,7 +5819,7 @@ fn panels_page() -> SettingsPage {
                             .button
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .collaboration_panel
                             .get_or_insert_default()
@@ -5721,7 +5837,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.collaboration_panel.as_ref()?.dock.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .collaboration_panel
                             .get_or_insert_default()
@@ -5743,7 +5859,7 @@ fn panels_page() -> SettingsPage {
                             .default_width
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .collaboration_panel
                             .get_or_insert_default()
@@ -5756,7 +5872,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 6] {
+    fn agent_panel_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5765,7 +5881,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("agent.button"),
                     pick: |settings_content| settings_content.agent.as_ref()?.button.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().button = value;
                     },
                 }),
@@ -5778,7 +5894,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("agent.dock"),
                     pick: |settings_content| settings_content.agent.as_ref()?.dock.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().dock = value;
                     },
                 }),
@@ -5791,7 +5907,7 @@ fn panels_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("agent.flexible"),
                     pick: |settings_content| settings_content.agent.as_ref()?.flexible.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().flexible = value;
                     },
                 }),
@@ -5806,7 +5922,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.default_width.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.agent.get_or_insert_default().default_width = value;
                     },
                 }),
@@ -5821,7 +5937,7 @@ fn panels_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.default_height.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -5830,6 +5946,59 @@ fn panels_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Limit Content Width",
+                    description: "Whether to constrain the agent panel content to a maximum width, centering it when the panel is wider, for optimal readability.",
+                    field: Box::new(SettingField::<bool> {
+                        json_path: Some("agent.limit_content_width"),
+                        pick: |settings_content| {
+                            settings_content
+                                .agent
+                                .as_ref()?
+                                .limit_content_width
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .agent
+                                .get_or_insert_default()
+                                .limit_content_width = value;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    let enabled = settings_content
+                        .agent
+                        .as_ref()?
+                        .limit_content_width
+                        .unwrap_or(true);
+                    Some(if enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Max Content Width",
+                        description: "Maximum content width in pixels. Content will be centered when the panel is wider than this value.",
+                        field: Box::new(SettingField {
+                            json_path: Some("agent.max_content_width"),
+                            pick: |settings_content| {
+                                settings_content.agent.as_ref()?.max_content_width.as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .agent
+                                    .get_or_insert_default()
+                                    .max_content_width = value;
+                            },
+                        }),
+                        metadata: None,
+                    }],
+                ],
             }),
         ]
     }
@@ -5842,7 +6011,6 @@ fn panels_page() -> SettingsPage {
             outline_panel_section(),
             git_panel_section(),
             debugger_panel_section(),
-            notification_panel_section(),
             collaboration_panel_section(),
             agent_panel_section(),
         ],
@@ -5865,7 +6033,7 @@ fn debugger_page() -> SettingsPage {
                             .stepping_granularity
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .debugger
                             .get_or_insert_default()
@@ -5887,7 +6055,7 @@ fn debugger_page() -> SettingsPage {
                             .save_breakpoints
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .debugger
                             .get_or_insert_default()
@@ -5903,7 +6071,7 @@ fn debugger_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("debugger.timeout"),
                     pick: |settings_content| settings_content.debugger.as_ref()?.timeout.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.debugger.get_or_insert_default().timeout = value;
                     },
                 }),
@@ -5922,7 +6090,7 @@ fn debugger_page() -> SettingsPage {
                             .log_dap_communications
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .debugger
                             .get_or_insert_default()
@@ -5944,7 +6112,7 @@ fn debugger_page() -> SettingsPage {
                             .format_dap_log_messages
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .debugger
                             .get_or_insert_default()
@@ -5985,7 +6153,7 @@ fn terminal_page() -> SettingsPage {
                                         .discriminant() as usize
                                 ])
                             },
-                            write: |settings_content, value| {
+                            write: |settings_content, value, _| {
                                 let Some(value) = value else {
                                     if let Some(terminal) = settings_content.terminal.as_mut() {
                                         terminal.project.shell = None;
@@ -6060,7 +6228,7 @@ fn terminal_page() -> SettingsPage {
                                         Some(settings::Shell::Program(program)) => Some(program),
                                         _ => None,
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let Some(value) = value else {
                                             return;
                                         };
@@ -6091,7 +6259,7 @@ fn terminal_page() -> SettingsPage {
                                                 _ => None,
                                             }
                                         },
-                                        write: |settings_content, value| {
+                                        write: |settings_content, value, _| {
                                             let Some(value) = value else {
                                                 return;
                                             };
@@ -6124,7 +6292,7 @@ fn terminal_page() -> SettingsPage {
                                                     _ => None,
                                                 }
                                             },
-                                            write: |settings_content, value| {
+                                            write: |settings_content, value, _| {
                                                 let Some(value) = value else {
                                                     return;
                                                 };
@@ -6158,7 +6326,7 @@ fn terminal_page() -> SettingsPage {
                                                 _ => None,
                                             }
                                         },
-                                        write: |settings_content, value| {
+                                        write: |settings_content, value, _| {
                                             match settings_content
                                                 .terminal
                                                 .get_or_insert_default()
@@ -6197,7 +6365,7 @@ fn terminal_page() -> SettingsPage {
                                         .discriminant() as usize
                                 ])
                             },
-                            write: |settings_content, value| {
+                            write: |settings_content, value, _| {
                                 let Some(value) = value else {
                                     if let Some(terminal) = settings_content.terminal.as_mut() {
                                         terminal.project.working_directory = None;
@@ -6265,7 +6433,7 @@ fn terminal_page() -> SettingsPage {
                                             _ => None,
                                         }
                                     },
-                                    write: |settings_content, value| {
+                                    write: |settings_content, value, _| {
                                         let value = value.unwrap_or_default();
                                         match settings_content
                                             .terminal
@@ -6291,7 +6459,7 @@ fn terminal_page() -> SettingsPage {
                         SettingField {
                             json_path: Some("terminal.env"),
                             pick: |settings_content| settings_content.terminal.as_ref()?.project.env.as_ref(),
-                            write: |settings_content, value| {
+                            write: |settings_content, value, _| {
                                 settings_content.terminal.get_or_insert_default().project.env = value;
                             },
                         }
@@ -6307,7 +6475,7 @@ fn terminal_page() -> SettingsPage {
                         SettingField {
                             json_path: Some("terminal.detect_venv"),
                             pick: |settings_content| settings_content.terminal.as_ref()?.project.detect_venv.as_ref(),
-                            write: |settings_content, value| {
+                            write: |settings_content, value, _| {
                                 settings_content
                                     .terminal
                                     .get_or_insert_default()
@@ -6338,7 +6506,7 @@ fn terminal_page() -> SettingsPage {
                             .and_then(|terminal| terminal.font_size.as_ref())
                             .or(settings_content.theme.buffer_font_size.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().font_size = value;
                     },
                 }),
@@ -6357,7 +6525,7 @@ fn terminal_page() -> SettingsPage {
                             .and_then(|terminal| terminal.font_family.as_ref())
                             .or(settings_content.theme.buffer_font_family.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6380,7 +6548,7 @@ fn terminal_page() -> SettingsPage {
                                 .and_then(|terminal| terminal.font_fallbacks.as_ref())
                                 .or(settings_content.theme.buffer_font_fallbacks.as_ref())
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -6400,7 +6568,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.font_weight.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6423,7 +6591,7 @@ fn terminal_page() -> SettingsPage {
                                 .and_then(|terminal| terminal.font_features.as_ref())
                                 .or(settings_content.theme.buffer_font_features.as_ref())
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -6450,7 +6618,7 @@ fn terminal_page() -> SettingsPage {
                         pick: |settings_content| {
                             settings_content.terminal.as_ref()?.line_height.as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content
                                 .terminal
                                 .get_or_insert_default()
@@ -6470,7 +6638,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.cursor_shape.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6486,7 +6654,7 @@ fn terminal_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("terminal.blinking"),
                     pick: |settings_content| settings_content.terminal.as_ref()?.blinking.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.terminal.get_or_insert_default().blinking = value;
                     },
                 }),
@@ -6505,7 +6673,7 @@ fn terminal_page() -> SettingsPage {
                             .alternate_scroll
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6527,7 +6695,7 @@ fn terminal_page() -> SettingsPage {
                             .minimum_contrast
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6540,7 +6708,7 @@ fn terminal_page() -> SettingsPage {
         ]
     }
 
-    fn behavior_settings_section() -> [SettingsPageItem; 4] {
+    fn behavior_settings_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Behavior Settings"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6551,7 +6719,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.option_as_meta.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6569,7 +6737,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.copy_on_select.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6591,11 +6759,24 @@ fn terminal_page() -> SettingsPage {
                             .keep_selection_on_copy
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
                             .keep_selection_on_copy = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Audible Bell",
+                description: "Whether to play a sound when the BEL character (`\\a`, `0x07`) is printed",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.bell"),
+                    pick: |settings_content| settings_content.terminal.as_ref()?.bell.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.terminal.get_or_insert_default().bell = value;
                     },
                 }),
                 metadata: None,
@@ -6615,7 +6796,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.default_width.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6633,7 +6814,7 @@ fn terminal_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.terminal.as_ref()?.default_height.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6661,7 +6842,7 @@ fn terminal_page() -> SettingsPage {
                             .max_scroll_history_lines
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6683,7 +6864,7 @@ fn terminal_page() -> SettingsPage {
                             .scroll_multiplier
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6713,7 +6894,7 @@ fn terminal_page() -> SettingsPage {
                             .breadcrumbs
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6747,7 +6928,7 @@ fn terminal_page() -> SettingsPage {
                                 .as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .terminal
                             .get_or_insert_default()
@@ -6797,7 +6978,7 @@ fn version_control_page() -> SettingsPage {
                                 .disable_git
                                 .as_ref()
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             settings_content
                                 .git
                                 .get_or_insert_default()
@@ -6836,7 +7017,7 @@ fn version_control_page() -> SettingsPage {
                                         .enable_status
                                         .as_ref()
                                 },
-                                write: |settings_content, value| {
+                                write: |settings_content, value, _| {
                                     settings_content
                                         .git
                                         .get_or_insert_default()
@@ -6862,7 +7043,7 @@ fn version_control_page() -> SettingsPage {
                                         .enable_diff
                                         .as_ref()
                                 },
-                                write: |settings_content, value| {
+                                write: |settings_content, value, _| {
                                     settings_content
                                         .git
                                         .get_or_insert_default()
@@ -6888,7 +7069,7 @@ fn version_control_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git.git_gutter"),
                     pick: |settings_content| settings_content.git.as_ref()?.git_gutter.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().git_gutter = value;
                     },
                 }),
@@ -6904,7 +7085,7 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.git.as_ref()?.gutter_debounce.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().gutter_debounce = value;
                     },
                 }),
@@ -6931,7 +7112,7 @@ fn version_control_page() -> SettingsPage {
                             .enabled
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -6957,7 +7138,7 @@ fn version_control_page() -> SettingsPage {
                             .delay_ms
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -6983,7 +7164,7 @@ fn version_control_page() -> SettingsPage {
                             .padding
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -7009,7 +7190,7 @@ fn version_control_page() -> SettingsPage {
                             .min_column
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -7035,7 +7216,7 @@ fn version_control_page() -> SettingsPage {
                             .show_commit_summary
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -7067,7 +7248,7 @@ fn version_control_page() -> SettingsPage {
                             .show_avatar
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -7099,7 +7280,7 @@ fn version_control_page() -> SettingsPage {
                             .show_author_name
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .git
                             .get_or_insert_default()
@@ -7114,7 +7295,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 3] {
+    fn git_hunks_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7123,7 +7304,7 @@ fn version_control_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git.hunk_style"),
                     pick: |settings_content| settings_content.git.as_ref()?.hunk_style.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().hunk_style = value;
                     },
                 }),
@@ -7136,8 +7317,30 @@ fn version_control_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("git.path_style"),
                     pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().path_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Stage/Restore Buttons",
+                description: "Whether to show the stage and restore buttons on diff hunks.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.show_stage_restore_buttons"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .show_stage_restore_buttons
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .show_stage_restore_buttons = value;
                     },
                 }),
                 metadata: None,
@@ -7169,7 +7372,7 @@ fn collaboration_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("calls.mute_on_join"),
                     pick: |settings_content| settings_content.calls.as_ref()?.mute_on_join.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.calls.get_or_insert_default().mute_on_join = value;
                     },
                 }),
@@ -7184,7 +7387,7 @@ fn collaboration_page() -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.calls.as_ref()?.share_on_join.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.calls.get_or_insert_default().share_on_join = value;
                     },
                 }),
@@ -7218,7 +7421,7 @@ fn collaboration_page() -> SettingsPage {
                             .as_ref()
                             .or(DEFAULT_EMPTY_AUDIO_OUTPUT)
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .audio
                             .get_or_insert_default()
@@ -7241,7 +7444,7 @@ fn collaboration_page() -> SettingsPage {
                             .as_ref()
                             .or(DEFAULT_EMPTY_AUDIO_INPUT)
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .audio
                             .get_or_insert_default()
@@ -7261,7 +7464,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 2] {
+    fn general_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7270,19 +7473,41 @@ fn ai_page(cx: &App) -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("disable_ai"),
                     pick: |settings_content| settings_content.project.disable_ai.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.project.disable_ai = value;
                     },
                 }),
                 metadata: None,
                 files: USER | PROJECT,
             }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar Side",
+                description: "Which side of the window the threads sidebar appears on.",
+                field: Box::new(SettingField {
+                    json_path: Some("agent.sidebar_side"),
+                    pick: |settings_content| settings_content.agent.as_ref()?.sidebar_side.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.agent.get_or_insert_default().sidebar_side = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
         ]
     }
 
-    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Skills".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.skills"),
+                description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                in_json: false,
+                files: USER | PROJECT,
+                render: render_skills_setup_page,
+            }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
@@ -7294,31 +7519,6 @@ fn ai_page(cx: &App) -> SettingsPage {
             }),
         ];
 
-        if cx.has_flag::<AgentV2FeatureFlag>() {
-            items.push(SettingsPageItem::SettingItem(SettingItem {
-                title: "New Thread Location",
-                description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-                field: Box::new(SettingField {
-                    json_path: Some("agent.new_thread_location"),
-                    pick: |settings_content| {
-                        settings_content
-                            .agent
-                            .as_ref()?
-                            .new_thread_location
-                            .as_ref()
-                    },
-                    write: |settings_content, value| {
-                        settings_content
-                            .agent
-                            .get_or_insert_default()
-                            .new_thread_location = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }));
-        }
-
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
@@ -7328,7 +7528,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.single_file_review.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7346,7 +7546,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.enable_feedback.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7368,7 +7568,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .notify_when_agent_waiting
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7390,7 +7590,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .play_sound_when_agent_done
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7408,7 +7608,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.expand_edit_card.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7430,7 +7630,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .expand_terminal_card
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7452,7 +7652,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .thinking_display
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7474,7 +7674,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .cancel_generation_on_terminal_stop
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7496,7 +7696,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .use_modifier_to_send
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7518,7 +7718,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                             .message_editor_min_lines
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7536,7 +7736,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.show_turn_stats.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7554,7 +7754,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.agent.as_ref()?.show_merge_conflict_indicator.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .agent
                             .get_or_insert_default()
@@ -7580,7 +7780,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                     pick: |settings_content| {
                         settings_content.project.context_server_timeout.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.project.context_server_timeout = value;
                     },
                 }),
@@ -7605,7 +7805,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                         .mode
                         .as_ref()
                 },
-                write: |settings_content, value| {
+                write: |settings_content, value, _| {
                     settings_content
                         .project
                         .all_languages
@@ -7641,7 +7841,7 @@ fn network_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("proxy"),
                     pick: |settings_content| settings_content.proxy.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.proxy = value;
                     },
                 }),
@@ -7657,7 +7857,7 @@ fn network_page() -> SettingsPage {
                 field: Box::new(SettingField {
                     json_path: Some("server_url"),
                     pick: |settings_content| settings_content.server_url.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.server_url = value;
                     },
                 }),
@@ -7725,7 +7925,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.tab_size.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.tab_size = value;
                         })
@@ -7744,7 +7944,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.hard_tabs.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.hard_tabs = value;
                         })
@@ -7763,7 +7963,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.auto_indent.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.auto_indent = value;
                         })
@@ -7782,7 +7982,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.auto_indent_on_paste.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.auto_indent_on_paste = value;
                         })
@@ -7807,7 +8007,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.soft_wrap.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.soft_wrap = value;
                         })
@@ -7826,7 +8026,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.show_wrap_guides.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.show_wrap_guides = value;
                         })
@@ -7845,7 +8045,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.preferred_line_length.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.preferred_line_length = value;
                         })
@@ -7865,7 +8065,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.wrap_guides.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -7890,7 +8090,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.allow_rewrap.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.allow_rewrap = value;
                         })
@@ -7918,7 +8118,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 .and_then(|indent_guides| indent_guides.enabled.as_ref())
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.indent_guides.get_or_insert_default().enabled = value;
                         })
@@ -7940,7 +8140,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 .and_then(|indent_guides| indent_guides.line_width.as_ref())
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.indent_guides.get_or_insert_default().line_width = value;
                         })
@@ -7962,7 +8162,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 .and_then(|indent_guides| indent_guides.active_line_width.as_ref())
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .indent_guides
@@ -7987,7 +8187,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 .and_then(|indent_guides| indent_guides.coloring.as_ref())
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.indent_guides.get_or_insert_default().coloring = value;
                         })
@@ -8008,7 +8208,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             })
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .indent_guides
@@ -8023,7 +8223,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn formatting_section() -> [SettingsPageItem; 7] {
+    fn formatting_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Formatting"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8038,7 +8238,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.format_on_save.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8062,7 +8262,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.remove_trailing_whitespace_on_save.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.remove_trailing_whitespace_on_save = value;
                         })
@@ -8081,13 +8281,35 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.ensure_final_newline_on_save.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.ensure_final_newline_on_save = value;
                         })
                     },
                 }),
                 metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Ending",
+                description: "How line endings should be handled for new files and during format and save operations.",
+                field: Box::new(SettingField {
+                    json_path: Some("languages.$(language).line_ending"),
+                    pick: |settings_content| {
+                        language_settings_field(settings_content, |language| {
+                            language.line_ending.as_ref()
+                        })
+                    },
+                    write: |settings_content, value, _| {
+                        language_settings_field_mut(settings_content, value, |language, value| {
+                            language.line_ending = value;
+                        })
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    should_do_titlecase: Some(false),
+                    ..Default::default()
+                })),
                 files: USER | PROJECT,
             }),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8101,7 +8323,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.formatter.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8126,7 +8348,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.use_on_type_format.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.use_on_type_format = value;
                         })
@@ -8146,7 +8368,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.code_actions_on_format.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8177,7 +8399,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.use_autoclose.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.use_autoclose = value;
                         })
@@ -8196,7 +8418,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.use_auto_surround.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.use_auto_surround = value;
                         })
@@ -8215,7 +8437,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.always_treat_brackets_as_autoclosed.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.always_treat_brackets_as_autoclosed = value;
                         })
@@ -8235,7 +8457,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.jsx_tag_auto_close.as_ref()?.enabled.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.jsx_tag_auto_close.get_or_insert_default().enabled = value;
                         })
@@ -8260,7 +8482,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.show_whitespaces.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.show_whitespaces = value;
                         })
@@ -8280,7 +8502,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.whitespace_map.as_ref()?.space.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8306,7 +8528,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.whitespace_map.as_ref()?.tab.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8324,7 +8546,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn completions_section() -> [SettingsPageItem; 7] {
+    fn completions_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Completions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8337,7 +8559,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.show_completions_on_input.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.show_completions_on_input = value;
                         })
@@ -8356,7 +8578,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.show_completion_documentation.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.show_completion_documentation = value;
                         })
@@ -8375,7 +8597,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.completions.as_ref()?.words.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.completions.get_or_insert_default().words = value;
                         })
@@ -8394,7 +8616,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.completions.as_ref()?.words_min_length.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .completions
@@ -8414,7 +8636,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     pick: |settings_content| {
                         settings_content.editor.completion_menu_scrollbar.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.completion_menu_scrollbar = value;
                     },
                 }),
@@ -8429,8 +8651,23 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     pick: |settings_content| {
                         settings_content.editor.completion_detail_alignment.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.completion_detail_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Menu Item Kind",
+                description: "How to display the LSP item kind (function, method, variable, etc.) of each entry in the completions menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_menu_item_kind"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_menu_item_kind.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.completion_menu_item_kind = value;
                     },
                 }),
                 metadata: None,
@@ -8452,7 +8689,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.enabled.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.inlay_hints.get_or_insert_default().enabled = value;
                         })
@@ -8471,7 +8708,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.show_value_hints.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .inlay_hints
@@ -8493,7 +8730,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.show_type_hints.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.inlay_hints.get_or_insert_default().show_type_hints = value;
                         })
@@ -8512,7 +8749,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.show_parameter_hints.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .inlay_hints
@@ -8534,7 +8771,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.show_other_hints.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .inlay_hints
@@ -8556,7 +8793,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.show_background.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.inlay_hints.get_or_insert_default().show_background = value;
                         })
@@ -8575,7 +8812,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.edit_debounce_ms.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .inlay_hints
@@ -8597,7 +8834,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.inlay_hints.as_ref()?.scroll_debounce_ms.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .inlay_hints
@@ -8626,7 +8863,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                     .as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8660,7 +8897,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.tasks.as_ref()?.enabled.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.tasks.get_or_insert_default().enabled = value;
                         })
@@ -8680,7 +8917,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.tasks.as_ref()?.variables.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8705,7 +8942,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.tasks.as_ref()?.prefer_lsp.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.tasks.get_or_insert_default().prefer_lsp = value;
                         })
@@ -8730,7 +8967,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.word_diff_enabled.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.word_diff_enabled = value;
                         })
@@ -8750,7 +8987,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.debuggers.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8771,7 +9008,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 field: Box::new(SettingField {
                     json_path: Some("languages.$(language).editor.middle_click_paste"),
                     pick: |settings_content| settings_content.editor.middle_click_paste.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.middle_click_paste = value;
                     },
                 }),
@@ -8788,7 +9025,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.extend_comment_on_newline.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.extend_comment_on_newline = value;
                         })
@@ -8807,7 +9044,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             language.colorize_brackets.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.colorize_brackets = value;
                         })
@@ -8822,7 +9059,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 field: Box::new(SettingField {
                     json_path: Some("modeline_lines"),
                     pick: |settings_content| settings_content.modeline_lines.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.modeline_lines = value;
                     },
                 }),
@@ -8845,7 +9082,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                             .as_ref()
                             .and_then(|image_viewer| image_viewer.unit.as_ref())
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.image_viewer.get_or_insert_default().unit = value;
                     },
                 }),
@@ -8865,7 +9102,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                                 message_editor.auto_replace_emoji_shortcode.as_ref()
                             })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .message_editor
                             .get_or_insert_default()
@@ -8881,7 +9118,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 field: Box::new(SettingField {
                     json_path: Some("drop_target_size"),
                     pick: |settings_content| settings_content.workspace.drop_target_size.as_ref(),
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.workspace.drop_target_size = value;
                     },
                 }),
@@ -8893,13 +9130,27 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 
     let is_global = active_language().is_none();
 
+    let code_lens_item = [SettingsPageItem::SettingItem(SettingItem {
+        title: "Code Lens",
+        description: "Whether and how to display code lenses from language servers.",
+        field: Box::new(SettingField {
+            json_path: Some("code_lens"),
+            pick: |settings_content| settings_content.editor.code_lens.as_ref(),
+            write: |settings_content, value, _| {
+                settings_content.editor.code_lens = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    })];
+
     let lsp_document_colors_item = [SettingsPageItem::SettingItem(SettingItem {
         title: "LSP Document Colors",
         description: "How to render LSP color previews in the editor.",
         field: Box::new(SettingField {
             json_path: Some("lsp_document_colors"),
             pick: |settings_content| settings_content.editor.lsp_document_colors.as_ref(),
-            write: |settings_content, value| {
+            write: |settings_content, value, _| {
                 settings_content.editor.lsp_document_colors = value;
             },
         }),
@@ -8917,6 +9168,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             whitespace_section(),
             completions_section(),
             inlay_hints_section(),
+            code_lens_item,
             lsp_document_colors_item,
             tasks_section(),
             miscellaneous_section(),
@@ -8932,6 +9184,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
             whitespace_section(),
             completions_section(),
             inlay_hints_section(),
+            code_lens_item,
             tasks_section(),
             miscellaneous_section(),
         )
@@ -8941,7 +9194,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
 /// LanguageSettings items that should be included in the "Languages & Tools" page
 /// not the "Editor" page
 fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
-    fn lsp_section() -> [SettingsPageItem; 8] {
+    fn lsp_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("LSP"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8954,7 +9207,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.enable_language_server.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.enable_language_server = value;
                         })
@@ -8974,7 +9227,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.language_servers.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -8999,7 +9252,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.linked_edits.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.linked_edits = value;
                         })
@@ -9016,8 +9269,26 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                     pick: |settings_content| {
                         settings_content.editor.go_to_definition_fallback.as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content.editor.go_to_definition_fallback = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Go To Definition Scroll Strategy",
+                description: "How to scroll the target into view when navigating to a definition or reference.",
+                field: Box::new(SettingField {
+                    json_path: Some("go_to_definition_scroll_strategy"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .go_to_definition_scroll_strategy
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.go_to_definition_scroll_strategy = value;
                     },
                 }),
                 metadata: None,
@@ -9047,7 +9318,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             .semantic_tokens
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         settings_content
                             .project
                             .all_languages
@@ -9068,7 +9339,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.document_folding_ranges.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.document_folding_ranges = value;
                         })
@@ -9087,7 +9358,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.document_symbols.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.document_symbols = value;
                         })
@@ -9112,7 +9383,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.completions.as_ref()?.lsp.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.completions.get_or_insert_default().lsp = value;
                         })
@@ -9131,7 +9402,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.completions.as_ref()?.lsp_fetch_timeout_ms.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language
                                 .completions
@@ -9153,7 +9424,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.completions.as_ref()?.lsp_insert_mode.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.completions.get_or_insert_default().lsp_insert_mode = value;
                         })
@@ -9179,7 +9450,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.debuggers.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -9210,7 +9481,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.prettier.as_ref()?.allowed.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.prettier.get_or_insert_default().allowed = value;
                         })
@@ -9229,7 +9500,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                             language.prettier.as_ref()?.parser.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.prettier.get_or_insert_default().parser = value;
                         })
@@ -9249,7 +9520,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.prettier.as_ref()?.plugins.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -9275,7 +9546,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
                                 language.prettier.as_ref()?.options.as_ref()
                             })
                         },
-                        write: |settings_content, value| {
+                        write: |settings_content, value, _| {
                             language_settings_field_mut(
                                 settings_content,
                                 value,
@@ -9301,7 +9572,7 @@ fn non_editor_language_settings_data() -> Box<[SettingsPageItem]> {
     )
 }
 
-fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
+fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
     [
         SettingsPageItem::SectionHeader("Edit Predictions"),
         SettingsPageItem::SubPageLink(SubPageLink {
@@ -9314,6 +9585,32 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
             render: render_edit_prediction_setup_page
         }),
         SettingsPageItem::SettingItem(SettingItem {
+            title: "Data Collection",
+            description: "Controls whether Zed may collect training data when using Zed's Edit Predictions. Data is only collected for files in projects detected as open source. The default value uses the preference previously set via the status-bar toggle, or false if no preference has been stored.",
+            field: Box::new(SettingField {
+                json_path: Some("edit_predictions.allow_data_collection"),
+                pick: |settings_content| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .as_ref()?
+                        .allow_data_collection
+                        .as_ref()
+                },
+                write: |settings_content, value, _app| {
+                    settings_content
+                        .project
+                        .all_languages
+                        .edit_predictions
+                        .get_or_insert_default()
+                        .allow_data_collection = value;
+                },
+            }),
+            metadata: None,
+            files: USER,
+        }),
+        SettingsPageItem::SettingItem(SettingItem {
             title: "Show Edit Predictions",
             description: "Controls whether edit predictions are shown immediately or manually.",
             field: Box::new(SettingField {
@@ -9323,7 +9620,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
                         language.show_edit_predictions.as_ref()
                     })
                 },
-                write: |settings_content, value| {
+                write: |settings_content, value, _| {
                     language_settings_field_mut(settings_content, value, |language, value| {
                         language.show_edit_predictions = value;
                     })
@@ -9343,7 +9640,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 4] {
                             language.edit_predictions_disabled_in.as_ref()
                         })
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _| {
                         language_settings_field_mut(settings_content, value, |language, value| {
                             language.edit_predictions_disabled_in = value;
                         })
@@ -9378,7 +9675,11 @@ where
 
 /// Updates the `vim_mode` setting, disabling `helix_mode` if present and
 /// `vim_mode` is being enabled.
-fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>) {
+fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>, _: &App) {
+    write_vim_mode_inner(settings, value);
+}
+
+fn write_vim_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
     if value == Some(true) && settings.helix_mode == Some(true) {
         settings.helix_mode = Some(false);
     }
@@ -9387,7 +9688,11 @@ fn write_vim_mode(settings: &mut SettingsContent, value: Option<bool>) {
 
 /// Updates the `helix_mode` setting, disabling `vim_mode` if present and
 /// `helix_mode` is being enabled.
-fn write_helix_mode(settings: &mut SettingsContent, value: Option<bool>) {
+fn write_helix_mode(settings: &mut SettingsContent, value: Option<bool>, _: &App) {
+    write_helix_mode_inner(settings, value);
+}
+
+fn write_helix_mode_inner(settings: &mut SettingsContent, value: Option<bool>) {
     if value == Some(true) && settings.vim_mode == Some(true) {
         settings.vim_mode = Some(false);
     }
@@ -9403,38 +9708,38 @@ mod tests {
         // Enabling vim mode while `vim_mode` and `helix_mode` are not yet set
         // should only update the `vim_mode` setting.
         let mut settings = SettingsContent::default();
-        write_vim_mode(&mut settings, Some(true));
+        write_vim_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.vim_mode, Some(true));
         assert_eq!(settings.helix_mode, None);
 
         // Enabling helix mode while `vim_mode` and `helix_mode` are not yet set
         // should only update the `helix_mode` setting.
         let mut settings = SettingsContent::default();
-        write_helix_mode(&mut settings, Some(true));
+        write_helix_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.helix_mode, Some(true));
         assert_eq!(settings.vim_mode, None);
 
         // Disabling helix mode should only touch `helix_mode` setting when
         // `vim_mode` is not set.
-        write_helix_mode(&mut settings, Some(false));
+        write_helix_mode_inner(&mut settings, Some(false));
         assert_eq!(settings.helix_mode, Some(false));
         assert_eq!(settings.vim_mode, None);
 
         // Enabling vim mode should update `vim_mode` but leave `helix_mode`
         // untouched.
-        write_vim_mode(&mut settings, Some(true));
+        write_vim_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.vim_mode, Some(true));
         assert_eq!(settings.helix_mode, Some(false));
 
         // Enabling helix mode should update `helix_mode` and disable
         // `vim_mode`.
-        write_helix_mode(&mut settings, Some(true));
+        write_helix_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.helix_mode, Some(true));
         assert_eq!(settings.vim_mode, Some(false));
 
         // Enabling vim mode should update `vim_mode` and disable
         // `helix_mode`.
-        write_vim_mode(&mut settings, Some(true));
+        write_vim_mode_inner(&mut settings, Some(true));
         assert_eq!(settings.vim_mode, Some(true));
         assert_eq!(settings.helix_mode, Some(false));
     }

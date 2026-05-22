@@ -61,6 +61,15 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Set the space to be reserved for rendering the scrollbar.
+    ///
+    /// This will only affect the layout of the element when overflow for this element is set to
+    /// `Overflow::Scroll`.
+    fn scrollbar_width(mut self, width: impl Into<AbsoluteLength>) -> Self {
+        self.style().scrollbar_width = Some(width.into());
+        self
+    }
+
     /// Sets the whitespace of the element to `normal`.
     /// [Docs](https://tailwindcss.com/docs/whitespace#normal)
     fn whitespace_normal(mut self) -> Self {
@@ -205,6 +214,13 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/flex-grow)
     fn flex_grow(mut self) -> Self {
         self.style().flex_grow = Some(1.);
+        self
+    }
+
+    /// Sets the element to prevent a flex item from growing.
+    /// [Docs](https://tailwindcss.com/docs/flex-grow#dont-grow)
+    fn flex_grow_0(mut self) -> Self {
+        self.style().flex_grow = Some(0.);
         self
     }
 

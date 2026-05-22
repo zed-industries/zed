@@ -8,7 +8,7 @@ description: Set up AI code completions in Zed with Zeta (built-in), GitHub Copi
 Edit Prediction is how Zed's AI code completions work: an LLM predicts the code you want to write.
 Each keystroke sends a new request to the edit prediction provider, which returns individual or multi-line suggestions you accept by pressing `tab`.
 
-The default provider is [Zeta, a proprietary open source and open dataset model](https://huggingface.co/zed-industries/zeta), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
+The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
 ## Configuring Zeta
 
@@ -146,7 +146,7 @@ If you configured edit prediction keybindings before Zed `v0.229.0`, your `keyma
 
 You can disable edit predictions at several levels, or turn them off entirely.
 
-Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
+Alternatively, consider [using Subtle Mode](#switching-modes).
 
 ### On Buffers
 
@@ -158,7 +158,7 @@ To not have predictions appear automatically as you type, set this in your setti
 }
 ```
 
-This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have Zed as your provider).
+This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in.
 Still, you can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} or hitting {#kb editor::ShowEditPrediction}.
 
 ### For Specific Languages
@@ -286,11 +286,29 @@ After adding your API key, Codestral will appear in the provider dropdown in the
 }
 ```
 
-### Self-Hosted OpenAI-compatible servers
+### Local and self-hosted models
 
-You can use any self-hosted server that implements the OpenAI completion API format. This works with vLLM, llama.cpp server, LocalAI, and other compatible servers.
+You can use local or self-hosted edit prediction models through Ollama or any server that implements the OpenAI completion API format. This works with Ollama, vLLM, llama.cpp server, LocalAI, and other compatible servers.
 
-#### Configuration
+#### Ollama
+
+Set `ollama` as your provider and configure the local model:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "ollama",
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "qwen2.5-coder:7b-base",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+#### OpenAI-compatible servers
 
 Set `open_ai_compatible_api` as your provider and configure the API endpoint:
 
@@ -302,7 +320,7 @@ Set `open_ai_compatible_api` as your provider and configure the API endpoint:
       "api_url": "http://localhost:8080/v1/completions",
       "model": "deepseek-coder-6.7b-base",
       "prompt_format": "deepseek_coder",
-      "max_output_tokens": 64
+      "max_output_tokens": 512
     }
   }
 }
@@ -310,15 +328,55 @@ Set `open_ai_compatible_api` as your provider and configure the API endpoint:
 
 The `prompt_format` setting controls how code context is formatted for the model. Use `"infer"` to detect the format from the model name, or specify one explicitly:
 
+- `zeta` - Zeta 1 format
+- `zeta2` - Zeta 2 format
+- `zeta2_1` - Zeta 2.1 format
 - `code_llama` - CodeLlama format: `<PRE> prefix <SUF> suffix <MID>`
 - `star_coder` - StarCoder format: `<fim_prefix>prefix<fim_suffix>suffix<fim_middle>`
 - `deepseek_coder` - DeepSeek format with special unicode markers
 - `qwen` - Qwen/CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
+- `code_gemma` - CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
 - `codestral` - Codestral format: `[SUFFIX]suffix[PREFIX]prefix`
 - `glm` - GLM-4 format with code markers
 - `infer` - Auto-detect from model name (default)
 
-Your server must implement the OpenAI `/v1/completions` endpoint. Edit predictions will send POST requests with this format:
+With `"prompt_format": "infer"`, Zed automatically uses Zeta 2 format for models named `zeta2` and Zeta 2.1 format for models named `zeta2.1`.
+
+For example, to use Zeta 2 with Ollama:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "ollama",
+    "ollama": {
+      "api_url": "http://localhost:11434",
+      "model": "zeta2",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+To use Zeta 2.1 with an OpenAI-compatible server:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "api_url": "http://localhost:8080/v1/completions",
+      "model": "zeta2.1",
+      "prompt_format": "infer",
+      "max_output_tokens": 512
+    }
+  }
+}
+```
+
+You can also set `"prompt_format": "zeta2"` or `"prompt_format": "zeta2_1"` explicitly when the model name does not match.
+
+Your OpenAI-compatible server must implement the OpenAI `/v1/completions` endpoint. Edit predictions will send POST requests with this format:
 
 ```json
 {

@@ -159,6 +159,7 @@ pub struct StyledText {
     text: SharedString,
     runs: Option<Vec<TextRun>>,
     delayed_highlights: Option<Vec<(Range<usize>, HighlightStyle)>>,
+    delayed_font_family_overrides: Option<Vec<(Range<usize>, SharedString)>>,
     layout: TextLayout,
 }
 
@@ -169,6 +170,7 @@ impl StyledText {
             text: text.into(),
             runs: None,
             delayed_highlights: None,
+            delayed_font_family_overrides: None,
             layout: TextLayout::default(),
         }
     }
@@ -242,9 +244,54 @@ impl StyledText {
         runs
     }
 
+    /// Override the font family for specific byte ranges of the text.
+    ///
+    /// This is resolved lazily at layout time, so the overrides are applied
+    /// on top of the inherited text style from the parent element.
+    /// Can be combined with [`with_highlights`](Self::with_highlights).
+    ///
+    /// The overrides must be sorted by range start and non-overlapping.
+    /// Each override range must fall on character boundaries.
+    pub fn with_font_family_overrides(
+        mut self,
+        overrides: impl IntoIterator<Item = (Range<usize>, SharedString)>,
+    ) -> Self {
+        self.delayed_font_family_overrides = Some(
+            overrides
+                .into_iter()
+                .inspect(|(range, _)| {
+                    debug_assert!(self.text.is_char_boundary(range.start));
+                    debug_assert!(self.text.is_char_boundary(range.end));
+                })
+                .collect(),
+        );
+        self
+    }
+
+    fn apply_font_family_overrides(
+        runs: &mut [TextRun],
+        overrides: &[(Range<usize>, SharedString)],
+    ) {
+        let mut byte_offset = 0;
+        let mut override_idx = 0;
+        for run in runs.iter_mut() {
+            let run_end = byte_offset + run.len;
+            while override_idx < overrides.len() && overrides[override_idx].0.end <= byte_offset {
+                override_idx += 1;
+            }
+            if override_idx < overrides.len() {
+                let (ref range, ref family) = overrides[override_idx];
+                if byte_offset >= range.start && run_end <= range.end {
+                    run.font.family = family.clone();
+                }
+            }
+            byte_offset = run_end;
+        }
+    }
+
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
-        let mut text = &**self.text;
+        let mut text = &*self.text;
         for run in &runs {
             text = text.get(run.len..).unwrap_or_else(|| {
                 #[cfg(debug_assertions)]
@@ -278,11 +325,18 @@ impl Element for StyledText {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let runs = self.runs.take().or_else(|| {
+        let font_family_overrides = self.delayed_font_family_overrides.take();
+        let mut runs = self.runs.take().or_else(|| {
             self.delayed_highlights.take().map(|delayed_highlights| {
                 Self::compute_runs(&self.text, &window.text_style(), delayed_highlights)
             })
         });
+
+        if let Some(ref overrides) = font_family_overrides {
+            let runs =
+                runs.get_or_insert_with(|| vec![window.text_style().to_run(self.text.len())]);
+            Self::apply_font_family_overrides(runs, overrides);
+        }
 
         let layout_id = self.layout.layout(self.text.clone(), runs, window, cx);
         (layout_id, ())
@@ -345,9 +399,11 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = text_style
-            .line_height
-            .to_pixels(font_size.into(), window.rem_size());
+        let line_height = window.pixel_snap(
+            text_style
+                .line_height
+                .to_pixels(font_size.into(), window.rem_size()),
+        );
 
         let runs = if let Some(runs) = runs {
             runs
@@ -399,14 +455,27 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_affix,
-                        &runs,
-                        truncate_from,
-                    )
+                let (text, runs) = if truncate_width.is_some() {
+                    if let Some(max_lines) = text_style.line_clamp
+                        && let Some(wrap_width) = wrap_width
+                    {
+                        line_wrapper.truncate_wrapped_line(
+                            text.clone(),
+                            wrap_width,
+                            max_lines,
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width.unwrap_or(Pixels::MAX),
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    }
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };
