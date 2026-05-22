@@ -13,8 +13,8 @@ use language::CursorShape;
 use settings::Settings;
 use std::time::Instant;
 use terminal::{
-    IndexedCell, Terminal, TerminalBounds, TerminalColor, TerminalContent, TerminalCursorShape,
-    TerminalModes, TerminalNamedColor, TerminalPoint, TerminalRange,
+    IndexedCell, Terminal, TerminalBounds, TerminalCell, TerminalColor, TerminalContent,
+    TerminalCursorShape, TerminalModes, TerminalNamedColor, TerminalPoint, TerminalRange,
     terminal_settings::TerminalSettings,
 };
 use theme::{ActiveTheme, Theme};
@@ -260,6 +260,31 @@ impl BackgroundRegion {
     }
 }
 
+pub trait TerminalLayoutCell {
+    fn point(&self) -> TerminalPoint;
+    fn cell(&self) -> &TerminalCell;
+}
+
+impl TerminalLayoutCell for IndexedCell {
+    fn point(&self) -> TerminalPoint {
+        self.point
+    }
+
+    fn cell(&self) -> &TerminalCell {
+        &self.cell
+    }
+}
+
+impl TerminalLayoutCell for &IndexedCell {
+    fn point(&self) -> TerminalPoint {
+        self.point
+    }
+
+    fn cell(&self) -> &TerminalCell {
+        &self.cell
+    }
+}
+
 /// Merge background regions to minimize the number of rectangles
 fn merge_background_regions(regions: Vec<BackgroundRegion>) -> Vec<BackgroundRegion> {
     if regions.is_empty() {
@@ -339,8 +364,8 @@ impl TerminalElement {
         .track_focus(&focus)
     }
 
-    pub fn layout_grid<'a>(
-        grid: impl Iterator<Item = &'a IndexedCell>,
+    pub fn layout_grid<T: TerminalLayoutCell>(
+        grid: impl Iterator<Item = T>,
         start_line_offset: i32,
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &TerminalRange)>,
@@ -363,7 +388,7 @@ impl TerminalElement {
         let mut current_batch: Option<BatchedTextRun> = None;
 
         // First pass: collect all cells and their backgrounds
-        let linegroups = grid.into_iter().chunk_by(|i| i.point.line);
+        let linegroups = grid.into_iter().chunk_by(|cell| cell.point().line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
             let display_line = start_line_offset + line_index as i32;
 
@@ -375,8 +400,10 @@ impl TerminalElement {
             let mut previous_cell_had_extras = false;
 
             for cell in line {
-                let mut fg = cell.fg;
-                let mut bg = cell.bg;
+                let point = cell.point();
+                let cell = cell.cell();
+                let mut fg = cell.foreground();
+                let mut bg = cell.background();
                 if cell.is_inverse() {
                     mem::swap(&mut fg, &mut bg);
                 }
@@ -384,7 +411,7 @@ impl TerminalElement {
                 // Collect background regions (skip default background)
                 if !bg.is_default_background() {
                     let color = convert_color(&bg, theme);
-                    let col = cell.point.column as i32;
+                    let col = point.column as i32;
 
                     // Try to extend the last region if it's on the same line with the same color
                     if let Some(last_region) = background_regions.last_mut()
@@ -404,7 +431,7 @@ impl TerminalElement {
                 }
 
                 // Skip spaces that follow cells with extras (emoji variation sequences)
-                if cell.c == ' ' && previous_cell_had_extras {
+                if cell.character() == ' ' && previous_cell_had_extras {
                     previous_cell_had_extras = false;
                     continue;
                 }
@@ -417,6 +444,7 @@ impl TerminalElement {
                     if !is_blank(cell) {
                         cell_count += 1;
                         let cell_style = TerminalElement::cell_style(
+                            point,
                             cell,
                             fg,
                             bg,
@@ -426,7 +454,7 @@ impl TerminalElement {
                             minimum_contrast,
                         );
 
-                        let cell_point = LayoutPoint::new(display_line, cell.point.column as i32);
+                        let cell_point = LayoutPoint::new(display_line, point.column as i32);
                         let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
@@ -436,7 +464,7 @@ impl TerminalElement {
                                 && batch.start_point.column + batch.cell_count as i32
                                     == cell_point.column
                             {
-                                batch.append_char(cell.c);
+                                batch.append_char(cell.character());
                                 if let Some(chars) = zero_width_chars {
                                     batch.append_zero_width_chars(chars);
                                 }
@@ -446,7 +474,7 @@ impl TerminalElement {
                                 batched_runs.push(old_batch);
                                 let mut new_batch = BatchedTextRun::new_from_char(
                                     cell_point,
-                                    cell.c,
+                                    cell.character(),
                                     cell_style,
                                     text_style.font_size,
                                 );
@@ -459,7 +487,7 @@ impl TerminalElement {
                             // Start new batch
                             let mut new_batch = BatchedTextRun::new_from_char(
                                 cell_point,
-                                cell.c,
+                                cell.character(),
                                 cell_style,
                                 text_style.font_size,
                             );
@@ -561,7 +589,8 @@ impl TerminalElement {
 
     /// Converts terminal cell styles to GPUI text styles and background color.
     fn cell_style(
-        indexed: &IndexedCell,
+        point: TerminalPoint,
+        cell: &TerminalCell,
         fg: TerminalColor,
         bg: TerminalColor,
         colors: &Theme,
@@ -573,43 +602,41 @@ impl TerminalElement {
         let mut fg = convert_color(&fg, colors);
         let bg = convert_color(&bg, colors);
 
-        if !skip_contrast && !Self::is_decorative_character(indexed.c) {
+        if !skip_contrast && !Self::is_decorative_character(cell.character()) {
             fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
         // Use a dim multiplier that stays close to the existing Alacritty look.
-        if indexed.cell.is_dim() {
+        if cell.is_dim() {
             fg.a *= 0.7;
         }
 
         let underline =
-            (indexed.cell.has_underline() || indexed.cell.hyperlink().is_some()).then(|| {
-                UnderlineStyle {
-                    color: Some(fg),
-                    thickness: Pixels::from(1.0),
-                    wavy: indexed.cell.has_undercurl(),
-                }
+            (cell.has_underline() || cell.hyperlink().is_some()).then(|| UnderlineStyle {
+                color: Some(fg),
+                thickness: Pixels::from(1.0),
+                wavy: cell.has_undercurl(),
             });
 
-        let strikethrough = indexed.cell.has_strikeout().then(|| StrikethroughStyle {
+        let strikethrough = cell.has_strikeout().then(|| StrikethroughStyle {
             color: Some(fg),
             thickness: Pixels::from(1.0),
         });
 
-        let weight = if indexed.cell.is_bold() {
+        let weight = if cell.is_bold() {
             FontWeight::BOLD
         } else {
             text_style.font_weight
         };
 
-        let style = if indexed.cell.is_italic() {
+        let style = if cell.is_italic() {
             FontStyle::Italic
         } else {
             FontStyle::Normal
         };
 
         let mut result = TextRun {
-            len: indexed.c.len_utf8(),
+            len: cell.character().len_utf8(),
             color: fg,
             background_color: None,
             font: Font {
@@ -622,7 +649,7 @@ impl TerminalElement {
         };
 
         if let Some((style, range)) = hyperlink
-            && range.contains(indexed.point)
+            && range.contains(point)
         {
             if let Some(underline) = style.underline {
                 result.underline = Some(underline);
@@ -1594,12 +1621,12 @@ impl InputHandler for TerminalInputHandler {
     }
 }
 
-pub fn is_blank(cell: &IndexedCell) -> bool {
-    if cell.c != ' ' {
+pub fn is_blank(cell: &TerminalCell) -> bool {
+    if cell.character() != ' ' {
         return false;
     }
 
-    if !cell.bg.is_default_background() {
+    if !cell.background().is_default_background() {
         return false;
     }
 

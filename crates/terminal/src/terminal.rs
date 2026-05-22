@@ -1802,6 +1802,19 @@ impl Terminal {
         }
     }
 
+    pub fn with_renderable_cells<R>(
+        &self,
+        f: impl FnOnce(&mut dyn Iterator<Item = IndexedCell>) -> R,
+    ) -> R {
+        let term = self.term.lock_unfair();
+        let content = term.renderable_content();
+        let mut cells = content.display_iter.map(|ic| IndexedCell {
+            point: terminal_point_from_alacritty(ic.point),
+            cell: terminal_cell_from_alacritty(ic.cell),
+        });
+        f(&mut cells)
+    }
+
     pub fn get_content(&self) -> String {
         let term = self.term.lock_unfair();
         let start = AlacPoint::new(term.topmost_line(), Column(0));
@@ -2234,9 +2247,7 @@ impl Terminal {
     ) -> Task<Vec<TerminalRange>> {
         let term = self.term.clone();
         cx.background_spawn(async move {
-            let Some(mut searcher) = searcher.alacritty() else {
-                return Vec::new();
-            };
+            let mut searcher = searcher.alacritty();
             let term = term.lock();
 
             all_search_matches(&term, &mut searcher)
@@ -3175,7 +3186,7 @@ mod tests {
 
                     let content_index =
                         content_index_for_mouse(mouse_pos, &content.terminal_bounds);
-                    let mouse_cell = content.cells[content_index].c;
+                    let mouse_cell = content.cells[content_index].character();
                     let real_cell = cells[row][col];
 
                     assert_eq!(mouse_cell, real_cell);
@@ -3203,7 +3214,7 @@ mod tests {
                 point(Pixels::from(-10.), Pixels::from(-10.)),
                 &content.terminal_bounds,
             )]
-            .c,
+            .character(),
             cells[0][0]
         );
         assert_eq!(
@@ -3211,7 +3222,7 @@ mod tests {
                 point(Pixels::from(1000.), Pixels::from(1000.)),
                 &content.terminal_bounds,
             )]
-            .c,
+            .character(),
             cells[9][9]
         );
     }
@@ -3285,7 +3296,7 @@ mod tests {
         for (index, row) in cells.iter().enumerate() {
             for (cell_index, cell_char) in row.iter().enumerate() {
                 let mut cell = TerminalCell::default();
-                cell.c = *cell_char;
+                cell.set_character(*cell_char);
                 ic.push(IndexedCell {
                     point: TerminalPoint::new(index as i32, cell_index),
                     cell,
@@ -3335,7 +3346,7 @@ mod tests {
         let mut line2_col0 = false;
 
         for cell in cells {
-            if cell.c == 'l' && cell.point.column == 0 {
+            if cell.character() == 'l' && cell.point.column == 0 {
                 if cell.point.line == 0 && !line1_col0 {
                     line1_col0 = true;
                 } else if cell.point.line == 1 && !line2_col0 {
@@ -3379,7 +3390,7 @@ mod tests {
         // Check that both lines start at column 0
         let mut found_lines_at_column_0 = 0;
         for cell in cells {
-            if cell.c == 'l' && cell.point.column == 0 {
+            if cell.character() == 'l' && cell.point.column == 0 {
                 found_lines_at_column_0 += 1;
             }
         }
@@ -3422,7 +3433,7 @@ mod tests {
         let mut text = String::new();
         for cell in cells.iter().take(5) {
             if cell.point.line == 0 {
-                text.push(cell.c);
+                text.push(cell.character());
             }
         }
 

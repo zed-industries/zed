@@ -10,7 +10,6 @@ use alacritty_terminal::{
     vi_mode::ViMotion,
     vte::ansi::CursorShape as AlacCursorShape,
 };
-use regex::Regex;
 use std::{
     ops::{BitOr, BitOrAssign, Deref, RangeInclusive},
     sync::Arc,
@@ -81,24 +80,18 @@ impl TerminalViMotion {
 
 #[derive(Clone, Debug)]
 pub struct TerminalSearch {
-    pattern: Arc<str>,
+    search: RegexSearch,
 }
 
 impl TerminalSearch {
     pub fn new(search: &str) -> Option<Self> {
-        Regex::new(search).ok()?;
-
         Some(Self {
-            pattern: Arc::from(search),
+            search: RegexSearch::new(search).ok()?,
         })
     }
 
-    fn compile_alacritty(search: &str) -> Option<RegexSearch> {
-        RegexSearch::new(search).ok()
-    }
-
-    pub(super) fn alacritty(&self) -> Option<RegexSearch> {
-        Self::compile_alacritty(self.pattern.as_ref())
+    pub(super) fn alacritty(&self) -> RegexSearch {
+        self.search.clone()
     }
 }
 
@@ -220,6 +213,16 @@ impl From<VteColor> for TerminalColor {
     }
 }
 
+impl From<TerminalColor> for VteColor {
+    fn from(color: TerminalColor) -> Self {
+        match color {
+            TerminalColor::Named(color) => Self::Named(color.into()),
+            TerminalColor::Spec(color) => Self::Spec(color.into()),
+            TerminalColor::Indexed(index) => Self::Indexed(index),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalRgb {
     pub r: u8,
@@ -316,6 +319,42 @@ impl From<VteNamedColor> for TerminalNamedColor {
     }
 }
 
+impl From<TerminalNamedColor> for VteNamedColor {
+    fn from(color: TerminalNamedColor) -> Self {
+        match color {
+            TerminalNamedColor::Black => Self::Black,
+            TerminalNamedColor::Red => Self::Red,
+            TerminalNamedColor::Green => Self::Green,
+            TerminalNamedColor::Yellow => Self::Yellow,
+            TerminalNamedColor::Blue => Self::Blue,
+            TerminalNamedColor::Magenta => Self::Magenta,
+            TerminalNamedColor::Cyan => Self::Cyan,
+            TerminalNamedColor::White => Self::White,
+            TerminalNamedColor::BrightBlack => Self::BrightBlack,
+            TerminalNamedColor::BrightRed => Self::BrightRed,
+            TerminalNamedColor::BrightGreen => Self::BrightGreen,
+            TerminalNamedColor::BrightYellow => Self::BrightYellow,
+            TerminalNamedColor::BrightBlue => Self::BrightBlue,
+            TerminalNamedColor::BrightMagenta => Self::BrightMagenta,
+            TerminalNamedColor::BrightCyan => Self::BrightCyan,
+            TerminalNamedColor::BrightWhite => Self::BrightWhite,
+            TerminalNamedColor::Foreground => Self::Foreground,
+            TerminalNamedColor::Background => Self::Background,
+            TerminalNamedColor::Cursor => Self::Cursor,
+            TerminalNamedColor::DimBlack => Self::DimBlack,
+            TerminalNamedColor::DimRed => Self::DimRed,
+            TerminalNamedColor::DimGreen => Self::DimGreen,
+            TerminalNamedColor::DimYellow => Self::DimYellow,
+            TerminalNamedColor::DimBlue => Self::DimBlue,
+            TerminalNamedColor::DimMagenta => Self::DimMagenta,
+            TerminalNamedColor::DimCyan => Self::DimCyan,
+            TerminalNamedColor::DimWhite => Self::DimWhite,
+            TerminalNamedColor::BrightForeground => Self::BrightForeground,
+            TerminalNamedColor::DimForeground => Self::DimForeground,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TerminalHyperlink {
     data: TerminalHyperlinkData,
@@ -386,272 +425,139 @@ mod tests {
 
         let clone = cell.clone();
 
-        match (&cell.extra, &clone.extra) {
+        match (&cell.cell.extra, &clone.cell.extra) {
             (Some(extra), Some(clone_extra)) => assert!(Arc::ptr_eq(extra, clone_extra)),
             _ => panic!("expected extra storage on both cells"),
         }
     }
 
     #[test]
-    fn terminal_cell_flags_from_alacritty_preserves_raw_bits() {
-        let flags = Flags::INVERSE
-            | Flags::BOLD
-            | Flags::ITALIC
-            | Flags::DIM
-            | Flags::STRIKEOUT
-            | Flags::UNDERCURL
-            | Flags::WIDE_CHAR_SPACER
-            | Flags::WRAPLINE;
+    fn terminal_cell_from_alacritty_shares_extra_storage() {
+        let mut cell = AlacCell::default();
+        cell.push_zerowidth('a');
 
-        let flags = terminal_cell_flags_from_alacritty(flags);
+        let converted = terminal_cell_from_alacritty(&cell);
 
-        assert!(flags.contains(TerminalCellFlags::INVERSE));
-        assert!(flags.contains(TerminalCellFlags::BOLD));
-        assert!(flags.contains(TerminalCellFlags::ITALIC));
-        assert!(flags.contains(TerminalCellFlags::DIM));
-        assert!(flags.contains(TerminalCellFlags::STRIKEOUT));
-        assert!(flags.contains(TerminalCellFlags::UNDERCURL));
-        assert!(flags.contains(TerminalCellFlags::WIDE_CHAR_SPACER));
-        assert!(!flags.contains(TerminalCellFlags::HIDDEN));
-        assert_eq!(flags.0 & Flags::WRAPLINE.bits(), 0);
+        match (&cell.extra, &converted.cell.extra) {
+            (Some(extra), Some(converted_extra)) => assert!(Arc::ptr_eq(extra, converted_extra)),
+            _ => panic!("expected extra storage on both cells"),
+        }
     }
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
-struct TerminalCellExtra {
-    zerowidth: Vec<char>,
-    underline_color: Option<TerminalColor>,
-    hyperlink: Option<TerminalHyperlink>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct TerminalCellFlags(u16);
-
-impl TerminalCellFlags {
-    pub(crate) const INVERSE: Self = Self(1 << 0);
-    pub(crate) const BOLD: Self = Self(1 << 1);
-    pub(crate) const ITALIC: Self = Self(1 << 2);
-    pub(crate) const UNDERLINE: Self = Self(1 << 3);
-    pub(crate) const WIDE_CHAR: Self = Self(1 << 5);
-    pub(crate) const WIDE_CHAR_SPACER: Self = Self(1 << 6);
-    pub(crate) const DIM: Self = Self(1 << 7);
-    pub(crate) const HIDDEN: Self = Self(1 << 8);
-    pub(crate) const STRIKEOUT: Self = Self(1 << 9);
-    pub(crate) const LEADING_WIDE_CHAR_SPACER: Self = Self(1 << 10);
-    pub(crate) const DOUBLE_UNDERLINE: Self = Self(1 << 11);
-    pub(crate) const UNDERCURL: Self = Self(1 << 12);
-    pub(crate) const DOTTED_UNDERLINE: Self = Self(1 << 13);
-    pub(crate) const DASHED_UNDERLINE: Self = Self(1 << 14);
-    const ALL_UNDERLINES: Self = Self(
-        Self::UNDERLINE.0
-            | Self::DOUBLE_UNDERLINE.0
-            | Self::UNDERCURL.0
-            | Self::DOTTED_UNDERLINE.0
-            | Self::DASHED_UNDERLINE.0,
-    );
-    const ALL: Self = Self(
-        Self::INVERSE.0
-            | Self::BOLD.0
-            | Self::ITALIC.0
-            | Self::UNDERLINE.0
-            | Self::WIDE_CHAR.0
-            | Self::WIDE_CHAR_SPACER.0
-            | Self::DIM.0
-            | Self::HIDDEN.0
-            | Self::STRIKEOUT.0
-            | Self::LEADING_WIDE_CHAR_SPACER.0
-            | Self::DOUBLE_UNDERLINE.0
-            | Self::UNDERCURL.0
-            | Self::DOTTED_UNDERLINE.0
-            | Self::DASHED_UNDERLINE.0,
-    );
-
-    pub(crate) fn empty() -> Self {
-        Self::default()
-    }
-
-    pub(crate) fn insert(&mut self, flag: Self) {
-        self.0 |= flag.0;
-    }
-
-    fn contains(self, flag: Self) -> bool {
-        self.0 & flag.0 == flag.0
-    }
-
-    fn intersects(self, flags: Self) -> bool {
-        self.0 & flags.0 != 0
-    }
-}
-
-impl BitOr for TerminalCellFlags {
-    type Output = Self;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        Self(self.0 | rhs.0)
-    }
-}
-
-impl BitOrAssign for TerminalCellFlags {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.insert(rhs);
-    }
-}
-
-fn terminal_cell_flags_from_alacritty(flags: Flags) -> TerminalCellFlags {
-    TerminalCellFlags(flags.bits() & TerminalCellFlags::ALL.0)
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TerminalCell {
-    pub c: char,
-    pub fg: TerminalColor,
-    pub bg: TerminalColor,
-    flags: TerminalCellFlags,
-    extra: Option<Arc<TerminalCellExtra>>,
-}
-
-impl Default for TerminalCell {
-    fn default() -> Self {
-        Self {
-            c: ' ',
-            bg: TerminalColor::Named(TerminalNamedColor::Background),
-            fg: TerminalColor::Named(TerminalNamedColor::Foreground),
-            flags: TerminalCellFlags::empty(),
-            extra: None,
-        }
-    }
+    cell: AlacCell,
 }
 
 impl TerminalCell {
-    fn extra_mut(&mut self) -> &mut TerminalCellExtra {
-        Arc::make_mut(
-            self.extra
-                .get_or_insert_with(|| Arc::new(TerminalCellExtra::default())),
-        )
+    #[inline]
+    pub fn character(&self) -> char {
+        self.cell.c
+    }
+
+    #[inline]
+    pub fn set_character(&mut self, character: char) {
+        self.cell.c = character;
+    }
+
+    #[inline]
+    pub fn foreground(&self) -> TerminalColor {
+        self.cell.fg.into()
+    }
+
+    #[inline]
+    pub fn background(&self) -> TerminalColor {
+        self.cell.bg.into()
     }
 
     #[inline]
     pub fn zerowidth(&self) -> Option<&[char]> {
-        self.extra.as_ref().map(|extra| extra.zerowidth.as_slice())
+        self.cell.zerowidth()
     }
 
     #[inline]
     pub fn push_zerowidth(&mut self, character: char) {
-        self.extra_mut().zerowidth.push(character);
+        self.cell.push_zerowidth(character);
     }
 
     pub fn set_underline_color(&mut self, color: Option<TerminalColor>) {
-        let should_drop = color.is_none()
-            && self
-                .extra
-                .as_ref()
-                .is_none_or(|extra| extra.zerowidth.is_empty() && extra.hyperlink.is_none());
-
-        if should_drop {
-            self.extra = None;
-        } else {
-            self.extra_mut().underline_color = color;
-        }
+        self.cell.set_underline_color(color.map(Into::into));
     }
 
     #[inline]
     pub fn underline_color(&self) -> Option<TerminalColor> {
-        self.extra.as_ref()?.underline_color
+        self.cell.underline_color().map(Into::into)
     }
 
     pub fn set_hyperlink(&mut self, hyperlink: Option<TerminalHyperlink>) {
-        let should_drop = hyperlink.is_none()
-            && self
-                .extra
-                .as_ref()
-                .is_none_or(|extra| extra.zerowidth.is_empty() && extra.underline_color.is_none());
-
-        if should_drop {
-            self.extra = None;
-        } else {
-            self.extra_mut().hyperlink = hyperlink;
-        }
+        self.cell.set_hyperlink(hyperlink.map(Into::into));
     }
 
     #[inline]
-    pub fn hyperlink(&self) -> Option<&TerminalHyperlink> {
-        self.extra.as_ref()?.hyperlink.as_ref()
+    pub fn hyperlink(&self) -> Option<TerminalHyperlink> {
+        self.cell.hyperlink().map(terminal_hyperlink_from_alacritty)
     }
 
     #[inline]
     pub fn is_inverse(&self) -> bool {
-        self.flags.contains(TerminalCellFlags::INVERSE)
+        self.cell.flags.contains(Flags::INVERSE)
     }
 
     #[inline]
     pub fn is_wide_char_spacer(&self) -> bool {
-        self.flags.contains(TerminalCellFlags::WIDE_CHAR_SPACER)
+        self.cell.flags.contains(Flags::WIDE_CHAR_SPACER)
     }
 
     #[inline]
     pub fn is_dim(&self) -> bool {
-        self.flags.intersects(TerminalCellFlags::DIM)
+        self.cell.flags.intersects(Flags::DIM)
     }
 
     #[inline]
     pub fn has_underline(&self) -> bool {
-        self.flags.intersects(TerminalCellFlags::ALL_UNDERLINES)
+        self.cell.flags.intersects(Flags::ALL_UNDERLINES)
     }
 
     #[inline]
     pub fn has_undercurl(&self) -> bool {
-        self.flags.contains(TerminalCellFlags::UNDERCURL)
+        self.cell.flags.contains(Flags::UNDERCURL)
     }
 
     #[inline]
     pub fn has_strikeout(&self) -> bool {
-        self.flags.intersects(TerminalCellFlags::STRIKEOUT)
+        self.cell.flags.intersects(Flags::STRIKEOUT)
     }
 
     #[inline]
     pub fn is_bold(&self) -> bool {
-        self.flags.intersects(TerminalCellFlags::BOLD)
+        self.cell.flags.intersects(Flags::BOLD)
     }
 
     #[inline]
     pub fn is_italic(&self) -> bool {
-        self.flags.intersects(TerminalCellFlags::ITALIC)
+        self.cell.flags.intersects(Flags::ITALIC)
     }
 
     #[inline]
     pub fn has_visible_style_modifier(&self) -> bool {
-        self.flags.intersects(
-            TerminalCellFlags::ALL_UNDERLINES
-                | TerminalCellFlags::INVERSE
-                | TerminalCellFlags::STRIKEOUT,
-        )
+        self.cell
+            .flags
+            .intersects(Flags::ALL_UNDERLINES | Flags::INVERSE | Flags::STRIKEOUT)
+    }
+}
+
+impl From<TerminalHyperlink> for AlacHyperlink {
+    fn from(hyperlink: TerminalHyperlink) -> Self {
+        match hyperlink.data {
+            TerminalHyperlinkData::Alacritty(hyperlink) => hyperlink,
+            TerminalHyperlinkData::Owned { id, uri } => Self::new(id.as_deref(), uri.to_string()),
+        }
     }
 }
 
 pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> TerminalCell {
-    let zerowidth = cell
-        .zerowidth()
-        .filter(|zerowidth| !zerowidth.is_empty())
-        .map(<[char]>::to_vec);
-    let underline_color = cell.underline_color().map(Into::into);
-    let hyperlink = cell.hyperlink().map(terminal_hyperlink_from_alacritty);
-    let extra = if zerowidth.is_none() && underline_color.is_none() && hyperlink.is_none() {
-        None
-    } else {
-        Some(Arc::new(TerminalCellExtra {
-            zerowidth: zerowidth.unwrap_or_default(),
-            underline_color,
-            hyperlink,
-        }))
-    };
-
-    TerminalCell {
-        c: cell.c,
-        fg: cell.fg.into(),
-        bg: cell.bg.into(),
-        flags: terminal_cell_flags_from_alacritty(cell.flags),
-        extra,
-    }
+    TerminalCell { cell: cell.clone() }
 }
 
 #[derive(Debug, Clone)]
