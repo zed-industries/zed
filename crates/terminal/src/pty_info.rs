@@ -185,7 +185,7 @@ impl PtyProcessInfo {
         Some(info)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(crate) fn load_for_test(&self) -> Option<ProcessInfo> {
         self.load()
     }

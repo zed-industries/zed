@@ -3453,6 +3453,7 @@ mod tests {
         panic!("Expected terminal content to contain {expected:?}, got: {content}");
     }
 
+    #[cfg(unix)]
     async fn assert_foreground_process_command_eventually(
         terminal: &Entity<Terminal>,
         expected: &str,
