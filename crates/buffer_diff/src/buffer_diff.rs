@@ -1459,8 +1459,9 @@ fn process_patch_hunk(
 
     let (base_word_diffs, buffer_word_diffs) = if let Some(diff_options) = diff_options
         && !buffer_row_range.is_empty()
-        && base_line_count == buffer_row_range.len()
-        && diff_options.max_word_diff_line_count >= base_line_count
+        && base_line_count > 0
+        && base_line_count <= diff_options.max_word_diff_line_count
+        && buffer_row_range.len() <= diff_options.max_word_diff_line_count
     {
         let base_text: String = diff_base
             .chunks_in_range(diff_base_byte_range.clone())

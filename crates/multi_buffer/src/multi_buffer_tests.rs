@@ -5636,6 +5636,21 @@ async fn test_word_diff_modified_lines_with_deletion_between(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_word_diff_modified_lines_with_different_line_counts(cx: &mut TestAppContext) {
+    let settings_store = cx.update(|cx| SettingsStore::test(cx));
+    cx.set_global(settings_store);
+
+    let base_text = "import { foo, bar } from 'a';\nimport { baz } from 'b';\nimport { qux } from 'c';\n";
+    let modified_text = "import { foo, baz } from 'b';\n";
+
+    let word_diffs = collect_word_diffs(base_text, modified_text, cx);
+
+    assert!(!word_diffs.is_empty());
+    assert!(word_diffs.iter().any(|diff| diff.contains("bar")));
+    assert!(word_diffs.iter().any(|diff| diff.contains("baz")));
+}
+
+#[gpui::test]
 async fn test_word_diff_disabled(cx: &mut TestAppContext) {
     let settings_store = cx.update(|cx| {
         let mut settings_store = SettingsStore::test(cx);
