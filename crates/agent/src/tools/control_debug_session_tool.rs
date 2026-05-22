@@ -2,7 +2,10 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
 use dap::{SteppingGranularity, client::SessionId};
 use gpui::{App, Entity, SharedString, Task};
-use project::{Project, debugger::session::ThreadId};
+use project::{
+    Project,
+    debugger::session::{RestartSessionResult, ThreadId},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -132,10 +135,21 @@ impl AgentTool for ControlDebugSessionTool {
                     Ok(format!("Pause command sent to thread {thread_id}"))
                 }
                 DebugControlAction::Restart { args } => {
-                    session_entity.update(cx, |session, cx| {
-                        session.restart(args, cx);
-                    });
-                    Ok("Restart command sent to session".to_string())
+                    let restart_result =
+                        session_entity.update(cx, |session, cx| session.restart(args, cx));
+                    match restart_result {
+                        RestartSessionResult::Started => {
+                            Ok("Restart command sent to session".to_string())
+                        }
+                        RestartSessionResult::AlreadyRestarting => Err(
+                            "Restart command was not sent because a restart is already in progress"
+                                .to_string(),
+                        ),
+                        RestartSessionResult::NotRunning => Err(
+                            "Restart command was not sent because the debug session is not running"
+                                .to_string(),
+                        ),
+                    }
                 }
                 DebugControlAction::Shutdown => {
                     let shutdown_task =

@@ -106,6 +106,13 @@ pub enum ThreadStatus {
     Ended,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RestartSessionResult {
+    Started,
+    AlreadyRestarting,
+    NotRunning,
+}
+
 impl ThreadStatus {
     pub fn label(&self) -> &'static str {
         match self {
@@ -2178,9 +2185,13 @@ impl Session {
         .detach();
     }
 
-    pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) {
-        if self.restart_task.is_some() || self.as_running().is_none() {
-            return;
+    pub fn restart(&mut self, args: Option<Value>, cx: &mut Context<Self>) -> RestartSessionResult {
+        if self.restart_task.is_some() {
+            return RestartSessionResult::AlreadyRestarting;
+        }
+
+        if self.as_running().is_none() {
+            return RestartSessionResult::NotRunning;
         }
 
         let supports_dap_restart =
@@ -2209,6 +2220,8 @@ impl Session {
             })
             .ok();
         }));
+
+        RestartSessionResult::Started
     }
 
     pub fn shutdown(&mut self, cx: &mut Context<Self>) -> Task<()> {

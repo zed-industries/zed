@@ -1,6 +1,6 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
 use agent_client_protocol::schema as acp;
-use dap::client::SessionId;
+use dap::{Variable, client::SessionId};
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::{
     Project,
@@ -86,12 +86,16 @@ impl AgentTool for GetDebugSessionStateTool {
                 for variable in variables {
                     let type_suffix = variable
                         .type_
+                        .as_ref()
                         .map(|type_name| format!(" ({type_name})"))
                         .unwrap_or_default();
                     writeln!(
                         output,
-                        "- {} = {}{}",
-                        variable.name, variable.value, type_suffix
+                        "- {} = {}{}{}",
+                        variable.name,
+                        variable.value,
+                        type_suffix,
+                        variable_reference_suffix(&variable)
                     )
                     .ok();
                 }
@@ -126,12 +130,16 @@ impl AgentTool for GetDebugSessionStateTool {
                     for variable in variables {
                         let type_suffix = variable
                             .type_
+                            .as_ref()
                             .map(|type_name| format!(" ({type_name})"))
                             .unwrap_or_default();
                         writeln!(
                             output,
-                            "  - {} = {}{}",
-                            variable.name, variable.value, type_suffix
+                            "  - {} = {}{}{}",
+                            variable.name,
+                            variable.value,
+                            type_suffix,
+                            variable_reference_suffix(&variable)
                         )
                         .ok();
                     }
@@ -228,12 +236,16 @@ impl AgentTool for GetDebugSessionStateTool {
                         for variable in variables {
                             let type_suffix = variable
                                 .type_
+                                .as_ref()
                                 .map(|type_name| format!(" ({type_name})"))
                                 .unwrap_or_default();
                             writeln!(
                                 output,
-                                "    - {} = {}{}",
-                                variable.name, variable.value, type_suffix
+                                "    - {} = {}{}{}",
+                                variable.name,
+                                variable.value,
+                                type_suffix,
+                                variable_reference_suffix(&variable)
                             )
                             .ok();
                         }
@@ -243,6 +255,14 @@ impl AgentTool for GetDebugSessionStateTool {
 
             Ok(output)
         })
+    }
+}
+
+fn variable_reference_suffix(variable: &Variable) -> String {
+    if variable.variables_reference == 0 {
+        String::new()
+    } else {
+        format!(" (variables reference: {})", variable.variables_reference)
     }
 }
 
