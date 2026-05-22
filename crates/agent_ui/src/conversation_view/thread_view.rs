@@ -362,19 +362,14 @@ pub struct TurnFields {
 }
 
 /// How a tool call is rendered relative to its surroundings.
+///
+/// `Standalone` draws its own border/margin/location header. `Embedded` is
+/// hosted by a container that provides its own framing (e.g. the subagent
+/// card or the main-agent awaiting-permission row).
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum ToolCallLayout {
-    /// Inline in the thread list with outer chrome.
     Standalone,
-    /// Hosted by a container that provides its own framing.
     Embedded,
-}
-
-impl ToolCallLayout {
-    /// Whether the tool call should draw its own border/margin/location header.
-    fn has_outer_chrome(self) -> bool {
-        matches!(self, Self::Standalone)
-    }
 }
 
 impl ThreadView {
@@ -2287,6 +2282,9 @@ impl ThreadView {
 
         let mut sections = Vec::new();
 
+        // Show at most one "awaiting permission" row at a time. If the main
+        // agent and subagents both have pending requests, surface the main
+        // agent's prompt.
         if let Some(element) = self.render_main_agent_awaiting_permission(window, cx) {
             sections.push(vec![element]);
         } else if let Some(element) = self.render_subagents_awaiting_permission(cx) {
@@ -2746,7 +2744,7 @@ impl ThreadView {
         }
 
         let active_session_id = self.thread.read(cx).session_id().clone();
-        let (tool_call_id, _options) = self
+        let tool_call_id = self
             .conversation
             .read(cx)
             .pending_tool_call_for_session(&active_session_id, cx)?;
@@ -2760,7 +2758,7 @@ impl ThreadView {
 
         let focus_handle = self.focus_handle(cx);
 
-        let card = self.render_tool_call(
+        let card = self.render_any_tool_call(
             &active_session_id,
             entry_ix,
             tool_call,
@@ -6350,7 +6348,7 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .when(layout.has_outer_chrome(), |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.my_1p5()
                     .mx_5()
                     .border_1()
@@ -6738,7 +6736,7 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if !layout.has_outer_chrome() {
+                if layout == ToolCallLayout::Embedded {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
@@ -6752,7 +6750,7 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .when(layout.has_outer_chrome(), |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.map(|this| {
                     if has_location && !use_card_layout {
                         this.ml_4()

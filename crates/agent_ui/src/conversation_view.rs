@@ -349,22 +349,24 @@ impl Conversation {
             .collect()
     }
 
-    /// Returns the first pending tool call request for the given session and
-    /// the available permission options. Unlike `pending_tool_call`, this does
-    /// not fall back to other sessions when none are pending in the queried
-    /// one.
-    pub fn pending_tool_call_for_session<'a>(
-        &'a self,
+    /// Returns the first pending tool call request for exactly `session_id`.
+    /// Unlike `pending_tool_call`, this does not use the global FIFO pending
+    /// request for non-subagent sessions.
+    pub fn pending_tool_call_for_session(
+        &self,
         session_id: &acp::SessionId,
-        cx: &'a App,
-    ) -> Option<(acp::ToolCallId, &'a PermissionOptions)> {
+        cx: &App,
+    ) -> Option<acp::ToolCallId> {
         let thread = self.threads.get(session_id)?;
         let tool_call_id = self.permission_requests.get(session_id)?.iter().next()?;
         let (_, tool_call) = thread.read(cx).tool_call(tool_call_id)?;
-        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+        if !matches!(
+            tool_call.status,
+            ToolCallStatus::WaitingForConfirmation { .. }
+        ) {
             return None;
-        };
-        Some((tool_call_id.clone(), options))
+        }
+        Some(tool_call_id.clone())
     }
 
     pub fn authorize_pending_tool_call(
@@ -7837,31 +7839,6 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_permission_row_hidden_when_inline_visible(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (_view, thread_view, entry_ix, cx) =
-            setup_pending_permission_thread("perm-visible", cx).await;
-
-        draw_thread_list_at(
-            &thread_view,
-            ListOffset {
-                item_ix: entry_ix,
-                offset_in_item: px(0.0),
-            },
-            cx,
-        );
-
-        thread_view.update_in(cx, |view, window, cx| {
-            assert!(
-                view.render_main_agent_awaiting_permission(window, cx)
-                    .is_none(),
-                "Floating row should be hidden when the inline prompt is visible"
-            );
-        });
-    }
-
-    #[gpui::test]
     async fn test_permission_row_hidden_when_inline_bounds_unavailable(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7873,63 +7850,6 @@ pub(crate) mod tests {
                 view.render_main_agent_awaiting_permission(window, cx)
                     .is_none(),
                 "Floating row should stay hidden until the inline prompt has known list bounds"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_permission_row_hidden_when_inline_above_viewport_bounds_unavailable(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        let (_view, thread_view, entry_ix, cx) =
-            setup_pending_permission_thread("perm-above", cx).await;
-
-        draw_thread_list_at(
-            &thread_view,
-            ListOffset {
-                item_ix: entry_ix,
-                offset_in_item: px(20.0),
-            },
-            cx,
-        );
-
-        thread_view.update_in(cx, |view, window, cx| {
-            assert!(
-                view.render_main_agent_awaiting_permission(window, cx)
-                    .is_none(),
-                "Floating row should stay hidden when the inline prompt has no list bounds"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_permission_row_shown_when_inline_below_viewport(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let (_view, thread_view, entry_ix, cx) =
-            setup_pending_permission_thread("perm-below", cx).await;
-
-        // Only meaningful when entry_ix > 0.
-        assert!(
-            entry_ix >= 1,
-            "Tool call should not be the very first entry"
-        );
-        draw_thread_list_at(
-            &thread_view,
-            ListOffset {
-                item_ix: 0,
-                offset_in_item: px(0.0),
-            },
-            cx,
-        );
-
-        thread_view.update_in(cx, |view, window, cx| {
-            assert!(
-                view.render_main_agent_awaiting_permission(window, cx)
-                    .is_some(),
-                "Floating row should render when the inline prompt is below the viewport"
             );
         });
     }
@@ -7964,13 +7884,13 @@ pub(crate) mod tests {
         let _task_b = request_test_tool_authorization(&thread_b, "tc-b", "allow-b", cx);
 
         cx.read(|cx| {
-            let (tool_call_id_a, _) = conversation
+            let tool_call_id_a = conversation
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_a, cx)
                 .expect("Expected a pending tool call in thread A");
             assert_eq!(tool_call_id_a, acp::ToolCallId::new("tc-a"));
 
-            let (tool_call_id_b, _) = conversation
+            let tool_call_id_b = conversation
                 .read(cx)
                 .pending_tool_call_for_session(&session_id_b, cx)
                 .expect("Expected a pending tool call in thread B");
@@ -7987,10 +7907,6 @@ pub(crate) mod tests {
 
         // Start off-screen below the viewport — row visible because the item
         // has bounds that do not intersect the viewport.
-        assert!(
-            entry_ix >= 1,
-            "Tool call should not be the very first entry"
-        );
         draw_thread_list_at(
             &thread_view,
             ListOffset {
@@ -7999,6 +7915,14 @@ pub(crate) mod tests {
             },
             cx,
         );
+        thread_view.read_with(cx, |view, _cx| {
+            assert!(
+                view.list_state.bounds_for_item(entry_ix).is_some(),
+                "The tool call entry must be measured for this test to exercise the\
+                 \"entry below viewport\" branch. If list overdraw stops measuring\
+                 offscreen items, this test needs to drive measurement another way."
+            );
+        });
         thread_view.update_in(cx, |view, window, cx| {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
@@ -8027,17 +7951,13 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
-    async fn test_permission_row_allow_button_authorizes(cx: &mut TestAppContext) {
+    async fn test_permission_row_disappears_when_authorized(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (conversation_view, thread_view, entry_ix, cx) =
+        let (conversation_view, thread_view, _entry_ix, cx) =
             setup_pending_permission_thread("perm-allow", cx).await;
 
         // Park the inline prompt below the viewport so the floating row would render.
-        assert!(
-            entry_ix >= 1,
-            "Tool call should not be the very first entry"
-        );
         draw_thread_list_at(
             &thread_view,
             ListOffset {
@@ -8050,7 +7970,7 @@ pub(crate) mod tests {
             assert!(
                 view.render_main_agent_awaiting_permission(window, cx)
                     .is_some(),
-                "Precondition: floating row should be visible"
+                "Floating row should be visible before authorizing"
             );
         });
 
