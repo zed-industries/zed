@@ -84,7 +84,7 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
         NewWorktreeBranchTarget::RemoteBranch {
             remote_name,
             branch_name,
-        } => Some(format!("{remote_name}/{branch_name}")),
+        } => Some(format!("refs/remotes/{remote_name}/{branch_name}")),
     }
 }
 
@@ -434,13 +434,13 @@ pub fn handle_create_worktree(
     let worktree_name = action.worktree_name.clone();
     let branch_target = action.branch_target.clone();
     let fetch_askpass_delegates = remote_branch_to_fetch(&branch_target)
-        .map(|(remote_name, branch_name)| {
+        .map(|(remote_name, _branch_name)| {
             git_repos
                 .iter()
                 .map(|_| {
                     create_worktree_askpass_delegate(
                         workspace_handle.clone(),
-                        format!("git fetch {remote_name}/{branch_name}"),
+                        format!("git fetch {remote_name}"),
                         window,
                         cx,
                     )

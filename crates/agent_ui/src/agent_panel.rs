@@ -9788,7 +9788,7 @@ mod tests {
                 branch_name: "main".to_string(),
             },
         );
-        assert_eq!(resolved, Some("origin/main".to_string()));
+        assert_eq!(resolved, Some("refs/remotes/origin/main".to_string()));
     }
 
     #[gpui::test]
