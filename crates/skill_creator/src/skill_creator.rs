@@ -250,7 +250,6 @@ pub struct SkillCreator {
     body_error: Option<&'static str>,
     save_error: Option<SharedString>,
     url_import_status: UrlImportStatus,
-    suppress_next_url_input_event: bool,
     saving: bool,
     // Held so that dropping the entity (e.g. the window closing) cancels
     // an in-flight save. Detaching the task instead would let
@@ -434,7 +433,6 @@ impl SkillCreator {
             body_error: None,
             save_error: None,
             url_import_status: UrlImportStatus::Idle,
-            suppress_next_url_input_event: false,
             saving: false,
             save_task: None,
             url_import_debounce_task: None,
@@ -453,8 +451,12 @@ impl SkillCreator {
             return;
         }
 
-        if self.suppress_next_url_input_event {
-            self.suppress_next_url_input_event = false;
+        // Convention from `thread_view::handle_title_editor_event` and
+        // `agent_panel::handle_terminal_title_editor_event`: programmatic
+        // `set_text` is performed while the editor is unfocused, so the
+        // focus check filters synthesized `BufferEdited` events out of
+        // the user-edit path without needing a one-shot suppression flag.
+        if !self.url_editor.focus_handle(cx).is_focused(window) {
             return;
         }
 
@@ -601,42 +603,39 @@ impl SkillCreator {
     ) {
         self.creation_mode = CreationMode::Url;
         self.save_error = None;
-        window.focus(&self.url_editor.focus_handle(cx), cx);
-
-        let Some(initial_url) = initial_url else {
-            self.url_import_debounce_task = None;
-            self.url_import_task = None;
-            self.url_import_status = UrlImportStatus::Idle;
-
-            if !self.current_url(cx).is_empty() {
-                let url_editor = self.url_editor.clone();
-                window.defer(cx, move |window, cx| {
-                    url_editor.update(cx, |input, cx| {
-                        input.set_text("", window, cx);
-                    });
-                });
-            }
-
-            cx.notify();
-            return;
-        };
-
         self.url_import_debounce_task = None;
         self.url_import_task = None;
         self.url_import_status = UrlImportStatus::Idle;
-        self.suppress_next_url_input_event = true;
 
+        let text = initial_url.unwrap_or_default();
+        let should_fetch = !text.is_empty();
+        let needs_set_text = should_fetch || !self.current_url(cx).is_empty();
+        if !needs_set_text {
+            // No text to write and nothing to clear: just move focus.
+            window.focus(&self.url_editor.focus_handle(cx), cx);
+            cx.notify();
+            return;
+        }
+
+        // Defer so the programmatic `set_text` runs before we move focus
+        // to the URL editor. `handle_url_input_event` uses
+        // `url_editor.is_focused(window)` to distinguish user edits from
+        // programmatic ones, so writing while unfocused is what keeps the
+        // synthesized `BufferEdited` from being treated as a user edit.
         let skill_creator = cx.weak_entity();
         let url_editor = self.url_editor.clone();
         window.defer(cx, move |window, cx| {
             url_editor.update(cx, |input, cx| {
-                input.set_text(&initial_url, window, cx);
+                input.set_text(&text, window, cx);
             });
-            skill_creator
-                .update(cx, |this, cx| {
-                    this.start_url_import(window, cx);
-                })
-                .log_err();
+            window.focus(&url_editor.focus_handle(cx), cx);
+            if should_fetch {
+                skill_creator
+                    .update(cx, |this, cx| {
+                        this.start_url_import(window, cx);
+                    })
+                    .log_err();
+            }
         });
         cx.notify();
     }
@@ -665,6 +664,9 @@ impl SkillCreator {
     }
 
     fn start_url_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Cancel any pending debounce so the explicit start supersedes it,
+        // instead of racing with a timer that's about to fire.
+        self.url_import_debounce_task = None;
         self.url_import_task = None;
 
         let url = self.current_url(cx).trim().to_string();
