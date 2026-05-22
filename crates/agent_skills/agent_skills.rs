@@ -41,6 +41,7 @@ pub struct SkillScopeId(pub usize);
 /// entries would fan out an equally large number of concurrent OS-level I/O
 /// operations, potentially exhausting file descriptors or stalling the app.
 const SKILL_IO_CONCURRENCY: usize = 16;
+const SKILL_READ_CHUNK_SIZE: usize = 4096;
 
 /// Maximum size for a single SKILL.md file (100KB)
 pub const MAX_SKILL_FILE_SIZE: usize = 100 * 1024;
@@ -631,7 +632,7 @@ pub async fn load_skill_frontmatter(
     // panic with "Parking forbidden" under `TestAppContext`.
     let read_result: Result<Vec<u8>, io::Error> = (|| {
         let mut accumulated: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 4096];
+        let mut chunk = [0u8; SKILL_READ_CHUNK_SIZE];
         loop {
             let n = reader.read(&mut chunk)?;
             if n == 0 {
@@ -1807,21 +1808,19 @@ description: A skill with no body content
         // We must be able to load skill frontmatter even when a
         // multipoint grapheme crosses the chunk read boundary.
         let fs = FakeFs::new(cx.executor());
-        let chunk_size = 4096;
-
         let frontmatter = "---\nname: my-skill\ndescription: Example skill testing multipoint graphemes at chunk boundary\n---\n";
 
         // Pad contents so that the emoji's first byte lands
         // at the last byte of the first read chunk.
-        let padding = "a".repeat(chunk_size - frontmatter.len() - 1);
+        let padding = "a".repeat(SKILL_READ_CHUNK_SIZE - frontmatter.len() - 1);
         let content = format!("{frontmatter}{padding}✅");
 
         assert!(
-            (frontmatter.len() + padding.len()) < chunk_size,
+            (frontmatter.len() + padding.len()) < SKILL_READ_CHUNK_SIZE,
             "emoji must start before the second chunk"
         );
         assert!(
-            content.len() > chunk_size,
+            content.len() > SKILL_READ_CHUNK_SIZE,
             "skill is longer than a chunk, so we know that the emoji crosses chunk boundaries"
         );
 
