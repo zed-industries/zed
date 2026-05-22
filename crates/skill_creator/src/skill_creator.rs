@@ -1,15 +1,18 @@
 use agent_skills::{
-    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata,
-    global_skills_dir, validate_description, validate_name,
+    AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE,
+    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, extract_skill_frontmatter, global_skills_dir,
+    slugify_skill_name, validate_description, validate_name,
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
+use futures::AsyncReadExt;
 use gpui::{
     App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
     Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
     WindowOptions, actions, point,
 };
+use http_client::{AsyncBody, HttpClient, Url};
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
@@ -18,8 +21,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
-    prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SpinnerLabel,
+    SwitchField, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
+    ToggleButtonSimple, prelude::*,
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
@@ -33,13 +37,45 @@ actions!(
     [SaveSkill, Cancel, FocusNextField, FocusPreviousField,]
 );
 
-const NAME_FIELD_TAB_INDEX: isize = 1;
-const DESCRIPTION_FIELD_TAB_INDEX: isize = 2;
-const SCOPE_FIELD_TAB_INDEX: isize = 3;
-const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
-const BODY_FIELD_TAB_INDEX: isize = 5;
+const CREATION_MODE_TAB_INDEX: isize = 1;
+const URL_FIELD_TAB_INDEX: isize = 3;
+const NAME_FIELD_TAB_INDEX: isize = 3;
+const DESCRIPTION_FIELD_TAB_INDEX: isize = 4;
+const SCOPE_FIELD_TAB_INDEX: isize = 5;
+const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 6;
+const BODY_FIELD_TAB_INDEX: isize = 7;
 
 pub fn init(_cx: &mut App) {}
+
+#[derive(Clone, Debug, Default)]
+pub enum SkillCreatorOpenMode {
+    #[default]
+    Form,
+    Url {
+        initial_url: Option<String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CreationMode {
+    Form,
+    Url,
+}
+
+#[derive(Clone, Debug)]
+enum UrlImportStatus {
+    Idle,
+    Fetching,
+    Error(SharedString),
+}
+
+#[derive(Debug)]
+struct ImportedSkill {
+    name: String,
+    description: String,
+    body: String,
+    disable_model_invocation: bool,
+}
 
 #[derive(Clone, Debug)]
 enum ScopeChoice {
@@ -113,9 +149,11 @@ pub fn open_skill_creator(
     workspace: Option<WeakEntity<Workspace>>,
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
+    open_mode: SkillCreatorOpenMode,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<SkillCreator>>> {
     cx.spawn(async move |cx| {
+        let open_mode_for_existing = open_mode.clone();
         let existing = cx.update(|cx| {
             let handle = cx
                 .windows()
@@ -123,7 +161,10 @@ pub fn open_skill_creator(
                 .find_map(|window| window.downcast::<SkillCreator>());
             if let Some(handle) = handle {
                 handle
-                    .update(cx, |_, window, _| window.activate_window())
+                    .update(cx, |this, window, cx| {
+                        window.activate_window();
+                        this.apply_open_mode(open_mode_for_existing, window, cx);
+                    })
                     .ok();
                 Some(handle)
             } else {
@@ -136,6 +177,7 @@ pub fn open_skill_creator(
 
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
+            let http_client = cx.http_client();
             let bounds = Bounds::centered(None, DEFAULT_ADDITIONAL_WINDOW_SIZE, cx);
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
@@ -161,7 +203,13 @@ pub fn open_skill_creator(
                     ..Default::default()
                 },
                 |window, cx| {
-                    cx.new(|cx| SkillCreator::new(workspace, language_registry, fs, window, cx))
+                    let skill_creator = cx.new(|cx| {
+                        SkillCreator::new(workspace, language_registry, fs, http_client, window, cx)
+                    });
+                    skill_creator.update(cx, |this, cx| {
+                        this.apply_open_mode(open_mode, window, cx);
+                    });
+                    skill_creator
                 },
             )
         })
@@ -173,6 +221,9 @@ pub struct SkillCreator {
     title_bar: Option<Entity<PlatformTitleBar>>,
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
+    http_client: Arc<dyn HttpClient>,
+    creation_mode: CreationMode,
+    url_editor: Entity<InputField>,
     name_editor: Entity<InputField>,
     description_editor: Entity<InputField>,
     body_editor: Entity<Editor>,
@@ -184,12 +235,16 @@ pub struct SkillCreator {
     description_error: Option<&'static str>,
     body_error: Option<&'static str>,
     save_error: Option<SharedString>,
+    url_import_status: UrlImportStatus,
+    suppress_next_url_input_event: bool,
     saving: bool,
     // Held so that dropping the entity (e.g. the window closing) cancels
     // an in-flight save. Detaching the task instead would let
     // `write_skill_to_disk` complete after the UI is gone, silently
     // creating a SKILL.md on disk with no toast and no error feedback.
     save_task: Option<Task<()>>,
+    // Held so replacing it or switching back to the form cancels an in-flight import.
+    url_import_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -198,6 +253,7 @@ impl SkillCreator {
         workspace: Option<WeakEntity<Workspace>>,
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -214,6 +270,17 @@ impl SkillCreator {
             .find(|scope| matches!(scope, ScopeChoice::Project { .. }))
             .map(|scope| scope.key())
             .unwrap_or_else(|| ScopeChoice::Global.key());
+
+        let url_editor = cx.new(|cx| {
+            InputField::new(
+                window,
+                cx,
+                "https://github.com/owner/repo/blob/main/path/to/SKILL.md",
+            )
+            .label("GitHub Markdown URL")
+            .tab_index(URL_FIELD_TAB_INDEX)
+            .tab_stop(true)
+        });
 
         let name_editor = cx.new(|cx| {
             InputField::new(window, cx, "my-new-skill")
@@ -281,8 +348,20 @@ impl SkillCreator {
         })
         .detach();
 
+        let url_input_editor = url_editor.read(cx).editor().clone();
         let name_input_editor = name_editor.read(cx).editor().clone();
         let description_input_editor = description_editor.read(cx).editor().clone();
+        let weak = cx.weak_entity();
+        let url_subscription = url_input_editor.subscribe(
+            Box::new(move |event, window, cx| {
+                weak.update(cx, |this, cx| {
+                    this.handle_url_input_event(&event, window, cx);
+                })
+                .ok();
+            }),
+            window,
+            cx,
+        );
         let weak = cx.weak_entity();
         let name_subscription = name_input_editor.subscribe(
             Box::new(move |event, window, cx| {
@@ -307,6 +386,7 @@ impl SkillCreator {
         );
 
         let subscriptions = vec![
+            url_subscription,
             name_subscription,
             description_subscription,
             cx.subscribe_in(&body_editor, window, Self::handle_body_editor_event),
@@ -321,6 +401,9 @@ impl SkillCreator {
             },
             workspace,
             fs,
+            http_client,
+            creation_mode: CreationMode::Form,
+            url_editor,
             name_editor,
             description_editor,
             body_editor,
@@ -332,9 +415,33 @@ impl SkillCreator {
             description_error: None,
             body_error: None,
             save_error: None,
+            url_import_status: UrlImportStatus::Idle,
+            suppress_next_url_input_event: false,
             saving: false,
             save_task: None,
+            url_import_task: None,
             _subscriptions: subscriptions,
+        }
+    }
+
+    fn handle_url_input_event(
+        &mut self,
+        event: &ErasedEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, ErasedEditorEvent::BufferEdited) {
+            return;
+        }
+
+        if self.suppress_next_url_input_event {
+            self.suppress_next_url_input_event = false;
+            return;
+        }
+
+        if self.creation_mode == CreationMode::Url {
+            self.save_error = None;
+            self.start_url_import(window, cx);
         }
     }
 
@@ -390,6 +497,10 @@ impl SkillCreator {
         self.body_editor.read(cx).text(cx)
     }
 
+    fn current_url(&self, cx: &App) -> String {
+        self.url_editor.read(cx).text(cx)
+    }
+
     fn recompute_name_error(&mut self, cx: &App) {
         let name = self.current_name(cx);
         self.name_error = validate_name(&name).err();
@@ -423,13 +534,158 @@ impl SkillCreator {
             .find(|scope| scope.key() == self.selected_scope_key)
     }
 
+    fn apply_open_mode(
+        &mut self,
+        open_mode: SkillCreatorOpenMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match open_mode {
+            SkillCreatorOpenMode::Form => {}
+            SkillCreatorOpenMode::Url { initial_url } => {
+                self.open_url_import(initial_url, window, cx);
+            }
+        }
+    }
+
+    fn select_creation_mode(
+        &mut self,
+        mode: CreationMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.creation_mode == mode {
+            return;
+        }
+
+        self.save_error = None;
+        match mode {
+            CreationMode::Form => {
+                self.creation_mode = CreationMode::Form;
+                self.url_import_task = None;
+                self.url_import_status = UrlImportStatus::Idle;
+                window.focus(&self.name_editor.focus_handle(cx), cx);
+                cx.notify();
+            }
+            CreationMode::Url => {
+                self.open_url_import(None, window, cx);
+            }
+        }
+    }
+
+    fn open_url_import(
+        &mut self,
+        initial_url: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.creation_mode = CreationMode::Url;
+        self.save_error = None;
+        window.focus(&self.url_editor.focus_handle(cx), cx);
+
+        let Some(initial_url) = initial_url else {
+            self.start_url_import(window, cx);
+            return;
+        };
+
+        self.url_import_task = None;
+        self.url_import_status = UrlImportStatus::Idle;
+        self.suppress_next_url_input_event = true;
+
+        let skill_creator = cx.weak_entity();
+        let url_editor = self.url_editor.clone();
+        window.defer(cx, move |window, cx| {
+            url_editor.update(cx, |input, cx| {
+                input.set_text(&initial_url, window, cx);
+            });
+            skill_creator
+                .update(cx, |this, cx| {
+                    this.start_url_import(window, cx);
+                })
+                .log_err();
+        });
+        cx.notify();
+    }
+
+    fn start_url_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.url_import_task = None;
+
+        let url = self.current_url(cx).trim().to_string();
+        if url.is_empty() {
+            self.url_import_status = UrlImportStatus::Idle;
+            cx.notify();
+            return;
+        }
+
+        if let Err(err) = github_raw_url(&url) {
+            self.url_import_status = UrlImportStatus::Error(SharedString::from(err.to_string()));
+            cx.notify();
+            return;
+        }
+
+        self.url_import_status = UrlImportStatus::Fetching;
+        let http_client = self.http_client.clone();
+        let fetch_task = cx.background_spawn(fetch_imported_skill_from_url(http_client, url));
+        let task = cx.spawn_in(window, async move |this, cx| {
+            let result = fetch_task.await;
+            let skill_creator = this.clone();
+            this.update_in(cx, |this, window, cx| {
+                this.url_import_task = None;
+                match result {
+                    Ok(imported) => {
+                        this.url_import_status = UrlImportStatus::Idle;
+                        this.save_error = None;
+
+                        let name_editor = this.name_editor.clone();
+                        let description_editor = this.description_editor.clone();
+                        let body_editor = this.body_editor.clone();
+                        window.defer(cx, move |window, cx| {
+                            name_editor.update(cx, |input, cx| {
+                                input.set_text(&imported.name, window, cx);
+                            });
+                            description_editor.update(cx, |input, cx| {
+                                input.set_text(&imported.description, window, cx);
+                            });
+                            body_editor.update(cx, |editor, cx| {
+                                editor.set_text(imported.body.clone(), window, cx);
+                            });
+                            skill_creator
+                                .update(cx, |this, cx| {
+                                    this.disable_model_invocation =
+                                        imported.disable_model_invocation;
+                                    this.creation_mode = CreationMode::Form;
+                                    this.url_import_status = UrlImportStatus::Idle;
+                                    this.url_import_task = None;
+                                    this.save_error = None;
+                                    this.recompute_name_error(cx);
+                                    this.recompute_description_error(cx);
+                                    this.recompute_body_error(cx);
+                                    cx.notify();
+                                })
+                                .log_err();
+                            window.focus(&name_editor.focus_handle(cx), cx);
+                        });
+                    }
+                    Err(err) => {
+                        this.url_import_status =
+                            UrlImportStatus::Error(SharedString::from(err.to_string()));
+                        cx.notify();
+                    }
+                }
+            })
+            .log_err();
+        });
+        self.url_import_task = Some(task);
+        cx.notify();
+    }
+
     fn save_skill(&mut self, _: &SaveSkill, window: &mut Window, cx: &mut Context<Self>) {
         // Surface any field-level errors before attempting to save.
         self.recompute_name_error(cx);
         self.recompute_description_error(cx);
         self.recompute_body_error(cx);
 
-        if !self.is_valid(cx) || self.saving {
+        if self.creation_mode != CreationMode::Form || !self.is_valid(cx) || self.saving {
             cx.notify();
             return;
         }
@@ -519,6 +775,109 @@ impl SkillCreator {
     fn toggle_disable_model_invocation(&mut self, cx: &mut Context<Self>) {
         self.disable_model_invocation = !self.disable_model_invocation;
         cx.notify();
+    }
+
+    fn render_creation_mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut tab_index = CREATION_MODE_TAB_INDEX;
+
+        h_flex()
+            .w_full()
+            .justify_between()
+            .gap_3()
+            .child(Label::new("Create from").color(Color::Muted))
+            .child(
+                ToggleButtonGroup::single_row(
+                    "skill-creation-mode",
+                    [
+                        ToggleButtonSimple::new(
+                            "Form",
+                            cx.listener(|this, _event, window, cx| {
+                                this.select_creation_mode(CreationMode::Form, window, cx);
+                            }),
+                        ),
+                        ToggleButtonSimple::new(
+                            "URL",
+                            cx.listener(|this, _event, window, cx| {
+                                this.select_creation_mode(CreationMode::Url, window, cx);
+                            }),
+                        ),
+                    ],
+                )
+                .style(ToggleButtonGroupStyle::Outlined)
+                .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
+                .label_size(LabelSize::Default)
+                .auto_width()
+                .tab_index(&mut tab_index)
+                .selected_index(match self.creation_mode {
+                    CreationMode::Form => 0,
+                    CreationMode::Url => 1,
+                }),
+            )
+    }
+
+    fn render_url_import(&self) -> impl IntoElement {
+        v_flex()
+            .id("skill-creator-url-import")
+            .min_h_0()
+            .gap_3()
+            .child(self.url_editor.clone())
+            .child(
+                Label::new(
+                    "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form.",
+                )
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .when(
+                matches!(self.url_import_status, UrlImportStatus::Fetching),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .gap_2()
+                            .child(SpinnerLabel::dots().size(LabelSize::Small))
+                            .child(
+                                Label::new("Fetching and parsing…")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                },
+            )
+            .when_some(
+                match &self.url_import_status {
+                    UrlImportStatus::Error(error) => Some(error.clone()),
+                    UrlImportStatus::Idle | UrlImportStatus::Fetching => None,
+                },
+                |this, error| {
+                    this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                },
+            )
+    }
+
+    fn render_form_fields(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("skill-creator-form-fields")
+            .flex_1()
+            .min_h_0()
+            .gap_4()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(Label::new("Font-matter"))
+                    .child(self.name_editor.clone())
+                    .child(self.description_editor.clone()),
+            )
+            .child(self.render_optional_params(cx))
+            .child(Divider::horizontal())
+            .child(self.render_scope_field(window, cx))
+            .child(Divider::horizontal())
+            .child(
+                v_flex()
+                    .flex_1()
+                    .gap_2()
+                    .child(Label::new("Skill Content"))
+                    .child(self.render_body_field(window, cx)),
+            )
     }
 
     fn render_scope_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -666,7 +1025,8 @@ impl SkillCreator {
     }
 
     fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let valid = self.is_valid(cx);
+        let show_save = self.creation_mode == CreationMode::Form;
+        let valid = show_save && self.is_valid(cx);
         let saving = self.saving;
         let main_action = if saving { "Saving…" } else { "Save Skill" };
 
@@ -695,16 +1055,18 @@ impl SkillCreator {
                                 window.dispatch_action(Box::new(Cancel), cx);
                             }),
                     )
-                    .child(
-                        Button::new("save-skill", main_action)
-                            .style(ButtonStyle::Filled)
-                            .layer(ui::ElevationIndex::ModalSurface)
-                            .disabled(!valid || saving)
-                            .loading(saving)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(SaveSkill), cx);
-                            }),
-                    ),
+                    .when(show_save, |this| {
+                        this.child(
+                            Button::new("save-skill", main_action)
+                                .style(ButtonStyle::Filled)
+                                .layer(ui::ElevationIndex::ModalSurface)
+                                .disabled(!valid || saving)
+                                .loading(saving)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(SaveSkill), cx);
+                                }),
+                        )
+                    }),
             )
     }
 
@@ -803,24 +1165,14 @@ impl Render for SkillCreator {
                         .min_h_0()
                         .gap_4()
                         .p_4()
-                        .child(
-                            v_flex()
-                                .gap_2()
-                                .child(Label::new("Font-matter"))
-                                .child(self.name_editor.clone())
-                                .child(self.description_editor.clone()),
-                        )
-                        .child(self.render_optional_params(cx))
+                        .child(self.render_creation_mode_toggle(cx))
                         .child(Divider::horizontal())
-                        .child(self.render_scope_field(window, cx))
-                        .child(Divider::horizontal())
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .gap_2()
-                                .child(Label::new("Skill Content"))
-                                .child(self.render_body_field(window, cx)),
-                        ),
+                        .child(match self.creation_mode {
+                            CreationMode::Form => {
+                                self.render_form_fields(window, cx).into_any_element()
+                            }
+                            CreationMode::Url => self.render_url_import().into_any_element(),
+                        }),
                 )
                 .child(
                     h_flex()
@@ -836,6 +1188,153 @@ impl Render for SkillCreator {
             Tiling::default(),
         )
     }
+}
+
+async fn fetch_imported_skill_from_url(
+    http_client: Arc<dyn HttpClient>,
+    url: String,
+) -> Result<ImportedSkill> {
+    let raw_url = github_raw_url(&url)?;
+    let mut response = http_client
+        .get(raw_url.as_str(), AsyncBody::default(), true)
+        .await
+        .with_context(|| format!("failed to fetch {raw_url}"))?;
+
+    let status = response.status();
+    let mut body = Vec::new();
+    response
+        .body_mut()
+        .read_to_end(&mut body)
+        .await
+        .context("failed to read response body")?;
+
+    if !status.is_success() {
+        let response_text = String::from_utf8_lossy(&body);
+        anyhow::bail!(
+            "GitHub returned {} while fetching the skill: {}",
+            status.as_u16(),
+            response_text.trim()
+        );
+    }
+
+    if body.len() > MAX_SKILL_FILE_SIZE {
+        anyhow::bail!(
+            "SKILL.md file exceeds maximum size of {}KB",
+            MAX_SKILL_FILE_SIZE / 1024
+        );
+    }
+
+    let content = String::from_utf8(body).context("GitHub response was not valid UTF-8")?;
+    parse_imported_skill(&content, raw_url.as_str())
+}
+
+pub fn is_supported_skill_url(input: &str) -> bool {
+    github_raw_url(input).is_ok()
+}
+
+fn github_raw_url(input: &str) -> Result<String> {
+    let url = Url::parse(input.trim()).context("Enter a valid GitHub URL")?;
+    if url.scheme() != "https" {
+        anyhow::bail!("GitHub skill URLs must use https://");
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("Enter a valid GitHub URL"))?;
+    let path_segments = url
+        .path_segments()
+        .ok_or_else(|| anyhow!("Enter a valid GitHub URL"))?
+        .collect::<Vec<_>>();
+
+    match host {
+        "github.com" => github_blob_raw_url(&path_segments),
+        "raw.githubusercontent.com" => {
+            ensure_markdown_path(&path_segments)?;
+            Ok(url.into())
+        }
+        _ => anyhow::bail!("Paste a GitHub .md URL"),
+    }
+}
+
+fn github_blob_raw_url(path_segments: &[&str]) -> Result<String> {
+    let [owner, repo, kind, reference, file_path @ ..] = path_segments else {
+        anyhow::bail!("Paste a GitHub blob URL that points to a .md file");
+    };
+
+    if *kind != "blob" {
+        anyhow::bail!("Paste a GitHub blob URL that points to a .md file");
+    }
+
+    ensure_markdown_path(file_path)?;
+    Ok(format!(
+        "https://raw.githubusercontent.com/{owner}/{repo}/{reference}/{}",
+        file_path.join("/")
+    ))
+}
+
+fn ensure_markdown_path(path_segments: &[&str]) -> Result<()> {
+    let Some(file_name) = path_segments.last() else {
+        anyhow::bail!("Paste a GitHub .md URL");
+    };
+
+    if !file_name.to_ascii_lowercase().ends_with(".md") {
+        anyhow::bail!("Paste a GitHub URL that points to a .md file");
+    }
+
+    Ok(())
+}
+
+fn parse_imported_skill(content: &str, source_url: &str) -> Result<ImportedSkill> {
+    match extract_skill_frontmatter(content) {
+        Ok((metadata, body)) => Ok(ImportedSkill {
+            name: metadata.name,
+            description: metadata.description,
+            body: body.trim().to_string(),
+            disable_model_invocation: metadata.disable_model_invocation,
+        }),
+        Err(_) => Ok(ImportedSkill {
+            name: derived_skill_name_from_url(source_url)
+                .unwrap_or_else(|| "imported-skill".into()),
+            description: derived_description_from_markdown(content).unwrap_or_default(),
+            body: content.trim().to_string(),
+            disable_model_invocation: false,
+        }),
+    }
+}
+
+fn derived_skill_name_from_url(source_url: &str) -> Option<String> {
+    let url = Url::parse(source_url).ok()?;
+    let file_name = url.path_segments()?.next_back()?;
+    let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
+    slugify_skill_name(stem)
+}
+
+fn derived_description_from_markdown(content: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        let line = line.trim();
+        if line.is_empty() || line == "---" {
+            return None;
+        }
+
+        let text = line.trim_start_matches('#').trim();
+        if text.is_empty() {
+            None
+        } else {
+            Some(truncate_description(text))
+        }
+    })
+}
+
+fn truncate_description(description: &str) -> String {
+    if description.len() <= MAX_SKILL_DESCRIPTION_LEN {
+        return description.to_string();
+    }
+
+    let mut end = MAX_SKILL_DESCRIPTION_LEN;
+    while !description.is_char_boundary(end) {
+        end -= 1;
+    }
+    description[..end].trim().to_string()
 }
 
 /// Serialize the SKILL.md file to disk at `<skills_dir>/<name>/SKILL.md`.
@@ -976,6 +1475,52 @@ mod tests {
         )
         .expect("YAML-special characters must round-trip");
         assert_eq!(skill.description, tricky);
+    }
+
+    #[test]
+    fn github_blob_url_converts_to_raw_url() {
+        let source_url = "https://github.com/cursor/plugins/blob/3347cbab5b54136f6fba0994c3a01a56f7fb7fca/cursor-team-kit/agents/thermo-nuclear-code-quality-review.md";
+        let raw_url = github_raw_url(source_url).expect("GitHub blob URLs should be importable");
+
+        assert_eq!(
+            raw_url,
+            "https://raw.githubusercontent.com/cursor/plugins/3347cbab5b54136f6fba0994c3a01a56f7fb7fca/cursor-team-kit/agents/thermo-nuclear-code-quality-review.md"
+        );
+        assert!(is_supported_skill_url(source_url));
+        assert!(!is_supported_skill_url(
+            "https://example.com/not-a-skill.md"
+        ));
+    }
+
+    #[test]
+    fn parse_imported_skill_reads_frontmatter_and_body() {
+        let imported = parse_imported_skill(
+            "---\nname: imported-skill\ndescription: Imported from GitHub.\ndisable-model-invocation: true\n---\n\n# Instructions\n\nDo the thing.\n",
+            "https://raw.githubusercontent.com/owner/repo/main/imported-skill.md",
+        )
+        .expect("valid skill frontmatter should parse");
+
+        assert_eq!(imported.name, "imported-skill");
+        assert_eq!(imported.description, "Imported from GitHub.");
+        assert_eq!(imported.body, "# Instructions\n\nDo the thing.");
+        assert!(imported.disable_model_invocation);
+    }
+
+    #[test]
+    fn parse_imported_skill_falls_back_to_markdown_when_frontmatter_is_missing() {
+        let imported = parse_imported_skill(
+            "# Code Review\n\nReview code for maintainability.",
+            "https://raw.githubusercontent.com/owner/repo/main/code-review.md",
+        )
+        .expect("plain markdown should still import");
+
+        assert_eq!(imported.name, "code-review");
+        assert_eq!(imported.description, "Code Review");
+        assert_eq!(
+            imported.body,
+            "# Code Review\n\nReview code for maintainability."
+        );
+        assert!(!imported.disable_model_invocation);
     }
 
     #[gpui::test]
