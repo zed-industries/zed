@@ -12,7 +12,7 @@ use gpui::{
     Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
     WindowOptions, actions, point,
 };
-use http_client::{AsyncBody, HttpClient, Url};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
@@ -20,6 +20,7 @@ use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SpinnerLabel,
@@ -45,6 +46,7 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 4;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 5;
 const SCOPE_FIELD_TAB_INDEX: isize = 6;
 const BODY_FIELD_TAB_INDEX: isize = 7;
+const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(100);
 const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
 
 pub fn init(_cx: &mut App) {}
@@ -255,6 +257,8 @@ pub struct SkillCreator {
     // `write_skill_to_disk` complete after the UI is gone, silently
     // creating a SKILL.md on disk with no toast and no error feedback.
     save_task: Option<Task<()>>,
+    // Held so replacing it or switching back to the form cancels a pending debounced import.
+    url_import_debounce_task: Option<Task<()>>,
     // Held so replacing it or switching back to the form cancels an in-flight import.
     url_import_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -433,6 +437,7 @@ impl SkillCreator {
             suppress_next_url_input_event: false,
             saving: false,
             save_task: None,
+            url_import_debounce_task: None,
             url_import_task: None,
             _subscriptions: subscriptions,
         }
@@ -455,7 +460,7 @@ impl SkillCreator {
 
         if self.creation_mode == CreationMode::Url {
             self.save_error = None;
-            self.start_url_import(window, cx);
+            self.schedule_url_import(window, cx);
         }
     }
 
@@ -576,6 +581,7 @@ impl SkillCreator {
         match mode {
             CreationMode::Form => {
                 self.creation_mode = CreationMode::Form;
+                self.url_import_debounce_task = None;
                 self.url_import_task = None;
                 self.url_import_status = UrlImportStatus::Idle;
                 window.focus(&self.name_editor.focus_handle(cx), cx);
@@ -598,6 +604,7 @@ impl SkillCreator {
         window.focus(&self.url_editor.focus_handle(cx), cx);
 
         let Some(initial_url) = initial_url else {
+            self.url_import_debounce_task = None;
             self.url_import_task = None;
             self.url_import_status = UrlImportStatus::Idle;
 
@@ -614,6 +621,7 @@ impl SkillCreator {
             return;
         };
 
+        self.url_import_debounce_task = None;
         self.url_import_task = None;
         self.url_import_status = UrlImportStatus::Idle;
         self.suppress_next_url_input_event = true;
@@ -630,6 +638,29 @@ impl SkillCreator {
                 })
                 .log_err();
         });
+        cx.notify();
+    }
+
+    fn schedule_url_import(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.url_import_debounce_task = None;
+        self.url_import_task = None;
+
+        let url = self.current_url(cx).trim().to_string();
+        if url.is_empty() {
+            self.url_import_status = UrlImportStatus::Idle;
+            cx.notify();
+            return;
+        }
+
+        self.url_import_status = UrlImportStatus::Idle;
+        let task = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(URL_IMPORT_DEBOUNCE).await;
+            this.update_in(cx, |this, window, cx| {
+                this.start_url_import(window, cx);
+            })
+            .log_err();
+        });
+        self.url_import_debounce_task = Some(task);
         cx.notify();
     }
 
@@ -656,6 +687,7 @@ impl SkillCreator {
             let result = fetch_task.await;
             let skill_creator = this.clone();
             this.update_in(cx, |this, window, cx| {
+                this.url_import_debounce_task = None;
                 this.url_import_task = None;
                 match result {
                     Ok(imported) => {
@@ -681,6 +713,7 @@ impl SkillCreator {
                                         imported.disable_model_invocation;
                                     this.creation_mode = CreationMode::Form;
                                     this.url_import_status = UrlImportStatus::Idle;
+                                    this.url_import_debounce_task = None;
                                     this.url_import_task = None;
                                     this.save_error = None;
                                     this.recompute_name_error(cx);
@@ -1220,9 +1253,57 @@ async fn fetch_imported_skill_from_url(
     http_client: Arc<dyn HttpClient>,
     url: String,
 ) -> Result<ImportedSkill> {
+    let github_token = std::env::var("GITHUB_TOKEN").ok().and_then(|token| {
+        let token = token.trim().to_string();
+        (!token.is_empty()).then_some(token)
+    });
+    fetch_imported_skill_from_url_with_github_token(http_client, url, github_token).await
+}
+
+async fn fetch_imported_skill_from_url_with_github_token(
+    http_client: Arc<dyn HttpClient>,
+    url: String,
+    github_token: Option<String>,
+) -> Result<ImportedSkill> {
     let raw_url = github_raw_url(&url)?;
+    let (mut status, mut body) =
+        fetch_skill_url(http_client.clone(), raw_url.as_str(), None).await?;
+
+    if status == StatusCode::NOT_FOUND
+        && let Some(github_token) = github_token.as_deref()
+    {
+        (status, body) = fetch_skill_url(http_client, raw_url.as_str(), Some(github_token)).await?;
+    }
+
+    if !status.is_success() {
+        return Err(github_fetch_error(status, &body));
+    }
+
+    if body.len() > MAX_SKILL_FILE_SIZE {
+        anyhow::bail!(
+            "SKILL.md file exceeds maximum size of {}KB",
+            MAX_SKILL_FILE_SIZE / 1024
+        );
+    }
+
+    let content = String::from_utf8(body).context("GitHub response was not valid UTF-8")?;
+    parse_imported_skill(&content, raw_url.as_str())
+}
+
+async fn fetch_skill_url(
+    http_client: Arc<dyn HttpClient>,
+    raw_url: &str,
+    github_token: Option<&str>,
+) -> Result<(StatusCode, Vec<u8>)> {
+    let request = Request::get(raw_url)
+        .follow_redirects(http_client::RedirectPolicy::FollowAll)
+        .when_some(github_token, |builder, token| {
+            builder.header("Authorization", format!("Bearer {token}"))
+        })
+        .body(AsyncBody::default())?;
+
     let mut response = http_client
-        .get(raw_url.as_str(), AsyncBody::default(), true)
+        .send(request)
         .await
         .with_context(|| format!("failed to fetch {raw_url}"))?;
 
@@ -1235,30 +1316,27 @@ async fn fetch_imported_skill_from_url(
         .await
         .context("failed to read response body")?;
 
-    if !status.is_success() {
-        let response_text = truncated_response_body_for_error(&body);
-        if response_text.is_empty() {
-            anyhow::bail!(
-                "GitHub returned {} while fetching the skill",
-                status.as_u16()
-            );
-        }
-        anyhow::bail!(
-            "GitHub returned {} while fetching the skill: {}",
-            status.as_u16(),
-            response_text
-        );
+    Ok((status, body))
+}
+
+fn github_fetch_error(status: StatusCode, body: &[u8]) -> anyhow::Error {
+    let mut message = if status == StatusCode::NOT_FOUND {
+        "GitHub returned 404 while fetching the skill; no repository exists at this URL, or it is private"
+            .to_string()
+    } else {
+        format!(
+            "GitHub returned {} while fetching the skill",
+            status.as_u16()
+        )
+    };
+
+    let response_text = truncated_response_body_for_error(body);
+    if !response_text.is_empty() {
+        message.push_str(": ");
+        message.push_str(&response_text);
     }
 
-    if body.len() > MAX_SKILL_FILE_SIZE {
-        anyhow::bail!(
-            "SKILL.md file exceeds maximum size of {}KB",
-            MAX_SKILL_FILE_SIZE / 1024
-        );
-    }
-
-    let content = String::from_utf8(body).context("GitHub response was not valid UTF-8")?;
-    parse_imported_skill(&content, raw_url.as_str())
+    anyhow!(message)
 }
 
 pub fn is_supported_skill_url(input: &str) -> bool {
@@ -1339,7 +1417,10 @@ fn parse_imported_skill(content: &str, source_url: &str) -> Result<ImportedSkill
 fn derived_skill_name_from_url(source_url: &str) -> Option<String> {
     let url = Url::parse(source_url).ok()?;
     let file_name = url.path_segments()?.next_back()?;
-    let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
+    let stem = file_name
+        .rsplit_once('.')
+        .and_then(|(stem, extension)| extension.eq_ignore_ascii_case("md").then_some(stem))
+        .unwrap_or(file_name);
     slugify_skill_name(stem)
 }
 
@@ -1475,6 +1556,7 @@ mod tests {
     use agent_skills::{SkillSource, parse_skill_frontmatter};
     use fs::FakeFs;
     use std::{
+        collections::VecDeque,
         io,
         path::Path,
         pin::Pin,
@@ -1483,17 +1565,38 @@ mod tests {
     };
 
     struct TestHttpClient {
-        status: http_client::StatusCode,
-        body: Mutex<Option<AsyncBody>>,
+        responses: Mutex<VecDeque<(StatusCode, AsyncBody)>>,
+        authorization_headers: Mutex<Vec<Option<String>>>,
     }
 
     impl TestHttpClient {
         fn new(status: u16, body: AsyncBody) -> Arc<dyn HttpClient> {
+            Self::new_sequence(vec![(status, body)])
+        }
+
+        fn new_sequence(responses: Vec<(u16, AsyncBody)>) -> Arc<Self> {
             Arc::new(Self {
-                status: http_client::StatusCode::from_u16(status)
-                    .expect("test status code should be valid"),
-                body: Mutex::new(Some(body)),
+                responses: Mutex::new(
+                    responses
+                        .into_iter()
+                        .map(|(status, body)| {
+                            (
+                                StatusCode::from_u16(status)
+                                    .expect("test status code should be valid"),
+                                body,
+                            )
+                        })
+                        .collect(),
+                ),
+                authorization_headers: Mutex::new(Vec::new()),
             })
+        }
+
+        fn authorization_headers(&self) -> Vec<Option<String>> {
+            self.authorization_headers
+                .lock()
+                .expect("authorization header mutex should not be poisoned")
+                .clone()
         }
     }
 
@@ -1508,18 +1611,34 @@ mod tests {
 
         fn send(
             &self,
-            _req: http_client::Request<AsyncBody>,
+            req: http_client::Request<AsyncBody>,
         ) -> futures::future::BoxFuture<'static, Result<http_client::Response<AsyncBody>>> {
-            let status = self.status;
-            let body = match self.body.lock() {
-                Ok(mut body) => body.take(),
+            let authorization_header = req
+                .headers()
+                .get("Authorization")
+                .and_then(|header| header.to_str().ok())
+                .map(ToString::to_string);
+
+            match self.authorization_headers.lock() {
+                Ok(mut authorization_headers) => authorization_headers.push(authorization_header),
+                Err(_) => {
+                    return Box::pin(async {
+                        Err(anyhow::anyhow!(
+                            "test authorization header mutex was poisoned"
+                        ))
+                    });
+                }
+            }
+
+            let response = match self.responses.lock() {
+                Ok(mut responses) => responses.pop_front(),
                 Err(_) => {
                     return Box::pin(async {
                         Err(anyhow::anyhow!("test response body mutex was poisoned"))
                     });
                 }
             };
-            let Some(body) = body else {
+            let Some((status, body)) = response else {
                 return Box::pin(async {
                     Err(anyhow::anyhow!("test response body was already consumed"))
                 });
@@ -1621,6 +1740,16 @@ mod tests {
     }
 
     #[test]
+    fn derived_skill_name_strips_markdown_extension_case_insensitively() {
+        let name = derived_skill_name_from_url(
+            "https://raw.githubusercontent.com/owner/repo/main/README.MD",
+        )
+        .expect("name should be derived from Markdown URL");
+
+        assert_eq!(name, "readme");
+    }
+
+    #[test]
     fn parse_imported_skill_reads_frontmatter_and_body() {
         let imported = parse_imported_skill(
             "---\nname: imported-skill\ndescription: Imported from GitHub.\ndisable-model-invocation: true\n---\n\n# Instructions\n\nDo the thing.\n",
@@ -1664,6 +1793,51 @@ mod tests {
             message.contains("Skill name must contain only lowercase letters"),
             "error should come from shared skill metadata validation, got: {message}"
         );
+    }
+
+    #[gpui::test]
+    async fn fetch_imported_skill_retries_404_with_github_token(_cx: &mut gpui::TestAppContext) {
+        let client = TestHttpClient::new_sequence(vec![
+            (404, AsyncBody::from("Not Found")),
+            (200, AsyncBody::from("# Imported Skill\n\nDo the thing.")),
+        ]);
+
+        let imported = fetch_imported_skill_from_url_with_github_token(
+            client.clone(),
+            "https://github.com/owner/repo/blob/main/skill.md".to_string(),
+            Some("secret-token".to_string()),
+        )
+        .await
+        .expect("private repo fallback should retry with the GitHub token");
+
+        assert_eq!(imported.name, "skill");
+        assert_eq!(imported.description, "Imported Skill");
+        assert_eq!(
+            client.authorization_headers(),
+            vec![None, Some("Bearer secret-token".to_string())]
+        );
+    }
+
+    #[gpui::test]
+    async fn fetch_imported_skill_reports_private_or_missing_for_404(
+        _cx: &mut gpui::TestAppContext,
+    ) {
+        let client = TestHttpClient::new_sequence(vec![(404, AsyncBody::from("Not Found"))]);
+
+        let error = fetch_imported_skill_from_url_with_github_token(
+            client.clone(),
+            "https://github.com/owner/repo/blob/main/skill.md".to_string(),
+            None,
+        )
+        .await
+        .expect_err("404 without a GitHub token should fail");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("no repository exists at this URL, or it is private"),
+            "404 error should mention private repositories, got: {message}"
+        );
+        assert_eq!(client.authorization_headers(), vec![None]);
     }
 
     #[gpui::test]
