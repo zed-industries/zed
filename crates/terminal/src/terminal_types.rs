@@ -11,7 +11,6 @@ use alacritty_terminal::{
     vte::ansi::CursorShape as AlacCursorShape,
 };
 use regex::Regex;
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::{
     ops::{BitOr, BitOrAssign, Deref, RangeInclusive},
     sync::Arc,
@@ -192,7 +191,7 @@ impl TerminalSelection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalColor {
     Named(TerminalNamedColor),
     Spec(TerminalRgb),
@@ -221,7 +220,7 @@ impl From<VteColor> for TerminalColor {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TerminalRgb {
     pub r: u8,
     pub g: u8,
@@ -248,7 +247,7 @@ impl From<TerminalRgb> for VteRgb {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TerminalNamedColor {
     Black,
     Red,
@@ -359,34 +358,6 @@ impl TerminalHyperlink {
     }
 }
 
-impl Serialize for TerminalHyperlink {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut state = serializer.serialize_struct("TerminalHyperlink", 2)?;
-        state.serialize_field("id", &self.id())?;
-        state.serialize_field("uri", self.uri())?;
-        state.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for TerminalHyperlink {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct SerializedTerminalHyperlink {
-            id: Option<String>,
-            uri: String,
-        }
-
-        let hyperlink = SerializedTerminalHyperlink::deserialize(deserializer)?;
-        Ok(Self::new(hyperlink.id, hyperlink.uri))
-    }
-}
-
 fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> TerminalHyperlink {
     TerminalHyperlink::from_alacritty(hyperlink)
 }
@@ -407,17 +378,30 @@ mod tests {
         assert_eq!(hyperlink.id(), Some("id"));
         assert_eq!(hyperlink.uri(), "https://example.com");
     }
+
+    #[test]
+    fn terminal_cell_clone_shares_extra_storage() {
+        let mut cell = TerminalCell::default();
+        cell.push_zerowidth('a');
+
+        let clone = cell.clone();
+
+        match (&cell.extra, &clone.extra) {
+            (Some(extra), Some(clone_extra)) => assert!(Arc::ptr_eq(extra, clone_extra)),
+            _ => panic!("expected extra storage on both cells"),
+        }
+    }
 }
 
-#[derive(Default, Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Default, Debug, Clone, Eq, PartialEq)]
 struct TerminalCellExtra {
     zerowidth: Vec<char>,
     underline_color: Option<TerminalColor>,
     hyperlink: Option<TerminalHyperlink>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct TerminalCellFlags(u32);
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct TerminalCellFlags(u16);
 
 impl TerminalCellFlags {
     pub(crate) const BOLD: Self = Self(1 << 0);
@@ -573,13 +557,13 @@ fn add_terminal_cell_flag(
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TerminalCell {
     pub c: char,
     pub fg: TerminalColor,
     pub bg: TerminalColor,
     flags: TerminalCellFlags,
-    extra: Option<TerminalCellExtra>,
+    extra: Option<Arc<TerminalCellExtra>>,
 }
 
 impl Default for TerminalCell {
@@ -595,6 +579,13 @@ impl Default for TerminalCell {
 }
 
 impl TerminalCell {
+    fn extra_mut(&mut self) -> &mut TerminalCellExtra {
+        Arc::make_mut(
+            self.extra
+                .get_or_insert_with(|| Arc::new(TerminalCellExtra::default())),
+        )
+    }
+
     #[inline]
     pub fn zerowidth(&self) -> Option<&[char]> {
         self.extra.as_ref().map(|extra| extra.zerowidth.as_slice())
@@ -602,10 +593,7 @@ impl TerminalCell {
 
     #[inline]
     pub fn push_zerowidth(&mut self, character: char) {
-        self.extra
-            .get_or_insert_with(TerminalCellExtra::default)
-            .zerowidth
-            .push(character);
+        self.extra_mut().zerowidth.push(character);
     }
 
     pub fn set_underline_color(&mut self, color: Option<TerminalColor>) {
@@ -618,9 +606,7 @@ impl TerminalCell {
         if should_drop {
             self.extra = None;
         } else {
-            self.extra
-                .get_or_insert_with(TerminalCellExtra::default)
-                .underline_color = color;
+            self.extra_mut().underline_color = color;
         }
     }
 
@@ -639,9 +625,7 @@ impl TerminalCell {
         if should_drop {
             self.extra = None;
         } else {
-            self.extra
-                .get_or_insert_with(TerminalCellExtra::default)
-                .hyperlink = hyperlink;
+            self.extra_mut().hyperlink = hyperlink;
         }
     }
 
@@ -707,11 +691,11 @@ pub(super) fn terminal_cell_from_alacritty(cell: AlacCell) -> TerminalCell {
     let extra = if zerowidth.is_empty() && underline_color.is_none() && hyperlink.is_none() {
         None
     } else {
-        Some(TerminalCellExtra {
+        Some(Arc::new(TerminalCellExtra {
             zerowidth,
             underline_color,
             hyperlink,
-        })
+        }))
     };
 
     TerminalCell {
@@ -723,7 +707,7 @@ pub(super) fn terminal_cell_from_alacritty(cell: AlacCell) -> TerminalCell {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub struct IndexedCell {
     pub point: TerminalPoint,
     pub cell: TerminalCell,
@@ -738,7 +722,7 @@ impl Deref for IndexedCell {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct TerminalModes(u32);
 
 impl TerminalModes {
@@ -1011,7 +995,7 @@ impl From<CursorShape> for TerminalCursorShape {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TerminalPoint {
     pub line: i32,
     pub column: usize,
