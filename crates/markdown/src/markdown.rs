@@ -2376,14 +2376,19 @@ impl Element for MarkdownElement {
                                     cx,
                                 );
                             });
-                            builder.push_text(source, source_range);
+                            match katex_diagram.mode {
+                                KatexRenderMode::Inline => builder.push_text(source, source_range),
+                                KatexRenderMode::Display => {
+                                    builder.push_block_text(source, source_range)
+                                }
+                            }
                         } else {
                             match katex_diagram.mode {
                                 KatexRenderMode::Inline => builder.push_inline_sourced_element(
                                     source_range,
                                     render_inline_katex_diagram(&katex_state, &contents, source),
                                 ),
-                                KatexRenderMode::Display => builder.push_sourced_element(
+                                KatexRenderMode::Display => builder.push_block_sourced_element(
                                     source_range,
                                     render_display_katex_diagram(&katex_state, &contents, source),
                                 ),
@@ -2901,6 +2906,24 @@ impl MarkdownElementBuilder {
         }]);
     }
 
+    fn push_block_sourced_element(
+        &mut self,
+        source_range: Range<usize>,
+        element: impl Into<AnyElement>,
+    ) {
+        self.flush_text();
+        let anchor = self.render_source_anchor(source_range);
+        self.div_stack.last_mut().unwrap().extend([{
+            div()
+                .relative()
+                .w_full()
+                .flex_none()
+                .child(anchor)
+                .child(element.into())
+                .into_any_element()
+        }]);
+    }
+
     fn push_inline_sourced_element(
         &mut self,
         source_range: Range<usize>,
@@ -2916,6 +2939,13 @@ impl MarkdownElementBuilder {
                 .child(element.into())
                 .into_any_element()
         }]);
+    }
+
+    fn push_block_text(&mut self, text: &str, source_range: Range<usize>) {
+        self.flush_text();
+        self.div_stack.push(div().w_full().flex_none().into());
+        self.push_text(text, source_range);
+        self.pop_div();
     }
 
     fn push_list(&mut self, bullet_index: Option<u64>) {
@@ -3635,6 +3665,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -4363,6 +4394,62 @@ mod tests {
             );
             row_top += line_height;
         }
+    }
+
+    #[gpui::test]
+    fn test_display_katex_fallback_is_rendered_on_its_own_line(cx: &mut TestAppContext) {
+        let source = "text 1 $$x$$ text 2";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_embedded_diagrams: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(
+            rendered.text_for_range(0..source.len()),
+            "text 1 \n$$x$$\n text 2"
+        );
+    }
+
+    #[gpui::test]
+    fn test_multiple_display_katex_fallbacks_are_rendered_on_their_own_lines(
+        cx: &mut TestAppContext,
+    ) {
+        let source = "text 1 $$x$$ text 2 $$y$$ text 3";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_embedded_diagrams: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(
+            rendered.text_for_range(0..source.len()),
+            "text 1 \n$$x$$\n text 2 \n$$y$$\n text 3"
+        );
+    }
+
+    #[gpui::test]
+    fn test_inline_katex_fallback_stays_inline(cx: &mut TestAppContext) {
+        let source = "text $x$ text";
+        let rendered = render_markdown_with_options(
+            source,
+            None,
+            MarkdownOptions {
+                render_embedded_diagrams: true,
+                ..Default::default()
+            },
+            cx,
+        );
+
+        assert_eq!(rendered.text_for_range(0..source.len()), "text $x$ text");
     }
 
     #[gpui::test]
