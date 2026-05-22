@@ -4898,7 +4898,7 @@ impl EditorElement {
             viewport_bounds,
             window,
             cx,
-            |height, max_width_for_stable_x, y_flipped, window, cx| {
+            |height, max_width_for_stable_x, _y_flipped, window, cx| {
                 // First layout the menu to get its size - others can be at least this wide.
                 let context_menu = if context_menu_visible {
                     let menu_height = height - edit_prediction_height - popover_gap;
