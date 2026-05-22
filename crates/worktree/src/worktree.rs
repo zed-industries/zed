@@ -1254,8 +1254,17 @@ impl LocalWorktree {
     ) {
         let repo_changes = self.changed_repos(&self.snapshot, &mut new_snapshot);
 
+        // Only treat the worktree root as a "repo root" when its own `.git` lives
+        // at the worktree root (either a normal repo or a linked worktree gitfile).
+        // An `AboveProject` repository — discovered by walking ancestors of the
+        // worktree root — must NOT populate `root_repo_common_dir`, otherwise
+        // multiple sibling subdirectories of the same monorepo would be grouped
+        // together as a single project in recent projects. See PR #55715.
         new_snapshot.root_repo_common_dir = new_snapshot
             .local_repo_for_work_directory_path(RelPath::empty())
+            .filter(|repo| {
+                !matches!(repo.work_directory, WorkDirectory::AboveProject { .. })
+            })
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
         let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir

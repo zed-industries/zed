@@ -3885,6 +3885,81 @@ async fn test_root_repo_common_dir(executor: BackgroundExecutor, cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_root_repo_common_dir_not_polluted_by_ancestor_git(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // Regression test: subdirectories of a monorepo (where `.git` lives on an
+    // ancestor, but the worktree root itself has no `.git`) must NOT report
+    // the ancestor `.git` as `root_repo_common_dir`. Otherwise sibling
+    // subdirectories of the same monorepo would be merged into a single entry
+    // in recent projects. See PR #55715.
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/monorepo"),
+        json!({
+            ".git": {},
+            "frontend": {
+                "file.txt": "content",
+            },
+            "backend": {
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    let frontend_tree = Worktree::local(
+        path!("/monorepo/frontend").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    frontend_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    let backend_tree = Worktree::local(
+        path!("/monorepo/backend").as_ref(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(1),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    backend_tree
+        .update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    cx.run_until_parked();
+
+    frontend_tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir(),
+            None,
+            "monorepo subdirectory must not inherit ancestor .git as root_repo_common_dir",
+        );
+    });
+    backend_tree.read_with(cx, |tree, _| {
+        assert_eq!(
+            tree.snapshot().root_repo_common_dir(),
+            None,
+            "monorepo subdirectory must not inherit ancestor .git as root_repo_common_dir",
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_invisible_worktree_does_not_track_ancestor_git_repository(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
