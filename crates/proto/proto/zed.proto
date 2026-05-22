@@ -484,7 +484,12 @@ message Envelope {
     SearchCommits search_commits = 449;
     SearchCommitsResponse search_commits_response = 450;
     GetInitialGraphData get_initial_graph_data = 451;
-    GetInitialGraphDataResponse get_initial_graph_data_response = 452; // current max
+    GetInitialGraphDataResponse get_initial_graph_data_response = 452;
+    BeginUploadFile begin_upload_file = 453;
+    BeginUploadFileResponse begin_upload_file_response = 454;
+    UploadFileChunk upload_file_chunk = 455;
+    FinishUploadFile finish_upload_file = 456;
+    CancelUploadFile cancel_upload_file = 457; // current max
   }
 
   reserved 87 to 88;

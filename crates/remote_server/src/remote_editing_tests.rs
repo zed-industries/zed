@@ -1550,6 +1550,229 @@ async fn test_copy_file_into_remote_project(
 }
 
 #[gpui::test]
+async fn test_copy_large_file_into_remote_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    "src": {}
+                },
+            }),
+        )
+        .await;
+
+    let (project, _) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let local_fs = project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    // 8 MiB of distinct bytes — well above the 256 KiB chunked-upload threshold.
+    let large: Vec<u8> = (0..(8 * 1024 * 1024))
+        .map(|i| (i as u32).wrapping_mul(2_654_435_761) as u8)
+        .collect();
+    local_fs.create_dir(path!("/local-code").as_ref()).await.unwrap();
+    local_fs
+        .insert_file(path!("/local-code/big.bin"), large.clone())
+        .await;
+
+    worktree
+        .update(cx, |worktree, cx| {
+            worktree.copy_external_entries(
+                rel_path("src").into(),
+                vec![Path::new(path!("/local-code/big.bin")).into()],
+                local_fs.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    let stored = remote_fs
+        .load_bytes(path!("/code/project1/src/big.bin").as_ref())
+        .await
+        .unwrap();
+    assert_eq!(stored, large);
+}
+
+#[gpui::test]
+async fn test_copy_mixed_files_into_remote_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    "src": {}
+                },
+            }),
+        )
+        .await;
+
+    let (project, _) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let local_fs = project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    let small_content = b"hello from a small file".to_vec();
+    // 2 MiB — exceeds the chunked threshold, so this exercises the chunk
+    // protocol while sitting alongside a tiny file and a directory.
+    let large: Vec<u8> = (0..(2 * 1024 * 1024)).map(|i| (i % 251) as u8).collect();
+    local_fs
+        .insert_tree(
+            path!("/local-code"),
+            json!({
+                "bundle": {
+                    "tiny.txt": String::from_utf8(small_content.clone()).unwrap(),
+                    "nested": {}
+                }
+            }),
+        )
+        .await;
+    local_fs
+        .insert_file(path!("/local-code/bundle/nested/huge.bin"), large.clone())
+        .await;
+
+    worktree
+        .update(cx, |worktree, cx| {
+            worktree.copy_external_entries(
+                rel_path("src").into(),
+                vec![Path::new(path!("/local-code/bundle")).into()],
+                local_fs.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remote_fs
+            .load_bytes(path!("/code/project1/src/bundle/tiny.txt").as_ref())
+            .await
+            .unwrap(),
+        small_content
+    );
+    assert_eq!(
+        remote_fs
+            .load_bytes(path!("/code/project1/src/bundle/nested/huge.bin").as_ref())
+            .await
+            .unwrap(),
+        large
+    );
+}
+
+#[gpui::test]
+async fn test_chunked_upload_cancel_cleans_up(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    use project::worktree_store::WorktreeStore;
+
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    "src": {}
+                },
+            }),
+        )
+        .await;
+
+    let (project, headless) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let worktree_store = headless.read_with(server_cx, |hp, _| hp.worktree_store.clone());
+
+    let upload_id = 4242;
+    let begin = proto::BeginUploadFile {
+        project_id: rpc::proto::REMOTE_SERVER_PROJECT_ID,
+        worktree_id: worktree_id.to_proto(),
+        path: rel_path("src/aborted.bin").to_proto(),
+        upload_id,
+        content_size: 1024,
+    };
+    let typed = rpc::TypedEnvelope {
+        sender_id: proto::PeerId { owner_id: 0, id: 0 },
+        original_sender_id: None,
+        message_id: 0,
+        payload: begin,
+        received_at: std::time::Instant::now(),
+    };
+    let response = WorktreeStore::handle_begin_upload_file(
+        worktree_store.clone(),
+        typed,
+        server_cx.to_async(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.upload_id, upload_id);
+
+    let cancel = proto::CancelUploadFile {
+        project_id: rpc::proto::REMOTE_SERVER_PROJECT_ID,
+        worktree_id: worktree_id.to_proto(),
+        upload_id,
+    };
+    let typed = rpc::TypedEnvelope {
+        sender_id: proto::PeerId { owner_id: 0, id: 0 },
+        original_sender_id: None,
+        message_id: 0,
+        payload: cancel,
+        received_at: std::time::Instant::now(),
+    };
+    WorktreeStore::handle_cancel_upload_file(worktree_store, typed, server_cx.to_async())
+        .await
+        .unwrap();
+
+    server_cx.run_until_parked();
+
+    let paths = remote_fs.paths(true);
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p.to_string_lossy().contains(".zed-upload-")),
+        "expected no leftover temp upload files, got {paths:?}"
+    );
+    assert!(
+        !paths
+            .iter()
+            .any(|p| p == &PathBuf::from(path!("/code/project1/src/aborted.bin"))),
+        "expected aborted target not to exist, got {paths:?}"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(

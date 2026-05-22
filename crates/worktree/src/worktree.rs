@@ -41,8 +41,8 @@ use postage::{
     watch,
 };
 use rpc::{
-    AnyProtoClient,
-    proto::{self, split_worktree_update},
+    AnyProtoClient, ErrorExt as _,
+    proto::{self, ErrorCode, split_worktree_update},
 };
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -62,7 +62,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -78,6 +78,35 @@ pub use worktree_settings::WorktreeSettings;
 use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+/// Files at or above this size are uploaded to a remote worktree using the
+/// chunked upload protocol instead of being embedded inside a single
+/// `CreateProjectEntry` envelope.
+const UPLOAD_CHUNKED_THRESHOLD: usize = 256 * 1024;
+/// Chunk size used by the chunked upload sender. Kept under
+/// `remote::protocol::MAX_INCOMING_MESSAGE_SIZE` after envelope framing.
+const UPLOAD_CHUNK_SIZE: usize = 1024 * 1024;
+
+/// Source of upload IDs for chunked file uploads. The id is opaque to the
+/// receiver but must be unique per concurrent upload from this process.
+static UPLOAD_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[repr(u8)]
+enum ChunkedUploadSupport {
+    Unknown = 0,
+    Supported = 1,
+    Unsupported = 2,
+}
+
+impl ChunkedUploadSupport {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            1 => Self::Supported,
+            2 => Self::Unsupported,
+            _ => Self::Unknown,
+        }
+    }
+}
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -167,6 +196,7 @@ pub struct RemoteWorktree {
     visible: bool,
     disconnected: bool,
     received_initial_update: bool,
+    chunked_upload_support: Arc<AtomicU8>,
 }
 
 #[derive(Clone)]
@@ -562,6 +592,9 @@ impl Worktree {
                 visible: worktree.visible,
                 disconnected: false,
                 received_initial_update: false,
+                chunked_upload_support: Arc::new(AtomicU8::new(
+                    ChunkedUploadSupport::Unknown as u8,
+                )),
             };
 
             // Apply updates to a separate snapshot in a background task, then
@@ -2261,9 +2294,10 @@ impl RemoteWorktree {
         let client = self.client.clone();
         let worktree_id = self.id().to_proto();
         let project_id = self.project_id;
+        let chunked_upload_support = self.chunked_upload_support.clone();
 
         cx.background_spawn(async move {
-            let mut requests = Vec::new();
+            let mut operations: Vec<UploadOperation> = Vec::new();
             for root_path_to_copy in paths_to_copy {
                 let Some(filename) = root_path_to_copy
                     .file_name()
@@ -2283,38 +2317,296 @@ impl RemoteWorktree {
                     else {
                         continue;
                     };
-                    let content = if is_directory {
-                        None
-                    } else {
-                        Some(local_fs.load_bytes(&abs_path).await?)
-                    };
 
                     let mut target_path = target_directory.join(filename);
                     if relative_path.file_name().is_some() {
                         target_path = target_path.join(&relative_path);
                     }
 
-                    requests.push(proto::CreateProjectEntry {
-                        project_id,
-                        worktree_id,
-                        path: target_path.to_proto(),
-                        is_directory,
-                        content,
-                    });
+                    if is_directory {
+                        operations.push(UploadOperation::Directory { target_path });
+                        continue;
+                    }
+
+                    let metadata = local_fs.metadata(&abs_path).await?.with_context(|| {
+                        format!("source file vanished before upload: {abs_path:?}")
+                    })?;
+                    let len = metadata.len as usize;
+                    if len >= UPLOAD_CHUNKED_THRESHOLD {
+                        operations.push(UploadOperation::LargeFile {
+                            target_path,
+                            abs_source_path: abs_path,
+                            content_size: metadata.len,
+                        });
+                    } else {
+                        let content = local_fs.load_bytes(&abs_path).await?;
+                        operations.push(UploadOperation::SmallFile {
+                            target_path,
+                            content,
+                        });
+                    }
                 }
             }
-            requests.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-            requests.dedup();
+            operations.sort_unstable_by(|a, b| a.target_path().cmp(b.target_path()));
+            operations.dedup_by(|a, b| a.target_path() == b.target_path());
 
             let mut copied_entry_ids = Vec::new();
-            for request in requests {
-                let response = client.request(request).await?;
-                copied_entry_ids.extend(response.entry.map(|e| ProjectEntryId::from_proto(e.id)));
+            for operation in operations {
+                let entry_response = match operation {
+                    UploadOperation::Directory { target_path } => {
+                        client
+                            .request(proto::CreateProjectEntry {
+                                project_id,
+                                worktree_id,
+                                path: target_path.to_proto(),
+                                is_directory: true,
+                                content: None,
+                            })
+                            .await?
+                    }
+                    UploadOperation::SmallFile {
+                        target_path,
+                        content,
+                    } => {
+                        client
+                            .request(proto::CreateProjectEntry {
+                                project_id,
+                                worktree_id,
+                                path: target_path.to_proto(),
+                                is_directory: false,
+                                content: Some(content),
+                            })
+                            .await?
+                    }
+                    UploadOperation::LargeFile {
+                        target_path,
+                        abs_source_path,
+                        content_size,
+                    } => {
+                        let support = ChunkedUploadSupport::from_u8(
+                            chunked_upload_support.load(SeqCst),
+                        );
+                        let use_chunked = match support {
+                            ChunkedUploadSupport::Unsupported => false,
+                            _ => true,
+                        };
+                        if use_chunked {
+                            match upload_file_chunked(
+                                client.clone(),
+                                local_fs.clone(),
+                                project_id,
+                                worktree_id,
+                                abs_source_path.clone(),
+                                target_path.clone(),
+                                content_size,
+                            )
+                            .await
+                            {
+                                Ok(response) => response,
+                                Err(error) if is_unhandled_message_error(&error) => {
+                                    chunked_upload_support
+                                        .store(ChunkedUploadSupport::Unsupported as u8, SeqCst);
+                                    log::info!(
+                                        "remote server does not support chunked uploads; \
+                                         falling back to legacy CreateProjectEntry for {target_path:?}"
+                                    );
+                                    let content = local_fs.load_bytes(&abs_source_path).await?;
+                                    client
+                                        .request(proto::CreateProjectEntry {
+                                            project_id,
+                                            worktree_id,
+                                            path: target_path.to_proto(),
+                                            is_directory: false,
+                                            content: Some(content),
+                                        })
+                                        .await?
+                                }
+                                Err(error) => return Err(error),
+                            }
+                        } else {
+                            let content = local_fs.load_bytes(&abs_source_path).await?;
+                            client
+                                .request(proto::CreateProjectEntry {
+                                    project_id,
+                                    worktree_id,
+                                    path: target_path.to_proto(),
+                                    is_directory: false,
+                                    content: Some(content),
+                                })
+                                .await?
+                        }
+                    }
+                };
+                copied_entry_ids
+                    .extend(entry_response.entry.map(|e| ProjectEntryId::from_proto(e.id)));
             }
 
             Ok(copied_entry_ids)
         })
     }
+}
+
+enum UploadOperation {
+    Directory {
+        target_path: Arc<RelPath>,
+    },
+    SmallFile {
+        target_path: Arc<RelPath>,
+        content: Vec<u8>,
+    },
+    LargeFile {
+        target_path: Arc<RelPath>,
+        abs_source_path: PathBuf,
+        content_size: u64,
+    },
+}
+
+impl UploadOperation {
+    fn target_path(&self) -> &Arc<RelPath> {
+        match self {
+            UploadOperation::Directory { target_path }
+            | UploadOperation::SmallFile { target_path, .. }
+            | UploadOperation::LargeFile { target_path, .. } => target_path,
+        }
+    }
+}
+
+/// Send a single file to the remote worktree using the chunked-upload
+/// protocol. The caller is expected to fall back to `CreateProjectEntry` if
+/// this returns an "unhandled message" error indicating an older server.
+async fn upload_file_chunked(
+    client: AnyProtoClient,
+    fs: Arc<dyn Fs>,
+    project_id: u64,
+    worktree_id: u64,
+    abs_source_path: PathBuf,
+    target_path: Arc<RelPath>,
+    content_size: u64,
+) -> anyhow::Result<proto::ProjectEntryResponse> {
+    let upload_id = UPLOAD_ID_COUNTER.fetch_add(1, SeqCst);
+    client
+        .request(proto::BeginUploadFile {
+            project_id,
+            worktree_id,
+            path: target_path.to_proto(),
+            upload_id,
+            content_size,
+        })
+        .await
+        .with_context(|| format!("starting chunked upload for {target_path:?}"))?;
+
+    let guard = CancelOnDrop::new(client.clone(), project_id, worktree_id, upload_id);
+
+    let mut reader = fs
+        .open_sync(&abs_source_path)
+        .await
+        .with_context(|| format!("opening source file {abs_source_path:?}"))?;
+    let mut total_sent: u64 = 0;
+    let mut buffer = vec![0u8; UPLOAD_CHUNK_SIZE];
+    loop {
+        let read = match std::io::Read::read(&mut reader, &mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(error) => {
+                return Err(anyhow::Error::from(error).context(format!(
+                    "reading from source file {abs_source_path:?}"
+                )));
+            }
+        };
+        total_sent = total_sent.saturating_add(read as u64);
+        if total_sent > content_size {
+            anyhow::bail!(
+                "source file {abs_source_path:?} grew during upload: \
+                 sent {total_sent} > declared {content_size}"
+            );
+        }
+        let mut chunk_bytes = Vec::with_capacity(read);
+        chunk_bytes.extend_from_slice(&buffer[..read]);
+        client
+            .send(proto::UploadFileChunk {
+                project_id,
+                worktree_id,
+                upload_id,
+                data: chunk_bytes,
+            })
+            .with_context(|| format!("sending chunk for upload {upload_id}"))?;
+    }
+
+    if total_sent != content_size {
+        anyhow::bail!(
+            "source file {abs_source_path:?} shrank during upload: \
+             sent {total_sent} < declared {content_size}"
+        );
+    }
+
+    let response = client
+        .request(proto::FinishUploadFile {
+            project_id,
+            worktree_id,
+            upload_id,
+        })
+        .await
+        .with_context(|| format!("finalizing chunked upload {upload_id}"))?;
+
+    guard.disarm();
+    Ok(response)
+}
+
+/// Sends a `CancelUploadFile` if dropped while the upload is in flight, so the
+/// server never leaks an in-progress upload entry on error/panic paths.
+struct CancelOnDrop {
+    client: AnyProtoClient,
+    project_id: u64,
+    worktree_id: u64,
+    upload_id: u64,
+    armed: bool,
+}
+
+impl CancelOnDrop {
+    fn new(
+        client: AnyProtoClient,
+        project_id: u64,
+        worktree_id: u64,
+        upload_id: u64,
+    ) -> Self {
+        Self {
+            client,
+            project_id,
+            worktree_id,
+            upload_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        if let Err(error) = self.client.send(proto::CancelUploadFile {
+            project_id: self.project_id,
+            worktree_id: self.worktree_id,
+            upload_id: self.upload_id,
+        }) {
+            log::debug!(
+                "failed to send CancelUploadFile for upload {} on drop: {error:#}",
+                self.upload_id
+            );
+        }
+    }
+}
+
+fn is_unhandled_message_error(error: &anyhow::Error) -> bool {
+    if !matches!(error.error_code(), ErrorCode::Internal) {
+        return false;
+    }
+    let text = format!("{error:#}");
+    text.contains("was not handled") || text.contains("no handler registered")
 }
 
 impl Snapshot {

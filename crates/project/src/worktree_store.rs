@@ -9,14 +9,21 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
-use fs::{Fs, copy_recursive};
-use futures::{FutureExt, future::Shared};
+use fs::{Fs, RemoveOptions, RenameOptions, copy_recursive};
+use futures::{
+    FutureExt, TryStreamExt as _,
+    channel::{mpsc, oneshot},
+    future::Shared,
+    stream::StreamExt as _,
+};
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task, TaskExt,
     WeakEntity,
 };
 use itertools::Either;
+use parking_lot::Mutex;
 use postage::{prelude::Stream as _, watch};
+use rand::RngCore as _;
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
     proto::{self, REMOTE_SERVER_PROJECT_ID},
@@ -194,6 +201,24 @@ pub struct WorktreeStore {
         HashMap<Arc<SanitizedPath>, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
     initial_scan_complete: (watch::Sender<bool>, watch::Receiver<bool>),
     state: WorktreeStoreState,
+    in_flight_uploads: Arc<Mutex<HashMap<u64, InFlightUpload>>>,
+}
+
+/// One active server-side chunked upload. The `chunk_tx` is the entry point
+/// for synchronous (no-await) ingest from message handlers, ensuring per-upload
+/// in-order writes even though message handlers run concurrently via
+/// `cx.spawn(...).detach()`. The writer task is detached on creation so that
+/// removing this entry from the in-flight map (on finish/cancel) does not
+/// cancel the task mid-cleanup — closing `chunk_tx` is enough to signal
+/// completion.
+struct InFlightUpload {
+    chunk_tx: mpsc::UnboundedSender<UploadEvent>,
+}
+
+enum UploadEvent {
+    Chunk(Vec<u8>),
+    Finish(oneshot::Sender<Result<proto::ProjectEntryResponse>>),
+    Cancel,
 }
 
 #[derive(Debug)]
@@ -218,6 +243,10 @@ impl WorktreeStore {
         client.add_entity_request_handler(Self::handle_delete_project_entry);
         client.add_entity_request_handler(Self::handle_expand_project_entry);
         client.add_entity_request_handler(Self::handle_expand_all_for_project_entry);
+        client.add_entity_request_handler(Self::handle_begin_upload_file);
+        client.add_entity_message_handler(Self::handle_upload_file_chunk);
+        client.add_entity_request_handler(Self::handle_finish_upload_file);
+        client.add_entity_message_handler(Self::handle_cancel_upload_file);
     }
 
     pub fn init_remote(client: &AnyProtoClient) {
@@ -239,6 +268,7 @@ impl WorktreeStore {
             retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
             state: WorktreeStoreState::Local { fs },
+            in_flight_uploads: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
@@ -263,6 +293,7 @@ impl WorktreeStore {
                 upstream_project_id,
                 path_style,
             },
+            in_flight_uploads: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
@@ -1321,6 +1352,161 @@ impl WorktreeStore {
         })
     }
 
+    pub async fn handle_begin_upload_file(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::BeginUploadFile>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BeginUploadFileResponse> {
+        let payload = envelope.payload;
+        let worktree_id = WorktreeId::from_proto(payload.worktree_id);
+        let upload_id = payload.upload_id;
+        let target_rel_path = RelPath::from_proto(&payload.path)
+            .with_context(|| format!("received invalid relative path {:?}", payload.path))?;
+
+        let (worktree, fs, in_flight, target_abs_path) = this.update(&mut cx, |this, cx| {
+            let worktree = this
+                .worktree_for_id(worktree_id, cx)
+                .context("worktree not found")?;
+            let (fs, target_abs_path) = {
+                let worktree_ref = worktree.read(cx);
+                worktree_ref
+                    .as_local()
+                    .map(|local| {
+                        (
+                            local.fs().clone(),
+                            worktree_ref.absolutize(target_rel_path.as_ref()),
+                        )
+                    })
+                    .context("can only upload into a local worktree")?
+            };
+            anyhow::Ok((
+                worktree.downgrade(),
+                fs,
+                this.in_flight_uploads.clone(),
+                target_abs_path,
+            ))
+        })?;
+
+        let parent_dir = target_abs_path
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .with_context(|| format!("target path {target_abs_path:?} has no parent"))?;
+        let mut rng_buf = [0u8; 4];
+        rand::rng().fill_bytes(&mut rng_buf);
+        let temp_name = format!(
+            ".zed-upload-{upload_id}-{:08x}",
+            u32::from_le_bytes(rng_buf)
+        );
+        let temp_path = parent_dir.join(&temp_name);
+
+        // Ensure the destination directory exists. Without this, a `rename`
+        // into a not-yet-created subdirectory of the destination tree would
+        // fail even with `create_parents: true`, because the temp file would
+        // be in an unwritable location.
+        fs.create_dir(&parent_dir)
+            .await
+            .with_context(|| format!("creating upload destination directory {parent_dir:?}"))?;
+
+        let (chunk_tx, chunk_rx) = mpsc::unbounded::<UploadEvent>();
+        cx.spawn(async move |cx| {
+            run_upload_writer(
+                fs,
+                worktree,
+                temp_path,
+                target_abs_path,
+                target_rel_path,
+                payload.content_size,
+                chunk_rx,
+                cx.clone(),
+            )
+            .await;
+        })
+        .detach();
+
+        let previous = in_flight.lock().insert(upload_id, InFlightUpload { chunk_tx });
+        if let Some(previous) = previous {
+            // A duplicate `BeginUploadFile` for the same id means the client
+            // restarted an upload without finishing or canceling the previous
+            // one. Abort the stale writer so we don't leave a temp file behind.
+            previous.chunk_tx.unbounded_send(UploadEvent::Cancel).ok();
+        }
+
+        Ok(proto::BeginUploadFileResponse { upload_id })
+    }
+
+    pub async fn handle_upload_file_chunk(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UploadFileChunk>,
+        cx: AsyncApp,
+    ) -> Result<()> {
+        // It is essential that this handler push the chunk into the writer
+        // task's channel synchronously, before any `.await`. Message handlers
+        // are dispatched as detached spawned tasks, so two concurrent chunk
+        // handlers could otherwise reorder writes to the temp file.
+        let payload = envelope.payload;
+        let in_flight = this.read_with(&cx, |this, _| this.in_flight_uploads.clone());
+        let guard = in_flight.lock();
+        if let Some(upload) = guard.get(&payload.upload_id) {
+            if upload
+                .chunk_tx
+                .unbounded_send(UploadEvent::Chunk(payload.data))
+                .is_err()
+            {
+                log::debug!(
+                    "upload {} writer task ended; dropping chunk",
+                    payload.upload_id
+                );
+            }
+        } else {
+            // A late chunk after the upload was canceled (or never began) is
+            // benign — drop it silently.
+            log::debug!(
+                "received chunk for unknown upload id {}",
+                payload.upload_id
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn handle_finish_upload_file(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::FinishUploadFile>,
+        cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let upload_id = envelope.payload.upload_id;
+        let upload = {
+            let in_flight = this.read_with(&cx, |this, _| this.in_flight_uploads.clone());
+            let mut guard = in_flight.lock();
+            guard.remove(&upload_id)
+        };
+        let upload = upload.with_context(|| format!("no upload in flight for id {upload_id}"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        upload
+            .chunk_tx
+            .unbounded_send(UploadEvent::Finish(reply_tx))
+            .map_err(|_| anyhow!("upload writer task for id {upload_id} ended unexpectedly"))?;
+        reply_rx
+            .await
+            .map_err(|_| anyhow!("upload writer task for id {upload_id} ended unexpectedly"))?
+    }
+
+    pub async fn handle_cancel_upload_file(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::CancelUploadFile>,
+        cx: AsyncApp,
+    ) -> Result<()> {
+        let upload_id = envelope.payload.upload_id;
+        let upload = {
+            let in_flight = this.read_with(&cx, |this, _| this.in_flight_uploads.clone());
+            let mut guard = in_flight.lock();
+            guard.remove(&upload_id)
+        };
+        if let Some(upload) = upload {
+            upload.chunk_tx.unbounded_send(UploadEvent::Cancel).ok();
+        }
+        Ok(())
+    }
+
     pub async fn handle_expand_project_entry(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ExpandProjectEntry>,
@@ -1395,4 +1581,163 @@ impl WorktreeHandle {
             WorktreeHandle::Weak(handle) => handle.upgrade(),
         }
     }
+}
+
+async fn run_upload_writer(
+    fs: Arc<dyn Fs>,
+    worktree: WeakEntity<Worktree>,
+    temp_path: PathBuf,
+    target_path: PathBuf,
+    target_rel_path: Arc<RelPath>,
+    expected_size: u64,
+    mut event_rx: mpsc::UnboundedReceiver<UploadEvent>,
+    mut cx: AsyncApp,
+) {
+    // Forward raw chunk bytes to a separate channel that drives the file
+    // writer. Closing this channel (by dropping `byte_tx`) signals EOF to the
+    // writer, letting `create_file_with` complete. Keeping bytes off the
+    // accumulator path is what bounds receiver memory to roughly one chunk
+    // plus whatever is in flight on the channel.
+    let (byte_tx, byte_rx) = mpsc::unbounded::<Vec<u8>>();
+
+    let writer_task: Task<Result<()>> = {
+        let fs = fs.clone();
+        let temp_path = temp_path.clone();
+        cx.background_spawn(async move {
+            let mut reader = byte_rx
+                .map(Ok::<Vec<u8>, std::io::Error>)
+                .into_async_read();
+            let pinned = std::pin::Pin::new(&mut reader);
+            fs.create_file_with(&temp_path, pinned)
+                .await
+                .with_context(|| format!("writing upload temp file {temp_path:?}"))
+        })
+    };
+
+    let mut received: u64 = 0;
+    let mut failed: Option<anyhow::Error> = None;
+    let mut canceled = false;
+    let mut finish_reply: Option<oneshot::Sender<Result<proto::ProjectEntryResponse>>> = None;
+
+    while let Some(event) = event_rx.next().await {
+        match event {
+            UploadEvent::Chunk(data) => {
+                if failed.is_some() {
+                    // Already failed; drain remaining events without writing.
+                    continue;
+                }
+                let chunk_len = data.len() as u64;
+                let new_total = received.saturating_add(chunk_len);
+                if new_total > expected_size {
+                    failed = Some(anyhow!(
+                        "upload exceeded declared content_size: {new_total} > {expected_size}"
+                    ));
+                    continue;
+                }
+                received = new_total;
+                if byte_tx.unbounded_send(data).is_err() {
+                    failed = Some(anyhow!("upload writer task ended before chunk arrived"));
+                }
+            }
+            UploadEvent::Finish(reply_tx) => {
+                finish_reply = Some(reply_tx);
+                break;
+            }
+            UploadEvent::Cancel => {
+                canceled = true;
+                break;
+            }
+        }
+    }
+
+    // Close the byte channel so `create_file_with` sees EOF and the writer
+    // task completes. Without this, the writer hangs forever waiting for the
+    // next chunk.
+    drop(byte_tx);
+    let write_result = writer_task.await;
+
+    let result = (|| -> Result<()> {
+        if canceled {
+            anyhow::bail!("upload canceled");
+        }
+        if let Some(error) = failed {
+            return Err(error);
+        }
+        write_result?;
+        if received != expected_size {
+            anyhow::bail!(
+                "upload short read: received {received} of declared {expected_size}"
+            );
+        }
+        Ok(())
+    })();
+
+    let commit_result = match result {
+        Ok(()) => publish_upload(
+            fs.clone(),
+            &worktree,
+            &temp_path,
+            &target_path,
+            &target_rel_path,
+            &mut cx,
+        )
+        .await
+        .with_context(|| format!("finalizing upload to {target_path:?}")),
+        Err(error) => Err(error),
+    };
+
+    if let Err(error) = &commit_result {
+        log::warn!(
+            "upload failed for {target_path:?}: {error:#}; cleaning up temp file"
+        );
+        fs.remove_file(
+            &temp_path,
+            RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+        .log_err();
+    }
+
+    if let Some(reply_tx) = finish_reply {
+        reply_tx.send(commit_result).ok();
+    }
+}
+
+async fn publish_upload(
+    fs: Arc<dyn Fs>,
+    worktree: &WeakEntity<Worktree>,
+    temp_path: &Path,
+    target_path: &Path,
+    target_rel_path: &Arc<RelPath>,
+    cx: &mut AsyncApp,
+) -> Result<proto::ProjectEntryResponse> {
+    fs.rename(
+        temp_path,
+        target_path,
+        RenameOptions {
+            overwrite: true,
+            ignore_if_exists: false,
+            create_parents: true,
+        },
+    )
+    .await
+    .with_context(|| format!("renaming upload temp file to {target_path:?}"))?;
+
+    let target_rel_path = target_rel_path.clone();
+    let (scan_id, refresh) = worktree
+        .update(cx, |worktree, cx| {
+            let scan_id = worktree.scan_id();
+            let local = worktree
+                .as_local_mut()
+                .context("worktree no longer local")?;
+            anyhow::Ok((scan_id, local.refresh_entry(target_rel_path.clone(), None, cx)))
+        })??;
+    let entry = refresh.await?;
+    Ok(proto::ProjectEntryResponse {
+        entry: entry.as_ref().map(|entry| entry.into()),
+        worktree_scan_id: scan_id as u64,
+    })
 }

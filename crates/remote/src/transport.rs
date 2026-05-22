@@ -106,7 +106,9 @@ fn handle_rpc_messages_over_child_process_stdio(
                     child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
                 }
 
-                let message_len = message_len_from_buffer(&stdout_buffer);
+                let mut header = [0u8; MESSAGE_LEN_SIZE];
+                header.copy_from_slice(&stdout_buffer[..MESSAGE_LEN_SIZE]);
+                let message_len = message_len_from_buffer(header);
                 let envelope =
                     read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len)
                         .await?;

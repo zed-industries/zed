@@ -98,6 +98,37 @@ message CreateProjectEntry {
   optional bytes content = 5;
 }
 
+message BeginUploadFile {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  string path = 3;
+  uint64 upload_id = 4;
+  uint64 content_size = 5;
+}
+
+message BeginUploadFileResponse {
+  uint64 upload_id = 1;
+}
+
+message UploadFileChunk {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  uint64 upload_id = 3;
+  bytes data = 4;
+}
+
+message FinishUploadFile {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  uint64 upload_id = 3;
+}
+
+message CancelUploadFile {
+  uint64 project_id = 1;
+  uint64 worktree_id = 2;
+  uint64 upload_id = 3;
+}
+
 message RenameProjectEntry {
   uint64 project_id = 1;
   uint64 entry_id = 2;
