@@ -1632,6 +1632,12 @@ impl Sidebar {
                         }
                     }
                 }
+
+                if is_active
+                    && let Some(ActiveEntry::Thread { thread_id, .. }) = self.active_entry.as_ref()
+                {
+                    notified_threads.remove(thread_id);
+                }
             }
 
             let has_visible_rows = !threads.is_empty() || !terminals.is_empty();

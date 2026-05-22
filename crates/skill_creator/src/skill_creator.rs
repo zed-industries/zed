@@ -18,6 +18,7 @@ use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use settings::{ActionSequence, Settings};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -41,8 +42,8 @@ const CREATION_MODE_TAB_INDEX: isize = 1;
 const URL_FIELD_TAB_INDEX: isize = 3;
 const NAME_FIELD_TAB_INDEX: isize = 3;
 const DESCRIPTION_FIELD_TAB_INDEX: isize = 4;
-const SCOPE_FIELD_TAB_INDEX: isize = 5;
-const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 6;
+const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 5;
+const SCOPE_FIELD_TAB_INDEX: isize = 6;
 const BODY_FIELD_TAB_INDEX: isize = 7;
 
 pub fn init(_cx: &mut App) {}
@@ -126,19 +127,17 @@ fn project_scopes_from_workspace(
         return Vec::new();
     };
     let workspace = workspace.read(cx);
-    let project = workspace.project().read(cx);
-    project
+    let root_paths = workspace.root_paths(cx);
+    workspace
         .visible_worktrees(cx)
-        .filter_map(|worktree| {
+        .zip(root_paths)
+        .map(|(worktree, abs_path)| {
             let worktree = worktree.read(cx);
-            if !worktree.is_local() {
-                return None;
-            }
-            Some(ScopeChoice::Project {
+            ScopeChoice::Project {
                 worktree_id: worktree.id(),
                 root_name: SharedString::from(worktree.root_name_str().to_string()),
-                abs_path: worktree.abs_path(),
-            })
+                abs_path,
+            }
         })
         .collect()
 }
@@ -150,10 +149,12 @@ pub fn open_skill_creator(
     language_registry: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     open_mode: SkillCreatorOpenMode,
+    on_saved: Option<Rc<dyn Fn(&mut App)>>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<SkillCreator>>> {
     cx.spawn(async move |cx| {
         let open_mode_for_existing = open_mode.clone();
+        let on_saved_for_existing = on_saved.clone();
         let existing = cx.update(|cx| {
             let handle = cx
                 .windows()
@@ -163,7 +164,8 @@ pub fn open_skill_creator(
                 handle
                     .update(cx, |this, window, cx| {
                         window.activate_window();
-                        this.apply_open_mode(open_mode_for_existing, window, cx);
+                        this.on_saved = on_saved_for_existing.clone();
+                        this.apply_open_mode(open_mode_for_existing.clone(), window, cx);
                     })
                     .ok();
                 Some(handle)
@@ -204,7 +206,15 @@ pub fn open_skill_creator(
                 },
                 |window, cx| {
                     let skill_creator = cx.new(|cx| {
-                        SkillCreator::new(workspace, language_registry, fs, http_client, window, cx)
+                        SkillCreator::new(
+                            workspace,
+                            language_registry,
+                            fs,
+                            http_client,
+                            on_saved,
+                            window,
+                            cx,
+                        )
                     });
                     skill_creator.update(cx, |this, cx| {
                         this.apply_open_mode(open_mode, window, cx);
@@ -222,6 +232,7 @@ pub struct SkillCreator {
     workspace: Option<WeakEntity<Workspace>>,
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
+    on_saved: Option<Rc<dyn Fn(&mut App)>>,
     creation_mode: CreationMode,
     url_editor: Entity<InputField>,
     name_editor: Entity<InputField>,
@@ -254,6 +265,7 @@ impl SkillCreator {
         language_registry: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
+        on_saved: Option<Rc<dyn Fn(&mut App)>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -402,6 +414,7 @@ impl SkillCreator {
             workspace,
             fs,
             http_client,
+            on_saved,
             creation_mode: CreationMode::Form,
             url_editor,
             name_editor,
@@ -724,6 +737,9 @@ impl SkillCreator {
                 this.save_task = None;
                 match result {
                     Ok(path) => {
+                        if let Some(on_saved) = &this.on_saved {
+                            on_saved(cx);
+                        }
                         if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
                             workspace.update(cx, |workspace, cx| {
                                 workspace.show_toast(
@@ -863,7 +879,7 @@ impl SkillCreator {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(Label::new("Font-matter"))
+                    .child(Label::new("Front-matter"))
                     .child(self.name_editor.clone())
                     .child(self.description_editor.clone()),
             )
@@ -904,9 +920,7 @@ impl SkillCreator {
         };
 
         let selected_label = h_flex()
-            .min_w_0()
-            .w_full()
-            .child(Label::new(selected_label).truncate())
+            .child(Label::new(selected_label))
             .into_any_element();
 
         let weak = cx.weak_entity();
@@ -944,13 +958,11 @@ impl SkillCreator {
                     .child(Label::new(scope_hint).color(Color::Muted)),
             )
             .child(
-                div().w_1_3().min_w_0().child(
-                    DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
-                        .tab_index(SCOPE_FIELD_TAB_INDEX)
-                        .style(DropdownStyle::Outlined)
-                        .trigger_size(ButtonSize::Medium)
-                        .full_width(true),
-                ),
+                DropdownMenu::new_with_element("skill-scope-dropdown", selected_label, menu)
+                    .tab_index(SCOPE_FIELD_TAB_INDEX)
+                    .style(DropdownStyle::Outlined)
+                    .trigger_size(ButtonSize::Medium)
+                    .full_width(false),
             )
     }
 
@@ -969,7 +981,8 @@ impl SkillCreator {
                 this.toggle_disable_model_invocation(cx);
             }),
         )
-        .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX).into_any_element()
+        .tab_index(DISABLE_MODEL_INVOCATION_TAB_INDEX)
+        .into_any_element()
     }
 
     fn render_body_field(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
