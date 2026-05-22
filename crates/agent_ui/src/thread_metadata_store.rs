@@ -347,6 +347,20 @@ impl ThreadMetadata {
     pub fn main_worktree_paths(&self) -> &PathList {
         self.worktree_paths.main_worktree_path_list()
     }
+
+    pub fn references_folder_path(&self, path: &Path) -> bool {
+        self.folder_paths()
+            .paths()
+            .iter()
+            .any(|folder_path| folder_path.as_path() == path)
+    }
+
+    pub fn matches_remote_connection(
+        &self,
+        remote_connection: Option<&RemoteConnectionOptions>,
+    ) -> bool {
+        same_remote_connection_identity(self.remote_connection.as_ref(), remote_connection)
+    }
 }
 
 /// Derives worktree display info from a thread's stored path list.
@@ -587,6 +601,12 @@ impl ThreadMetadataStore {
         self.threads.values()
     }
 
+    pub fn reload_task(&self) -> Shared<Task<()>> {
+        self.reload_task
+            .clone()
+            .unwrap_or_else(|| Task::ready(()).shared())
+    }
+
     /// Returns all archived threads.
     pub fn archived_entries(&self) -> impl Iterator<Item = &ThreadMetadata> + '_ {
         self.entries().filter(|t| t.archived)
@@ -609,9 +629,7 @@ impl ThreadMetadataStore {
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
-            .filter(move |s| {
-                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
-            })
+            .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
     /// Returns threads whose `main_worktree_paths` matches the given path list
@@ -633,9 +651,7 @@ impl ThreadMetadataStore {
             .flatten()
             .filter_map(|s| self.threads.get(s))
             .filter(|s| !s.archived)
-            .filter(move |s| {
-                same_remote_connection_identity(s.remote_connection.as_ref(), remote_connection)
-            })
+            .filter(move |s| s.matches_remote_connection(remote_connection))
     }
 
     fn reload(&mut self, cx: &mut Context<Self>) -> Shared<Task<()>> {
@@ -853,18 +869,27 @@ impl ThreadMetadataStore {
         path: &Path,
         remote_connection: Option<&RemoteConnectionOptions>,
     ) -> bool {
+        self.path_is_referenced_by_unarchived_threads_matching(
+            thread_id,
+            path,
+            remote_connection,
+            |_| true,
+        )
+    }
+
+    pub fn path_is_referenced_by_unarchived_threads_matching(
+        &self,
+        thread_id: Option<ThreadId>,
+        path: &Path,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        matches: impl Fn(&ThreadMetadata) -> bool,
+    ) -> bool {
         self.entries().any(|thread| {
             Some(thread.thread_id) != thread_id
                 && !thread.archived
-                && same_remote_connection_identity(
-                    thread.remote_connection.as_ref(),
-                    remote_connection,
-                )
-                && thread
-                    .folder_paths()
-                    .paths()
-                    .iter()
-                    .any(|other_path| other_path.as_path() == path)
+                && thread.matches_remote_connection(remote_connection)
+                && thread.references_folder_path(path)
+                && matches(thread)
         })
     }
 
@@ -1115,6 +1140,26 @@ impl ThreadMetadataStore {
             .log_err();
         crate::draft_prompt_store::delete(thread_id, cx).detach_and_log_err(cx);
         cx.notify();
+    }
+
+    pub fn unarchived_draft_ids_matching(
+        &self,
+        matches: impl Fn(&ThreadMetadata) -> bool,
+    ) -> Vec<ThreadId> {
+        self.entries()
+            .filter(|thread| thread.is_draft() && !thread.archived && matches(thread))
+            .map(|thread| thread.thread_id)
+            .collect()
+    }
+
+    pub fn delete_all(
+        &mut self,
+        thread_ids: impl IntoIterator<Item = ThreadId>,
+        cx: &mut Context<Self>,
+    ) {
+        for thread_id in thread_ids {
+            self.delete(thread_id, cx);
+        }
     }
 
     fn new(db: ThreadMetadataDb, cx: &mut Context<Self>) -> Self {
