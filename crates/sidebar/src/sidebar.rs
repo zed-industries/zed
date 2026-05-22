@@ -422,26 +422,31 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
-/// Identity-and-layout key for a [`ListEntry`].
+/// Identity-and-layout key for a [`ListEntry`], used by [`Sidebar::update_entries`] to diff
+/// the entry list across rebuilds and update [`ListState`] only over the changed range.
 ///
-/// `update_entries` resets the underlying [`ListState`] on every change, which throws away
-/// item measurements. The first frame after a reset has no measured bounds for any item, so
-/// any rendering that depends on `ListState::bounds_for_item` (notably the sticky project
-/// header's pushed-off offset) snaps to a wrong position for one frame.
+/// Items outside the spliced range keep their measured bounds, so the sticky project
+/// header (which reads `ListState::bounds_for_item` to compute its pushed-off offset)
+/// stays in place instead of snapping to the wrong position for a frame.
 ///
-/// To avoid that, [`Sidebar::update_entries`] snapshots an `EntryShape` per entry before and
-/// after the rebuild and only resets the list when the shape sequence actually changed. Two
-/// shapes are equal iff their entries have the same identity and the same height-affecting
-/// flags, so it is safe to keep the previous frame's measurements.
-#[cfg_attr(test, derive(Debug))]
-#[derive(PartialEq, Eq)]
+/// For the optimization to be sound, two entries with equal [`EntryShape`] must render
+/// to the same height. Today that holds because:
+/// - For [`ListEntry::ProjectHeader`], the header is a fixed-height row, and the only
+///   conditional sub-row (`No threads yet`) is gated on `!is_collapsed && !has_threads`.
+/// - For [`ListEntry::Thread`] and [`ListEntry::Terminal`], `ThreadItem` always renders a
+///   two-row layout, because `format_history_entry_timestamp` is always non-empty.
+///
+/// If `ThreadItem`'s layout becomes conditional on per-entry state (e.g. the timestamp
+/// row stops being unconditional, or a new conditional row is added), those flags must be
+/// added here so the splice still invalidates measurements for affected items.
+#[derive(Debug, PartialEq, Eq)]
 enum EntryShape {
     ProjectHeader {
         key: ProjectGroupKey,
-        // Toggles the "No threads yet" empty-state row, which changes the header's height.
+        // Toggles the "No threads yet" empty-state row when not collapsed.
         has_threads: bool,
-        // Hides thread/terminal entries below the header; included for completeness even
-        // though a collapse change also changes the entry count.
+        // Determines whether the "No threads yet" row is rendered (only shown when
+        // `!is_collapsed && !has_threads`).
         is_collapsed: bool,
     },
     Thread(ThreadId),
@@ -1863,22 +1868,21 @@ impl Sidebar {
         }
 
         let had_notifications = self.has_notifications(cx);
-        let previous_shapes = self.entry_shapes(cx);
+        // Snapshot the shapes of the current entries, paired with the current collapse
+        // state read from `multi_workspace`. Collapse state isn't mutated by
+        // `rebuild_contents`, so the same `MultiWorkspace` reference is valid for both
+        // snapshots; this avoids an `Entity::upgrade` per project header on each call.
+        let previous_shapes: Vec<EntryShape> =
+            self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
         self.refresh_draft_editor_observations(cx);
 
-        // Only reset the list when the entries' identity or height-affecting flags actually
-        // changed. A bare status / title / live-info update produces the same shape sequence,
-        // so keeping the previous frame's item measurements lets the sticky project header
-        // stay in its pushed-off position instead of flickering for a frame while the list
-        // remeasures. See [`EntryShape`].
-        let new_shapes = self.entry_shapes(cx);
-        if previous_shapes != new_shapes {
-            let scroll_position = self.list_state.logical_scroll_top();
-            self.list_state.reset(self.contents.entries.len());
-            self.list_state.scroll_to(scroll_position);
-        }
+        // Diff the new shapes against `previous_shapes` and splice only the changed range
+        // into `list_state`. Items outside that range keep their measured bounds, which is
+        // what keeps the sticky project header from snapping to the wrong position for a
+        // frame when entries are added, removed, or reordered. See [`EntryShape`].
+        self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
@@ -1889,24 +1893,61 @@ impl Sidebar {
         cx.notify();
     }
 
-    fn entry_shapes(&self, cx: &App) -> Vec<EntryShape> {
-        self.contents
-            .entries
+    /// Walks the new entries in lockstep with `previous_shapes` and, if they differ,
+    /// calls `ListState::splice` on just the changed range. The lockstep walk is lazy,
+    /// so the common no-op case (a status / title / live-info / keystroke update where
+    /// nothing structural changed) returns without allocating a second vector or touching
+    /// `list_state` at all.
+    fn apply_list_state_diff(
+        &self,
+        previous_shapes: &[EntryShape],
+        multi_workspace: &MultiWorkspace,
+    ) {
+        let mut new_iter = self.entry_shapes(multi_workspace);
+        let mut prefix_len = 0;
+        let leading_new = loop {
+            match (previous_shapes.get(prefix_len), new_iter.next()) {
+                (Some(prev), Some(next)) if *prev == next => prefix_len += 1,
+                (None, None) => return,
+                (_, leading) => break leading,
+            }
+        };
+
+        // Mismatch: materialize the rest of the new shapes (including the leading item we
+        // already pulled off `new_iter`) so we can find the common suffix and bound the
+        // splice to just the range that actually changed.
+        let new_tail: Vec<EntryShape> = leading_new.into_iter().chain(new_iter).collect();
+        let prev_tail = &previous_shapes[prefix_len..];
+        let suffix_len = prev_tail
             .iter()
-            .map(|entry| match entry {
-                ListEntry::ProjectHeader {
-                    key, has_threads, ..
-                } => EntryShape::ProjectHeader {
-                    key: key.clone(),
-                    has_threads: *has_threads,
-                    is_collapsed: self.is_group_collapsed(key, cx),
-                },
-                ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
-                ListEntry::Terminal(terminal) => {
-                    EntryShape::Terminal(terminal.metadata.terminal_id)
-                }
-            })
-            .collect()
+            .rev()
+            .zip(new_tail.iter().rev())
+            .take_while(|(prev, next)| prev == next)
+            .count();
+
+        let old_changed = prefix_len..previous_shapes.len() - suffix_len;
+        let new_changed_count = new_tail.len() - suffix_len;
+        self.list_state.splice(old_changed, new_changed_count);
+    }
+
+    fn entry_shapes<'a>(
+        &'a self,
+        multi_workspace: &'a MultiWorkspace,
+    ) -> impl Iterator<Item = EntryShape> + 'a {
+        self.contents.entries.iter().map(move |entry| match entry {
+            ListEntry::ProjectHeader {
+                key, has_threads, ..
+            } => EntryShape::ProjectHeader {
+                key: key.clone(),
+                has_threads: *has_threads,
+                is_collapsed: multi_workspace
+                    .group_state_by_key(key)
+                    .map(|state| !state.expanded)
+                    .unwrap_or(false),
+            },
+            ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
+            ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
+        })
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor

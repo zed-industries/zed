@@ -606,6 +606,87 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_thread_metadata_update_preserves_sticky_header_measurements(cx: &mut TestAppContext) {
+    let (fs, project_a) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("project-a-thread")),
+        Some("Project A Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &project_a,
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "project-b-thread",
+        "Project B Thread",
+        PathList::new(&[PathBuf::from("/project-b")]),
+        PathList::new(&[PathBuf::from("/project-b")]),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        cx,
+    );
+
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(400.), px(240.)),
+        |_, _| sidebar.clone().into_any_element(),
+    );
+    cx.run_until_parked();
+
+    let next_header_ix = sidebar.read_with(cx, |sidebar, _| {
+        assert!(
+            sidebar.contents.project_header_indices.len() >= 2,
+            "test setup should render at least two project headers"
+        );
+        sidebar.contents.project_header_indices[1]
+    });
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.list_state.scroll_to(gpui::ListOffset {
+            item_ix: next_header_ix - 1,
+            offset_in_item: px(24.),
+        });
+        cx.notify();
+    });
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(400.), px(240.)),
+        |_, _| sidebar.clone().into_any_element(),
+    );
+    cx.run_until_parked();
+
+    let bounds_before = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .list_state
+            .bounds_for_item(next_header_ix)
+            .expect("next project header should be measured before metadata update")
+    });
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("project-a-thread")),
+        Some("Renamed Project A Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 1, 0).unwrap(),
+        None,
+        None,
+        &project_a,
+        cx,
+    );
+
+    let bounds_after = sidebar.read_with(cx, |sidebar, _| {
+        sidebar
+            .list_state
+            .bounds_for_item(next_header_ix)
+            .expect("same-shape metadata update should preserve next header measurements")
+    });
+    assert_eq!(bounds_before, bounds_after);
+}
+
+#[gpui::test]
 async fn test_thread_status_update_does_not_reset_list_measurements(cx: &mut TestAppContext) {
     // When a thread's status changes (e.g. Running -> Completed after sending a message), the
     // shape sequence is unchanged, so `update_entries` should not reset the underlying
@@ -619,10 +700,18 @@ async fn test_thread_status_update_does_not_reset_list_measurements(cx: &mut Tes
     save_n_test_threads(2, &project, cx).await;
     cx.run_until_parked();
 
-    let before = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    let before = sidebar.read_with(cx, |sidebar, app| {
+        sidebar
+            .entry_shapes(multi_workspace.read(app))
+            .collect::<Vec<_>>()
+    });
     sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
     cx.run_until_parked();
-    let after = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    let after = sidebar.read_with(cx, |sidebar, app| {
+        sidebar
+            .entry_shapes(multi_workspace.read(app))
+            .collect::<Vec<_>>()
+    });
 
     assert_eq!(
         before, after,
@@ -642,12 +731,20 @@ async fn test_collapse_changes_entry_shape(cx: &mut TestAppContext) {
 
     let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
 
-    let before = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    let before = sidebar.read_with(cx, |sidebar, app| {
+        sidebar
+            .entry_shapes(multi_workspace.read(app))
+            .collect::<Vec<_>>()
+    });
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.toggle_collapse(&project_group_key, window, cx);
     });
     cx.run_until_parked();
-    let after = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    let after = sidebar.read_with(cx, |sidebar, app| {
+        sidebar
+            .entry_shapes(multi_workspace.read(app))
+            .collect::<Vec<_>>()
+    });
 
     assert_ne!(
         before, after,
