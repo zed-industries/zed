@@ -23,8 +23,11 @@ impl MetalAtlas {
         }))
     }
 
-    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
-        self.0.lock().texture(id).metal_texture.clone()
+    pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> Option<metal::Texture> {
+        self.0
+            .lock()
+            .texture(id)
+            .map(|texture| texture.metal_texture.clone())
     }
 
     pub(crate) fn allocate(
@@ -68,7 +71,12 @@ impl PlatformAtlas for MetalAtlas {
         } else {
             let (size, bytes) = build()?;
             let tile = lock.allocate(size, key.texture_kind());
-            let texture = lock.texture(tile.texture_id);
+            let texture = lock.texture(tile.texture_id).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "failed to find atlas texture {:?} immediately after allocation",
+                    tile.texture_id
+                )
+            })?;
             texture.upload(tile.bounds, &bytes);
             lock.tiles_by_key.insert(key.clone(), tile.clone());
             Ok(tile)
@@ -144,13 +152,13 @@ impl MetalAtlasState {
         textures.last_mut().unwrap()
     }
 
-    fn texture(&self, id: AtlasTextureId) -> &MetalAtlasTexture {
+    fn texture(&self, id: AtlasTextureId) -> Option<&MetalAtlasTexture> {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
             crate::AtlasTextureKind::Path => &self.path_textures,
         };
-        &textures[id.index as usize]
+        textures.get(id.index as usize)
     }
 }
 

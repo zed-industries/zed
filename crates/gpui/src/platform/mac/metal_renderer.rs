@@ -441,7 +441,12 @@ impl MetalRenderer {
                 .object_at(0)
                 .unwrap();
 
-            let texture = self.sprite_atlas.metal_texture(texture_id);
+            let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+                log::warn!(
+                    "skipping path rasterization for missing atlas texture {texture_id:?}"
+                );
+                continue;
+            };
             color_attachment.set_texture(Some(&texture));
             color_attachment.set_load_action(metal::MTLLoadAction::Clear);
             color_attachment.set_store_action(metal::MTLStoreAction::Store);
@@ -662,7 +667,13 @@ impl MetalRenderer {
             } else {
                 align_offset(instance_offset);
                 let texture_id = prev_texture_id.take().unwrap();
-                let texture: metal::Texture = self.sprite_atlas.metal_texture(texture_id);
+                let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+                    log::warn!(
+                        "skipping path draw for missing atlas texture {texture_id:?}"
+                    );
+                    sprites.clear();
+                    continue;
+                };
                 let texture_size = size(
                     DevicePixels(texture.width() as i32),
                     DevicePixels(texture.height() as i32),
@@ -793,7 +804,12 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            log::warn!(
+                "skipping monochrome sprites for missing atlas texture {texture_id:?}"
+            );
+            return true;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -867,7 +883,12 @@ impl MetalRenderer {
         }
         align_offset(instance_offset);
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            log::warn!(
+                "skipping polychrome sprites for missing atlas texture {texture_id:?}"
+            );
+            return true;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
