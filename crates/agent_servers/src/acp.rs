@@ -421,9 +421,7 @@ pub struct AcpConnection {
     auth_methods: Vec<acp::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
-    default_mode: Option<acp::SessionModeId>,
-    default_model: Option<acp::ModelId>,
-    default_config_options: HashMap<String, String>,
+    defaults: AcpConnectionDefaults,
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
@@ -431,6 +429,56 @@ pub struct AcpConnection {
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
     _stderr_task: Task<Result<()>>,
+}
+
+#[derive(Clone, Default)]
+struct AcpConnectionDefaults {
+    mode: Rc<RefCell<Option<acp::SessionModeId>>>,
+    model: Rc<RefCell<Option<acp::ModelId>>>,
+    config_options: Rc<RefCell<HashMap<String, String>>>,
+}
+
+impl AcpConnectionDefaults {
+    fn new(
+        mode: Option<acp::SessionModeId>,
+        model: Option<acp::ModelId>,
+        config_options: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            mode: Rc::new(RefCell::new(mode)),
+            model: Rc::new(RefCell::new(model)),
+            config_options: Rc::new(RefCell::new(config_options)),
+        }
+    }
+
+    fn mode(&self) -> Option<acp::SessionModeId> {
+        self.mode.borrow().clone()
+    }
+
+    fn set_mode(&self, mode: Option<acp::SessionModeId>) {
+        *self.mode.borrow_mut() = mode;
+    }
+
+    fn model(&self) -> Option<acp::ModelId> {
+        self.model.borrow().clone()
+    }
+
+    fn set_model(&self, model: Option<acp::ModelId>) {
+        *self.model.borrow_mut() = model;
+    }
+
+    fn config_option(&self, config_id: &str) -> Option<String> {
+        self.config_options.borrow().get(config_id).cloned()
+    }
+
+    fn set_config_option(&self, config_id: &str, value_id: Option<&str>) {
+        let mut config_options = self.config_options.borrow_mut();
+        if let Some(value_id) = value_id {
+            config_options.insert(config_id.to_string(), value_id.to_string());
+        } else {
+            config_options.remove(config_id);
+        }
+    }
 }
 
 struct PendingAcpSession {
@@ -1006,9 +1054,11 @@ impl AcpConnection {
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
-            default_mode,
-            default_model,
-            default_config_options,
+            defaults: AcpConnectionDefaults::new(
+                default_mode,
+                default_model,
+                default_config_options,
+            ),
             session_list,
             debug_log,
             _io_task: io_task,
@@ -1021,6 +1071,18 @@ impl AcpConnection {
 
     pub fn prompt_capabilities(&self) -> &acp::PromptCapabilities {
         &self.agent_capabilities.prompt_capabilities
+    }
+
+    pub fn set_default_mode(&self, mode: Option<acp::SessionModeId>) {
+        self.defaults.set_mode(mode);
+    }
+
+    pub fn set_default_model(&self, model: Option<acp::ModelId>) {
+        self.defaults.set_model(model);
+    }
+
+    pub fn set_default_config_option(&self, config_id: &str, value_id: Option<&str>) {
+        self.defaults.set_config_option(config_id, value_id);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1043,9 +1105,7 @@ impl AcpConnection {
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
-            default_mode: None,
-            default_model: None,
-            default_config_options: HashMap::default(),
+            defaults: AcpConnectionDefaults::default(),
             child: None,
             session_list: None,
             debug_log: AcpDebugLog::default(),
@@ -1215,7 +1275,7 @@ impl AcpConnection {
             config_opts_ref
                 .iter()
                 .filter_map(|config_option| {
-                    let default_value = self.default_config_options.get(&*config_option.id.0)?;
+                    let default_value = self.defaults.config_option(config_option.id.0.as_ref())?;
 
                     let is_valid = match &config_option.kind {
                         acp::SessionConfigKind::Select(select) => match &select.options {
@@ -1241,11 +1301,7 @@ impl AcpConnection {
                             }
                             _ => None,
                         };
-                        Some((
-                            config_option.id.clone(),
-                            default_value.clone(),
-                            initial_value,
-                        ))
+                        Some((config_option.id.clone(), default_value, initial_value))
                     } else {
                         log::warn!(
                             "`{}` is not a valid value for config option `{}` in {}",
@@ -1488,7 +1544,8 @@ impl AgentConnection for AcpConnection {
             let (modes, models, config_options) =
                 config_state(response.modes, response.models, response.config_options);
 
-            if let Some(default_mode) = self.default_mode.clone() {
+            let default_mode = self.defaults.mode();
+            if let Some(default_mode) = default_mode {
                 if let Some(modes) = modes.as_ref() {
                     let mut modes_ref = modes.borrow_mut();
                     let has_mode = modes_ref
@@ -1537,7 +1594,8 @@ impl AgentConnection for AcpConnection {
                 }
             }
 
-            if let Some(default_model) = self.default_model.clone() {
+            let default_model = self.defaults.model();
+            if let Some(default_model) = default_model {
                 if let Some(models) = models.as_ref() {
                     let mut models_ref = models.borrow_mut();
                     let has_model = models_ref
@@ -2968,6 +3026,35 @@ mod tests {
         connection_rx
             .await
             .expect("failed to receive ACP connection")
+    }
+
+    #[gpui::test]
+    async fn setting_defaults_refreshes_active_connection_cache(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let store = settings::SettingsStore::test(cx);
+            cx.set_global(store);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+        fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
+        let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
+        let harness = test_support::connect_fake_acp_connection(project, cx).await;
+
+        let mode_id = acp::SessionModeId::new("manual");
+        harness.connection.set_default_mode(Some(mode_id.clone()));
+        assert_eq!(harness.connection.defaults.mode(), Some(mode_id));
+
+        let model_id = acp::ModelId::new("manual");
+        harness.connection.set_default_model(Some(model_id.clone()));
+        assert_eq!(harness.connection.defaults.model(), Some(model_id));
+
+        harness
+            .connection
+            .set_default_config_option("mode", Some("manual"));
+        assert_eq!(
+            harness.connection.defaults.config_option("mode").as_deref(),
+            Some("manual")
+        );
     }
 
     #[gpui::test]

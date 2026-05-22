@@ -1108,6 +1108,9 @@ impl ConversationView {
 
         let connection = thread.read(cx).connection().clone();
         let session_id = thread.read(cx).session_id().clone();
+        let acp_connection = connection
+            .clone()
+            .downcast::<agent_servers::AcpConnection>();
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
@@ -1121,10 +1124,16 @@ impl ConversationView {
             // Use config options - don't create mode_selector or model_selector
             let agent_server = self.agent.clone();
             let fs = self.project.read(cx).fs().clone();
-            config_options_view =
-                Some(cx.new(|cx| {
-                    ConfigOptionsView::new(config_options, agent_server, fs, window, cx)
-                }));
+            config_options_view = Some(cx.new(|cx| {
+                ConfigOptionsView::new(
+                    config_options,
+                    agent_server,
+                    acp_connection.clone(),
+                    fs,
+                    window,
+                    cx,
+                )
+            }));
             model_selector = None;
             mode_selector = None;
         } else {
@@ -1138,6 +1147,7 @@ impl ConversationView {
                         selector,
                         agent_server,
                         fs,
+                        acp_connection.clone(),
                         PopoverMenuHandle::default(),
                         self.focus_handle(cx),
                         window,
@@ -1150,7 +1160,14 @@ impl ConversationView {
                 .session_modes(&session_id, cx)
                 .map(|session_modes| {
                     let fs = self.project.read(cx).fs().clone();
-                    cx.new(|_cx| ModeSelector::new(session_modes, self.agent.clone(), fs))
+                    cx.new(|_cx| {
+                        ModeSelector::new(
+                            session_modes,
+                            self.agent.clone(),
+                            acp_connection.clone(),
+                            fs,
+                        )
+                    })
                 });
         }
 

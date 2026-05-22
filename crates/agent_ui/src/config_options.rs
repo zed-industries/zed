@@ -2,7 +2,7 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
 use agent_client_protocol::schema as acp;
-use agent_servers::AgentServer;
+use agent_servers::{AcpConnection, AgentServer};
 
 use collections::HashSet;
 use fs::Fs;
@@ -27,6 +27,7 @@ pub struct ConfigOptionsView {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     selectors: Vec<Entity<ConfigOptionSelector>>,
     agent_server: Rc<dyn AgentServer>,
+    acp_connection: Option<Rc<AcpConnection>>,
     fs: Arc<dyn Fs>,
     config_option_ids: Vec<acp::SessionConfigId>,
     _refresh_task: Task<()>,
@@ -36,11 +37,19 @@ impl ConfigOptionsView {
     pub fn new(
         config_options: Rc<dyn AgentSessionConfigOptions>,
         agent_server: Rc<dyn AgentServer>,
+        acp_connection: Option<Rc<AcpConnection>>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let selectors = Self::build_selectors(&config_options, &agent_server, &fs, window, cx);
+        let selectors = Self::build_selectors(
+            &config_options,
+            &agent_server,
+            &acp_connection,
+            &fs,
+            window,
+            cx,
+        );
         let config_option_ids = Self::config_option_ids(&config_options);
 
         let rx = config_options.watch(cx);
@@ -60,6 +69,7 @@ impl ConfigOptionsView {
             config_options,
             selectors,
             agent_server,
+            acp_connection,
             fs,
             config_option_ids,
             _refresh_task: refresh_task,
@@ -107,6 +117,9 @@ impl ConfigOptionsView {
             self.fs.clone(),
             cx,
         );
+        if let Some(connection) = &self.acp_connection {
+            connection.set_default_config_option(config_id.0.as_ref(), Some(next_value.0.as_ref()));
+        }
 
         let task = self
             .config_options
@@ -197,6 +210,7 @@ impl ConfigOptionsView {
         self.selectors = Self::build_selectors(
             &self.config_options,
             &self.agent_server,
+            &self.acp_connection,
             &self.fs,
             window,
             cx,
@@ -207,6 +221,7 @@ impl ConfigOptionsView {
     fn build_selectors(
         config_options: &Rc<dyn AgentSessionConfigOptions>,
         agent_server: &Rc<dyn AgentServer>,
+        acp_connection: &Option<Rc<AcpConnection>>,
         fs: &Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -217,12 +232,14 @@ impl ConfigOptionsView {
             .map(|option| {
                 let config_options = config_options.clone();
                 let agent_server = agent_server.clone();
+                let acp_connection = acp_connection.clone();
                 let fs = fs.clone();
                 cx.new(|cx| {
                     ConfigOptionSelector::new(
                         config_options,
                         option.id.clone(),
                         agent_server,
+                        acp_connection,
                         fs,
                         window,
                         cx,
@@ -259,6 +276,7 @@ impl ConfigOptionSelector {
         config_options: Rc<dyn AgentSessionConfigOptions>,
         config_id: acp::SessionConfigId,
         agent_server: Rc<dyn AgentServer>,
+        acp_connection: Option<Rc<AcpConnection>>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -282,6 +300,7 @@ impl ConfigOptionSelector {
                     config_options,
                     config_id,
                     agent_server,
+                    acp_connection,
                     fs,
                     window,
                     picker_cx,
@@ -415,6 +434,7 @@ struct ConfigOptionPickerDelegate {
     config_options: Rc<dyn AgentSessionConfigOptions>,
     config_id: acp::SessionConfigId,
     agent_server: Rc<dyn AgentServer>,
+    acp_connection: Option<Rc<AcpConnection>>,
     fs: Arc<dyn Fs>,
     filtered_entries: Vec<ConfigOptionPickerEntry>,
     all_options: Vec<ConfigOptionValue>,
@@ -429,6 +449,7 @@ impl ConfigOptionPickerDelegate {
         config_options: Rc<dyn AgentSessionConfigOptions>,
         config_id: acp::SessionConfigId,
         agent_server: Rc<dyn AgentServer>,
+        acp_connection: Option<Rc<AcpConnection>>,
         fs: Arc<dyn Fs>,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -465,6 +486,7 @@ impl ConfigOptionPickerDelegate {
             config_options,
             config_id,
             agent_server,
+            acp_connection,
             fs,
             filtered_entries,
             all_options,
@@ -561,6 +583,12 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 self.fs.clone(),
                 cx,
             );
+            if let Some(connection) = &self.acp_connection {
+                connection.set_default_config_option(
+                    self.config_id.0.as_ref(),
+                    Some(option.value.0.as_ref()),
+                );
+            }
             let task = self.config_options.set_config_option(
                 self.config_id.clone(),
                 option.value.clone(),
@@ -895,6 +923,7 @@ mod tests {
                 config_options,
                 selectors: Vec::new(),
                 agent_server,
+                acp_connection: None,
                 fs,
                 _refresh_task: Task::ready(()),
             });
