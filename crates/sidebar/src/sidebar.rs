@@ -18,8 +18,8 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
-    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
-    import_threads_from_other_channels,
+    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
@@ -5126,6 +5126,23 @@ impl Sidebar {
         }
     }
 
+    fn rename_selected_thread(
+        &mut self,
+        _: &RenameSelectedThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
+            return;
+        };
+        let thread_id = thread.metadata.thread_id;
+        let title = thread.metadata.display_title();
+        self.start_renaming_thread(ix, thread_id, title, window, cx);
+    }
+
     fn record_thread_access(&mut self, id: &ThreadId) {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
@@ -5644,7 +5661,17 @@ impl Sidebar {
                 let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("Rename Thread"))
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Rename Thread",
+                                &RenameSelectedThread,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
                     .on_click({
                         let title = title.clone();
                         cx.listener(move |this, _, window, cx| {
@@ -7142,6 +7169,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::archive_selected_thread))
+            .on_action(cx.listener(Self::rename_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::new_terminal_thread))
             .on_action(cx.listener(Self::toggle_archive))
