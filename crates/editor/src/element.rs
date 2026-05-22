@@ -4818,6 +4818,7 @@ impl EditorElement {
         let mut edit_prediction_popover_visible = false;
         let mut context_menu_visible = false;
         let context_menu_placement;
+        let menu_line_height = self.context_menu_line_height(window);
 
         {
             let editor = self.editor.read(cx);
@@ -4838,8 +4839,10 @@ impl EditorElement {
                         (options.min_entries_visible, options.max_entries_visible)
                     });
 
-                min_menu_height += line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
-                max_menu_height += line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
+                min_menu_height +=
+                    menu_line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
+                max_menu_height +=
+                    menu_line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
                 context_menu_visible = true;
             }
             context_menu_placement = editor
@@ -4879,8 +4882,14 @@ impl EditorElement {
                 ..Default::default()
             });
 
-        let min_height = height_above_menu + min_menu_height + height_below_menu;
-        let max_height = height_above_menu + max_menu_height + height_below_menu;
+        // Account for the gap drawn between the two popovers when both are present.
+        let popover_gap = if edit_prediction_popover_visible && context_menu_visible {
+            MENU_GAP
+        } else {
+            Pixels::ZERO
+        };
+        let min_height = height_above_menu + min_menu_height + height_below_menu + popover_gap;
+        let max_height = height_above_menu + max_menu_height + height_below_menu + popover_gap;
         let (laid_out_popovers, y_flipped) = self.layout_popovers_above_or_below_line(
             target_position,
             line_height,
@@ -4894,13 +4903,9 @@ impl EditorElement {
             |height, max_width_for_stable_x, y_flipped, window, cx| {
                 // First layout the menu to get its size - others can be at least this wide.
                 let context_menu = if context_menu_visible {
-                    let menu_height = if y_flipped {
-                        height - height_below_menu
-                    } else {
-                        height - height_above_menu
-                    };
+                    let menu_height = height - height_above_menu - height_below_menu - popover_gap;
                     let mut element = self
-                        .render_context_menu(line_height, menu_height, window, cx)
+                        .render_context_menu(menu_line_height, menu_height, window, cx)
                         .expect("Visible context menu should always render.");
                     let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                     Some((CursorPopoverType::CodeContextMenu, element, size))
@@ -5051,8 +5056,9 @@ impl EditorElement {
                 (options.min_entries_visible, options.max_entries_visible)
             });
 
-        let min_height = line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
-        let max_height = line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
+        let menu_line_height = self.context_menu_line_height(window);
+        let min_height = menu_line_height * min_height_in_lines as f32 + POPOVER_Y_PADDING;
+        let max_height = menu_line_height * max_height_in_lines as f32 + POPOVER_Y_PADDING;
         let viewport_bounds =
             Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
                 right: -right_margin - MENU_GAP,
@@ -5073,7 +5079,7 @@ impl EditorElement {
             cx,
             move |height, _max_width_for_stable_x, _, window, cx| {
                 let mut element = self
-                    .render_context_menu(line_height, height, window, cx)
+                    .render_context_menu(menu_line_height, height, window, cx)
                     .expect("Visible context menu should always render.");
                 let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
                 vec![(CursorPopoverType::CodeContextMenu, element, size)]
@@ -5297,6 +5303,14 @@ impl EditorElement {
         }
 
         None
+    }
+
+    // Menu rows render at Comfortable line height regardless of the editor's buffer_line_height
+    // (see the text-style override in layout_popovers_above_or_below_line). Budget calculations
+    // and the lines→pixels floor must use this same value so they stay consistent.
+    fn context_menu_line_height(&self, window: &Window) -> Pixels {
+        self.style.text.font_size.to_pixels(window.rem_size())
+            * BufferLineHeight::Comfortable.value()
     }
 
     fn render_context_menu(
