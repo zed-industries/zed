@@ -606,52 +606,53 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
-async fn test_sticky_header_top_offset_uses_cached_position_while_list_remeasures(
-    cx: &mut TestAppContext,
-) {
+async fn test_thread_status_update_does_not_reset_list_measurements(cx: &mut TestAppContext) {
+    // When a thread's status changes (e.g. Running -> Completed after sending a message), the
+    // shape sequence is unchanged, so `update_entries` should not reset the underlying
+    // `ListState`. Resetting throws away measured item bounds for one frame, which makes the
+    // sticky project header flicker between its pushed-off and fully-on-screen positions.
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
-        let scroll_top = ListOffset {
-            item_ix: 1,
-            offset_in_item: px(12.),
-        };
-        sidebar.sticky_header_position = Some(StickyHeaderPosition {
-            header_index: 0,
-            next_header_index: Some(2),
-            entry_count: 3,
-            scroll_top_item_index: scroll_top.item_ix,
-            scroll_top_offset_in_item: scroll_top.offset_in_item,
-            top_offset: px(-8.),
-        });
+    save_n_test_threads(2, &project, cx).await;
+    cx.run_until_parked();
 
-        sidebar.list_state.reset(3);
-        sidebar.list_state.scroll_to(scroll_top);
+    let before = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    sidebar.update_in(cx, |sidebar, _window, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+    let after = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
 
-        assert_eq!(
-            sidebar.sticky_header_top_offset(0, Some(2), 3, scroll_top),
-            px(-8.)
-        );
-        assert_eq!(
-            sidebar.sticky_header_top_offset(
-                0,
-                Some(2),
-                3,
-                ListOffset {
-                    item_ix: 1,
-                    offset_in_item: px(13.),
-                },
-            ),
-            px(0.)
-        );
-        assert_eq!(
-            sidebar.sticky_header_top_offset(0, Some(2), 4, scroll_top),
-            px(0.)
-        );
+    assert_eq!(
+        before, after,
+        "a no-op rebuild should produce an identical shape sequence"
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_changes_entry_shape(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_n_test_threads(2, &project, cx).await;
+    cx.run_until_parked();
+
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    let before = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.toggle_collapse(&project_group_key, window, cx);
     });
+    cx.run_until_parked();
+    let after = sidebar.read_with(cx, |sidebar, cx| sidebar.entry_shapes(cx));
+
+    assert_ne!(
+        before, after,
+        "collapsing the project group should change the shape sequence so the list resets"
+    );
 }
 
 #[gpui::test]

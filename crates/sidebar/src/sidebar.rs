@@ -28,9 +28,8 @@ use feature_flags::{
 };
 use gpui::{
     Action as _, AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EntityId, FocusHandle,
-    Focusable, KeyContext, ListOffset, ListState, Modifiers, Pixels, Render, SharedString, Task,
-    TaskExt, WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list,
-    prelude::*, px,
+    Focusable, KeyContext, ListState, Modifiers, Pixels, Render, SharedString, Task, TaskExt,
+    WeakEntity, Window, WindowHandle, linear_color_stop, linear_gradient, list, prelude::*, px,
 };
 use itertools::Itertools;
 use menu::{
@@ -423,30 +422,30 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
-#[derive(Clone, Copy)]
-struct StickyHeaderPosition {
-    header_index: usize,
-    next_header_index: Option<usize>,
-    entry_count: usize,
-    scroll_top_item_index: usize,
-    scroll_top_offset_in_item: Pixels,
-    top_offset: Pixels,
-}
-
-impl StickyHeaderPosition {
-    fn matches(
-        &self,
-        header_index: usize,
-        next_header_index: Option<usize>,
-        entry_count: usize,
-        scroll_top: ListOffset,
-    ) -> bool {
-        self.header_index == header_index
-            && self.next_header_index == next_header_index
-            && self.entry_count == entry_count
-            && self.scroll_top_item_index == scroll_top.item_ix
-            && self.scroll_top_offset_in_item == scroll_top.offset_in_item
-    }
+/// Identity-and-layout key for a [`ListEntry`].
+///
+/// `update_entries` resets the underlying [`ListState`] on every change, which throws away
+/// item measurements. The first frame after a reset has no measured bounds for any item, so
+/// any rendering that depends on `ListState::bounds_for_item` (notably the sticky project
+/// header's pushed-off offset) snaps to a wrong position for one frame.
+///
+/// To avoid that, [`Sidebar::update_entries`] snapshots an `EntryShape` per entry before and
+/// after the rebuild and only resets the list when the shape sequence actually changed. Two
+/// shapes are equal iff their entries have the same identity and the same height-affecting
+/// flags, so it is safe to keep the previous frame's measurements.
+#[cfg_attr(test, derive(Debug))]
+#[derive(PartialEq, Eq)]
+enum EntryShape {
+    ProjectHeader {
+        key: ProjectGroupKey,
+        // Toggles the "No threads yet" empty-state row, which changes the header's height.
+        has_threads: bool,
+        // Hides thread/terminal entries below the header; included for completeness even
+        // though a collapse change also changes the entry count.
+        is_collapsed: bool,
+    },
+    Thread(ThreadId),
+    Terminal(TerminalId),
 }
 
 impl SidebarContents {
@@ -691,9 +690,6 @@ pub struct Sidebar {
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
-    // Thread updates reset the virtual list before it has remeasured the next project header.
-    // Keep the pushed-off sticky header position stable for that frame.
-    sticky_header_position: Option<StickyHeaderPosition>,
     _subscriptions: Vec<gpui::Subscription>,
     _draft_editor_observations: Vec<gpui::Subscription>,
     /// For the thread import banners, if there is just one we show "Import
@@ -803,7 +799,6 @@ impl Sidebar {
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
-            sticky_header_position: None,
             _subscriptions: Vec::new(),
             _draft_editor_observations: Vec::new(),
             import_banners_use_verbose_labels: None,
@@ -1868,13 +1863,22 @@ impl Sidebar {
         }
 
         let had_notifications = self.has_notifications(cx);
-        let scroll_position = self.list_state.logical_scroll_top();
+        let previous_shapes = self.entry_shapes(cx);
 
         self.rebuild_contents(cx);
         self.refresh_draft_editor_observations(cx);
 
-        self.list_state.reset(self.contents.entries.len());
-        self.list_state.scroll_to(scroll_position);
+        // Only reset the list when the entries' identity or height-affecting flags actually
+        // changed. A bare status / title / live-info update produces the same shape sequence,
+        // so keeping the previous frame's item measurements lets the sticky project header
+        // stay in its pushed-off position instead of flickering for a frame while the list
+        // remeasures. See [`EntryShape`].
+        let new_shapes = self.entry_shapes(cx);
+        if previous_shapes != new_shapes {
+            let scroll_position = self.list_state.logical_scroll_top();
+            self.list_state.reset(self.contents.entries.len());
+            self.list_state.scroll_to(scroll_position);
+        }
 
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
@@ -1883,6 +1887,26 @@ impl Sidebar {
         }
 
         cx.notify();
+    }
+
+    fn entry_shapes(&self, cx: &App) -> Vec<EntryShape> {
+        self.contents
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                ListEntry::ProjectHeader {
+                    key, has_threads, ..
+                } => EntryShape::ProjectHeader {
+                    key: key.clone(),
+                    has_threads: *has_threads,
+                    is_collapsed: self.is_group_collapsed(key, cx),
+                },
+                ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
+                ListEntry::Terminal(terminal) => {
+                    EntryShape::Terminal(terminal.metadata.terminal_id)
+                }
+            })
+            .collect()
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor
@@ -2646,86 +2670,26 @@ impl Sidebar {
             .into_any_element()
     }
 
-    fn sticky_header_top_offset(
-        &self,
-        header_index: usize,
-        next_header_index: Option<usize>,
-        entry_count: usize,
-        scroll_top: ListOffset,
-    ) -> Pixels {
-        if let Some(next_header_index) = next_header_index {
-            let measured_top_offset =
-                self.list_state
-                    .bounds_for_item(next_header_index)
-                    .and_then(|bounds| {
-                        let viewport = self.list_state.viewport_bounds();
-                        let y_in_viewport = bounds.origin.y - viewport.origin.y;
-                        let header_height = bounds.size.height;
-                        (y_in_viewport < header_height).then_some(y_in_viewport - header_height)
-                    });
-
-            measured_top_offset
-                .or_else(|| {
-                    self.sticky_header_position
-                        .filter(|position| {
-                            position.matches(
-                                header_index,
-                                Some(next_header_index),
-                                entry_count,
-                                scroll_top,
-                            )
-                        })
-                        .map(|position| position.top_offset)
-                })
-                .unwrap_or(px(0.))
-        } else {
-            px(0.)
-        }
-    }
-
     fn render_sticky_header(
-        &mut self,
+        &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let scroll_top = self.list_state.logical_scroll_top();
 
-        let Some(&header_index) = self
+        let &header_idx = self
             .contents
             .project_header_indices
             .iter()
             .rev()
-            .find(|&&index| index <= scroll_top.item_ix)
-        else {
-            self.sticky_header_position = None;
-            return None;
-        };
+            .find(|&&idx| idx <= scroll_top.item_ix)?;
 
-        let needs_sticky = header_index < scroll_top.item_ix
-            || (header_index == scroll_top.item_ix && scroll_top.offset_in_item > px(0.));
+        let needs_sticky = header_idx < scroll_top.item_ix
+            || (header_idx == scroll_top.item_ix && scroll_top.offset_in_item > px(0.));
 
         if !needs_sticky {
-            self.sticky_header_position = None;
             return None;
         }
-
-        let next_header_index = self
-            .contents
-            .project_header_indices
-            .iter()
-            .copied()
-            .find(|&index| index > header_index);
-        let entry_count = self.contents.entries.len();
-        let top_offset =
-            self.sticky_header_top_offset(header_index, next_header_index, entry_count, scroll_top);
-        self.sticky_header_position = Some(StickyHeaderPosition {
-            header_index,
-            next_header_index,
-            entry_count,
-            scroll_top_item_index: scroll_top.item_ix,
-            scroll_top_offset_in_item: scroll_top.offset_in_item,
-            top_offset,
-        });
 
         let ListEntry::ProjectHeader {
             key,
@@ -2736,14 +2700,13 @@ impl Sidebar {
             has_notifications,
             is_active,
             has_threads,
-        } = self.contents.entries.get(header_index)?
+        } = self.contents.entries.get(header_idx)?
         else {
-            self.sticky_header_position = None;
             return None;
         };
 
         let is_focused = self.focus_handle.is_focused(window);
-        let is_selected = is_focused && self.selection == Some(header_index);
+        let is_selected = is_focused && self.selection == Some(header_idx);
 
         let has_active_draft = *is_active
             && self
@@ -2757,7 +2720,7 @@ impl Sidebar {
                             || panel.active_conversation_view().is_none())
                 });
         let header_element = self.render_project_header(
-            header_index,
+            header_idx,
             true,
             key,
             &label,
@@ -2771,6 +2734,20 @@ impl Sidebar {
             has_active_draft,
             cx,
         );
+
+        let top_offset = self
+            .contents
+            .project_header_indices
+            .iter()
+            .find(|&&idx| idx > header_idx)
+            .and_then(|&next_idx| {
+                let bounds = self.list_state.bounds_for_item(next_idx)?;
+                let viewport = self.list_state.viewport_bounds();
+                let y_in_viewport = bounds.origin.y - viewport.origin.y;
+                let header_height = bounds.size.height;
+                (y_in_viewport < header_height).then_some(y_in_viewport - header_height)
+            })
+            .unwrap_or(px(0.));
 
         let color = cx.theme().colors();
         let background = color
