@@ -1,5 +1,6 @@
 mod apply_code_action_tool;
 mod context_server_registry;
+mod control_debug_session_tool;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -12,8 +13,10 @@ mod fetch_tool;
 mod find_path_tool;
 mod find_references_tool;
 mod get_code_actions_tool;
+mod get_debug_session_state_tool;
 mod go_to_definition_tool;
 mod grep_tool;
+mod list_debug_sessions_tool;
 mod list_directory_tool;
 mod move_path_tool;
 mod read_file_tool;
@@ -60,6 +63,7 @@ where
 
 pub use apply_code_action_tool::*;
 pub use context_server_registry::*;
+pub use control_debug_session_tool::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
 pub use delete_path_tool::*;
@@ -69,8 +73,10 @@ pub use fetch_tool::*;
 pub use find_path_tool::*;
 pub use find_references_tool::*;
 pub use get_code_actions_tool::*;
+pub use get_debug_session_state_tool::*;
 pub use go_to_definition_tool::*;
 pub use grep_tool::*;
+pub use list_debug_sessions_tool::*;
 pub use list_directory_tool::*;
 pub use move_path_tool::*;
 pub use read_file_tool::*;
@@ -155,6 +161,7 @@ macro_rules! tools {
 
 tools! {
     ApplyCodeActionTool,
+    ControlDebugSessionTool,
     CopyPathTool,
     CreateDirectoryTool,
     DeletePathTool,
@@ -164,8 +171,10 @@ tools! {
     FindPathTool,
     FindReferencesTool,
     GetCodeActionsTool,
+    GetDebugSessionStateTool,
     GoToDefinitionTool,
     GrepTool,
+    ListDebugSessionsTool,
     ListDirectoryTool,
     MovePathTool,
     ReadFileTool,

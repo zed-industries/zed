@@ -164,6 +164,7 @@ dependencies = [
  "collections",
  "context_server",
  "ctor",
+ "dap",
  "db",
  "editor",
  "env_logger 0.11.8",

@@ -2280,6 +2280,52 @@ impl Session {
         })
     }
 
+    pub fn dap_threads(&self) -> Task<Result<Vec<dap::Thread>>> {
+        self.state.request_dap(ThreadsCommand)
+    }
+
+    pub fn dap_stack_trace(
+        &self,
+        thread_id: ThreadId,
+        levels: Option<u64>,
+    ) -> Task<Result<Vec<dap::StackFrame>>> {
+        self.state.request_dap(StackTraceCommand {
+            thread_id: thread_id.0,
+            start_frame: None,
+            levels,
+        })
+    }
+
+    pub fn dap_scopes(&self, stack_frame_id: StackFrameId) -> Task<Result<Vec<dap::Scope>>> {
+        self.state.request_dap(ScopesCommand { stack_frame_id })
+    }
+
+    pub fn dap_variables(
+        &self,
+        variables_reference: VariableReference,
+    ) -> Task<Result<Vec<dap::Variable>>> {
+        self.state.request_dap(VariablesCommand {
+            variables_reference,
+            filter: None,
+            start: None,
+            count: None,
+            format: None,
+        })
+    }
+
+    pub fn dap_evaluate_expression(
+        &self,
+        expression: String,
+        stack_frame_id: Option<StackFrameId>,
+    ) -> Task<Result<dap::EvaluateResponse>> {
+        self.state.request_dap(EvaluateCommand {
+            expression,
+            frame_id: stack_frame_id,
+            context: None,
+            source: None,
+        })
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         self.select_historic_snapshot(None, cx);
 
