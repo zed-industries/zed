@@ -26,7 +26,7 @@ use settings::{
 use std::{
     any::Any,
     cmp,
-    ops::{Range, RangeInclusive},
+    ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -36,11 +36,8 @@ use task::TaskId;
 use terminal::{
     Clear, Copy, Event, HoveredWord, MaybeNavigationTarget, Paste, PasteText, ScrollLineDown,
     ScrollLineUp, ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette,
-    TaskState, TaskStatus, Terminal, TerminalBounds, ToggleViMode,
-    alacritty_terminal::{
-        index::Point as AlacPoint,
-        term::{TermMode, point_to_viewport, search::RegexSearch},
-    },
+    TaskState, TaskStatus, Terminal, TerminalBounds, TerminalModes, TerminalPoint, TerminalRange,
+    TerminalSearch, ToggleViMode,
     terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
@@ -68,6 +65,16 @@ use zed_actions::{agent::AddSelectionToThread, assistant::InlineAssist};
 
 struct ImeState {
     marked_text: String,
+}
+
+fn viewport_line_for_point(point: TerminalPoint, display_offset: usize) -> Option<usize> {
+    let display_offset = i32::try_from(display_offset).unwrap_or(i32::MAX);
+    let line = point.line.saturating_add(display_offset);
+    if line < 0 {
+        None
+    } else {
+        usize::try_from(line).ok()
+    }
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -596,7 +603,7 @@ impl TerminalView {
             .read(cx)
             .last_content
             .mode
-            .contains(TermMode::ALT_SCREEN)
+            .contains(TerminalModes::ALT_SCREEN)
         {
             self.terminal.update(cx, |term, cx| {
                 term.try_keystroke(
@@ -639,13 +646,13 @@ impl TerminalView {
 
         let line_height = terminal.last_content().terminal_bounds.line_height;
         let viewport_lines = terminal.viewport_lines();
-        let cursor = point_to_viewport(
-            terminal.last_content.display_offset,
+        let cursor_line = viewport_line_for_point(
             terminal.last_content.cursor.point,
+            terminal.last_content.display_offset,
         )
         .unwrap_or_default();
         let max_scroll_top_in_lines =
-            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(cursor.line + 1));
+            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(cursor_line + 1));
 
         max_scroll_top_in_lines as f32 * line_height
     }
@@ -770,7 +777,7 @@ impl TerminalView {
                 .read(cx)
                 .last_content
                 .mode
-                .contains(TermMode::ALT_SCREEN)
+                .contains(TerminalModes::ALT_SCREEN)
         {
             return true;
         }
@@ -894,55 +901,55 @@ impl TerminalView {
         let mode = self.terminal.read(cx).last_content.mode;
         dispatch_context.set(
             "screen",
-            if mode.contains(TermMode::ALT_SCREEN) {
+            if mode.contains(TerminalModes::ALT_SCREEN) {
                 "alt"
             } else {
                 "normal"
             },
         );
 
-        if mode.contains(TermMode::APP_CURSOR) {
+        if mode.contains(TerminalModes::APP_CURSOR) {
             dispatch_context.add("DECCKM");
         }
-        if mode.contains(TermMode::APP_KEYPAD) {
+        if mode.contains(TerminalModes::APP_KEYPAD) {
             dispatch_context.add("DECPAM");
         } else {
             dispatch_context.add("DECPNM");
         }
-        if mode.contains(TermMode::SHOW_CURSOR) {
+        if mode.contains(TerminalModes::SHOW_CURSOR) {
             dispatch_context.add("DECTCEM");
         }
-        if mode.contains(TermMode::LINE_WRAP) {
+        if mode.contains(TerminalModes::LINE_WRAP) {
             dispatch_context.add("DECAWM");
         }
-        if mode.contains(TermMode::ORIGIN) {
+        if mode.contains(TerminalModes::ORIGIN) {
             dispatch_context.add("DECOM");
         }
-        if mode.contains(TermMode::INSERT) {
+        if mode.contains(TerminalModes::INSERT) {
             dispatch_context.add("IRM");
         }
         //LNM is apparently the name for this. https://vt100.net/docs/vt510-rm/LNM.html
-        if mode.contains(TermMode::LINE_FEED_NEW_LINE) {
+        if mode.contains(TerminalModes::LINE_FEED_NEW_LINE) {
             dispatch_context.add("LNM");
         }
-        if mode.contains(TermMode::FOCUS_IN_OUT) {
+        if mode.contains(TerminalModes::FOCUS_IN_OUT) {
             dispatch_context.add("report_focus");
         }
-        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+        if mode.contains(TerminalModes::ALTERNATE_SCROLL) {
             dispatch_context.add("alternate_scroll");
         }
-        if mode.contains(TermMode::BRACKETED_PASTE) {
+        if mode.contains(TerminalModes::BRACKETED_PASTE) {
             dispatch_context.add("bracketed_paste");
         }
-        if mode.intersects(TermMode::MOUSE_MODE) {
+        if mode.intersects(TerminalModes::MOUSE_MODE) {
             dispatch_context.add("any_mouse_reporting");
         }
         {
-            let mouse_reporting = if mode.contains(TermMode::MOUSE_REPORT_CLICK) {
+            let mouse_reporting = if mode.contains(TerminalModes::MOUSE_REPORT_CLICK) {
                 "click"
-            } else if mode.contains(TermMode::MOUSE_DRAG) {
+            } else if mode.contains(TerminalModes::MOUSE_DRAG) {
                 "drag"
-            } else if mode.contains(TermMode::MOUSE_MOTION) {
+            } else if mode.contains(TerminalModes::MOUSE_MOTION) {
                 "motion"
             } else {
                 "off"
@@ -950,9 +957,9 @@ impl TerminalView {
             dispatch_context.set("mouse_reporting", mouse_reporting);
         }
         {
-            let format = if mode.contains(TermMode::SGR_MOUSE) {
+            let format = if mode.contains(TerminalModes::SGR_MOUSE) {
                 "sgr"
-            } else if mode.contains(TermMode::UTF8_MOUSE) {
+            } else if mode.contains(TerminalModes::UTF8_MOUSE) {
                 "utf8"
             } else {
                 "normal"
@@ -1131,15 +1138,15 @@ fn subscribe_for_terminal_events(
     vec![terminal_subscription, terminal_events_subscription]
 }
 
-fn regex_search_for_query(query: &SearchQuery) -> Option<RegexSearch> {
+fn regex_search_for_query(query: &SearchQuery) -> Option<TerminalSearch> {
     let str = query.as_str();
     if query.is_regex() {
         if str == "." {
             return None;
         }
-        RegexSearch::new(str).ok()
+        TerminalSearch::new(str)
     } else {
-        RegexSearch::new(&regex::escape(str)).ok()
+        TerminalSearch::new(&regex::escape(str))
     }
 }
 
@@ -1848,7 +1855,7 @@ impl SerializableItem for TerminalView {
 }
 
 impl SearchableItem for TerminalView {
-    type Match = RangeInclusive<AlacPoint>;
+    type Match = TerminalRange;
 
     fn supported_options(&self) -> SearchOptions {
         SearchOptions {
@@ -1962,8 +1969,8 @@ impl SearchableItem for TerminalView {
                                 .enumerate()
                                 .rev()
                                 .find(|(_, search_match)| {
-                                    search_match.contains(&selection_head)
-                                        || search_match.start() < &selection_head
+                                    search_match.contains(selection_head)
+                                        || search_match.start() < selection_head
                                 })
                                 .map(|(ix, _)| ix)
                                 .unwrap_or(0),
@@ -1976,8 +1983,8 @@ impl SearchableItem for TerminalView {
                                 .iter()
                                 .enumerate()
                                 .find(|(_, search_match)| {
-                                    search_match.contains(&selection_head)
-                                        || search_match.start() > &selection_head
+                                    search_match.contains(selection_head)
+                                        || search_match.start() > selection_head
                                 })
                                 .map(|(ix, _)| ix)
                                 .unwrap_or(matches.len().saturating_sub(1)),
