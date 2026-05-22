@@ -45,9 +45,8 @@ struct WgpuAtlasState {
     pending_uploads: Vec<PendingUpload>,
 }
 
-/// Backend-specific keep-alive carried by every [`AtlasTileRef`] for a
-/// tile in this atlas. When the last clone is dropped its `Drop` impl
-/// releases the slot in the originating atlas (if it still exists).
+/// Backend [`AtlasTileKeepAlive`] for this atlas; see [`AtlasTileRef`] for
+/// the contract.
 #[derive(Debug)]
 struct WgpuAtlasTileKeepAlive {
     state: Weak<Mutex<WgpuAtlasState>>,
@@ -89,9 +88,7 @@ impl WgpuAtlas {
         }
     }
 
-    /// Wrap a freshly allocated tile in an [`AtlasTileRef`] backed by a
-    /// keep-alive that points back at this atlas. Dropping the last clone
-    /// will free the slot.
+    /// Wrap a freshly allocated tile in an [`AtlasTileRef`].
     fn make_tile_ref(&self, tile: AtlasTile) -> AtlasTileRef {
         let keep_alive: Arc<dyn AtlasTileKeepAlive> = Arc::new(WgpuAtlasTileKeepAlive {
             state: Arc::downgrade(&self.state),
@@ -171,18 +168,15 @@ impl PlatformAtlas for WgpuAtlas {
     }
 
     fn remove(&self, key: &AtlasKey) {
-        // Drop the cache's reference; the slot is freed only when the last
-        // `AtlasTileRef` for this tile (held by the cache and/or any scene)
-        // is dropped, via `WgpuAtlasTileKeepAlive::drop`.
+        // See `MetalAtlas::remove`.
         self.state.lock().tiles_by_key.remove(key);
     }
 }
 
 impl WgpuAtlasState {
-    /// Free a tile's slot. Called from the keep-alive's `Drop` once the last
-    /// [`AtlasTileRef`] for the tile is gone, so no scene primitive or cache
-    /// entry can still be referring to the slot. If the slot held the last
-    /// tile in its texture, the texture itself is returned to the free list.
+    /// Free a tile's slot. Called from the keep-alive's `Drop`. If the slot
+    /// held the last tile in its texture, the texture itself is returned to
+    /// the free list.
     fn release_slot(&mut self, id: AtlasTextureId) {
         let Some(texture_slot) = self.storage[id.kind].textures.get_mut(id.index as usize) else {
             return;

@@ -32,9 +32,7 @@ impl MetalAtlas {
         self.state.lock().texture(id).metal_texture.clone()
     }
 
-    /// Wrap a freshly allocated tile in an [`AtlasTileRef`] backed by a
-    /// keep-alive that points back at this atlas. Dropping the last clone
-    /// will free the slot.
+    /// Wrap a freshly allocated tile in an [`AtlasTileRef`].
     fn make_tile_ref(&self, tile: AtlasTile) -> AtlasTileRef {
         let keep_alive: Arc<dyn AtlasTileKeepAlive> = Arc::new(MetalAtlasTileKeepAlive {
             state: Arc::downgrade(&self.state),
@@ -54,9 +52,8 @@ struct MetalAtlasState {
     tiles_by_key: FxHashMap<AtlasKey, AtlasTileRef>,
 }
 
-/// Backend-specific keep-alive carried by every [`AtlasTileRef`] for a
-/// tile in this atlas. When the last clone is dropped its `Drop` impl
-/// releases the slot in the originating atlas (if it still exists).
+/// Backend [`AtlasTileKeepAlive`] for this atlas; see [`AtlasTileRef`] for
+/// the contract.
 #[derive(Debug)]
 struct MetalAtlasTileKeepAlive {
     state: Weak<Mutex<MetalAtlasState>>,
@@ -67,10 +64,6 @@ impl AtlasTileKeepAlive for MetalAtlasTileKeepAlive {}
 
 impl Drop for MetalAtlasTileKeepAlive {
     fn drop(&mut self) {
-        // Slot release is driven entirely by the keep-alive Drop. By the time
-        // the last `AtlasTileRef` for this tile goes out of scope, no scene
-        // primitive or cache entry can still be referring to the slot, so it
-        // is safe to free.
         let Some(state) = self.state.upgrade() else {
             return;
         };
@@ -109,18 +102,16 @@ impl PlatformAtlas for MetalAtlas {
     }
 
     fn remove(&self, key: &AtlasKey) {
-        // Just drop the cache's reference. The underlying slot is released
-        // when (and only when) the last `AtlasTileRef` for the tile — held by
-        // the scene, the cache, or both — is dropped.
+        // Drop the cache's reference; the slot itself is released by the
+        // keep-alive's `Drop`. See [`AtlasTileRef`].
         self.state.lock().tiles_by_key.remove(key);
     }
 }
 
 impl MetalAtlasState {
-    /// Free a tile's slot. Called from the keep-alive's `Drop` once the last
-    /// [`AtlasTileRef`] for the tile is gone, so no scene primitive or cache
-    /// entry can still be referring to the slot. If the slot held the last
-    /// tile in its texture, the texture itself is returned to the free list.
+    /// Free a tile's slot. Called from the keep-alive's `Drop`. If the slot
+    /// held the last tile in its texture, the texture itself is returned to
+    /// the free list.
     fn release_slot(&mut self, id: AtlasTextureId) {
         let textures = match id.kind {
             AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
