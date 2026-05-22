@@ -5983,6 +5983,72 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore]
+async fn test_open_many_large_buffers_concurrently(cx: &mut gpui::TestAppContext) {
+    const RAYON_STACK_SIZE: usize = 256 * 1024;
+
+    if let Err(error) = rayon::ThreadPoolBuilder::new()
+        .num_threads(
+            std::thread::available_parallelism().map_or(1, |count| count.get().div_ceil(2)),
+        )
+        .stack_size(RAYON_STACK_SIZE)
+        .thread_name(|index| format!("SmallStackRayonWorker{index}"))
+        .build_global()
+    {
+        panic!(
+            "failed to initialize Rayon global pool with {RAYON_STACK_SIZE} byte stacks: {error}"
+        );
+    }
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    const FILE_COUNT: usize = 2048;
+    const FILE_SIZE: usize = 256 * 1024;
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let line = "abcdefghijklmnopqrstuvwxyz0123456789\n";
+    let mut large_text = line.repeat(FILE_SIZE / line.len() + 1);
+    large_text.truncate(FILE_SIZE);
+    let large_text_bytes = large_text.as_bytes().to_vec();
+
+    for index in 0..FILE_COUNT {
+        fs.insert_file(
+            Path::new(path!("/project")).join(format!("large_{index}.txt")),
+            large_text_bytes.clone(),
+        )
+        .await;
+    }
+
+    let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let open_buffer_tasks = (0..FILE_COUNT)
+        .map(|index| {
+            let path = format!("large_{index}.txt");
+            project.update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path(&path)), cx)
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let buffers = future::join_all(open_buffer_tasks)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()
+        .unwrap();
+
+    assert_eq!(buffers.len(), FILE_COUNT);
+    for buffer in buffers {
+        assert_eq!(buffer.read_with(cx, |buffer, _| buffer.len()), FILE_SIZE);
+    }
+}
+
+#[gpui::test]
 async fn test_buffer_deduping(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

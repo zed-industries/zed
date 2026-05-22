@@ -13537,6 +13537,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "rand 0.9.4",
+ "rayon",
  "regex",
  "release_channel",
  "remote",
