@@ -4774,10 +4774,11 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .expect("sidebar should have a thread entry")
     });
 
+    let renamed_title = "abcdefghijklmnopqrstuvwxyé renamed";
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.start_renaming_thread(entry_ix, thread_id, title, window, cx);
         sidebar.thread_rename_editor.update(cx, |editor, cx| {
-            editor.set_text("Renamed from sidebar", window, cx);
+            editor.set_text(renamed_title, window, cx);
         });
         sidebar.confirm_thread_rename(window, cx);
     });
@@ -4790,32 +4791,29 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
             .cloned()
             .expect("thread metadata should exist")
     });
-    assert_eq!(
-        metadata.title_override.as_deref(),
-        Some("Renamed from sidebar")
-    );
+    assert_eq!(metadata.title_override.as_deref(), Some(renamed_title));
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
         vec![
             //
             "v [my-project]",
-            "  Renamed from sidebar *  <== selected",
+            "  abcdefghijklmnopqrstuvwxyé renamed *  <== selected",
         ]
     );
 
     let active_thread = panel.read_with(cx, |panel, cx| panel.active_agent_thread(cx).unwrap());
     assert_eq!(
         active_thread.read_with(cx, |thread, _| thread.title()),
-        Some("Renamed from sidebar".into())
+        Some(renamed_title.into())
     );
     let active_thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
     let title_editor_text =
         active_thread_view.read_with(cx, |view, cx| view.title_editor.read(cx).text(cx));
-    assert_eq!(title_editor_text, "Renamed from sidebar");
+    assert_eq!(title_editor_text, renamed_title);
 
     active_thread.update(cx, |thread, cx| {
         thread
-            .set_title("Generated after rename".into(), cx)
+            .set_title("abcdefghijklmnopqrstuvwxyz0".into(), cx)
             .detach();
     });
     cx.run_until_parked();
@@ -4825,9 +4823,43 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
         vec![
             //
             "v [my-project]",
-            "  Renamed from sidebar *  <== selected",
+            "  abcdefghijklmnopqrstuvwxyé renamed *  <== selected",
         ]
     );
+
+    type_in_search(&sidebar, "0", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        Vec::<String>::new()
+    );
+
+    type_in_search(&sidebar, "é", cx);
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  abcdefghijklmnopqrstuvwxyé renamed *  <== selected",
+        ]
+    );
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let thread = sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread) => Some(thread),
+                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+            })
+            .expect("renamed thread should match the search");
+        let title = thread.metadata.display_title();
+        assert!(
+            thread
+                .highlight_positions
+                .iter()
+                .all(|position| { title.is_char_boundary(*position) })
+        );
+    });
 }
 
 #[gpui::test]

@@ -1691,12 +1691,8 @@ impl Sidebar {
 
                 let mut matched_threads: Vec<ThreadEntry> = Vec::new();
                 for mut thread in threads {
-                    let title: &str = thread
-                        .metadata
-                        .title
-                        .as_ref()
-                        .map_or(DEFAULT_THREAD_TITLE, |t| t.as_ref());
-                    if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    let title = thread.metadata.display_title();
+                    if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
                         thread.highlight_positions = positions;
                     }
                     let mut worktree_matched = false;
