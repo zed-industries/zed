@@ -254,7 +254,7 @@ impl Console {
                         let start_offset = range.start;
                         let range = buffer.anchor_after(MultiBufferOffset(range.start))
                             ..buffer.anchor_before(MultiBufferOffset(range.end));
-                        let color_fn = color_fetcher(color);
+                        let color_fn = background_color_fetcher(color);
                         console.highlight_background(
                             HighlightKey::ConsoleAnsiHighlight(start_offset),
                             &[range],
@@ -869,9 +869,15 @@ impl ansi::Handler for ConsoleHandler {
     }
 }
 
-fn color_fetcher(color: ansi::Color) -> impl Fn(&Theme) -> Hsla {
+fn background_color_fetcher(color: ansi::Color) -> impl Fn(&Theme) -> Hsla {
     let color = terminal::TerminalColor::from(color);
-    move |theme| terminal_view::terminal_element::convert_color(&color, theme)
+    move |theme| {
+        if color.is_default_background() {
+            theme.colors().terminal_background
+        } else {
+            terminal_view::terminal_element::convert_color(&color, theme)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -919,6 +925,22 @@ mod tests {
         });
 
         pretty_assertions::assert_eq!(expect, cx.display_text());
+    }
+
+    #[gpui::test]
+    fn test_background_color_fetcher_preserves_default_background(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let mut theme = theme::GlobalTheme::theme(cx).as_ref().clone();
+            theme.styles.colors.terminal_background = gpui::red();
+            theme.styles.colors.terminal_ansi_background = gpui::blue();
+
+            let color =
+                background_color_fetcher(ansi::Color::Named(ansi::NamedColor::Background))(&theme);
+
+            assert_eq!(color, gpui::red());
+        });
     }
 
     #[gpui::test]

@@ -11,7 +11,7 @@ use alacritty_terminal::{
     vte::ansi::CursorShape as AlacCursorShape,
 };
 use regex::Regex;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use std::{
     ops::{BitOr, BitOrAssign, Deref, RangeInclusive},
     sync::Arc,
@@ -317,31 +317,96 @@ impl From<VteNamedColor> for TerminalNamedColor {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TerminalHyperlink {
-    id: Option<String>,
-    uri: String,
+    data: TerminalHyperlinkData,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum TerminalHyperlinkData {
+    Alacritty(AlacHyperlink),
+    Owned { id: Option<Arc<str>>, uri: Arc<str> },
 }
 
 impl TerminalHyperlink {
     pub fn new<T: ToString>(id: Option<T>, uri: String) -> Self {
         Self {
-            id: id.map(|id| id.to_string()),
-            uri,
+            data: TerminalHyperlinkData::Owned {
+                id: id.map(|id| Arc::from(id.to_string())),
+                uri: Arc::from(uri),
+            },
         }
     }
 
     pub fn id(&self) -> Option<&str> {
-        self.id.as_deref()
+        match &self.data {
+            TerminalHyperlinkData::Alacritty(hyperlink) => Some(hyperlink.id()),
+            TerminalHyperlinkData::Owned { id, .. } => id.as_deref(),
+        }
     }
 
     pub fn uri(&self) -> &str {
-        &self.uri
+        match &self.data {
+            TerminalHyperlinkData::Alacritty(hyperlink) => hyperlink.uri(),
+            TerminalHyperlinkData::Owned { uri, .. } => uri,
+        }
+    }
+
+    fn from_alacritty(hyperlink: AlacHyperlink) -> Self {
+        Self {
+            data: TerminalHyperlinkData::Alacritty(hyperlink),
+        }
+    }
+}
+
+impl Serialize for TerminalHyperlink {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("TerminalHyperlink", 2)?;
+        state.serialize_field("id", &self.id())?;
+        state.serialize_field("uri", self.uri())?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for TerminalHyperlink {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct SerializedTerminalHyperlink {
+            id: Option<String>,
+            uri: String,
+        }
+
+        let hyperlink = SerializedTerminalHyperlink::deserialize(deserializer)?;
+        Ok(Self::new(hyperlink.id, hyperlink.uri))
     }
 }
 
 fn terminal_hyperlink_from_alacritty(hyperlink: AlacHyperlink) -> TerminalHyperlink {
-    TerminalHyperlink::new(Some(hyperlink.id().to_owned()), hyperlink.uri().to_owned())
+    TerminalHyperlink::from_alacritty(hyperlink)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_hyperlink_from_alacritty_keeps_alacritty_storage() {
+        let hyperlink = AlacHyperlink::new(Some("id"), "https://example.com".to_string());
+        let hyperlink = terminal_hyperlink_from_alacritty(hyperlink);
+
+        assert!(matches!(
+            &hyperlink.data,
+            TerminalHyperlinkData::Alacritty(_)
+        ));
+        assert_eq!(hyperlink.id(), Some("id"));
+        assert_eq!(hyperlink.uri(), "https://example.com");
+    }
 }
 
 #[derive(Default, Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]

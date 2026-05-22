@@ -26,6 +26,7 @@ use util::paths::PathStyle;
 
 use crate::outputs::OutputContent;
 use crate::repl_settings::ReplSettings;
+use std::cell::{Cell, RefCell};
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.
@@ -43,7 +44,8 @@ use crate::repl_settings::ReplSettings;
 pub struct TerminalOutput {
     full_buffer: Option<Entity<Buffer>>,
     terminal: Option<Entity<Terminal>>,
-    full_text: String,
+    full_text: RefCell<String>,
+    full_text_dirty: Cell<bool>,
 }
 
 /// Returns the default text style for the terminal output.
@@ -154,7 +156,8 @@ impl TerminalOutput {
 
         Self {
             terminal,
-            full_text: String::new(),
+            full_text: RefCell::new(String::new()),
+            full_text_dirty: Cell::new(false),
             full_buffer: None,
         }
     }
@@ -205,12 +208,12 @@ impl TerminalOutput {
     /// * `text` - A string slice containing the text to be appended.
     pub fn append_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if let Some(terminal) = &self.terminal {
-            self.full_text = terminal.update(cx, |terminal, cx| {
+            terminal.update(cx, |terminal, cx| {
                 terminal.write_output(text.as_bytes(), cx);
-                Self::sanitize_terminal_text(terminal.get_content())
             });
+            self.full_text_dirty.set(true);
         } else {
-            self.full_text.push_str(text);
+            self.full_text.borrow_mut().push_str(text);
         }
 
         // This will keep the buffer up to date, though with some terminal codes it won't be perfect
@@ -221,8 +224,16 @@ impl TerminalOutput {
         }
     }
 
-    pub fn full_text(&self) -> String {
-        self.full_text.clone()
+    pub fn full_text(&self, cx: &App) -> String {
+        if self.full_text_dirty.get()
+            && let Some(terminal) = &self.terminal
+        {
+            let text = terminal.read(cx).get_content();
+            *self.full_text.borrow_mut() = Self::sanitize_terminal_text(text);
+            self.full_text_dirty.set(false);
+        }
+
+        self.full_text.borrow().clone()
     }
 
     fn sanitize_terminal_text(text: String) -> String {
@@ -305,11 +316,27 @@ mod tests {
             output.update(cx, |output, cx| {
                 output.append_text("\x1b[", cx);
                 output.append_text("31mred\x1b[0m", cx);
-                output.full_text()
+                output.full_text(cx)
             })
         });
 
         assert_eq!(text, "red\n");
+    }
+
+    #[gpui::test]
+    fn test_append_text_defers_full_text_refresh(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        cx.update(|window, cx| {
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("hello\n", cx);
+
+                assert!(output.full_text_dirty.get());
+                assert_eq!(output.full_text.borrow().as_str(), "");
+                assert_eq!(output.full_text(cx), "hello\n");
+                assert!(!output.full_text_dirty.get());
+            });
+        });
     }
 
     #[gpui::test]
@@ -320,7 +347,7 @@ mod tests {
             let input = format!("\x1b[{columns}Gx");
             let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
             (
-                output.read(cx).full_text(),
+                output.read(cx).full_text(cx),
                 format!("{}x\n", " ".repeat(columns - 1)),
             )
         });
@@ -345,7 +372,7 @@ mod tests {
                 .map(|line| format!("line-{line}\n"))
                 .collect::<String>();
             let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
-            (output.read(cx).full_text(), input)
+            (output.read(cx).full_text(cx), input)
         });
 
         assert_eq!(text, expected);
@@ -360,7 +387,7 @@ impl Render for TerminalOutput {
     /// creates a canvas element that paints the terminal cells and background rectangles.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(terminal) = self.terminal.clone() else {
-            return div().child(self.full_text.clone()).into_any_element();
+            return div().child(self.full_text(cx)).into_any_element();
         };
 
         let content = terminal.update(cx, |terminal, cx| {
@@ -437,7 +464,7 @@ impl Render for TerminalOutput {
 
 impl OutputContent for TerminalOutput {
     fn clipboard_content(&self, _window: &Window, _cx: &App) -> Option<ClipboardItem> {
-        Some(ClipboardItem::new_string(self.full_text()))
+        Some(ClipboardItem::new_string(self.full_text(_cx)))
     }
 
     fn has_clipboard_content(&self, _window: &Window, _cx: &App) -> bool {
@@ -454,8 +481,8 @@ impl OutputContent for TerminalOutput {
         }
 
         let buffer = cx.new(|cx| {
-            let mut buffer =
-                Buffer::local(self.full_text(), cx).with_language(language::PLAIN_TEXT.clone(), cx);
+            let mut buffer = Buffer::local(self.full_text(cx), cx)
+                .with_language(language::PLAIN_TEXT.clone(), cx);
             buffer.set_capability(language::Capability::ReadOnly, cx);
             buffer
         });
