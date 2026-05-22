@@ -40,6 +40,15 @@ pub enum SidebarSide {
     Right,
 }
 
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SidebarSettingsContent {
+    /// Whether the threads sidebar is enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+}
+
 /// How thinking blocks should be displayed by default in the agent panel.
 #[derive(
     Clone,

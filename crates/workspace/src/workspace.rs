@@ -154,7 +154,8 @@ use util::{
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
-    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    RestoreOnStartupBehavior, SidebarSettings, StatusBarSettings, TabBarSettings,
+    WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -9899,7 +9900,7 @@ pub fn open_paths(
                     window.filter(|window| {
                         window
                             .read(cx)
-                            .is_ok_and(|mw| mw.multi_workspace_enabled(cx))
+                            .is_ok_and(|mw| mw.enabled(cx))
                     })
                 });
 

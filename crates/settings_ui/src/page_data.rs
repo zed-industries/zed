@@ -7449,7 +7449,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 3] {
+    fn general_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7464,6 +7464,19 @@ fn ai_page(cx: &App) -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Threads Sidebar",
+                description: "Whether the threads sidebar is enabled.",
+                field: Box::new(SettingField {
+                    json_path: Some("sidebar.enabled"),
+                    pick: |settings_content| settings_content.sidebar.as_ref()?.enabled.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.sidebar.get_or_insert_default().enabled = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Threads Sidebar Side",

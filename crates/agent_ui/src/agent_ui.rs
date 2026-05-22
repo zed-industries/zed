@@ -65,7 +65,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use workspace::Workspace;
+use workspace::{SidebarSettings, Workspace};
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
@@ -670,6 +670,7 @@ fn maybe_backfill_editor_layout(fs: Arc<dyn Fs>, is_new_install: bool, cx: &mut 
 fn update_command_palette_filter(cx: &mut App) {
     let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
     let agent_enabled = AgentSettings::get_global(cx).enabled;
+    let sidebar_enabled = SidebarSettings::get_global(cx).enabled;
 
     let edit_prediction_provider = AllLanguageSettings::get_global(cx)
         .edit_predictions
@@ -739,8 +740,12 @@ fn update_command_palette_filter(cx: &mut App) {
 
             filter.show_namespace("zed_predict_onboarding");
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+        }
 
+        if !disable_ai && agent_enabled && sidebar_enabled {
             filter.show_namespace("multi_workspace");
+        } else {
+            filter.hide_namespace("multi_workspace");
         }
 
         // Hide `assistant: open rules library` — Rules are surfaced
@@ -828,6 +833,7 @@ mod tests {
     use settings::{
         DockPosition, NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings, SettingsStore,
     };
+    use workspace::ToggleWorkspaceSidebar;
 
     #[gpui::test]
     fn test_agent_command_palette_visibility(cx: &mut TestAppContext) {
@@ -837,6 +843,7 @@ mod tests {
             cx.set_global(store);
             command_palette_hooks::init(cx);
             AgentSettings::register(cx);
+            SidebarSettings::register(cx);
             DisableAiSettings::register(cx);
             AllLanguageSettings::register(cx);
         });
@@ -878,6 +885,7 @@ mod tests {
 
         cx.update(|cx| {
             AgentSettings::override_global(agent_settings.clone(), cx);
+            SidebarSettings::override_global(SidebarSettings { enabled: true }, cx);
             DisableAiSettings::override_global(DisableAiSettings { disable_ai: false }, cx);
 
             // Initial update
@@ -894,6 +902,10 @@ mod tests {
             assert!(
                 !filter.is_hidden(&NewTerminalThread),
                 "NewTerminalThread should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&ToggleWorkspaceSidebar),
+                "ToggleWorkspaceSidebar should be visible by default"
             );
         });
 
@@ -918,6 +930,36 @@ mod tests {
                 filter.is_hidden(&NewTerminalThread),
                 "NewTerminalThread should be hidden when agent is disabled"
             );
+            assert!(
+                filter.is_hidden(&ToggleWorkspaceSidebar),
+                "ToggleWorkspaceSidebar should be hidden when agent is disabled"
+            );
+        });
+
+        // Re-enable agent and disable sidebar
+        cx.update(|cx| {
+            AgentSettings::override_global(agent_settings.clone(), cx);
+            SidebarSettings::override_global(SidebarSettings { enabled: false }, cx);
+
+            update_command_palette_filter(cx);
+        });
+
+        cx.update(|cx| {
+            let filter = CommandPaletteFilter::try_global(cx).unwrap();
+            assert!(
+                filter.is_hidden(&ToggleWorkspaceSidebar),
+                "ToggleWorkspaceSidebar should be hidden when sidebar is disabled"
+            );
+            assert!(
+                !filter.is_hidden(&NewThread),
+                "NewThread should remain visible when only sidebar is disabled"
+            );
+        });
+
+        // Restore sidebar before testing edit predictions.
+        cx.update(|cx| {
+            SidebarSettings::override_global(SidebarSettings { enabled: true }, cx);
+            update_command_palette_filter(cx);
         });
 
         // Test EditPredictionProvider

@@ -72,6 +72,11 @@ pub struct TabBarSettings {
     pub show_pinned_tabs_in_separate_row: bool,
 }
 
+#[derive(Clone, Debug, RegisterSetting)]
+pub struct SidebarSettings {
+    pub enabled: bool,
+}
+
 impl Settings for WorkspaceSettings {
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let workspace = &content.workspace;
@@ -148,6 +153,15 @@ impl Settings for TabBarSettings {
             show_nav_history_buttons: tab_bar.show_nav_history_buttons.unwrap(),
             show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
             show_pinned_tabs_in_separate_row: tab_bar.show_pinned_tabs_in_separate_row.unwrap(),
+        }
+    }
+}
+
+impl Settings for SidebarSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let sidebar = content.sidebar.clone().unwrap();
+        Self {
+            enabled: sidebar.enabled.unwrap(),
         }
     }
 }

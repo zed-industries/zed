@@ -30,7 +30,7 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
 
     multi_workspace.read_with(cx, |mw, cx| {
-        assert!(mw.multi_workspace_enabled(cx));
+        assert!(mw.enabled(cx));
     });
 
     multi_workspace.update_in(cx, |mw, _window, cx| {
@@ -49,7 +49,7 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
             "Sidebar should be closed when disable_ai is true"
         );
         assert!(
-            !mw.multi_workspace_enabled(cx),
+            !mw.enabled(cx),
             "Multi-workspace should be disabled when disable_ai is true"
         );
     });
@@ -71,7 +71,7 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
 
     multi_workspace.read_with(cx, |mw, cx| {
         assert!(
-            mw.multi_workspace_enabled(cx),
+            mw.enabled(cx),
             "Multi-workspace should be enabled after re-enabling AI"
         );
         assert!(
@@ -109,7 +109,7 @@ async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppC
     cx.run_until_parked();
 
     multi_workspace.read_with(cx, |multi_workspace, cx| {
-        assert!(multi_workspace.multi_workspace_enabled(cx));
+        assert!(multi_workspace.enabled(cx));
         assert_eq!(multi_workspace.workspaces().count(), 2);
     });
 
@@ -121,7 +121,44 @@ async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppC
     cx.run_until_parked();
 
     multi_workspace.read_with(cx, |multi_workspace, cx| {
-        assert!(!multi_workspace.multi_workspace_enabled(cx));
+        assert!(!multi_workspace.enabled(cx));
+        assert!(!multi_workspace.sidebar_open());
+        assert_eq!(multi_workspace.workspaces().count(), 1);
+        assert!(multi_workspace.project_group_keys().is_empty());
+    });
+}
+
+#[gpui::test]
+async fn test_multi_workspace_collapses_when_sidebar_is_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.open_sidebar(cx);
+        multi_workspace.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.enabled(cx));
+        assert!(multi_workspace.sidebar_open());
+        assert_eq!(multi_workspace.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| {
+        SidebarSettings::override_global(SidebarSettings { enabled: false }, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(!multi_workspace.enabled(cx));
         assert!(!multi_workspace.sidebar_open());
         assert_eq!(multi_workspace.workspaces().count(), 1);
         assert!(multi_workspace.project_group_keys().is_empty());

@@ -85,7 +85,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    SidebarSettings, ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemEvent,
 };
@@ -4851,7 +4851,7 @@ impl AgentPanel {
             .with_handle(self.agent_panel_menu_handle.clone())
             .menu({
                 move |window, cx| {
-                    Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, cx| {
                         menu = menu.context(menu_action_context.clone());
 
                         if can_regenerate_thread_title {
@@ -4964,10 +4964,13 @@ impl AgentPanel {
                             menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
 
-                        menu = menu
-                            .action("Settings", Box::new(OpenSettings))
-                            .separator()
-                            .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
+                        menu = menu.action("Settings", Box::new(OpenSettings));
+
+                        if SidebarSettings::get_global(cx).enabled {
+                            menu = menu
+                                .separator()
+                                .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
+                        }
 
                         if has_auth_methods || supports_logout {
                             menu = menu.separator()
