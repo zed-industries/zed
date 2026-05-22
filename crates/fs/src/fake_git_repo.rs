@@ -14,7 +14,7 @@ use git::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, Worktree,
     },
     stash::GitStash,
     status::{
@@ -69,6 +69,7 @@ pub struct FakeGitRepositoryState {
     pub branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
     pub remotes: HashMap<String, String>,
+    pub fetches: Vec<FetchOptions>,
     pub simulated_index_write_error_message: Option<String>,
     pub simulated_create_worktree_error: Option<String>,
     pub simulated_graph_error: Option<String>,
@@ -99,6 +100,7 @@ impl FakeGitRepositoryState {
             merge_base_contents: Default::default(),
             oids: Default::default(),
             remotes: HashMap::default(),
+            fetches: Vec::new(),
             graph_commits: Vec::new(),
             commit_data: Default::default(),
             commit_history: Vec::new(),
@@ -1087,12 +1089,18 @@ impl GitRepository for FakeGitRepository {
 
     fn fetch(
         &self,
-        _fetch_options: FetchOptions,
+        fetch_options: FetchOptions,
         _askpass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
-    ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
-        unimplemented!()
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>> {
+        self.with_state_async(true, move |state| {
+            state.fetches.push(fetch_options);
+            Ok(RemoteCommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        })
     }
 
     fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {

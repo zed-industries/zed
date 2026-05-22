@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use askpass::AskPassDelegate;
 use collections::HashSet;
 use fs::Fs;
 use gpui::{AsyncWindowContext, Entity, SharedString, TaskExt, WeakEntity};
@@ -14,8 +15,11 @@ use settings::Settings;
 use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition};
 use zed_actions::NewWorktreeBranchTarget;
 
+use git::repository::{FetchOptions, Remote};
+
 use util::ResultExt as _;
 
+use crate::askpass_modal::AskPassModal;
 use crate::git_panel::show_error_toast;
 use crate::worktree_names;
 
@@ -77,7 +81,82 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
     match branch_target {
         NewWorktreeBranchTarget::CurrentBranch => None,
         NewWorktreeBranchTarget::ExistingBranch { name } => Some(name.clone()),
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name,
+            branch_name,
+        } => Some(format!("{remote_name}/{branch_name}")),
     }
+}
+
+fn remote_branch_to_fetch(branch_target: &NewWorktreeBranchTarget) -> Option<(&str, &str)> {
+    match branch_target {
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name,
+            branch_name,
+        } => Some((remote_name, branch_name)),
+        NewWorktreeBranchTarget::CurrentBranch | NewWorktreeBranchTarget::ExistingBranch { .. } => {
+            None
+        }
+    }
+}
+
+fn create_worktree_askpass_delegate(
+    workspace: WeakEntity<Workspace>,
+    operation: impl Into<SharedString>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) -> AskPassDelegate {
+    let operation = operation.into();
+    let window = window.window_handle();
+    AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
+        window
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
+                    });
+                })
+            })
+            .ok();
+    })
+}
+
+async fn fetch_remote_for_worktree_base(
+    git_repos: &[Entity<Repository>],
+    remote_name: String,
+    askpass_delegates: Vec<AskPassDelegate>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    if askpass_delegates.len() != git_repos.len() {
+        return Err(anyhow!(
+            "Unable to fetch {remote_name}: missing credential prompt delegate"
+        ));
+    }
+
+    let fetches = cx.update(|_, cx| {
+        git_repos
+            .iter()
+            .cloned()
+            .zip(askpass_delegates)
+            .map(|(repo, askpass)| {
+                repo.update(cx, |repo, cx| {
+                    repo.fetch(
+                        FetchOptions::Remote(Remote {
+                            name: remote_name.clone().into(),
+                        }),
+                        askpass,
+                        cx,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    for fetch in futures::future::join_all(fetches).await {
+        fetch??;
+    }
+
+    Ok(())
 }
 
 /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -354,6 +433,21 @@ pub fn handle_create_worktree(
 
     let worktree_name = action.worktree_name.clone();
     let branch_target = action.branch_target.clone();
+    let fetch_askpass_delegates = remote_branch_to_fetch(&branch_target)
+        .map(|(remote_name, branch_name)| {
+            git_repos
+                .iter()
+                .map(|_| {
+                    create_worktree_askpass_delegate(
+                        workspace_handle.clone(),
+                        format!("git fetch {remote_name}/{branch_name}"),
+                        window,
+                        cx,
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let display_name: SharedString = worktree_name
         .as_deref()
         .unwrap_or("worktree")
@@ -368,6 +462,7 @@ pub fn handle_create_worktree(
             non_git_paths,
             worktree_name,
             branch_target,
+            fetch_askpass_delegates,
             previous_state,
             workspace_handle.clone(),
             window_handle,
@@ -466,6 +561,7 @@ async fn do_create_worktree(
     non_git_paths: Vec<PathBuf>,
     worktree_name: Option<String>,
     branch_target: NewWorktreeBranchTarget,
+    fetch_askpass_delegates: Vec<AskPassDelegate>,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
     window_handle: Option<gpui::WindowHandle<MultiWorkspace>>,
@@ -508,6 +604,16 @@ async fn do_create_worktree(
             }
             Err(_) => {}
         }
+    }
+
+    if let Some((remote_name, _branch_name)) = remote_branch_to_fetch(&branch_target) {
+        fetch_remote_for_worktree_base(
+            &git_repos,
+            remote_name.to_string(),
+            fetch_askpass_delegates,
+            cx,
+        )
+        .await?;
     }
 
     let mut rng = rand::rng();
