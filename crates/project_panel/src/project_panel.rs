@@ -553,7 +553,7 @@ pub fn init(cx: &mut App) {
             };
             let git_store = workspace.project().read(cx).git_store().clone();
             let workspace = workspace.weak_handle();
-            div.on_action(move |_: &git::FileHistory, window, cx| {
+            div.capture_action(move |_: &git::FileHistory, window, cx| {
                 let git_store = git_store.clone();
                 let log_source = log_source.clone();
                 workspace
@@ -562,7 +562,8 @@ pub fn init(cx: &mut App) {
                             workspace, repo_id, git_store, log_source, None, window, cx,
                         );
                     })
-                    .ok();
+                    .log_err();
+                cx.stop_propagation();
             })
         });
     })

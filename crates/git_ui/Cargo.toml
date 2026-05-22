@@ -89,7 +89,6 @@ gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-project_panel.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
