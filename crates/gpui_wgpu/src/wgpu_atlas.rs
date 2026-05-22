@@ -44,6 +44,9 @@ struct WgpuAtlasState {
     pending_uploads: Vec<PendingUpload>,
 }
 
+    /// Backend-specific keep-alive carried by every [`AtlasTileRef`] for a
+    /// tile in this atlas. When the last clone is dropped its `Drop` impl
+    /// releases the slot in the originating atlas (if it still exists).
 #[derive(Debug)]
 struct WgpuAtlasTileKeepAlive {
     state: Weak<Mutex<WgpuAtlasState>>,
@@ -85,6 +88,9 @@ impl WgpuAtlas {
         }
     }
 
+    /// Wrap a freshly allocated tile in an [`AtlasTileRef`] backed by a
+    /// keep-alive that points back at this atlas. Dropping the last clone
+    /// will free the slot.
     fn make_tile_ref(&self, tile: AtlasTile) -> AtlasTileRef {
         let keep_alive: Arc<dyn AtlasTileKeepAlive> = Arc::new(WgpuAtlasTileKeepAlive {
             state: Arc::downgrade(&self.state),
@@ -172,6 +178,10 @@ impl PlatformAtlas for WgpuAtlas {
 }
 
 impl WgpuAtlasState {
+    /// Free a tile's slot. Called from the keep-alive's `Drop` once the last
+    /// [`AtlasTileRef`] for the tile is gone, so no scene primitive or cache
+    /// entry can still be referring to the slot. If the slot held the last
+    /// tile in its texture, the texture itself is returned to the free list.
     fn release_slot(&mut self, id: AtlasTextureId) {
         let Some(texture_slot) = self.storage[id.kind].textures.get_mut(id.index as usize) else {
             return;
