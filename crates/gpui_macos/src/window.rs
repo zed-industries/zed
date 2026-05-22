@@ -4,7 +4,6 @@ use crate::{
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
-#[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
@@ -1738,9 +1737,9 @@ impl PlatformWindow for MacWindow {
         }
     }
 
-    fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
         if paths.paths().is_empty() {
-            return FileDragSession::noop();
+            anyhow::bail!("cannot start file drag with empty paths");
         }
 
         let window_state = self.0.clone();
@@ -1754,7 +1753,7 @@ impl PlatformWindow for MacWindow {
             let event: id = msg_send![app, currentEvent];
             if event.is_null() {
                 window_state.lock().outbound_files_dragged = false;
-                return FileDragSession::noop();
+                anyhow::bail!("failed to start file drag: no current event");
             }
             let event_location: NSPoint = msg_send![event, locationInWindow];
 
@@ -1795,7 +1794,7 @@ impl PlatformWindow for MacWindow {
 
             if dragged_count == 0 {
                 window_state.lock().outbound_files_dragged = false;
-                return FileDragSession::noop();
+                anyhow::bail!("failed to create any drag items from the provided paths");
             }
 
             let _: id = msg_send![
@@ -1806,9 +1805,9 @@ impl PlatformWindow for MacWindow {
             ];
         }
 
-        FileDragSession::cleanup(move || {
+        Ok(FileDragSession::cleanup(move || {
             window_state.lock().outbound_files_dragged = false;
-        })
+        }))
     }
 
     fn play_system_bell(&self) {

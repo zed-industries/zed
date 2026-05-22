@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Result;
 use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
@@ -1446,10 +1447,9 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
         let state = self.borrow();
-        state.client.start_file_drag(self.0.clone(), paths);
-        FileDragSession::noop()
+        state.client.start_file_drag(self.0.clone(), paths)
     }
 
     fn start_window_resize(&self, edge: gpui::ResizeEdge) {

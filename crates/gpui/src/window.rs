@@ -2201,7 +2201,7 @@ impl Window {
 
     /// Start a drag operation to move the given files out of this window
     /// and into an external application
-    pub fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+    pub fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
         self.platform_window.start_file_drag(paths)
     }
 

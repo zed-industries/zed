@@ -59,7 +59,7 @@ impl Render for FileDragOut {
                                 MouseButton::Left,
                                 cx.listener(move |this, _, window, _| {
                                     let paths = ExternalPaths(vec![test_dir().join(name)].into());
-                                    this._drag_session = Some(window.start_file_drag(paths));
+                                    this._drag_session = window.start_file_drag(paths).ok();
                                 }),
                             )
                     })),

@@ -737,8 +737,8 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
-    fn start_file_drag(&self, _paths: ExternalPaths) -> FileDragSession {
-        FileDragSession::noop()
+    fn start_file_drag(&self, _paths: ExternalPaths) -> Result<FileDragSession> {
+        Ok(FileDragSession::noop())
     }
 
     fn play_system_bell(&self) {}

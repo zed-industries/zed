@@ -5,6 +5,7 @@ use crate::{
     Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
+use anyhow::Result;
 use collections::HashMap;
 use image::RgbaImage;
 use parking_lot::Mutex;
@@ -331,9 +332,9 @@ impl PlatformWindow for TestWindow {
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
 
-    fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
         self.0.lock().file_drag_paths = Some(paths);
-        FileDragSession::noop()
+        Ok(FileDragSession::noop())
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {

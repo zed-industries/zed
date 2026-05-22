@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use x11rb::connection::RequestConnection;
 
 use crate::linux::X11ClientStatePtr;
@@ -1736,10 +1736,9 @@ impl PlatformWindow for X11Window {
         self.send_moveresize(MOVERESIZE_MOVE).log_err();
     }
 
-    fn start_file_drag(&self, paths: ExternalPaths) -> FileDragSession {
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
         let client = self.0.state.borrow().client.clone();
-        client.start_file_drag(self.0.x_window, paths).log_err();
-        FileDragSession::noop()
+        client.start_file_drag(self.0.x_window, paths)
     }
 
     fn start_window_resize(&self, edge: ResizeEdge) {

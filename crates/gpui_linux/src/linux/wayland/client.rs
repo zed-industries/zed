@@ -10,6 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Result;
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle, PostAction,
@@ -97,7 +98,7 @@ use crate::linux::{
 };
 use gpui::{
     AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    FileDragSession, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
     PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
@@ -321,21 +322,21 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
-    pub fn start_file_drag(&self, window: WaylandWindowStatePtr, paths: ExternalPaths) {
+    pub fn start_file_drag(
+        &self,
+        window: WaylandWindowStatePtr,
+        paths: ExternalPaths,
+    ) -> Result<FileDragSession> {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         let (Some(data_device_manager), Some(data_device)) = (
             state.globals.data_device_manager.clone(),
             state.data_device.clone(),
         ) else {
-            log::warn!("wayland: cannot start file drag - missing data_device_manager or data_device globals");
-            return;
+            anyhow::bail!("wayland: cannot start file drag - missing data_device_manager or data_device globals");
         };
 
-        let Ok(payload) = encode_paths_as_uri_list(&paths) else {
-            log::error!("failed to encode drag paths for Wayland");
-            return;
-        };
+        let payload = encode_paths_as_uri_list(&paths)?;
 
         let serial = state.serial_tracker.get(SerialKind::MousePress);
         let source = data_device_manager.create_data_source(&state.globals.qh, ());
@@ -370,6 +371,8 @@ impl WaylandClientStatePtr {
         {
             log::warn!("wayland: failed to register outbound drag timeout");
         }
+
+        Ok(FileDragSession::noop())
     }
 
     pub fn set_pending_activation(&self, window: ObjectId) {

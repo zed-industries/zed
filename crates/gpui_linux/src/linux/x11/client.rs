@@ -59,11 +59,10 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, ExternalPaths, FileDragSession,
-    FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams, point,
-    px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, ExternalPaths, FileDropEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta,
+    Size, TouchPhase, WindowButtonLayout, WindowParams, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -295,9 +294,9 @@ impl X11ClientStatePtr {
         &self,
         source_window: xproto::Window,
         paths: ExternalPaths,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<FileDragSession> {
         let Some(client) = self.get_client() else {
-            return Ok(());
+            return Ok(FileDragSession::noop());
         };
         let mut state = client.0.borrow_mut();
         let payload = encode_paths_as_uri_list(&paths)?;
@@ -319,7 +318,7 @@ impl X11ClientStatePtr {
             started_at: Instant::now(),
         });
 
-        Ok(())
+        Ok(FileDragSession::noop())
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
