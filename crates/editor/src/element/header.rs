@@ -26,23 +26,25 @@ use ui::{
 use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
+use super::{
+    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, layout_line,
+    render_breadcrumb_text,
+};
 use crate::{
-    BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorElement, EditorSettings, EditorSnapshot,
-    FILE_HEADER_HEIGHT, GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-    OpenExcerpts, Point, RowExt, SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold,
-    ToggleFoldAll,
+    BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
+    GutterDimensions, JumpData, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, Point, RowExt,
+    SelectionEffects, StickyHeaderExcerpt, ToPoint, ToggleFold, ToggleFoldAll,
     display_map::ToDisplayPoint,
-    element::{BlockLayout, EditorLayout, LineWithInvisibles, layout_line, render_breadcrumb_text},
     scroll::{Autoscroll, ScrollOffset, ScrollPixelOffset},
 };
 
-pub(super) struct StickyHeader {
+pub(crate) struct StickyHeader {
     pub sticky_row: DisplayRow,
     pub start_point: Point,
     pub offset: ScrollOffset,
 }
 
-pub(super) struct StickyHeaders {
+pub(crate) struct StickyHeaders {
     pub(super) lines: Vec<StickyHeaderLine>,
     gutter_background: Hsla,
     content_background: Hsla,
@@ -60,7 +62,7 @@ pub(super) struct StickyHeaderLine {
 }
 
 impl EditorElement {
-    pub(super) fn sticky_headers(editor: &Editor, snapshot: &EditorSnapshot) -> Vec<StickyHeader> {
+    pub(crate) fn sticky_headers(editor: &Editor, snapshot: &EditorSnapshot) -> Vec<StickyHeader> {
         let scroll_top = snapshot.scroll_position().y;
 
         let mut end_rows = Vec::<DisplayRow>::new();
@@ -547,7 +549,7 @@ impl StickyHeaderLine {
     }
 }
 
-pub(super) fn header_jump_data(
+pub(crate) fn header_jump_data(
     editor_snapshot: &EditorSnapshot,
     block_row_start: DisplayRow,
     height: u32,
@@ -602,7 +604,7 @@ pub(super) fn header_jump_data(
     }
 }
 
-pub(super) fn render_buffer_header(
+pub(crate) fn render_buffer_header(
     editor: &Entity<Editor>,
     for_excerpt: &ExcerptBoundaryInfo,
     is_folded: bool,

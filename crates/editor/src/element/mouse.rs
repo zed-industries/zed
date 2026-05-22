@@ -17,16 +17,13 @@ use text::SelectionGoal;
 use theme_settings::BufferLineHeight;
 use util::{RangeExt, debug_panic, post_inc};
 
+use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
 use crate::{
     CURSORS_VISIBLE_FOR, ColumnarMode, DisplayDiffHunk, DisplayPoint, DisplayRow, Editor,
     EditorSettings, EditorSnapshot, GutterHoverButton, HoveredCursor, JumpData,
     PhantomDiffReviewIndicator, SelectPhase, Selection, SelectionDragState,
-    display_map::ToDisplayPoint,
-    editor_settings::DoubleClickInMultibuffer,
-    element::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide},
-    hover_popover::hover_at,
-    mouse_context_menu,
-    scroll::ScrollPixelOffset,
+    display_map::ToDisplayPoint, editor_settings::DoubleClickInMultibuffer,
+    hover_popover::hover_at, mouse_context_menu, scroll::ScrollPixelOffset,
 };
 
 impl EditorElement {
@@ -240,7 +237,7 @@ impl EditorElement {
         });
     }
 
-    pub(super) fn mouse_moved(
+    pub(crate) fn mouse_moved(
         editor: &mut Editor,
         event: &MouseMoveEvent,
         position_map: &PositionMap,

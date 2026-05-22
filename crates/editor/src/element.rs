@@ -1,3 +1,6 @@
+pub(crate) mod header;
+mod mouse;
+
 use crate::{
     BUFFER_HEADER_PADDING, BlockId, ChunkRendererContext, ChunkReplacement, CodeActionSource,
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
@@ -3194,14 +3197,14 @@ impl EditorElement {
 
                 if self.should_show_buffer_headers() {
                     let selected = selected_buffer_ids.contains(&first_excerpt.buffer_id());
-                    let jump_data = crate::header::header_jump_data(
+                    let jump_data = header::header_jump_data(
                         snapshot,
                         block_row_start,
                         *height,
                         first_excerpt,
                         latest_selection_anchors,
                     );
-                    result = result.child(crate::header::render_buffer_header(
+                    result = result.child(header::render_buffer_header(
                         &self.editor,
                         first_excerpt,
                         true,
@@ -3241,7 +3244,7 @@ impl EditorElement {
                 let mut result = v_flex().id(block_id).w_full();
 
                 if self.should_show_buffer_headers() {
-                    let jump_data = crate::header::header_jump_data(
+                    let jump_data = header::header_jump_data(
                         snapshot,
                         block_row_start,
                         *height,
@@ -3253,7 +3256,7 @@ impl EditorElement {
                         let selected = selected_buffer_ids.contains(&excerpt.buffer_id());
 
                         result = result.child(div().pr(editor_margins.right).child(
-                            crate::header::render_buffer_header(
+                            header::render_buffer_header(
                                 &self.editor,
                                 excerpt,
                                 false,
@@ -9520,7 +9523,7 @@ pub struct EditorLayout {
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     pub(super) sticky_buffer_header: Option<AnyElement>,
-    pub(super) sticky_headers: Option<crate::header::StickyHeaders>,
+    pub(super) sticky_headers: Option<header::StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
     text_align: TextAlign,
     content_width: Pixels,
