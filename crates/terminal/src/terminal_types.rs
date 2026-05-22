@@ -1,5 +1,5 @@
 use alacritty_terminal::{
-    grid::Scroll as AlacScroll,
+    grid::{GridIterator, Scroll as AlacScroll},
     index::{Column, Direction as AlacDirection, Line, Point as AlacPoint},
     selection::{Selection, SelectionRange, SelectionType as AlacSelectionType},
     term::{
@@ -90,8 +90,8 @@ impl TerminalSearch {
         })
     }
 
-    pub(super) fn alacritty(&self) -> RegexSearch {
-        self.search.clone()
+    pub(super) fn into_alacritty(self) -> RegexSearch {
+        self.search
     }
 }
 
@@ -558,6 +558,31 @@ impl From<TerminalHyperlink> for AlacHyperlink {
 
 pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> TerminalCell {
     TerminalCell { cell: cell.clone() }
+}
+
+pub struct RenderableCells<'a> {
+    cells: GridIterator<'a, AlacCell>,
+}
+
+impl<'a> RenderableCells<'a> {
+    pub(super) fn new(cells: GridIterator<'a, AlacCell>) -> Self {
+        Self { cells }
+    }
+}
+
+impl Iterator for RenderableCells<'_> {
+    type Item = IndexedCell;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.cells.next().map(|cell| IndexedCell {
+            point: terminal_point_from_alacritty(cell.point),
+            cell: terminal_cell_from_alacritty(cell.cell),
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.cells.size_hint()
+    }
 }
 
 #[derive(Debug, Clone)]

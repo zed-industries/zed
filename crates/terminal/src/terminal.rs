@@ -7,9 +7,10 @@ mod terminal_types;
 
 pub(crate) use terminal_types::TerminalSelectionSide;
 pub use terminal_types::{
-    HoveredWord, IndexedCell, SelectionPhase, TerminalCell, TerminalColor, TerminalContent,
-    TerminalCursor, TerminalCursorShape, TerminalHyperlink, TerminalModes, TerminalNamedColor,
-    TerminalPoint, TerminalRange, TerminalRgb, TerminalSearch, TerminalSelectionRange,
+    HoveredWord, IndexedCell, RenderableCells, SelectionPhase, TerminalCell, TerminalColor,
+    TerminalContent, TerminalCursor, TerminalCursorShape, TerminalHyperlink, TerminalModes,
+    TerminalNamedColor, TerminalPoint, TerminalRange, TerminalRgb, TerminalSearch,
+    TerminalSelectionRange,
 };
 
 use alacritty_terminal::event::Notify;
@@ -1802,17 +1803,10 @@ impl Terminal {
         }
     }
 
-    pub fn with_renderable_cells<R>(
-        &self,
-        f: impl FnOnce(&mut dyn Iterator<Item = IndexedCell>) -> R,
-    ) -> R {
+    pub fn with_renderable_cells<R>(&self, f: impl for<'a> FnOnce(RenderableCells<'a>) -> R) -> R {
         let term = self.term.lock_unfair();
         let content = term.renderable_content();
-        let mut cells = content.display_iter.map(|ic| IndexedCell {
-            point: terminal_point_from_alacritty(ic.point),
-            cell: terminal_cell_from_alacritty(ic.cell),
-        });
-        f(&mut cells)
+        f(RenderableCells::new(content.display_iter))
     }
 
     pub fn get_content(&self) -> String {
@@ -2247,7 +2241,7 @@ impl Terminal {
     ) -> Task<Vec<TerminalRange>> {
         let term = self.term.clone();
         cx.background_spawn(async move {
-            let mut searcher = searcher.alacritty();
+            let mut searcher = searcher.into_alacritty();
             let term = term.lock();
 
             all_search_matches(&term, &mut searcher)
