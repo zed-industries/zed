@@ -1853,12 +1853,12 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn supports_logout(&self, cx: &App) -> bool {
-        cx.has_flag::<AcpBetaFeatureFlag>() && self.agent_capabilities.auth.logout.is_some()
+    fn supports_logout(&self) -> bool {
+        self.agent_capabilities.auth.logout.is_some()
     }
 
     fn logout(&self, cx: &mut App) -> Task<Result<()>> {
-        if !self.supports_logout(cx) {
+        if !self.supports_logout() {
             return Task::ready(Err(anyhow!("Logout is not supported by this agent.")));
         }
 
@@ -2234,8 +2234,8 @@ pub mod test_support {
             self.inner.authenticate(method, cx)
         }
 
-        fn supports_logout(&self, cx: &App) -> bool {
-            self.inner.supports_logout(cx)
+        fn supports_logout(&self) -> bool {
+            self.inner.supports_logout()
         }
 
         fn logout(&self, cx: &mut App) -> Task<Result<()>> {
@@ -3117,28 +3117,16 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn logout_is_gated_by_beta_flag_and_agent_capability(cx: &mut gpui::TestAppContext) {
-        cx.update(|cx| {
-            let store = settings::SettingsStore::test(cx);
-            cx.set_global(store);
-            settings::SettingsStore::update_global(cx, |store, _| {
-                store.register_setting::<feature_flags::FeatureFlagsSettings>();
-            });
-            feature_flags::FeatureFlagStore::init(cx);
-        });
+    async fn logout_support_requires_agent_capability(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| set_acp_beta_override(cx, "off"));
+        assert!(!cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()));
 
         let fs = fs::FakeFs::new(cx.executor());
         fs.insert_tree("/", serde_json::json!({ "a": {} })).await;
         let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
         let mut harness = test_support::connect_fake_acp_connection(project, cx).await;
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, _| {
-                store.register_setting::<feature_flags::FeatureFlagsSettings>();
-            });
-            feature_flags::FeatureFlagStore::init(cx);
-        });
 
-        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
+        assert!(!harness.connection.supports_logout());
         let unsupported_logout = cx.update(|cx| harness.connection.logout(cx));
         let error = unsupported_logout
             .await
@@ -3151,35 +3139,7 @@ mod tests {
             .agent_capabilities
             .auth = acp::AgentAuthCapabilities::new().logout(acp::LogoutCapabilities::new());
 
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    content
-                        .feature_flags
-                        .get_or_insert_default()
-                        .insert("acp-beta".to_string(), "off".to_string());
-                });
-            });
-        });
-        assert!(!cx.update(|cx| harness.connection.supports_logout(cx)));
-        let disabled_logout = cx.update(|cx| harness.connection.logout(cx));
-        let error = disabled_logout
-            .await
-            .expect_err("logout should be rejected when acp-beta is disabled");
-        assert_eq!(error.to_string(), "Logout is not supported by this agent.");
-        assert_eq!(harness.logout_count.load(Ordering::SeqCst), 0);
-
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |content| {
-                    content
-                        .feature_flags
-                        .get_or_insert_default()
-                        .insert("acp-beta".to_string(), "on".to_string());
-                });
-            });
-        });
-        assert!(cx.update(|cx| harness.connection.supports_logout(cx)));
+        assert!(harness.connection.supports_logout());
         cx.update(|cx| harness.connection.logout(cx))
             .await
             .expect("logout should be sent when the agent advertises support");

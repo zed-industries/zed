@@ -132,7 +132,7 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn supports_logout(&self, _cx: &App) -> bool {
+    fn supports_logout(&self) -> bool {
         false
     }
 
