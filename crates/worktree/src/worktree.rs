@@ -2992,38 +2992,6 @@ impl LocalSnapshot {
 }
 
 impl BackgroundScannerState {
-    fn should_scan_directory(
-        &self,
-        entry: &Entry,
-        scan_symlinks: settings::ScanSymlinksSetting,
-    ) -> bool {
-        use settings::ScanSymlinksSetting;
-
-        let scan_external = entry.is_external
-            && scan_symlinks == ScanSymlinksSetting::Always
-            && self.scanning_enabled
-            && (!entry.is_ignored || entry.is_always_included);
-
-        (self.scanning_enabled && !entry.is_external && (!entry.is_ignored || entry.is_always_included))
-            || scan_external
-            || entry.path.file_name() == Some(DOT_GIT)
-            || entry.path.file_name() == Some(local_settings_folder_name())
-            || entry.path.file_name() == Some(local_vscode_folder_name())
-            // In Always mode, external directories are already covered by `scan_external` above,
-            // so we exclude them from the scanned_dirs check to avoid re-scanning them a second
-            // time via a different code path with potentially different conditions.
-            || ((!entry.is_external || scan_symlinks != ScanSymlinksSetting::Always)
-                && self.scanned_dirs.contains(&entry.id)) // If we've ever scanned it, keep scanning
-            || self
-                .paths_to_scan
-                .iter()
-                .any(|p| p.starts_with(&entry.path))
-            || self
-                .path_prefixes_to_scan
-                .iter()
-                .any(|p| entry.path.starts_with(p))
-    }
-
     async fn enqueue_scan_dir(
         &self,
         abs_path: Arc<Path>,
@@ -5046,7 +5014,7 @@ impl BackgroundScanner {
         for entry in &mut new_entries {
             state.reuse_entry_id(entry);
             if entry.is_dir() {
-                if state.should_scan_directory(entry, self.settings.scan_symlinks) {
+                if self.should_scan_directory(&state, entry) {
                     job_ix += 1;
                 } else {
                     log::debug!("defer scanning directory {:?}", entry.path);
@@ -5208,7 +5176,7 @@ impl BackgroundScanner {
                     fs_entry.is_hidden = self.settings.is_path_hidden(path);
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
-                        if state.should_scan_directory(&fs_entry, self.settings.scan_symlinks)
+                        if self.should_scan_directory(&state, &fs_entry)
                             || (self.track_git_repositories
                                 && fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
@@ -5500,7 +5468,7 @@ impl BackgroundScanner {
                 // Scan any directories that were previously ignored and weren't previously scanned.
                 if was_ignored && !entry.is_ignored && entry.kind.is_unloaded() {
                     let state = self.state.lock().await;
-                    if state.should_scan_directory(&entry, self.settings.scan_symlinks) {
+                    if self.should_scan_directory(&state, &entry) {
                         state
                             .enqueue_scan_dir(
                                 abs_path.clone(),
@@ -5659,6 +5627,27 @@ impl BackgroundScanner {
 
     fn is_path_private(&self, path: &RelPath) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
+    }
+
+    fn should_scan_directory(&self, state: &BackgroundScannerState, entry: &Entry) -> bool {
+        let scannable = state.scanning_enabled
+            && (!entry.is_external
+                || self.settings.scan_symlinks == settings::ScanSymlinksSetting::Always)
+            && (!entry.is_ignored || entry.is_always_included);
+
+        scannable
+            || entry.path.file_name() == Some(DOT_GIT)
+            || entry.path.file_name() == Some(local_settings_folder_name())
+            || entry.path.file_name() == Some(local_vscode_folder_name())
+            || state.scanned_dirs.contains(&entry.id) // If we've ever scanned it, keep scanning
+            || state
+                .paths_to_scan
+                .iter()
+                .any(|p| p.starts_with(&entry.path))
+            || state
+                .path_prefixes_to_scan
+                .iter()
+                .any(|p| entry.path.starts_with(p))
     }
 
     async fn next_scan_request(&self) -> Result<ScanRequest> {
