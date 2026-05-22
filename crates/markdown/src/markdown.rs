@@ -630,6 +630,28 @@ impl Markdown {
         &self.source
     }
 
+    pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
+        self.parsed_markdown.events.iter().find_map(|(_, event)| {
+            let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
+                return None;
+            };
+
+            match kind {
+                CodeBlockKind::FencedLang(language) => self
+                    .parsed_markdown
+                    .languages_by_name
+                    .get(language)
+                    .cloned(),
+                CodeBlockKind::FencedSrc(path_range) => self
+                    .parsed_markdown
+                    .languages_by_path
+                    .get(&path_range.path)
+                    .cloned(),
+                CodeBlockKind::Fenced | CodeBlockKind::Indented => None,
+            }
+        })
+    }
+
     pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
         self.source = SharedString::new(self.source.to_string() + text);
         self.parse(cx);
