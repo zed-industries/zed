@@ -246,9 +246,9 @@ impl Primitive {
             Primitive::Quad(quad) => &quad.bounds,
             Primitive::Path(path) => &path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
-            Primitive::MonochromeSprite { sprite, .. } => &sprite.bounds,
-            Primitive::SubpixelSprite { sprite, .. } => &sprite.bounds,
-            Primitive::PolychromeSprite { sprite, .. } => &sprite.bounds,
+            Primitive::MonochromeSprite { sprite, tile_ref: _ } => &sprite.bounds,
+            Primitive::SubpixelSprite { sprite, tile_ref: _ } => &sprite.bounds,
+            Primitive::PolychromeSprite { sprite, tile_ref: _ } => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
     }
@@ -259,9 +259,9 @@ impl Primitive {
             Primitive::Quad(quad) => &quad.content_mask,
             Primitive::Path(path) => &path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
-            Primitive::MonochromeSprite { sprite, .. } => &sprite.content_mask,
-            Primitive::SubpixelSprite { sprite, .. } => &sprite.content_mask,
-            Primitive::PolychromeSprite { sprite, .. } => &sprite.content_mask,
+            Primitive::MonochromeSprite { sprite, tile_ref: _ } => &sprite.content_mask,
+            Primitive::SubpixelSprite { sprite, tile_ref: _ } => &sprite.content_mask,
+            Primitive::PolychromeSprite { sprite, tile_ref: _ } => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
