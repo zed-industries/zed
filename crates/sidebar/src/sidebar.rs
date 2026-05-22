@@ -422,23 +422,9 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
-/// Identity-and-layout key for a [`ListEntry`], used by [`Sidebar::update_entries`] to diff
-/// the entry list across rebuilds and update [`ListState`] only over the changed range.
-///
-/// Items outside the spliced range keep their measured bounds, so the sticky project
-/// header (which reads `ListState::bounds_for_item` to compute its pushed-off offset)
-/// stays in place instead of snapping to the wrong position for a frame.
-///
-/// For the optimization to be sound, two entries with equal [`EntryShape`] must render
-/// to the same height. Today that holds because:
-/// - For [`ListEntry::ProjectHeader`], the header is a fixed-height row, and the only
-///   conditional sub-row (`No threads yet`) is gated on `!is_collapsed && !has_threads`.
-/// - For [`ListEntry::Thread`] and [`ListEntry::Terminal`], `ThreadItem` always renders a
-///   two-row layout, because `format_history_entry_timestamp` is always non-empty.
-///
-/// If `ThreadItem`'s layout becomes conditional on per-entry state (e.g. the timestamp
-/// row stops being unconditional, or a new conditional row is added), those flags must be
-/// added here so the splice still invalidates measurements for affected items.
+/// Identity-and-layout key for a [`ListEntry`] used to preserve measured list items
+/// across rebuilds. Equal shapes must render to the same height; add any new
+/// height-affecting state here.
 #[derive(Debug, PartialEq, Eq)]
 enum EntryShape {
     ProjectHeader {
@@ -1868,20 +1854,13 @@ impl Sidebar {
         }
 
         let had_notifications = self.has_notifications(cx);
-        // Snapshot the shapes of the current entries, paired with the current collapse
-        // state read from `multi_workspace`. Collapse state isn't mutated by
-        // `rebuild_contents`, so the same `MultiWorkspace` reference is valid for both
-        // snapshots; this avoids an `Entity::upgrade` per project header on each call.
         let previous_shapes: Vec<EntryShape> =
             self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
         self.refresh_draft_editor_observations(cx);
 
-        // Diff the new shapes against `previous_shapes` and splice only the changed range
-        // into `list_state`. Items outside that range keep their measured bounds, which is
-        // what keeps the sticky project header from snapping to the wrong position for a
-        // frame when entries are added, removed, or reordered. See [`EntryShape`].
+        // Preserve measurements for unchanged entries so sticky headers do not flicker.
         self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
         if had_notifications != self.has_notifications(cx) {
@@ -1893,11 +1872,7 @@ impl Sidebar {
         cx.notify();
     }
 
-    /// Walks the new entries in lockstep with `previous_shapes` and, if they differ,
-    /// calls `ListState::splice` on just the changed range. The lockstep walk is lazy,
-    /// so the common no-op case (a status / title / live-info / keystroke update where
-    /// nothing structural changed) returns without allocating a second vector or touching
-    /// `list_state` at all.
+    /// Splices only the changed entry range, leaving unchanged item measurements intact.
     fn apply_list_state_diff(
         &self,
         previous_shapes: &[EntryShape],
@@ -1913,9 +1888,6 @@ impl Sidebar {
             }
         };
 
-        // Mismatch: materialize the rest of the new shapes (including the leading item we
-        // already pulled off `new_iter`) so we can find the common suffix and bound the
-        // splice to just the range that actually changed.
         let new_tail: Vec<EntryShape> = leading_new.into_iter().chain(new_iter).collect();
         let prev_tail = &previous_shapes[prefix_len..];
         let suffix_len = prev_tail
