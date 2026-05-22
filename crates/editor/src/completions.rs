@@ -263,15 +263,13 @@ impl Editor {
 
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
-        let in_snippet_choice = self.snippet_stack.last().is_some_and(|snippet| {
-            snippet
-                .choices
-                .get(snippet.active_index)
-                .is_some_and(|choices| choices.is_some())
-        });
+        let is_showing_snippet_choices = matches!(
+            completions_source,
+            Some(CompletionsMenuSource::SnippetChoices)
+        );
 
         let anchor = self.selections.newest_anchor();
-        let position = if in_snippet_choice {
+        let position = if is_showing_snippet_choices {
             anchor.start.bias_right(&multibuffer_snapshot)
         } else {
             anchor.head().bias_right(&multibuffer_snapshot)
@@ -317,7 +315,7 @@ impl Editor {
 
         // Hide the current completions menu when query is empty. Without this, cached
         // completions from before the trigger char may be reused (#32774).
-        if query.is_none() && menu_is_open {
+        if query.is_none() && menu_is_open && !is_showing_snippet_choices {
             self.hide_context_menu(window, cx);
         }
 
