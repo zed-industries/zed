@@ -2737,11 +2737,10 @@ impl ThreadView {
     /// Returns true when the entry has been measured and sits entirely below
     /// the current viewport.
     fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
+        let viewport_bounds = self.list_state.viewport_bounds();
         self.list_state
             .bounds_for_item(entry_ix)
-            .is_some_and(|entry_bounds| {
-                !entry_bounds.intersects(&self.list_state.viewport_bounds())
-            })
+            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
     }
 
     pub(crate) fn render_main_agent_awaiting_permission(
