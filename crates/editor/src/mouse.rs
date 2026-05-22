@@ -107,17 +107,6 @@ impl EditorElement {
         })
     }
 
-    pub(super) fn paint_mouse_context_menu(
-        &mut self,
-        layout: &mut EditorLayout,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
-            mouse_context_menu.paint(window, cx);
-        }
-    }
-
     pub(super) fn paint_mouse_listeners(
         &mut self,
         layout: &EditorLayout,

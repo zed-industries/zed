@@ -6454,6 +6454,17 @@ impl EditorElement {
         }
     }
 
+    fn paint_mouse_context_menu(
+        &mut self,
+        layout: &mut EditorLayout,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(mouse_context_menu) = layout.mouse_context_menu.as_mut() {
+            mouse_context_menu.paint(window, cx);
+        }
+    }
+
     pub(crate) fn shape_line_number(
         &self,
         text: SharedString,
@@ -9505,7 +9516,7 @@ pub struct EditorLayout {
     diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     edit_prediction_popover: Option<AnyElement>,
-    pub(super) mouse_context_menu: Option<AnyElement>,
+    mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     pub(crate) sticky_buffer_header: Option<AnyElement>,
