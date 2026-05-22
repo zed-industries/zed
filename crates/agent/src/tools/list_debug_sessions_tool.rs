@@ -73,6 +73,8 @@ impl AgentTool for ListDebugSessionsTool {
                         .unwrap_or_default();
                     let status = if session.is_terminated() {
                         "terminated"
+                    } else if session.is_building() {
+                        "booting"
                     } else if session.any_stopped_thread() {
                         "stopped"
                     } else {
