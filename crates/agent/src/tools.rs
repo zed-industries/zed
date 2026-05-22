@@ -27,6 +27,7 @@ mod update_plan_tool;
 mod update_title_tool;
 mod web_search_tool;
 mod write_file_tool;
+mod write_plan_file_tool;
 
 use crate::AgentTool;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
@@ -84,6 +85,7 @@ pub use update_plan_tool::*;
 pub use update_title_tool::*;
 pub use web_search_tool::*;
 pub use write_file_tool::*;
+pub use write_plan_file_tool::*;
 
 macro_rules! tools {
     ($($tool:ty),* $(,)?) => {
@@ -177,4 +179,5 @@ tools! {
     UpdateTitleTool,
     WebSearchTool,
     WriteFileTool,
+    WritePlanFileTool,
 }

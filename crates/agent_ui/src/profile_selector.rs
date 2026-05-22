@@ -345,6 +345,9 @@ impl ProfilePickerDelegate {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
+            builtin_profiles::PLAN => Some(
+                "Research and write an implementation plan to `.zed/plans/`. Source files are not modified — press Build to execute the plan.",
+            ),
             _ => None,
         }
     }

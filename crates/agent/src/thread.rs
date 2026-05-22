@@ -4,7 +4,7 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool,
+    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool, WritePlanFileTool,
     decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
@@ -1673,6 +1673,12 @@ impl Thread {
             language_registry.clone(),
         ));
         self.add_tool(WriteFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            self.action_log.clone(),
+            language_registry.clone(),
+        ));
+        self.add_tool(WritePlanFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
             self.action_log.clone(),

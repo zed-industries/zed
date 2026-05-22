@@ -1165,6 +1165,29 @@
         "enable_all_context_servers": false,
         "tools": {},
       },
+      "plan": {
+        "name": "Plan",
+        // Read-only mode: research the codebase and produce a markdown plan
+        // at .zed/plans/<slug>.md, but do not modify any source files. Use the
+        // "Build" button in the message editor footer to execute the plan.
+        "enable_all_context_servers": false,
+        "tools": {
+          "diagnostics": true,
+          "fetch": true,
+          "find_path": true,
+          "find_references": true,
+          "go_to_definition": true,
+          "grep": true,
+          "list_directory": true,
+          "read_file": true,
+          "search_web": true,
+          "skill": true,
+          "spawn_agent": true,
+          "update_plan": true,
+          "update_title": true,
+          "write_plan_file": true,
+        },
+      },
     },
     // Where to show notifications when the agent has either completed
     // its response, or else needs confirmation before it can run a

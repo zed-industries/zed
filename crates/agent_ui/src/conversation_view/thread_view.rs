@@ -298,6 +298,9 @@ pub struct ThreadView {
     /// Used for showing/hiding tool call results, terminal output, etc.
     pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
+    /// Paths of plan files we've already revealed in the workspace this
+    /// session, so repeated `write_plan_file` calls don't keep re-opening.
+    opened_plan_files: HashSet<PathBuf>,
     pub expanded_thinking_blocks: HashSet<(usize, usize)>,
     auto_expanded_thinking_block: Option<(usize, usize)>,
     user_toggled_thinking_blocks: HashSet<(usize, usize)>,
@@ -593,6 +596,7 @@ impl ThreadView {
             thread_feedback: Default::default(),
             expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
+            opened_plan_files: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
             auto_expanded_thinking_block: None,
             user_toggled_thinking_blocks: HashSet::default(),
@@ -811,6 +815,7 @@ impl ThreadView {
                 if AgentSettings::get_global(cx).expand_edit_card {
                     self.expanded_tool_calls.insert(tool_call_id.clone());
                 }
+                self.maybe_reveal_plan_file(tool_call_id, window, cx);
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
@@ -3394,6 +3399,7 @@ impl ThreadView {
                                             .children(self.mode_selector.clone())
                                             .children(self.model_selector.clone()),
                                     })
+                                    .children(self.render_build_button(cx))
                                     .child(self.render_send_button(cx)),
                             ),
                     ),
@@ -4133,6 +4139,255 @@ impl ThreadView {
                 }))
                 .into_any_element()
         }
+    }
+
+    /// When `tool_call_id` references a `write_plan_file` tool call, open the
+    /// plan file in the workspace so the user can read/edit it inline.
+    /// Called once per `NewDiff` event; subsequent updates to the same file
+    /// are no-ops because the workspace already has the buffer open.
+    fn maybe_reveal_plan_file(
+        &mut self,
+        tool_call_id: &acp::ToolCallId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread = self.thread.read(cx);
+        let plan_path = thread.entries().iter().find_map(|entry| {
+            let acp_thread::AgentThreadEntry::ToolCall(call) = entry else {
+                return None;
+            };
+            if &call.id != tool_call_id {
+                return None;
+            }
+            // Tool name matches the `NAME` const on `agent::WritePlanFileTool`.
+            // We use the literal here to avoid bringing the `AgentTool` trait
+            // into scope just for this one comparison.
+            if call.tool_name.as_deref() != Some("write_plan_file") {
+                return None;
+            }
+            call.locations.first().map(|loc| loc.path.clone())
+        });
+        let Some(plan_path) = plan_path else {
+            return;
+        };
+        if !self.opened_plan_files.insert(plan_path.clone()) {
+            return;
+        }
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .open_abs_path(plan_path, workspace::OpenOptions::default(), window, cx)
+                .detach_and_log_err(cx);
+        });
+    }
+
+    /// Returns true when the active thread is using the built-in "Plan" profile.
+    fn is_in_plan_mode(&self, cx: &App) -> bool {
+        self.as_native_thread(cx).is_some_and(|thread| {
+            thread.read(cx).profile().as_str() == agent_settings::builtin_profiles::PLAN
+        })
+    }
+
+    /// Scans every visible worktree's `.zed/plans/` directory for `.md` files
+    /// and returns the absolute path of the most recently modified one. This
+    /// is what "Build" will execute against.
+    fn latest_plan_file(&self, cx: &App) -> Option<PathBuf> {
+        let plans_rel = RelPath::unix(".zed/plans").ok()?;
+        let project = self.thread.read(cx).project().read(cx);
+        let mut best: Option<(std::time::SystemTime, PathBuf)> = None;
+        for worktree in project.visible_worktrees(cx) {
+            let worktree = worktree.read(cx);
+            let snapshot = worktree.snapshot();
+            if snapshot
+                .entry_for_path(plans_rel)
+                .is_none_or(|e| !e.is_dir())
+            {
+                continue;
+            }
+            for entry in snapshot.child_entries(plans_rel) {
+                if !entry.is_file() {
+                    continue;
+                }
+                let path_str = entry.path.as_unix_str();
+                if !path_str.ends_with(".md") {
+                    continue;
+                }
+                let mtime = entry
+                    .mtime
+                    .map(|m| m.timestamp_for_user())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                let abs = worktree.abs_path().join(entry.path.as_std_path());
+                match &best {
+                    Some((best_mtime, _)) if *best_mtime >= mtime => {}
+                    _ => best = Some((mtime, abs)),
+                }
+            }
+        }
+        best.map(|(_, path)| path)
+    }
+
+    /// Switches the thread out of Plan mode and asks the agent to implement
+    /// the given plan file. If `model` is provided, the thread is switched to
+    /// that model before sending; otherwise the current model is used.
+    pub(crate) fn build_plan(
+        &mut self,
+        plan_path: PathBuf,
+        model: Option<Arc<dyn language_model::LanguageModel>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(native_thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        native_thread.update(cx, |thread, cx| {
+            thread.set_profile(
+                AgentProfileId(agent_settings::builtin_profiles::WRITE.into()),
+                cx,
+            );
+            if let Some(model) = model {
+                thread.set_model(model, cx);
+            }
+        });
+
+        // Display the plan path the same way users see it in the project panel:
+        // worktree-prefixed when there are multiple worktrees, otherwise just the relative path.
+        let project = self.thread.read(cx).project().clone();
+        let display_path = project
+            .read(cx)
+            .project_path_for_absolute_path(&plan_path, cx)
+            .and_then(|pp| project.read(cx).short_full_path_for_project_path(&pp, cx))
+            .unwrap_or_else(|| plan_path.to_string_lossy().into_owned());
+
+        let prompt = format!(
+            "Implement the plan in `{display_path}`.\n\n\
+             Workflow:\n\
+             1. Read the plan file fully with `read_file`.\n\
+             2. Use `update_plan` to mirror its TODO list, then work through it in order.\n\
+             3. After completing each TODO, update the plan file to mark that item as `[x]` so it stays in sync with reality.\n\
+             4. If you need to deviate from the plan, append a bullet under `## Decisions Log` in the plan file before changing course.\n\
+             5. When all TODOs are done, run validation and produce a final summary."
+        );
+
+        // Reveal the plan file in the workspace so the user can see it while the agent works.
+        if let Some(workspace) = self.workspace.upgrade() {
+            workspace.update(cx, |workspace, cx| {
+                workspace
+                    .open_abs_path(
+                        plan_path,
+                        workspace::OpenOptions {
+                            visible: Some(workspace::OpenVisible::None),
+                            ..Default::default()
+                        },
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            });
+        }
+
+        self.message_editor.update(cx, |editor, cx| {
+            editor.clear(window, cx);
+            editor.insert_text(&prompt, window, cx);
+        });
+        self.send(window, cx);
+    }
+
+    fn render_build_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.is_in_plan_mode(cx) {
+            return None;
+        }
+        let plan_path = self.latest_plan_file(cx)?;
+        let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
+
+        let current_model_name = self
+            .as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model().map(|m| m.name().0.to_string()));
+
+        let plan_for_left = plan_path.clone();
+        let weak_self = cx.weak_entity();
+
+        let left = ButtonLike::new("build-plan-button")
+            .style(ButtonStyle::Tinted(TintColor::Accent))
+            .disabled(is_generating)
+            .child(Icon::new(IconName::PlayFilled).size(IconSize::Small))
+            .child(Label::new("Build").size(LabelSize::Small))
+            .tooltip({
+                let model_name = current_model_name.clone();
+                move |_window, cx| {
+                    let body = match &model_name {
+                        Some(name) => {
+                            format!("Switch to Write mode and execute the plan with {name}")
+                        }
+                        None => "Switch to Write mode and execute the plan".to_string(),
+                    };
+                    Tooltip::simple(body, cx)
+                }
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.build_plan(plan_for_left.clone(), None, window, cx);
+            }));
+
+        // Right half: a chevron that opens a context menu listing every
+        // configured language model. Clicking a model builds the plan with it.
+        let plan_for_menu = plan_path.clone();
+        let menu_weak = weak_self.clone();
+        let right = PopoverMenu::new("build-plan-model-menu")
+            .trigger(
+                IconButton::new("build-plan-model-trigger", IconName::ChevronDown)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .disabled(is_generating),
+            )
+            .anchor(gpui::Anchor::BottomRight)
+            .offset(gpui::Point {
+                x: px(0.0),
+                y: px(-2.0),
+            })
+            .menu(move |window, cx| {
+                let plan_path = plan_for_menu.clone();
+                let weak_self = menu_weak.clone();
+                Some(ContextMenu::build(
+                    window,
+                    cx,
+                    move |mut menu, _window, cx| {
+                        let models: Vec<Arc<dyn language_model::LanguageModel>> =
+                            LanguageModelRegistry::read_global(cx)
+                                .available_models(cx)
+                                .collect();
+                        if models.is_empty() {
+                            menu = menu.label("No models configured");
+                        } else {
+                            menu = menu.header("Build with model");
+                            for model in models {
+                                let label =
+                                    format!("{} · {}", model.provider_name().0, model.name().0);
+                                let plan_path = plan_path.clone();
+                                let weak_self = weak_self.clone();
+                                let model = model.clone();
+                                menu = menu.entry(label, None, move |window, cx| {
+                                    let plan_path = plan_path.clone();
+                                    let model = model.clone();
+                                    weak_self
+                                        .update(cx, |this, cx| {
+                                            this.build_plan(plan_path, Some(model), window, cx);
+                                        })
+                                        .ok();
+                                });
+                            }
+                        }
+                        menu
+                    },
+                ))
+            });
+
+        Some(
+            SplitButton::new(left, right.into_any_element())
+                .style(SplitButtonStyle::Filled)
+                .into_any_element(),
+        )
     }
 
     fn render_add_context_button(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
