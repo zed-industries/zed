@@ -34,7 +34,6 @@ enum RegistryInstallStatus {
     NotInstalled,
     InstalledRegistry,
     InstalledCustom,
-    InstalledExtension,
 }
 
 #[derive(IntoElement)]
@@ -155,9 +154,6 @@ impl AgentRegistryPage {
                     RegistryInstallStatus::InstalledRegistry
                 }
                 CustomAgentServerSettings::Custom { .. } => RegistryInstallStatus::InstalledCustom,
-                CustomAgentServerSettings::Extension { .. } => {
-                    RegistryInstallStatus::InstalledExtension
-                }
             };
             self.installed_statuses.insert(id.clone(), status);
         }
@@ -558,9 +554,6 @@ impl AgentRegistryPage {
                     })
             }
             RegistryInstallStatus::InstalledCustom => Button::new(button_id, "Installed")
-                .style(ButtonStyle::OutlinedGhost)
-                .disabled(true),
-            RegistryInstallStatus::InstalledExtension => Button::new(button_id, "Installed")
                 .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
         }

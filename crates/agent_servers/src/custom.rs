@@ -88,19 +88,15 @@ impl AgentServer for CustomAgentServer {
         let config_id = config_id.to_string();
         let value_id = value_id.to_string();
 
-        update_settings_file(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .entry(agent_id.0.to_string())
-                .or_insert_with(|| default_settings_for_agent(agent_id, cx));
+                .or_insert_with(default_settings_for_agent);
 
             match settings {
                 settings::CustomAgentServerSettings::Custom {
-                    favorite_config_option_values,
-                    ..
-                }
-                | settings::CustomAgentServerSettings::Extension {
                     favorite_config_option_values,
                     ..
                 }
@@ -129,16 +125,15 @@ impl AgentServer for CustomAgentServer {
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let agent_id = self.agent_id();
-        update_settings_file(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .entry(agent_id.0.to_string())
-                .or_insert_with(|| default_settings_for_agent(agent_id, cx));
+                .or_insert_with(default_settings_for_agent);
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_mode, .. }
-                | settings::CustomAgentServerSettings::Extension { default_mode, .. }
                 | settings::CustomAgentServerSettings::Registry { default_mode, .. } => {
                     *default_mode = mode_id.map(|m| m.to_string());
                 }
@@ -161,16 +156,15 @@ impl AgentServer for CustomAgentServer {
 
     fn set_default_model(&self, model_id: Option<acp::ModelId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let agent_id = self.agent_id();
-        update_settings_file(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .entry(agent_id.0.to_string())
-                .or_insert_with(|| default_settings_for_agent(agent_id, cx));
+                .or_insert_with(default_settings_for_agent);
 
             match settings {
                 settings::CustomAgentServerSettings::Custom { default_model, .. }
-                | settings::CustomAgentServerSettings::Extension { default_model, .. }
                 | settings::CustomAgentServerSettings::Registry { default_model, .. } => {
                     *default_model = model_id.map(|m| m.to_string());
                 }
@@ -205,18 +199,15 @@ impl AgentServer for CustomAgentServer {
         cx: &App,
     ) {
         let agent_id = self.agent_id();
-        update_settings_file(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .entry(agent_id.0.to_string())
-                .or_insert_with(|| default_settings_for_agent(agent_id, cx));
+                .or_insert_with(default_settings_for_agent);
 
             let favorite_models = match settings {
                 settings::CustomAgentServerSettings::Custom {
-                    favorite_models, ..
-                }
-                | settings::CustomAgentServerSettings::Extension {
                     favorite_models, ..
                 }
                 | settings::CustomAgentServerSettings::Registry {
@@ -258,19 +249,15 @@ impl AgentServer for CustomAgentServer {
         let agent_id = self.agent_id();
         let config_id = config_id.to_string();
         let value_id = value_id.map(|s| s.to_string());
-        update_settings_file(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, _cx| {
             let settings = settings
                 .agent_servers
                 .get_or_insert_default()
                 .entry(agent_id.0.to_string())
-                .or_insert_with(|| default_settings_for_agent(agent_id, cx));
+                .or_insert_with(default_settings_for_agent);
 
             match settings {
                 settings::CustomAgentServerSettings::Custom {
-                    default_config_options,
-                    ..
-                }
-                | settings::CustomAgentServerSettings::Extension {
                     default_config_options,
                     ..
                 }
@@ -304,10 +291,6 @@ impl AgentServer for CustomAgentServer {
                 .get(self.agent_id().as_ref())
                 .map(|s| match s {
                     project::agent_server_store::CustomAgentServerSettings::Custom {
-                        default_config_options,
-                        ..
-                    }
-                    | project::agent_server_store::CustomAgentServerSettings::Extension {
                         default_config_options,
                         ..
                     }
@@ -422,28 +405,14 @@ fn is_registry_agent(agent_id: impl Into<AgentId>, cx: &App) -> bool {
     is_in_registry || is_settings_registry
 }
 
-fn default_settings_for_agent(
-    agent_id: impl Into<AgentId>,
-    cx: &App,
-) -> settings::CustomAgentServerSettings {
-    if is_registry_agent(agent_id, cx) {
-        settings::CustomAgentServerSettings::Registry {
-            default_model: None,
-            default_mode: None,
-            env: Default::default(),
-            favorite_models: Vec::new(),
-            default_config_options: Default::default(),
-            favorite_config_option_values: Default::default(),
-        }
-    } else {
-        settings::CustomAgentServerSettings::Extension {
-            default_model: None,
-            default_mode: None,
-            env: Default::default(),
-            favorite_models: Vec::new(),
-            default_config_options: Default::default(),
-            favorite_config_option_values: Default::default(),
-        }
+fn default_settings_for_agent() -> settings::CustomAgentServerSettings {
+    settings::CustomAgentServerSettings::Registry {
+        default_model: None,
+        default_mode: None,
+        env: Default::default(),
+        favorite_models: Vec::new(),
+        default_config_options: Default::default(),
+        favorite_config_option_values: Default::default(),
     }
 }
 
@@ -545,55 +514,6 @@ mod tests {
         );
         cx.update(|cx| {
             assert!(is_registry_agent("agent-from-settings", cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_agent_with_extension_settings_type_is_not_registry(cx: &mut TestAppContext) {
-        init_test(cx);
-        set_agent_server_settings(
-            cx,
-            vec![(
-                "my-extension-agent",
-                settings::CustomAgentServerSettings::Extension {
-                    env: HashMap::default(),
-                    default_mode: None,
-                    default_model: None,
-                    favorite_models: Vec::new(),
-                    default_config_options: HashMap::default(),
-                    favorite_config_option_values: HashMap::default(),
-                },
-            )],
-        );
-        cx.update(|cx| {
-            assert!(!is_registry_agent("my-extension-agent", cx));
-        });
-    }
-
-    #[gpui::test]
-    fn test_default_settings_for_extension_agent(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            assert!(matches!(
-                default_settings_for_agent("some-extension-agent", cx),
-                settings::CustomAgentServerSettings::Extension { .. }
-            ));
-        });
-    }
-
-    #[gpui::test]
-    fn test_default_settings_for_agent_in_registry(cx: &mut TestAppContext) {
-        init_test(cx);
-        init_registry_with_agents(cx, &["new-registry-agent"]);
-        cx.update(|cx| {
-            assert!(matches!(
-                default_settings_for_agent("new-registry-agent", cx),
-                settings::CustomAgentServerSettings::Registry { .. }
-            ));
-            assert!(matches!(
-                default_settings_for_agent("not-in-registry", cx),
-                settings::CustomAgentServerSettings::Extension { .. }
-            ));
         });
     }
 }
