@@ -1,6 +1,6 @@
 use agent_skills::{
     AGENTS_DIR_NAME, GLOBAL_SKILLS_DIR_DISPLAY, MAX_SKILL_DESCRIPTION_LEN, MAX_SKILL_FILE_SIZE,
-    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, extract_skill_frontmatter, global_skills_dir,
+    SKILL_FILE_NAME, SKILLS_DIR_NAME, SkillMetadata, global_skills_dir, parse_skill_file_content,
     slugify_skill_name, validate_description, validate_name,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -45,6 +45,7 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 4;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 5;
 const SCOPE_FIELD_TAB_INDEX: isize = 6;
 const BODY_FIELD_TAB_INDEX: isize = 7;
+const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
 
 pub fn init(_cx: &mut App) {}
 
@@ -597,7 +598,19 @@ impl SkillCreator {
         window.focus(&self.url_editor.focus_handle(cx), cx);
 
         let Some(initial_url) = initial_url else {
-            self.start_url_import(window, cx);
+            self.url_import_task = None;
+            self.url_import_status = UrlImportStatus::Idle;
+
+            if !self.current_url(cx).is_empty() {
+                let url_editor = self.url_editor.clone();
+                window.defer(cx, move |window, cx| {
+                    url_editor.update(cx, |input, cx| {
+                        input.set_text("", window, cx);
+                    });
+                });
+            }
+
+            cx.notify();
             return;
         };
 
@@ -1217,16 +1230,23 @@ async fn fetch_imported_skill_from_url(
     let mut body = Vec::new();
     response
         .body_mut()
+        .take(MAX_SKILL_FILE_SIZE as u64 + 1)
         .read_to_end(&mut body)
         .await
         .context("failed to read response body")?;
 
     if !status.is_success() {
-        let response_text = String::from_utf8_lossy(&body);
+        let response_text = truncated_response_body_for_error(&body);
+        if response_text.is_empty() {
+            anyhow::bail!(
+                "GitHub returned {} while fetching the skill",
+                status.as_u16()
+            );
+        }
         anyhow::bail!(
             "GitHub returned {} while fetching the skill: {}",
             status.as_u16(),
-            response_text.trim()
+            response_text
         );
     }
 
@@ -1298,21 +1318,22 @@ fn ensure_markdown_path(path_segments: &[&str]) -> Result<()> {
 }
 
 fn parse_imported_skill(content: &str, source_url: &str) -> Result<ImportedSkill> {
-    match extract_skill_frontmatter(content) {
-        Ok((metadata, body)) => Ok(ImportedSkill {
+    if content.trim_start().starts_with("---") {
+        let (metadata, body) = parse_skill_file_content(content)?;
+        return Ok(ImportedSkill {
             name: metadata.name,
             description: metadata.description,
             body: body.trim().to_string(),
             disable_model_invocation: metadata.disable_model_invocation,
-        }),
-        Err(_) => Ok(ImportedSkill {
-            name: derived_skill_name_from_url(source_url)
-                .unwrap_or_else(|| "imported-skill".into()),
-            description: derived_description_from_markdown(content).unwrap_or_default(),
-            body: content.trim().to_string(),
-            disable_model_invocation: false,
-        }),
+        });
     }
+
+    Ok(ImportedSkill {
+        name: derived_skill_name_from_url(source_url).unwrap_or_else(|| "imported-skill".into()),
+        description: derived_description_from_markdown(content).unwrap_or_default(),
+        body: content.trim().to_string(),
+        disable_model_invocation: false,
+    })
 }
 
 fn derived_skill_name_from_url(source_url: &str) -> Option<String> {
@@ -1320,6 +1341,20 @@ fn derived_skill_name_from_url(source_url: &str) -> Option<String> {
     let file_name = url.path_segments()?.next_back()?;
     let stem = file_name.strip_suffix(".md").unwrap_or(file_name);
     slugify_skill_name(stem)
+}
+
+fn truncated_response_body_for_error(body: &[u8]) -> String {
+    let text = String::from_utf8_lossy(body);
+    let text = text.trim();
+    if text.len() <= URL_IMPORT_ERROR_BODY_MAX_LEN {
+        return text.to_string();
+    }
+
+    let mut end = URL_IMPORT_ERROR_BODY_MAX_LEN;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", text[..end].trim_end())
 }
 
 fn derived_description_from_markdown(content: &str) -> Option<String> {
@@ -1439,7 +1474,87 @@ mod tests {
     use super::*;
     use agent_skills::{SkillSource, parse_skill_frontmatter};
     use fs::FakeFs;
-    use std::path::Path;
+    use std::{
+        io,
+        path::Path,
+        pin::Pin,
+        sync::{Arc, Mutex},
+        task::{self, Poll},
+    };
+
+    struct TestHttpClient {
+        status: http_client::StatusCode,
+        body: Mutex<Option<AsyncBody>>,
+    }
+
+    impl TestHttpClient {
+        fn new(status: u16, body: AsyncBody) -> Arc<dyn HttpClient> {
+            Arc::new(Self {
+                status: http_client::StatusCode::from_u16(status)
+                    .expect("test status code should be valid"),
+                body: Mutex::new(Some(body)),
+            })
+        }
+    }
+
+    impl HttpClient for TestHttpClient {
+        fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            _req: http_client::Request<AsyncBody>,
+        ) -> futures::future::BoxFuture<'static, Result<http_client::Response<AsyncBody>>> {
+            let status = self.status;
+            let body = match self.body.lock() {
+                Ok(mut body) => body.take(),
+                Err(_) => {
+                    return Box::pin(async {
+                        Err(anyhow::anyhow!("test response body mutex was poisoned"))
+                    });
+                }
+            };
+            let Some(body) = body else {
+                return Box::pin(async {
+                    Err(anyhow::anyhow!("test response body was already consumed"))
+                });
+            };
+
+            Box::pin(async move {
+                http_client::Response::builder()
+                    .status(status)
+                    .body(body)
+                    .map_err(anyhow::Error::new)
+            })
+        }
+    }
+
+    struct FailsAfterLimitReader {
+        bytes_read: usize,
+        limit: usize,
+    }
+
+    impl futures::AsyncRead for FailsAfterLimitReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut task::Context<'_>,
+            buffer: &mut [u8],
+        ) -> Poll<io::Result<usize>> {
+            if self.bytes_read >= self.limit {
+                return Poll::Ready(Err(io::Error::other("read past limit")));
+            }
+
+            let byte_count = buffer.len().min(self.limit - self.bytes_read);
+            buffer[..byte_count].fill(b'a');
+            self.bytes_read += byte_count;
+            Poll::Ready(Ok(byte_count))
+        }
+    }
 
     // Name and description validation rules are unit-tested in
     // `agent_skills`, which owns `validate_name` / `validate_description`
@@ -1534,6 +1649,76 @@ mod tests {
             "# Code Review\n\nReview code for maintainability."
         );
         assert!(!imported.disable_model_invocation);
+    }
+
+    #[test]
+    fn parse_imported_skill_reuses_skill_metadata_validation() {
+        let error = parse_imported_skill(
+            "---\nname: Imported Skill\ndescription: Imported from GitHub.\n---\n\n# Instructions\n",
+            "https://raw.githubusercontent.com/owner/repo/main/imported-skill.md",
+        )
+        .expect_err("invalid skill metadata should be rejected instead of imported");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("Skill name must contain only lowercase letters"),
+            "error should come from shared skill metadata validation, got: {message}"
+        );
+    }
+
+    #[gpui::test]
+    async fn fetch_imported_skill_stops_reading_after_size_limit(_cx: &mut gpui::TestAppContext) {
+        let client = TestHttpClient::new(
+            200,
+            AsyncBody::from_reader(FailsAfterLimitReader {
+                bytes_read: 0,
+                limit: MAX_SKILL_FILE_SIZE + 1,
+            }),
+        );
+
+        let error = fetch_imported_skill_from_url(
+            client,
+            "https://github.com/owner/repo/blob/main/skill.md".to_string(),
+        )
+        .await
+        .expect_err("oversized responses should be rejected");
+        let message = error.to_string();
+
+        assert!(
+            message.contains("exceeds maximum size"),
+            "error should report the skill size limit, got: {message}"
+        );
+        assert!(
+            !message.contains("failed to read response body"),
+            "reader should not be polled past the limit, got: {message}"
+        );
+    }
+
+    #[gpui::test]
+    async fn fetch_imported_skill_truncates_error_response_body(_cx: &mut gpui::TestAppContext) {
+        let body = format!(
+            "{}tail-that-should-not-appear",
+            "x".repeat(URL_IMPORT_ERROR_BODY_MAX_LEN + 20)
+        );
+        let client = TestHttpClient::new(500, AsyncBody::from(body));
+
+        let error = fetch_imported_skill_from_url(
+            client,
+            "https://github.com/owner/repo/blob/main/skill.md".to_string(),
+        )
+        .await
+        .expect_err("non-success responses should be rejected");
+        let message = error.to_string();
+
+        assert!(message.contains("GitHub returned 500"));
+        assert!(
+            message.ends_with('…'),
+            "error body should be visibly truncated, got: {message}"
+        );
+        assert!(
+            !message.contains("tail-that-should-not-appear"),
+            "error body should not include the unbounded tail, got: {message}"
+        );
     }
 
     #[gpui::test]
