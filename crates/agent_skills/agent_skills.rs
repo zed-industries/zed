@@ -1800,6 +1800,48 @@ description: A skill with no body content
     }
 
     #[gpui::test]
+    async fn test_load_skill_frontmatter_with_emoji_at_chunk_boundary(cx: &mut TestAppContext) {
+        // We must be able to load skill frontmatter even when a
+        // multipoint grapheme crosses the chunk read boundary.
+        let fs = FakeFs::new(cx.executor());
+        let chunk_size = 4096;
+
+        let frontmatter = "---\nname: my-skill\ndescription: Example skill testing multipoint graphemes at chunk boundary\n---\n";
+
+        // Pad contents so that the emoji's first byte lands
+        // at the last byte of the first read chunk.
+        let padding = "a".repeat(chunk_size - frontmatter.len() - 1);
+        let content = format!("{frontmatter}{padding}✅");
+
+        assert!(
+            (frontmatter.len() + padding.len()) < chunk_size,
+            "emoji must start before the second chunk"
+        );
+        assert!(
+            content.len() > chunk_size,
+            "skill is longer than a chunk, so we know that the emoji crosses chunk boundaries"
+        );
+
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "my-skill": {
+                    "SKILL.md": content,
+                }
+            }),
+        )
+        .await;
+
+        load_skill_frontmatter(
+            fs as Arc<dyn Fs>,
+            PathBuf::from("/skills/my-skill/SKILL.md"),
+            SkillSource::Global,
+        )
+        .await
+        .expect("frontmatter should parse even when a multipoint grapheme such as an emoji crosses the byte chunk boundary");
+    }
+
+    #[gpui::test]
     async fn test_read_skill_body_returns_trimmed_body(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
