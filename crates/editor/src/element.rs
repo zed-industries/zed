@@ -9479,10 +9479,10 @@ impl IntoElement for EditorElement {
 }
 
 pub struct EditorLayout {
-    pub(crate) position_map: Rc<PositionMap>,
+    pub(super) position_map: Rc<PositionMap>,
     pub(super) hitbox: Hitbox,
-    pub(crate) gutter_hitbox: Hitbox,
-    pub(crate) content_origin: gpui::Point<Pixels>,
+    pub(super) gutter_hitbox: Hitbox,
+    pub(super) content_origin: gpui::Point<Pixels>,
     scrollbars_layout: Option<EditorScrollbars>,
     minimap: Option<MinimapLayout>,
     pub(super) mode: EditorMode,
@@ -9519,8 +9519,8 @@ pub struct EditorLayout {
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
-    pub(crate) sticky_buffer_header: Option<AnyElement>,
-    pub(crate) sticky_headers: Option<crate::header::StickyHeaders>,
+    pub(super) sticky_buffer_header: Option<AnyElement>,
+    pub(super) sticky_headers: Option<crate::header::StickyHeaders>,
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
     text_align: TextAlign,
     content_width: Pixels,
