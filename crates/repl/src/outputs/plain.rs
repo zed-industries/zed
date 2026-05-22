@@ -390,22 +390,19 @@ impl Render for TerminalOutput {
             return div().child(self.full_text(cx)).into_any_element();
         };
 
-        let content = terminal.update(cx, |terminal, cx| {
-            terminal.sync(window, cx);
-            terminal.last_content().clone()
-        });
         let text_style = text_style(window, cx);
-        let text_system = window.text_system();
-
         let minimum_contrast = TerminalSettings::get_global(cx).minimum_contrast;
-        let (rects, batched_text_runs) = TerminalElement::layout_grid(
-            content.cells.into_iter(),
-            0,
-            &text_style,
-            None,
-            minimum_contrast,
-            cx,
-        );
+        let (rects, batched_text_runs) = terminal.update(cx, |terminal, cx| {
+            terminal.sync(window, cx);
+            TerminalElement::layout_grid(
+                terminal.last_content().cells.iter(),
+                0,
+                &text_style,
+                None,
+                minimum_contrast,
+                cx,
+            )
+        });
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
         let text_line_height = text_style.line_height_in_pixels(window.rem_size());
@@ -417,6 +414,7 @@ impl Render for TerminalOutput {
             + 1;
         let height = num_lines as f32 * text_line_height;
 
+        let text_system = window.text_system();
         let font_pixels = text_style.font_size.to_pixels(window.rem_size());
         let font_id = text_system.resolve_font(&text_style.font());
 

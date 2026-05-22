@@ -1776,7 +1776,7 @@ impl Terminal {
 
         cells.extend(content.display_iter.map(|ic| IndexedCell {
             point: terminal_point_from_alacritty(ic.point),
-            cell: terminal_cell_from_alacritty(ic.cell.clone()),
+            cell: terminal_cell_from_alacritty(ic.cell),
         }));
 
         let selection_text = if content.selection.is_some() {

@@ -391,6 +391,30 @@ mod tests {
             _ => panic!("expected extra storage on both cells"),
         }
     }
+
+    #[test]
+    fn terminal_cell_flags_from_alacritty_preserves_raw_bits() {
+        let flags = Flags::INVERSE
+            | Flags::BOLD
+            | Flags::ITALIC
+            | Flags::DIM
+            | Flags::STRIKEOUT
+            | Flags::UNDERCURL
+            | Flags::WIDE_CHAR_SPACER
+            | Flags::WRAPLINE;
+
+        let flags = terminal_cell_flags_from_alacritty(flags);
+
+        assert!(flags.contains(TerminalCellFlags::INVERSE));
+        assert!(flags.contains(TerminalCellFlags::BOLD));
+        assert!(flags.contains(TerminalCellFlags::ITALIC));
+        assert!(flags.contains(TerminalCellFlags::DIM));
+        assert!(flags.contains(TerminalCellFlags::STRIKEOUT));
+        assert!(flags.contains(TerminalCellFlags::UNDERCURL));
+        assert!(flags.contains(TerminalCellFlags::WIDE_CHAR_SPACER));
+        assert!(!flags.contains(TerminalCellFlags::HIDDEN));
+        assert_eq!(flags.0 & Flags::WRAPLINE.bits(), 0);
+    }
 }
 
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
@@ -404,22 +428,38 @@ struct TerminalCellExtra {
 pub(crate) struct TerminalCellFlags(u16);
 
 impl TerminalCellFlags {
-    pub(crate) const BOLD: Self = Self(1 << 0);
-    pub(crate) const ITALIC: Self = Self(1 << 1);
-    pub(crate) const DIM: Self = Self(1 << 2);
-    pub(crate) const INVERSE: Self = Self(1 << 3);
-    pub(crate) const HIDDEN: Self = Self(1 << 4);
-    pub(crate) const STRIKEOUT: Self = Self(1 << 5);
-    pub(crate) const UNDERLINE: Self = Self(1 << 6);
-    pub(crate) const DOUBLE_UNDERLINE: Self = Self(1 << 7);
-    pub(crate) const UNDERCURL: Self = Self(1 << 8);
-    pub(crate) const DOTTED_UNDERLINE: Self = Self(1 << 9);
-    pub(crate) const DASHED_UNDERLINE: Self = Self(1 << 10);
-    pub(crate) const WIDE_CHAR: Self = Self(1 << 11);
-    pub(crate) const WIDE_CHAR_SPACER: Self = Self(1 << 12);
-    pub(crate) const LEADING_WIDE_CHAR_SPACER: Self = Self(1 << 13);
+    pub(crate) const INVERSE: Self = Self(1 << 0);
+    pub(crate) const BOLD: Self = Self(1 << 1);
+    pub(crate) const ITALIC: Self = Self(1 << 2);
+    pub(crate) const UNDERLINE: Self = Self(1 << 3);
+    pub(crate) const WIDE_CHAR: Self = Self(1 << 5);
+    pub(crate) const WIDE_CHAR_SPACER: Self = Self(1 << 6);
+    pub(crate) const DIM: Self = Self(1 << 7);
+    pub(crate) const HIDDEN: Self = Self(1 << 8);
+    pub(crate) const STRIKEOUT: Self = Self(1 << 9);
+    pub(crate) const LEADING_WIDE_CHAR_SPACER: Self = Self(1 << 10);
+    pub(crate) const DOUBLE_UNDERLINE: Self = Self(1 << 11);
+    pub(crate) const UNDERCURL: Self = Self(1 << 12);
+    pub(crate) const DOTTED_UNDERLINE: Self = Self(1 << 13);
+    pub(crate) const DASHED_UNDERLINE: Self = Self(1 << 14);
     const ALL_UNDERLINES: Self = Self(
         Self::UNDERLINE.0
+            | Self::DOUBLE_UNDERLINE.0
+            | Self::UNDERCURL.0
+            | Self::DOTTED_UNDERLINE.0
+            | Self::DASHED_UNDERLINE.0,
+    );
+    const ALL: Self = Self(
+        Self::INVERSE.0
+            | Self::BOLD.0
+            | Self::ITALIC.0
+            | Self::UNDERLINE.0
+            | Self::WIDE_CHAR.0
+            | Self::WIDE_CHAR_SPACER.0
+            | Self::DIM.0
+            | Self::HIDDEN.0
+            | Self::STRIKEOUT.0
+            | Self::LEADING_WIDE_CHAR_SPACER.0
             | Self::DOUBLE_UNDERLINE.0
             | Self::UNDERCURL.0
             | Self::DOTTED_UNDERLINE.0
@@ -458,103 +498,7 @@ impl BitOrAssign for TerminalCellFlags {
 }
 
 fn terminal_cell_flags_from_alacritty(flags: Flags) -> TerminalCellFlags {
-    let mut terminal_flags = TerminalCellFlags::empty();
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::BOLD,
-        TerminalCellFlags::BOLD,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::ITALIC,
-        TerminalCellFlags::ITALIC,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::DIM,
-        TerminalCellFlags::DIM,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::INVERSE,
-        TerminalCellFlags::INVERSE,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::HIDDEN,
-        TerminalCellFlags::HIDDEN,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::STRIKEOUT,
-        TerminalCellFlags::STRIKEOUT,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::UNDERLINE,
-        TerminalCellFlags::UNDERLINE,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::DOUBLE_UNDERLINE,
-        TerminalCellFlags::DOUBLE_UNDERLINE,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::UNDERCURL,
-        TerminalCellFlags::UNDERCURL,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::DOTTED_UNDERLINE,
-        TerminalCellFlags::DOTTED_UNDERLINE,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::DASHED_UNDERLINE,
-        TerminalCellFlags::DASHED_UNDERLINE,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::WIDE_CHAR,
-        TerminalCellFlags::WIDE_CHAR,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::WIDE_CHAR_SPACER,
-        TerminalCellFlags::WIDE_CHAR_SPACER,
-    );
-    add_terminal_cell_flag(
-        &mut terminal_flags,
-        flags,
-        Flags::LEADING_WIDE_CHAR_SPACER,
-        TerminalCellFlags::LEADING_WIDE_CHAR_SPACER,
-    );
-    terminal_flags
-}
-
-fn add_terminal_cell_flag(
-    terminal_flags: &mut TerminalCellFlags,
-    alacritty_flags: Flags,
-    alacritty_flag: Flags,
-    terminal_flag: TerminalCellFlags,
-) {
-    if alacritty_flags.contains(alacritty_flag) {
-        terminal_flags.insert(terminal_flag);
-    }
+    TerminalCellFlags(flags.bits() & TerminalCellFlags::ALL.0)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -684,15 +628,18 @@ impl TerminalCell {
     }
 }
 
-pub(super) fn terminal_cell_from_alacritty(cell: AlacCell) -> TerminalCell {
-    let zerowidth = cell.zerowidth().unwrap_or_default().to_vec();
+pub(super) fn terminal_cell_from_alacritty(cell: &AlacCell) -> TerminalCell {
+    let zerowidth = cell
+        .zerowidth()
+        .filter(|zerowidth| !zerowidth.is_empty())
+        .map(<[char]>::to_vec);
     let underline_color = cell.underline_color().map(Into::into);
     let hyperlink = cell.hyperlink().map(terminal_hyperlink_from_alacritty);
-    let extra = if zerowidth.is_empty() && underline_color.is_none() && hyperlink.is_none() {
+    let extra = if zerowidth.is_none() && underline_color.is_none() && hyperlink.is_none() {
         None
     } else {
         Some(Arc::new(TerminalCellExtra {
-            zerowidth,
+            zerowidth: zerowidth.unwrap_or_default(),
             underline_color,
             hyperlink,
         }))

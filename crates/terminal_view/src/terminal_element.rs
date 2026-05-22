@@ -339,8 +339,8 @@ impl TerminalElement {
         .track_focus(&focus)
     }
 
-    pub fn layout_grid(
-        grid: impl Iterator<Item = IndexedCell>,
+    pub fn layout_grid<'a>(
+        grid: impl Iterator<Item = &'a IndexedCell>,
         start_line_offset: i32,
         text_style: &TextStyle,
         hyperlink: Option<(HighlightStyle, &TerminalRange)>,
@@ -414,10 +414,10 @@ impl TerminalElement {
 
                 //Layout current cell text
                 {
-                    if !is_blank(&cell) {
+                    if !is_blank(cell) {
                         cell_count += 1;
                         let cell_style = TerminalElement::cell_style(
-                            &cell,
+                            cell,
                             fg,
                             bg,
                             theme,
@@ -1131,7 +1131,7 @@ impl Element for TerminalElement {
                     // Fast path: terminal fully visible, no clipping needed.
                     // Avoid grouping/allocation overhead by streaming cells directly.
                     TerminalElement::layout_grid(
-                        cells.iter().cloned(),
+                        cells.iter(),
                         0,
                         &text_style,
                         last_hovered_word
@@ -1162,8 +1162,7 @@ impl Element for TerminalElement {
                             .into_iter()
                             .skip(rows_above_viewport)
                             .take(visible_row_count)
-                            .flat_map(|(_, line_cells)| line_cells)
-                            .cloned(),
+                            .flat_map(|(_, line_cells)| line_cells),
                         rows_above_viewport as i32,
                         &text_style,
                         last_hovered_word
