@@ -1404,6 +1404,30 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
 
 #[perf]
 #[gpui::test]
+async fn test_ime_transaction_undo(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j k",
+            NormalBefore,
+            Some("vim_mode == insert"),
+        )])
+    });
+
+    cx.set_state("ˇone", Mode::Normal);
+    cx.simulate_keystrokes("i j");
+    cx.assert_state("ˇjone", Mode::Insert);
+    assert_pending_input(&mut cx, "«j»one");
+    cx.simulate_keystrokes("k");
+    cx.assert_state("ˇone", Mode::Normal);
+
+    cx.simulate_keystrokes("u");
+    cx.assert_state("ˇ", Mode::Normal);
+}
+
+#[perf]
+#[gpui::test]
 async fn test_lsp_completions_undo(cx: &mut gpui::TestAppContext) {
     use editor::test::editor_lsp_test_context::EditorLspTestContext;
     VimTestContext::init(cx);
