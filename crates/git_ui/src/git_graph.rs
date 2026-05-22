@@ -42,12 +42,12 @@ use std::{
     cell::Cell,
     ops::Range,
     rc::Rc,
-    sync::{Arc, OnceLock},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
-use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
+use time::{OffsetDateTime, UtcOffset};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
     DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
@@ -339,24 +339,24 @@ struct SearchState {
     case_sensitive: bool,
     editor: Entity<Editor>,
     state: QueryState,
-    pub matches: IndexSet<Oid>,
-    pub selected_index: Option<usize>,
+    matches: IndexSet<Oid>,
+    selected_index: Option<usize>,
 }
 
-pub struct SplitState {
+struct SplitState {
     left_ratio: f32,
     visible_left_ratio: f32,
 }
 
 impl SplitState {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             left_ratio: 1.0,
             visible_left_ratio: 1.0,
         }
     }
 
-    pub fn right_ratio(&self) -> f32 {
+    fn right_ratio(&self) -> f32 {
         1.0 - self.visible_left_ratio
     }
 
@@ -390,6 +390,8 @@ impl SplitState {
 actions!(
     git_graph,
     [
+        /// Opens the Git Graph Tab.
+        Open,
         /// Copies the SHA of the selected commit to the clipboard.
         CopyCommitSha,
         /// Copies a tag from the selected commit to the clipboard.
@@ -409,25 +411,23 @@ actions!(
     ]
 );
 
-fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
-    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
-    FORMAT.get_or_init(|| {
-        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
-            .unwrap_or_default()
-    })
+/// Opens the Git Graph Tab at a specific commit.
+#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
+#[action(namespace = git_graph)]
+pub struct OpenAtCommit {
+    pub sha: String,
 }
 
 fn format_timestamp(timestamp: i64) -> String {
-    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
-    };
-
+    let datetime = OffsetDateTime::from_unix_timestamp(timestamp)
+        .unwrap_or_else(|_| OffsetDateTime::now_utc());
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    let local_datetime = datetime.to_offset(local_offset);
-
-    local_datetime
-        .format(timestamp_format())
-        .unwrap_or_default()
+    time_format::format_localized_timestamp(
+        datetime,
+        OffsetDateTime::now_utc(),
+        local_offset,
+        time_format::TimestampFormat::MediumAbsolute,
+    )
 }
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
@@ -892,7 +892,7 @@ pub fn init(cx: &mut App) {
 
                     div.on_action({
                         let workspace = workspace.clone();
-                        move |_: &crate::git_panel::Open, window, cx| {
+                        move |_: &Open, window, cx| {
                             workspace
                                 .update(cx, |workspace, cx| {
                                     let Some(repo) =
@@ -918,7 +918,7 @@ pub fn init(cx: &mut App) {
                         }
                     })
                     .on_action(
-                        move |action: &crate::git_panel::OpenAtCommit, window, cx| {
+                        move |action: &OpenAtCommit, window, cx| {
                             let sha = action.sha.clone();
                             workspace
                                 .update(cx, |workspace, cx| {

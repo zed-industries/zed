@@ -1172,7 +1172,7 @@ impl Render for CommitViewToolbar {
                         .tooltip(Tooltip::text("Show in Git Graph"))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
-                                Box::new(crate::git_panel::OpenAtCommit {
+                                Box::new(crate::git_graph::OpenAtCommit {
                                     sha: sha_for_graph.clone(),
                                 }),
                                 cx,

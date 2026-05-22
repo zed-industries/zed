@@ -137,21 +137,6 @@ actions!(
     ]
 );
 
-actions!(
-    git_graph,
-    [
-        /// Opens the Git Graph Tab.
-        Open,
-    ]
-);
-
-/// Opens the Git Graph Tab at a specific commit.
-#[derive(Clone, PartialEq, serde::Deserialize, schemars::JsonSchema, gpui::Action)]
-#[action(namespace = git_graph)]
-pub struct OpenAtCommit {
-    pub sha: String,
-}
-
 fn prompt<T>(
     msg: &str,
     detail: Option<&str>,
@@ -4996,10 +4981,15 @@ impl GitPanel {
                             IconButton::new("git-graph-button", IconName::GitGraph)
                                 .icon_size(IconSize::Small)
                                 .tooltip(|_window, cx| {
-                                    Tooltip::for_action("Open Git Graph", &Open, cx)
+                                    Tooltip::for_action(
+                                        "Open Git Graph",
+                                        &crate::git_graph::Open,
+                                        cx,
+                                    )
                                 })
                                 .on_click(|_, window, cx| {
-                                    window.dispatch_action(Open.boxed_clone(), cx)
+                                    window
+                                        .dispatch_action(crate::git_graph::Open.boxed_clone(), cx)
                                 }),
                         ),
                 ),
