@@ -8,7 +8,8 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet, VecDeque};
 use encoding_rs::Encoding;
 use fs::{
-    Fs, MTime, PathEvent, RemoveOptions, TrashedEntry, Watcher, copy_recursive, read_dir_items,
+    Fs, MTime, PathEvent, PathEventKind, RemoveOptions, TrashedEntry, Watcher, copy_recursive,
+    read_dir_items,
 };
 use futures::{
     FutureExt as _, Stream, StreamExt,
@@ -4374,6 +4375,8 @@ impl BackgroundScanner {
             events = Self::normalized_events_for_worktree(&state, &root_canonical_path, events);
         }
 
+        log::debug!("raw events for process_events: {events:?}");
+
         fn skip_ix(ranges: &mut SmallVec<[Range<usize>; 4]>, ix: usize) {
             if let Some(last_range) = ranges.last_mut()
                 && last_range.end == ix
@@ -4418,16 +4421,25 @@ impl BackgroundScanner {
                 }
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    let skip = skipped_files_in_dot_git.iter().any(|skipped| {
+                    let is_ignored = skipped_files_in_dot_git.iter().any(|skipped| {
                         OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()
                     }) || skipped_dirs_in_dot_git
                         .iter()
-                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir))
-                        || path_in_git_dir == Path::new("")
-                            && self.fs.is_dir(&dot_git_abs_path).await;
-                    if skip {
+                        .any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir));
+                    let is_dot_git = path_in_git_dir == Path::new("")
+                        && matches!(event.kind, Some(PathEventKind::Changed))
+                        && self.fs.is_dir(&dot_git_abs_path).await;
+                    if is_ignored {
                         log::debug!(
                             "ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories"
+                        );
+                        skip_ix(&mut ranges_to_drop, ix);
+                        continue;
+                    }
+                    if is_dot_git {
+                        log::debug!(
+                            "ignoring event {abs_path:?} for .git directory itself (kind: {:?})",
+                            event.kind
                         );
                         skip_ix(&mut ranges_to_drop, ix);
                         continue;

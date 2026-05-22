@@ -42,6 +42,7 @@ pub struct OpenRequest {
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub remote_connection: Option<RemoteConnectionOptions>,
+    pub open_behavior: Option<cli::OpenBehavior>,
 }
 
 pub enum OpenRequestKind {
@@ -51,6 +52,7 @@ pub enum OpenRequestKind {
             Box<dyn CliResponseSink>,
         ),
     ),
+    FocusApp,
     Extension {
         extension_id: String,
     },
@@ -82,6 +84,7 @@ impl std::fmt::Debug for OpenRequestKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CliConnection(_) => write!(f, "CliConnection(..)"),
+            Self::FocusApp => write!(f, "FocusApp"),
             Self::Extension { extension_id } => f
                 .debug_struct("Extension")
                 .field("extension_id", extension_id)
@@ -118,12 +121,22 @@ impl std::fmt::Debug for OpenRequestKind {
 }
 
 impl OpenRequest {
+    pub fn is_focus_app_only(&self) -> bool {
+        matches!(self.kind, Some(OpenRequestKind::FocusApp))
+            && self.open_paths.is_empty()
+            && self.diff_paths.is_empty()
+            && self.remote_connection.is_none()
+            && self.join_channel.is_none()
+            && self.open_channel_notes.is_empty()
+    }
+
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
 
         this.diff_paths = request.diff_paths;
         this.diff_all = request.diff_all;
         this.dev_container = request.dev_container;
+        this.open_behavior = request.open_behavior;
         if let Some(wsl) = request.wsl {
             let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
                 if user.is_empty() {
@@ -167,6 +180,8 @@ impl OpenRequest {
                 }
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
+            } else if url == "zed://" || url == "zed://open" || url == "zed://open/" {
+                this.kind = Some(OpenRequestKind::FocusApp);
             } else if let Some(schema_path) = url.strip_prefix("zed://schemas/") {
                 this.kind = Some(OpenRequestKind::BuiltinJsonSchema {
                     schema_path: schema_path.to_string(),
@@ -210,7 +225,8 @@ impl OpenRequest {
     }
 
     fn parse_agent_url(&mut self, agent_path: &str) {
-        // Format: "" or "?prompt=<text>"
+        // Format: "" or "?prompt=<text>".
+        let agent_path = agent_path.strip_prefix('/').unwrap_or(agent_path);
         let external_source_prompt = agent_path.strip_prefix('?').and_then(|query| {
             url::form_urlencoded::parse(query.as_bytes())
                 .find_map(|(key, value)| (key == "prompt").then_some(value))
@@ -368,6 +384,7 @@ pub struct RawOpenRequest {
     pub diff_all: bool,
     pub dev_container: bool,
     pub wsl: Option<String>,
+    pub open_behavior: Option<cli::OpenBehavior>,
 }
 
 impl Global for OpenListener {}
@@ -557,6 +574,7 @@ pub async fn handle_cli_connection(
                                 diff_all,
                                 dev_container,
                                 wsl,
+                                open_behavior: Some(open_behavior),
                             },
                             cx,
                         ) {
@@ -721,6 +739,52 @@ async fn resolve_open_behavior(
     None
 }
 
+pub(crate) fn open_options_for_request(
+    open_behavior: Option<cli::OpenBehavior>,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> workspace::OpenOptions {
+    open_behavior.map_or_else(workspace::OpenOptions::default, |open_behavior| {
+        open_options_for_behavior(open_behavior, location, cx)
+    })
+}
+
+pub(crate) fn open_options_for_behavior(
+    open_behavior: cli::OpenBehavior,
+    location: &SerializedWorkspaceLocation,
+    cx: &App,
+) -> workspace::OpenOptions {
+    // If reuse flag is passed, open a new workspace in an existing window.
+    let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
+        workspace::workspace_windows_for_location(location, cx)
+            .into_iter()
+            .next()
+    } else {
+        None
+    };
+    workspace::OpenOptions {
+        workspace_matching: match open_behavior {
+            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
+                workspace::WorkspaceMatching::None
+            }
+            cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
+            _ => workspace::WorkspaceMatching::MatchExact,
+        },
+        add_dirs_to_sidebar: match open_behavior {
+            cli::OpenBehavior::ExistingWindow => true,
+            // For the default value, we consult the settings to decide
+            // whether to open in a new window or existing window.
+            cli::OpenBehavior::Default => {
+                workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior
+                    == settings::CliDefaultOpenBehavior::ExistingWindow
+            }
+            _ => false,
+        },
+        requesting_window,
+        ..Default::default()
+    }
+}
+
 async fn open_workspaces(
     paths: Vec<String>,
     diff_paths: Vec<[String; 2]>,
@@ -773,39 +837,13 @@ async fn open_workspaces(
     let mut errored = false;
 
     for (location, workspace_paths) in grouped_locations {
-        // If reuse flag is passed, open a new workspace in an existing window.
-        let replace_window = if open_behavior == cli::OpenBehavior::Reuse {
-            cx.update(|cx| {
-                workspace::workspace_windows_for_location(&location, cx)
-                    .into_iter()
-                    .next()
-            })
-        } else {
-            None
-        };
+        let base_open_options =
+            cx.update(|cx| open_options_for_behavior(open_behavior, &location, cx));
         let open_options = workspace::OpenOptions {
-            workspace_matching: match open_behavior {
-                cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
-                    workspace::WorkspaceMatching::None
-                }
-                cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
-                _ => workspace::WorkspaceMatching::MatchExact,
-            },
-            add_dirs_to_sidebar: match open_behavior {
-                cli::OpenBehavior::ExistingWindow => true,
-                // For the default value, we consult the settings to decide
-                // whether to open in a new window or existing window.
-                cli::OpenBehavior::Default => cx.update(|cx| {
-                    workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                        == settings::CliDefaultOpenBehavior::ExistingWindow
-                }),
-                _ => false,
-            },
-            requesting_window: replace_window,
             wait,
             env: env.clone(),
             open_in_dev_container: dev_container,
-            ..Default::default()
+            ..base_open_options
         };
 
         match location {
@@ -1147,6 +1185,25 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_parse_ssh_url_preserves_open_behavior(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["ssh://me@host:/".into()],
+                    open_behavior: Some(cli::OpenBehavior::AlwaysNew),
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        assert_eq!(request.open_behavior, Some(cli::OpenBehavior::AlwaysNew));
+    }
+
+    #[gpui::test]
     fn test_reject_ssh_urls(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
@@ -1166,6 +1223,24 @@ mod tests {
             });
             assert!(result.is_err(), "{input} should be rejected");
         }
+    }
+
+    #[gpui::test]
+    fn test_open_options_for_behavior_always_new(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        let options = cx.update(|cx| {
+            open_options_for_behavior(
+                cli::OpenBehavior::AlwaysNew,
+                &SerializedWorkspaceLocation::Local,
+                cx,
+            )
+        });
+        assert_eq!(
+            options.workspace_matching,
+            workspace::WorkspaceMatching::None
+        );
+        assert!(!options.add_dirs_to_sidebar);
+        assert!(options.requesting_window.is_none());
     }
 
     #[gpui::test]
@@ -1227,6 +1302,63 @@ mod tests {
                 );
             }
             _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_agent_url_with_trailing_slash(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        let request = cx.update(|cx| {
+            OpenRequest::parse(
+                RawOpenRequest {
+                    urls: vec!["zed://agent/?prompt=hello".into()],
+                    ..Default::default()
+                },
+                cx,
+            )
+            .unwrap()
+        });
+
+        match request.kind {
+            Some(OpenRequestKind::AgentPanel {
+                external_source_prompt,
+            }) => {
+                assert_eq!(
+                    external_source_prompt
+                        .as_ref()
+                        .map(ExternalSourcePrompt::as_str),
+                    Some("hello")
+                );
+            }
+            _ => panic!("Expected AgentPanel kind"),
+        }
+    }
+
+    #[gpui::test]
+    fn test_parse_focus_app_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+
+        for url in ["zed://", "zed://open", "zed://open/"] {
+            let request = cx.update(|cx| {
+                OpenRequest::parse(
+                    RawOpenRequest {
+                        urls: vec![url.into()],
+                        ..Default::default()
+                    },
+                    cx,
+                )
+                .unwrap()
+            });
+            assert!(
+                matches!(request.kind, Some(OpenRequestKind::FocusApp)),
+                "expected FocusApp for {url}, got {:?}",
+                request.kind
+            );
+            assert!(
+                request.is_focus_app_only(),
+                "expected is_focus_app_only for {url}"
+            );
         }
     }
 
@@ -2095,6 +2227,25 @@ mod tests {
         }
     }
 
+    fn make_cli_url_open_request(
+        urls: Vec<String>,
+        open_behavior: cli::OpenBehavior,
+    ) -> CliRequest {
+        CliRequest::Open {
+            paths: vec![],
+            urls,
+            diff_paths: vec![],
+            diff_all: false,
+            wsl: None,
+            wait: false,
+            open_behavior,
+            env: None,
+            user_data_dir: None,
+            dev_container: false,
+            cwd: None,
+        }
+    }
+
     /// Runs the real [`cli::run_cli_response_loop`] on an OS thread against
     /// the Zed-side `handle_cli_connection` on the GPUI foreground executor,
     /// using `allow_parking` so the test scheduler tolerates cross-thread
@@ -2393,6 +2544,35 @@ mod tests {
                 vec![path!("/project_b/file.txt").to_string()],
                 cli::OpenBehavior::AlwaysNew, // -n flag: force new window
             ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(!prompt_shown, "no prompt should be shown with -n flag");
+        assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_explicit_new_flag_with_file_url_opens_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let file_url = format!(
+            "file://{}",
+            urlencoding::encode(path!("/project/file.txt")).into_owned()
+        );
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_url_open_request(vec![file_url], cli::OpenBehavior::AlwaysNew),
             None,
         );
 

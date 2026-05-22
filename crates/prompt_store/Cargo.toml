@@ -18,7 +18,7 @@ assets.workspace = true
 chrono.workspace = true
 collections.workspace = true
 db.workspace = true
-feature_flags.workspace = true
+
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
