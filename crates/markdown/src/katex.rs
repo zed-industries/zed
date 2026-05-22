@@ -288,7 +288,10 @@ pub(crate) fn render_display_katex_diagram(
     source: &str,
 ) -> AnyElement {
     div()
+        .flex()
         .w_full()
+        .items_center()
+        .justify_center()
         .py_2()
         .child(render_katex_content(katex_state, contents, source))
         .into_any_element()
@@ -341,8 +344,8 @@ pub(crate) fn cache_contents_for_rendered_formula(
     color: Hsla,
 ) -> ParsedMarkdownKatexDiagramContents {
     let effective_font_size = match formula.mode {
-        KatexRenderMode::Inline => font_size,
-        KatexRenderMode::Display => font_size * 1.2,
+        KatexRenderMode::Inline => font_size * 0.83,
+        KatexRenderMode::Display => font_size,
     };
     cache_contents(formula, effective_font_size, color)
 }
@@ -369,8 +372,8 @@ fn math_style(mode: KatexRenderMode) -> MathStyle {
 
 fn padding_for_mode(mode: KatexRenderMode) -> f32 {
     match mode {
-        KatexRenderMode::Inline => 2.0,
-        KatexRenderMode::Display => 6.0,
+        KatexRenderMode::Inline => 0.5,
+        KatexRenderMode::Display => 3.0,
     }
 }
 
