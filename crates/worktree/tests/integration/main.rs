@@ -3584,6 +3584,34 @@ async fn test_dot_git_dir_event_does_not_suppress_children(
             "should emit UpdatedGitRepositories for a .git/index event"
         );
     }
+
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(dot_git, Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories for a .git rescan event"
+        );
+    }
+
+    {
+        let mut events = cx.events(&worktree);
+        fs.pause_events();
+        fs.emit_fs_event(project_dir, Some(PathEventKind::Rescan));
+        fs.unpause_events_and_flush();
+        executor.run_until_parked();
+
+        let got_git_update = drain_git_repo_updates(&mut events);
+        assert!(
+            got_git_update,
+            "should emit UpdatedGitRepositories for a .git rescan event"
+        );
+    }
 }
 
 fn drain_git_repo_updates(events: &mut futures::channel::mpsc::UnboundedReceiver<Event>) -> bool {
