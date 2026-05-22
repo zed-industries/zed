@@ -9,6 +9,9 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = ["project/alacritty-backend", "terminal/alacritty-backend"]
+libghostty-vt = ["project/libghostty-vt", "terminal/libghostty-vt"]
 test-support = ["editor/test-support", "gpui/test-support"]
 
 [lib]

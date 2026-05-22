@@ -1,3 +1,4 @@
+#[cfg(feature = "alacritty-backend")]
 use alacritty_terminal::{
     Term,
     event::EventListener,
@@ -10,68 +11,132 @@ use alacritty_terminal::{
 };
 use log::{info, warn};
 use regex::Regex;
+#[cfg(feature = "alacritty-backend")]
+use std::ops::Index;
 use std::{
-    ops::{Index, Range},
+    ops::Range,
     time::{Duration, Instant},
 };
 use url::Url;
 use util::paths::{PathStyle, UrlExt};
 
+#[cfg(feature = "libghostty-vt")]
+use crate::TerminalContent;
+#[cfg(feature = "libghostty-vt")]
+use crate::TerminalPoint;
+use crate::TerminalRange;
+
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`']+"#;
+#[cfg(feature = "alacritty-backend")]
 const WIDE_CHAR_SPACERS: Flags =
     Flags::from_bits(Flags::LEADING_WIDE_CHAR_SPACER.bits() | Flags::WIDE_CHAR_SPACER.bits())
         .unwrap();
 
 pub(super) struct RegexSearches {
-    url_regex: RegexSearch,
+    #[cfg(feature = "alacritty-backend")]
+    url_regex: Option<RegexSearch>,
+    #[cfg(feature = "libghostty-vt")]
+    content_url_regex: Option<Regex>,
     path_hyperlink_regexes: Vec<Regex>,
     path_hyperlink_timeout: Duration,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct HyperlinkMatch {
+    pub(super) text: String,
+    pub(super) is_url: bool,
+    pub(super) range: TerminalRange,
+}
+
+#[cfg(feature = "alacritty-backend")]
+impl From<(String, bool, Match)> for HyperlinkMatch {
+    fn from((text, is_url, range): (String, bool, Match)) -> Self {
+        Self {
+            text,
+            is_url,
+            range: TerminalRange::from_alacritty(range),
+        }
+    }
+}
+
 impl Default for RegexSearches {
     fn default() -> Self {
-        Self {
-            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            path_hyperlink_regexes: Vec::default(),
-            path_hyperlink_timeout: Duration::default(),
+        #[cfg(feature = "alacritty-backend")]
+        {
+            Self::new(Vec::<String>::new(), 0)
+        }
+        #[cfg(all(not(feature = "alacritty-backend"), feature = "libghostty-vt"))]
+        {
+            Self::new_ghostty(Vec::<String>::new(), 0)
+        }
+        #[cfg(not(any(feature = "alacritty-backend", feature = "libghostty-vt")))]
+        {
+            Self {
+                path_hyperlink_regexes: Vec::new(),
+                path_hyperlink_timeout: Duration::ZERO,
+            }
         }
     }
 }
 impl RegexSearches {
+    #[cfg(feature = "alacritty-backend")]
     pub(super) fn new(
         path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
         path_hyperlink_timeout_ms: u64,
     ) -> Self {
         Self {
-            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
-            path_hyperlink_regexes: path_hyperlink_regexes
-                .into_iter()
-                .filter_map(|regex| {
-                    Regex::new(regex.as_ref())
-                        .inspect_err(|error| {
-                            warn!(
-                                concat!(
-                                    "Ignoring path hyperlink regex specified in ",
-                                    "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
-                                ),
-                                regex.as_ref(),
-                                error
-                            );
-                        })
-                        .ok()
-                })
-                .collect(),
+            url_regex: RegexSearch::new(URL_REGEX).ok(),
+            #[cfg(feature = "libghostty-vt")]
+            content_url_regex: None,
+            path_hyperlink_regexes: Self::path_hyperlink_regexes(path_hyperlink_regexes),
             path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
         }
     }
+
+    #[cfg(feature = "libghostty-vt")]
+    pub(super) fn new_ghostty(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
+        path_hyperlink_timeout_ms: u64,
+    ) -> Self {
+        Self {
+            #[cfg(feature = "alacritty-backend")]
+            url_regex: None,
+            content_url_regex: Regex::new(URL_REGEX).ok(),
+            path_hyperlink_regexes: Self::path_hyperlink_regexes(path_hyperlink_regexes),
+            path_hyperlink_timeout: Duration::from_millis(path_hyperlink_timeout_ms),
+        }
+    }
+
+    fn path_hyperlink_regexes(
+        path_hyperlink_regexes: impl IntoIterator<Item: AsRef<str>>,
+    ) -> Vec<Regex> {
+        path_hyperlink_regexes
+            .into_iter()
+            .filter_map(|regex| {
+                Regex::new(regex.as_ref())
+                    .inspect_err(|error| {
+                        warn!(
+                            concat!(
+                                "Ignoring path hyperlink regex specified in ",
+                                "`terminal.path_hyperlink_regexes`:\n\n\t{}\n\nError: {}",
+                            ),
+                            regex.as_ref(),
+                            error
+                        );
+                    })
+                    .ok()
+            })
+            .collect()
+    }
 }
 
+#[cfg(feature = "alacritty-backend")]
 pub(super) fn find_from_grid_point<T: EventListener>(
     term: &Term<T>,
     point: AlacPoint,
     regex_searches: &mut RegexSearches,
     path_style: PathStyle,
-) -> Option<(String, bool, Match)> {
+) -> Option<HyperlinkMatch> {
     let grid = term.grid();
     let link = grid.index(point).hyperlink();
     let found_word = if let Some(ref url) = link {
@@ -101,18 +166,16 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         Some((url, true, url_match))
     } else {
         let (line_start, line_end) = (term.line_search_left(point), term.line_search_right(point));
-        if let Some((url, url_match)) = RegexIter::new(
-            line_start,
-            line_end,
-            AlacDirection::Right,
-            term,
-            &mut regex_searches.url_regex,
-        )
-        .find(|rm| rm.contains(&point))
-        .map(|url_match| {
-            let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-            sanitize_url_punctuation(url, url_match, term)
-        }) {
+        let url_match = regex_searches.url_regex.as_mut().and_then(|url_regex| {
+            RegexIter::new(line_start, line_end, AlacDirection::Right, term, url_regex)
+                .find(|rm| rm.contains(&point))
+                .map(|url_match| {
+                    let url = term.bounds_to_string(*url_match.start(), *url_match.end());
+                    sanitize_url_punctuation(url, url_match, term)
+                })
+        });
+
+        if let Some((url, url_match)) = url_match {
             Some((url, true, url_match))
         } else {
             path_match(
@@ -127,35 +190,341 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         }
     };
 
-    found_word.map(|(maybe_url_or_path, is_url, word_match)| {
-        if is_url {
-            // Treat "file://" IRIs like file paths to ensure
-            // that line numbers at the end of the path are
-            // handled correctly.
-            // Use Url::to_file_path() to properly handle Windows drive letters
-            // (e.g., file:///C:/path -> C:\path)
-            if maybe_url_or_path.starts_with("file://") {
-                if let Ok(url) = Url::parse(&maybe_url_or_path) {
-                    if let Ok(path) = url.to_file_path_ext(path_style) {
-                        return (path.to_string_lossy().into_owned(), false, word_match);
-                    } else if let Some(path) = try_osc8_url_to_path(url)
-                        && path_style.is_posix()
-                    {
-                        return (path, false, word_match);
-                    }
+    found_word.map(|found_word| normalize_found_word(found_word, path_style))
+}
+
+#[cfg(feature = "libghostty-vt")]
+pub(super) fn find_from_content_point(
+    content: &TerminalContent,
+    point: TerminalPoint,
+    regex_searches: &mut RegexSearches,
+    path_style: PathStyle,
+) -> Option<HyperlinkMatch> {
+    if let Some((text, is_url, range)) = content_cell_hyperlink(content, point) {
+        return Some(normalize_hyperlink_match(text, is_url, range, path_style));
+    }
+
+    let (line, points, hovered_point_byte_offset) = content_line_text(content, point)?;
+
+    let found_word = regex_searches
+        .content_url_regex
+        .as_ref()
+        .and_then(|content_url_regex| {
+            content_url_regex
+                .find_iter(&line)
+                .find(|url_match| url_match.range().contains(&hovered_point_byte_offset))
+                .and_then(|url_match| {
+                    sanitize_content_url_punctuation(
+                        url_match.as_str().to_string(),
+                        url_match.range(),
+                        &points,
+                    )
+                })
+                .map(|(url, url_match)| (url, true, url_match))
+        })
+        .or_else(|| {
+            content_path_match(
+                &line,
+                &points,
+                hovered_point_byte_offset,
+                point,
+                &mut regex_searches.path_hyperlink_regexes,
+                regex_searches.path_hyperlink_timeout,
+            )
+            .map(|(path, path_match)| (path, false, path_match))
+        });
+
+    found_word
+        .map(|(text, is_url, range)| normalize_hyperlink_match(text, is_url, range, path_style))
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn content_cell_hyperlink(
+    content: &TerminalContent,
+    point: TerminalPoint,
+) -> Option<(String, bool, TerminalRange)> {
+    let index = content.cells.iter().position(|cell| cell.point == point)?;
+    let link = content.cells[index].hyperlink()?;
+    let mut start_index = index;
+    while start_index > 0 && content.cells[start_index - 1].hyperlink() == Some(link) {
+        start_index -= 1;
+    }
+
+    let mut end_index = index;
+    while content
+        .cells
+        .get(end_index + 1)
+        .and_then(|cell| cell.hyperlink())
+        == Some(link)
+    {
+        end_index += 1;
+    }
+
+    Some((
+        link.uri().to_string(),
+        true,
+        TerminalRange::new(
+            content.cells[start_index].point,
+            content.cells[end_index].point,
+        ),
+    ))
+}
+
+#[cfg(feature = "alacritty-backend")]
+fn normalize_found_word(
+    found_word: (String, bool, Match),
+    path_style: PathStyle,
+) -> HyperlinkMatch {
+    let (maybe_url_or_path, is_url, word_match) = found_word;
+    normalize_hyperlink_match(
+        maybe_url_or_path,
+        is_url,
+        TerminalRange::from_alacritty(word_match),
+        path_style,
+    )
+}
+
+fn normalize_hyperlink_match(
+    maybe_url_or_path: String,
+    is_url: bool,
+    range: TerminalRange,
+    path_style: PathStyle,
+) -> HyperlinkMatch {
+    if is_url {
+        // Treat "file://" IRIs like file paths to ensure
+        // that line numbers at the end of the path are
+        // handled correctly.
+        // Use Url::to_file_path() to properly handle Windows drive letters
+        // (e.g., file:///C:/path -> C:\path)
+        if maybe_url_or_path.starts_with("file://") {
+            if let Ok(url) = Url::parse(&maybe_url_or_path) {
+                if let Ok(path) = url.to_file_path_ext(path_style) {
+                    return HyperlinkMatch {
+                        text: path.to_string_lossy().into_owned(),
+                        is_url: false,
+                        range,
+                    };
+                } else if let Some(path) = try_osc8_url_to_path(url)
+                    && path_style.is_posix()
+                {
+                    return HyperlinkMatch {
+                        text: path,
+                        is_url: false,
+                        range,
+                    };
                 }
-                // Fallback: strip file:// prefix if URL parsing fails
-                let path = maybe_url_or_path
-                    .strip_prefix("file://")
-                    .unwrap_or(&maybe_url_or_path);
-                (path.to_string(), false, word_match)
-            } else {
-                (maybe_url_or_path, true, word_match)
+            }
+            // Fallback: strip file:// prefix if URL parsing fails
+            let path = maybe_url_or_path
+                .strip_prefix("file://")
+                .unwrap_or(&maybe_url_or_path);
+            HyperlinkMatch {
+                text: path.to_string(),
+                is_url: false,
+                range,
             }
         } else {
-            (maybe_url_or_path, false, word_match)
+            HyperlinkMatch {
+                text: maybe_url_or_path,
+                is_url: true,
+                range,
+            }
         }
-    })
+    } else {
+        HyperlinkMatch {
+            text: maybe_url_or_path,
+            is_url: false,
+            range,
+        }
+    }
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn content_line_text(
+    content: &TerminalContent,
+    point: TerminalPoint,
+) -> Option<(String, Vec<(usize, TerminalPoint)>, usize)> {
+    let mut line = String::new();
+    let mut points = Vec::new();
+    let mut hovered_point_byte_offset = None;
+
+    for cell in content
+        .cells
+        .iter()
+        .filter(|cell| cell.point.line == point.line)
+    {
+        if cell.is_wide_char_spacer_or_leading() {
+            continue;
+        }
+
+        let byte_offset = line.len();
+        if cell.point == point {
+            hovered_point_byte_offset = Some(byte_offset);
+        }
+        points.push((byte_offset, cell.point));
+        match cell.c {
+            ' ' | '\t' => line.push(' '),
+            character => line.push(character),
+        }
+
+        if let Some(characters) = cell.zerowidth() {
+            for character in characters {
+                points.push((line.len(), cell.point));
+                line.push(*character);
+            }
+        }
+    }
+
+    let trimmed_len = line.trim_ascii_end().len();
+    line.truncate(trimmed_len);
+    let hovered_point_byte_offset = hovered_point_byte_offset?;
+    (line.len() > hovered_point_byte_offset).then_some((line, points, hovered_point_byte_offset))
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn sanitize_content_url_punctuation(
+    url: String,
+    url_match_range: Range<usize>,
+    points: &[(usize, TerminalPoint)],
+) -> Option<(String, TerminalRange)> {
+    let mut sanitized_url = url;
+    let mut bytes_trimmed = 0;
+
+    let (open_parens, mut close_parens) =
+        sanitized_url
+            .chars()
+            .fold((0, 0), |(opens, closes), character| match character {
+                '(' => (opens + 1, closes),
+                ')' => (opens, closes + 1),
+                _ => (opens, closes),
+            });
+
+    while let Some(last_char) = sanitized_url.chars().last() {
+        let should_remove = match last_char {
+            '.' | ',' | ':' | ';' => true,
+            '(' => true,
+            ')' if close_parens > open_parens => {
+                close_parens -= 1;
+                true
+            }
+            _ => false,
+        };
+
+        if should_remove {
+            sanitized_url.pop();
+            bytes_trimmed += last_char.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    let sanitized_range = url_match_range.start..url_match_range.end.checked_sub(bytes_trimmed)?;
+    let sanitized_match = content_match_from_byte_range(points, sanitized_range)?;
+    Some((sanitized_url, sanitized_match))
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn content_path_match(
+    line: &str,
+    points: &[(usize, TerminalPoint)],
+    hovered_point_byte_offset: usize,
+    hovered: TerminalPoint,
+    path_hyperlink_regexes: &mut Vec<Regex>,
+    path_hyperlink_timeout: Duration,
+) -> Option<(String, TerminalRange)> {
+    if path_hyperlink_regexes.is_empty() || path_hyperlink_timeout.as_millis() == 0 {
+        return None;
+    }
+    let search_start_time = Instant::now();
+
+    let timed_out = || {
+        let elapsed_time = Instant::now().saturating_duration_since(search_start_time);
+        (elapsed_time > path_hyperlink_timeout)
+            .then_some((elapsed_time.as_millis(), path_hyperlink_timeout.as_millis()))
+    };
+
+    for regex in path_hyperlink_regexes {
+        let mut path_found = false;
+
+        for captures in regex.captures_iter(line) {
+            path_found = true;
+            let Some(full_match) = captures.get(0) else {
+                continue;
+            };
+            let match_range = full_match.range();
+            let (mut path_range, line_column) = if let Some(path) = captures.name("path") {
+                let parse = |name: &str| -> Option<u32> {
+                    captures
+                        .name(name)
+                        .and_then(|capture| capture.as_str().parse().ok())
+                };
+
+                (
+                    path.range(),
+                    parse("line").map(|line| (line, parse("column"))),
+                )
+            } else {
+                (match_range.clone(), None)
+            };
+            let mut link_range = captures
+                .name("link")
+                .map_or_else(|| match_range.clone(), |link| link.range());
+
+            if let Some(trim) = first_unbalanced_open_paren(&line[path_range.clone()]) {
+                path_range.start += trim;
+                link_range.start = link_range.start.max(path_range.start);
+            }
+
+            if !link_range.contains(&hovered_point_byte_offset) {
+                continue;
+            }
+
+            let link_match = content_match_from_byte_range(points, link_range.clone())?;
+            if !link_match.contains(hovered) {
+                continue;
+            }
+
+            let mut path = line[path_range].to_string();
+            if let Some((line, column)) = line_column {
+                path += &format!(":{line}");
+                if let Some(column) = column {
+                    path += &format!(":{column}");
+                }
+            }
+
+            return Some((path, link_match));
+        }
+
+        if path_found {
+            return None;
+        }
+
+        if let Some((timed_out_ms, timeout_ms)) = timed_out() {
+            warn!("Timed out processing path hyperlink regexes after {timed_out_ms}ms");
+            info!("{timeout_ms}ms time out specified in `terminal.path_hyperlink_timeout_ms`");
+            return None;
+        }
+    }
+
+    None
+}
+
+#[cfg(feature = "libghostty-vt")]
+fn content_match_from_byte_range(
+    points: &[(usize, TerminalPoint)],
+    range: Range<usize>,
+) -> Option<TerminalRange> {
+    if range.is_empty() {
+        return None;
+    }
+
+    let start_index = points.partition_point(|(byte_offset, _)| *byte_offset < range.start);
+    let end_index = points
+        .partition_point(|(byte_offset, _)| *byte_offset < range.end)
+        .checked_sub(1)?;
+    let start = points.get(start_index)?.1;
+    let end = points.get(end_index)?.1;
+    Some(TerminalRange::new(start, end))
 }
 
 // OSC 8 mandates that file:// URIs must be encoded as file://{host}{path}
@@ -174,6 +543,7 @@ fn try_osc8_url_to_path(url: url::Url) -> Option<String> {
     bytes.try_into().ok()
 }
 
+#[cfg(feature = "alacritty-backend")]
 fn sanitize_url_punctuation<T: EventListener>(
     url: String,
     url_match: Match,
@@ -252,6 +622,7 @@ fn first_unbalanced_open_paren(s: &str) -> Option<usize> {
     first_unmatched.filter(|_| balance > 0)
 }
 
+#[cfg(feature = "alacritty-backend")]
 fn path_match<T>(
     term: &Term<T>,
     line_start: AlacPoint,
@@ -421,7 +792,7 @@ fn path_match<T>(
     None
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alacritty-backend"))]
 mod tests {
     use crate::terminal_settings::TerminalSettings;
 
@@ -1080,8 +1451,7 @@ mod tests {
                 event::VoidListener,
                 grid::Scroll,
                 index::{Column, Point as AlacPoint},
-                term::test::mock_term,
-                term::{Term, search::Match},
+                term::{Term, test::mock_term},
             };
             use settings::{self, Settings, SettingsContent};
             use std::{cell::RefCell, rc::Rc};
@@ -1114,7 +1484,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal",
                         "Hyperlink should have been found"
@@ -1132,7 +1502,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "/Hyperlinks/Bench/Source/zed-hyperlinks/crates/terminal/terminal.rs:1000:42",
                         "Hyperlink should have been found"
@@ -1150,7 +1520,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "rust-toolchain.toml",
                         "Hyperlink should have been found"
@@ -1213,7 +1583,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         "392",
                         "Hyperlink should have been found"
@@ -1247,7 +1617,7 @@ mod tests {
                 TEST_TERM_AND_POINT.with(|(term, point)| {
                     assert_eq!(
                         find_from_grid_point_bench(term, *point)
-                            .map(|(path, ..)| path)
+                            .map(|hyperlink| hyperlink.text)
                             .unwrap_or_default(),
                         LINE.trim_end_matches(['.', '\r', '\n']),
                         "Hyperlink should have been found"
@@ -1258,7 +1628,7 @@ mod tests {
             pub fn find_from_grid_point_bench(
                 term: &Term<VoidListener>,
                 point: AlacPoint,
-            ) -> Option<(String, bool, Match)> {
+            ) -> Option<HyperlinkMatch> {
                 const PATH_HYPERLINK_TIMEOUT_MS: u64 = 1000;
 
                 thread_local! {
@@ -1891,14 +2261,16 @@ mod tests {
         let check_hyperlink_match =
             CheckHyperlinkMatch::new(&term, &expected_hyperlink, source_location);
         match hyperlink_found {
-            Some((hyperlink_word, false, hyperlink_match)) => {
+            Some(hyperlink) if !hyperlink.is_url => {
+                let hyperlink_match = hyperlink.range.to_alacritty();
                 check_hyperlink_match.check_path_with_position_and_match(
-                    PathWithPosition::parse_str(&hyperlink_word),
+                    PathWithPosition::parse_str(&hyperlink.text),
                     &hyperlink_match,
                 );
             }
-            Some((hyperlink_word, true, hyperlink_match)) => {
-                check_hyperlink_match.check_iri_and_match(hyperlink_word, &hyperlink_match);
+            Some(hyperlink) => {
+                let hyperlink_match = hyperlink.range.to_alacritty();
+                check_hyperlink_match.check_iri_and_match(hyperlink.text, &hyperlink_match);
             }
             None => {
                 if expected_hyperlink.hyperlink_match.start()

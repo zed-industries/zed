@@ -13,6 +13,9 @@ path = "src/acp_thread.rs"
 doctest = false
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = ["project/alacritty-backend", "terminal/alacritty-backend"]
+libghostty-vt = ["project/libghostty-vt", "terminal/libghostty-vt"]
 test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 
 [dependencies]

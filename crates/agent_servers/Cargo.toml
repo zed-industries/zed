@@ -6,7 +6,26 @@ publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [features]
-test-support = ["acp_thread/test-support", "gpui/test-support", "project/test-support", "dep:env_logger", "client/test-support", "dep:gpui_tokio", "reqwest_client/test-support"]
+default = ["alacritty-backend"]
+alacritty-backend = [
+    "acp_thread/alacritty-backend",
+    "project/alacritty-backend",
+    "terminal/alacritty-backend",
+]
+libghostty-vt = [
+    "acp_thread/libghostty-vt",
+    "project/libghostty-vt",
+    "terminal/libghostty-vt",
+]
+test-support = [
+    "acp_thread/test-support",
+    "gpui/test-support",
+    "project/test-support",
+    "dep:env_logger",
+    "client/test-support",
+    "dep:gpui_tokio",
+    "reqwest_client/test-support",
+]
 e2e = []
 
 [lints]

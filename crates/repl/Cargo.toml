@@ -9,6 +9,17 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = [
+    "project/alacritty-backend",
+    "terminal/alacritty-backend",
+    "terminal_view/alacritty-backend",
+]
+libghostty-vt = [
+    "project/libghostty-vt",
+    "terminal/libghostty-vt",
+    "terminal_view/libghostty-vt",
+]
 test-support = []
 
 [lib]
@@ -16,7 +27,6 @@ path = "src/repl.rs"
 doctest = false
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
 async-task.workspace = true

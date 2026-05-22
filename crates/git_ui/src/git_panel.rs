@@ -10,7 +10,6 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::AgentSettings;
-use alacritty_terminal::vte::ansi;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -81,6 +80,7 @@ use ui::{
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
+use vte::ansi;
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
     Workspace,
@@ -8924,8 +8924,6 @@ mod tests {
 
     #[test]
     fn test_git_output_handler_strips_ansi_codes() {
-        use alacritty_terminal::vte::ansi;
-
         let cases = [
             ("no escape codes here\n", "no escape codes here\n"),
             ("\x1b[31mhello\x1b[0m", "hello"),

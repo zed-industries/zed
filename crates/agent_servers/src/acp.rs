@@ -4240,6 +4240,7 @@ fn handle_session_notification(
                                 0,
                                 cx.background_executor(),
                                 thread.project().read(cx).path_style(cx),
+                                cx,
                             )?;
                             let lower = cx.new(|cx| builder.subscribe(cx));
                             thread.on_terminal_provider_event(

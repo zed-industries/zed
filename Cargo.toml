@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["crates/libghostty-vt-sys"]
 members = [
     "crates/acp_thread",
     "crates/acp_tools",
@@ -268,14 +269,14 @@ edition = "2024"
 #
 
 acp_tools = { path = "crates/acp_tools" }
-acp_thread = { path = "crates/acp_thread" }
+acp_thread = { path = "crates/acp_thread", default-features = false }
 action_log = { path = "crates/action_log" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent = { path = "crates/agent" }
-agent_servers = { path = "crates/agent_servers" }
+agent_servers = { path = "crates/agent_servers", default-features = false }
 agent_settings = { path = "crates/agent_settings" }
 agent_skills = { path = "crates/agent_skills" }
-agent_ui = { path = "crates/agent_ui" }
+agent_ui = { path = "crates/agent_ui", default-features = false }
 ai_onboarding = { path = "crates/ai_onboarding" }
 anthropic = { path = "crates/anthropic" }
 askpass = { path = "crates/askpass" }
@@ -317,7 +318,7 @@ dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
 debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
-debugger_ui = { path = "crates/debugger_ui" }
+debugger_ui = { path = "crates/debugger_ui", default-features = false }
 deepseek = { path = "crates/deepseek" }
 derive_refineable = { path = "crates/refineable/derive_refineable" }
 dev_container = { path = "crates/dev_container" }
@@ -381,7 +382,7 @@ language_models_cloud = { path = "crates/language_models_cloud" }
 language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
-languages = { path = "crates/languages" }
+languages = { path = "crates/languages", default-features = false }
 line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
@@ -416,7 +417,7 @@ perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
-project = { path = "crates/project" }
+project = { path = "crates/project", default-features = false }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
@@ -427,7 +428,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_connection = { path = "crates/remote_connection" }
 remote_server = { path = "crates/remote_server" }
-repl = { path = "crates/repl" }
+repl = { path = "crates/repl", default-features = false }
 reqwest_client = { path = "crates/reqwest_client" }
 rodio = { git = "https://github.com/RustAudio/rodio", rev = "e50e726ddd0292f6ef9de0dda6b90af4ed1fb66a", features = ["wav", "playback", "wav_output", "recording"] }
 rope = { path = "crates/rope" }
@@ -459,8 +460,8 @@ task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 telemetry = { path = "crates/telemetry" }
 telemetry_events = { path = "crates/telemetry_events" }
-terminal = { path = "crates/terminal" }
-terminal_view = { path = "crates/terminal_view" }
+terminal = { path = "crates/terminal", default-features = false }
+terminal_view = { path = "crates/terminal_view", default-features = false }
 text = { path = "crates/text" }
 theme = { path = "crates/theme" }
 theme_extension = { path = "crates/theme_extension" }
@@ -617,6 +618,7 @@ jsonwebtoken = "10.0"
 jupyter-protocol = "1.4.0"
 jupyter-websocket-client = "1.1.0"
 libc = "0.2"
+libghostty-vt = "0.1.1"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 libwebrtc = "0.3.26"
@@ -796,6 +798,7 @@ unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
+vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.221"
 wasmparser = "0.221"
@@ -889,6 +892,7 @@ calloop = { git = "https://github.com/zed-industries/calloop" }
 livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "147fbca3d4b592d96d33f5e6a84b59fc0b5d9bf1" }
+libghostty-vt-sys = { path = "crates/libghostty-vt-sys" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

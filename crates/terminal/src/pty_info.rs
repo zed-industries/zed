@@ -1,9 +1,12 @@
+#[cfg(feature = "alacritty-backend")]
 use alacritty_terminal::tty::Pty;
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
+#[cfg(feature = "libghostty-vt")]
+use portable_pty::{Child as PortableChild, MasterPty as PortableMasterPty};
 #[cfg(target_os = "windows")]
 use std::num::NonZeroU32;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "alacritty-backend"))]
 use std::os::fd::AsRawFd;
 use std::{path::PathBuf, sync::Arc};
 
@@ -24,15 +27,28 @@ impl ProcessIdGetter {
     pub fn fallback_pid(&self) -> Pid {
         Pid::from_u32(self.fallback_pid)
     }
+
+    fn new_from_parts(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle,
+            fallback_pid,
+        }
+    }
 }
 
 #[cfg(unix)]
 impl ProcessIdGetter {
+    #[cfg(feature = "alacritty-backend")]
     fn new(pty: &Pty) -> ProcessIdGetter {
-        ProcessIdGetter {
-            handle: pty.file().as_raw_fd(),
-            fallback_pid: pty.child().id(),
-        }
+        ProcessIdGetter::new_from_parts(pty.file().as_raw_fd(), pty.child().id())
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn new_portable(master: &dyn PortableMasterPty, child: &dyn PortableChild) -> ProcessIdGetter {
+        ProcessIdGetter::new_from_parts(
+            master.as_raw_fd().unwrap_or(-1),
+            child.process_id().unwrap_or(0),
+        )
     }
 
     fn pid(&self) -> Option<Pid> {
@@ -54,6 +70,7 @@ impl ProcessIdGetter {
 
 #[cfg(windows)]
 impl ProcessIdGetter {
+    #[cfg(feature = "alacritty-backend")]
     fn new(pty: &Pty) -> ProcessIdGetter {
         let child = pty.child_watcher();
         let handle = child.raw_handle();
@@ -61,10 +78,18 @@ impl ProcessIdGetter {
             NonZeroU32::new_unchecked(GetProcessId(HANDLE(handle as _)))
         });
 
-        ProcessIdGetter {
-            handle: handle as i32,
-            fallback_pid: u32::from(fallback_pid),
-        }
+        ProcessIdGetter::new_from_parts(handle as i32, u32::from(fallback_pid))
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    fn new_portable(_master: &dyn PortableMasterPty, child: &dyn PortableChild) -> ProcessIdGetter {
+        ProcessIdGetter::new_from_parts(
+            child
+                .as_raw_handle()
+                .map(|handle| handle as i32)
+                .unwrap_or_default(),
+            child.process_id().unwrap_or(0),
+        )
     }
 
     fn pid(&self) -> Option<Pid> {
@@ -100,7 +125,20 @@ pub struct PtyProcessInfo {
 }
 
 impl PtyProcessInfo {
+    #[cfg(feature = "alacritty-backend")]
     pub fn new(pty: &Pty) -> PtyProcessInfo {
+        Self::from_pid_getter(ProcessIdGetter::new(pty))
+    }
+
+    #[cfg(feature = "libghostty-vt")]
+    pub fn new_portable(
+        master: &dyn PortableMasterPty,
+        child: &dyn PortableChild,
+    ) -> PtyProcessInfo {
+        Self::from_pid_getter(ProcessIdGetter::new_portable(master, child))
+    }
+
+    fn from_pid_getter(pid_getter: ProcessIdGetter) -> PtyProcessInfo {
         let process_refresh_kind = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::Always)
             .with_cwd(UpdateKind::Always)
@@ -111,7 +149,7 @@ impl PtyProcessInfo {
         PtyProcessInfo {
             system: RwLock::new(system),
             refresh_kind: process_refresh_kind,
-            pid_getter: ProcessIdGetter::new(pty),
+            pid_getter,
             current: RwLock::new(None),
             task: Mutex::new(None),
         }

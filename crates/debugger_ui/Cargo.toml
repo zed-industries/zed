@@ -13,6 +13,17 @@ path = "src/debugger_ui.rs"
 doctest = false
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = [
+    "project/alacritty-backend",
+    "terminal/alacritty-backend",
+    "terminal_view/alacritty-backend",
+]
+libghostty-vt = [
+    "project/libghostty-vt",
+    "terminal/libghostty-vt",
+    "terminal_view/libghostty-vt",
+]
 test-support = [
     "dap/test-support",
     "dap_adapters/test-support",
@@ -26,7 +37,6 @@ test-support = [
 ]
 
 [dependencies]
-alacritty_terminal.workspace = true
 anyhow.workspace = true
 bitflags.workspace = true
 client.workspace = true
@@ -64,6 +74,7 @@ settings.workspace = true
 sysinfo.workspace = true
 task.workspace = true
 tasks_ui.workspace = true
+terminal.workspace = true
 terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
@@ -74,6 +85,7 @@ ui.workspace = true
 ui_input.workspace = true
 unindent = { workspace = true, optional = true }
 util.workspace = true
+vte.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

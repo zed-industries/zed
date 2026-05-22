@@ -12,7 +12,28 @@ default-run = "zed"
 workspace = true
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = [
+    "acp_thread/alacritty-backend",
+    "agent_servers/alacritty-backend",
+    "agent_ui/alacritty-backend",
+    "debugger_ui/alacritty-backend",
+    "languages/alacritty-backend",
+    "project/alacritty-backend",
+    "repl/alacritty-backend",
+    "terminal_view/alacritty-backend",
+]
 tracy = ["ztracing/tracy"]
+libghostty-vt = [
+    "acp_thread/libghostty-vt",
+    "agent_servers/libghostty-vt",
+    "agent_ui/libghostty-vt",
+    "debugger_ui/libghostty-vt",
+    "languages/libghostty-vt",
+    "project/libghostty-vt",
+    "repl/libghostty-vt",
+    "terminal_view/libghostty-vt",
+]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
 test-support = [

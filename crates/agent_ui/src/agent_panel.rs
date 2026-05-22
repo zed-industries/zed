@@ -814,6 +814,10 @@ impl AgentTerminal {
     fn custom_title(&self, cx: &App) -> Option<SharedString> {
         self.view.read(cx).custom_title().map(SharedString::from)
     }
+
+    fn is_ghostty_backend(&self, cx: &App) -> bool {
+        self.view.read(cx).terminal().read(cx).is_ghostty_backend()
+    }
 }
 
 enum BaseView {
@@ -4646,13 +4650,14 @@ impl AgentPanel {
                 }
             }
             VisibleSurface::Terminal(_) => {
-                if let Some((terminal_id, title_editor, title)) =
+                if let Some((terminal_id, title_editor, title, is_ghostty_backend)) =
                     self.active_terminal_id().and_then(|terminal_id| {
                         self.terminals.get(&terminal_id).map(|terminal| {
                             (
                                 terminal_id,
                                 terminal.title_editor.clone(),
                                 terminal.title(cx),
+                                terminal.is_ghostty_backend(cx),
                             )
                         })
                     })
@@ -4676,7 +4681,15 @@ impl AgentPanel {
                             .flex_1()
                             .cursor_text()
                             .overflow_x_scroll()
-                            .child(Label::new(title).color(Color::Muted).single_line())
+                            .child(
+                                h_flex()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .when(is_ghostty_backend, |this| {
+                                        this.child(Self::render_ghostty_terminal_backend_indicator())
+                                    })
+                                    .child(Label::new(title).color(Color::Muted).single_line()),
+                            )
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.edit_terminal_title(terminal_id, window, cx);
                             }))
@@ -4723,6 +4736,14 @@ impl AgentPanel {
                 )
             })
             .into_any()
+    }
+
+    fn render_ghostty_terminal_backend_indicator() -> impl IntoElement {
+        div()
+            .id("agent-panel-terminal-ghostty-backend-indicator")
+            .flex_none()
+            .tooltip(Tooltip::text("Ghostty terminal backend"))
+            .child(Label::new("👻").size(LabelSize::Small).color(Color::Muted))
     }
 
     fn handle_regenerate_thread_title(conversation_view: Entity<ConversationView>, cx: &mut App) {
@@ -5935,6 +5956,7 @@ impl AgentPanel {
             cx.entity_id().as_u64(),
             cx.background_executor(),
             path_style,
+            cx,
         )?;
         let terminal = cx.new(|cx| builder.subscribe(cx));
         let terminal_view = cx.new(|cx| {

@@ -19,6 +19,9 @@ required-features = ["test-support"]
 path = "tests/integration/project_tests.rs"
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = ["terminal/alacritty-backend"]
+libghostty-vt = ["terminal/libghostty-vt"]
 test-support = [
     "buffer_diff/test-support",
     "client/test-support",

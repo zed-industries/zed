@@ -535,8 +535,7 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use terminal::{
-        HoveredWord, TerminalBuilder,
-        alacritty_terminal::index::Point as AlacPoint,
+        HoveredWord, TerminalBuilder, TerminalPoint, TerminalRange,
         terminal_settings::{AlternateScroll, CursorShape},
     };
     use util::path;
@@ -581,6 +580,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .expect("Failed to create display-only terminal")
             .subscribe(cx)
@@ -653,7 +653,7 @@ mod tests {
         let (hover_target, open_target) = test_path_like(
             HoveredWord {
                 word: maybe_path.to_string(),
-                word_match: AlacPoint::default()..=AlacPoint::default(),
+                word_match: TerminalRange::new(TerminalPoint::new(0, 0), TerminalPoint::new(0, 0)),
                 id: 0,
             },
             PathLikeTarget {

@@ -47,6 +47,18 @@ impl FeatureFlag for DiffReviewFeatureFlag {
 }
 register_feature_flag!(DiffReviewFeatureFlag);
 
+pub struct GhosttyTerminalFeatureFlag;
+
+impl FeatureFlag for GhosttyTerminalFeatureFlag {
+    const NAME: &'static str = "ghostty-terminal";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(GhosttyTerminalFeatureFlag);
+
 pub struct UpdatePlanToolFeatureFlag;
 
 impl FeatureFlag for UpdatePlanToolFeatureFlag {

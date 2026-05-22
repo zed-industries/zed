@@ -13,6 +13,21 @@ path = "src/agent_ui.rs"
 doctest = false
 
 [features]
+default = ["alacritty-backend"]
+alacritty-backend = [
+    "acp_thread/alacritty-backend",
+    "agent_servers/alacritty-backend",
+    "project/alacritty-backend",
+    "terminal/alacritty-backend",
+    "terminal_view/alacritty-backend",
+]
+libghostty-vt = [
+    "acp_thread/libghostty-vt",
+    "agent_servers/libghostty-vt",
+    "project/libghostty-vt",
+    "terminal/libghostty-vt",
+    "terminal_view/libghostty-vt",
+]
 test-support = [
     "acp_thread/test-support",
     "eval_utils",

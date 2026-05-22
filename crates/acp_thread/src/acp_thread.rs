@@ -3308,6 +3308,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -3389,6 +3390,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -5004,6 +5006,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -5051,6 +5054,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .unwrap();
             builder.subscribe(cx)
@@ -5112,6 +5116,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
+                cx,
             )
             .unwrap();
             builder.subscribe(cx)
