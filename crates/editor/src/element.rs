@@ -1,5 +1,9 @@
-pub(crate) mod header;
+mod header;
 mod mouse;
+
+#[cfg(test)]
+pub(crate) use header::StickyHeader;
+pub(crate) use header::{header_jump_data, render_buffer_header};
 
 use crate::{
     BUFFER_HEADER_PADDING, BlockId, ChunkRendererContext, ChunkReplacement, CodeActionSource,

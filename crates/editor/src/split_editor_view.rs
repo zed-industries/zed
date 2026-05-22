@@ -21,10 +21,7 @@ use crate::{
     DisplayRow, Editor, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, RowExt, StickyHeaderExcerpt,
     display_map::Block,
-    element::{
-        EditorElement, SplitSide,
-        header::{header_jump_data, render_buffer_header},
-    },
+    element::{EditorElement, SplitSide, header_jump_data, render_buffer_header},
     scroll::ScrollOffset,
     split::SplittableEditor,
 };
