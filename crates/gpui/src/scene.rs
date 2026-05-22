@@ -33,6 +33,7 @@ pub struct Scene {
     pub paths: Vec<Path<ScaledPixels>>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
+    pub background_sprites: Vec<BackgroundSprite>,
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
@@ -49,6 +50,7 @@ impl Scene {
         self.quads.clear();
         self.underlines.clear();
         self.monochrome_sprites.clear();
+        self.background_sprites.clear();
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
@@ -106,6 +108,10 @@ impl Scene {
             Primitive::MonochromeSprite(sprite) => {
                 sprite.order = order;
                 self.monochrome_sprites.push(*sprite);
+            }
+            Primitive::BackgroundSprite(sprite) => {
+                sprite.order = order;
+                self.background_sprites.push(*sprite);
             }
             Primitive::SubpixelSprite(sprite) => {
                 sprite.order = order;
@@ -167,6 +173,8 @@ impl Scene {
             underlines_iter: self.underlines.iter().peekable(),
             monochrome_sprites_start: 0,
             monochrome_sprites_iter: self.monochrome_sprites.iter().peekable(),
+            background_sprites_start: 0,
+            background_sprites_iter: self.background_sprites.iter().peekable(),
             subpixel_sprites_start: 0,
             subpixel_sprites_iter: self.subpixel_sprites.iter().peekable(),
             polychrome_sprites_start: 0,
@@ -192,6 +200,7 @@ pub(crate) enum PrimitiveKind {
     Path,
     Underline,
     MonochromeSprite,
+    BackgroundSprite,
     SubpixelSprite,
     PolychromeSprite,
     Surface,
@@ -211,6 +220,7 @@ pub enum Primitive {
     Path(Path<ScaledPixels>),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
+    BackgroundSprite(BackgroundSprite),
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
@@ -225,6 +235,7 @@ impl Primitive {
             Primitive::Path(path) => &path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
+            Primitive::BackgroundSprite(sprite) => &sprite.bounds,
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
@@ -238,6 +249,7 @@ impl Primitive {
             Primitive::Path(path) => &path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
+            Primitive::BackgroundSprite(sprite) => &sprite.content_mask,
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
@@ -263,6 +275,8 @@ struct BatchIterator<'a> {
     underlines_iter: Peekable<slice::Iter<'a, Underline>>,
     monochrome_sprites_start: usize,
     monochrome_sprites_iter: Peekable<slice::Iter<'a, MonochromeSprite>>,
+    background_sprites_start: usize,
+    background_sprites_iter: Peekable<slice::Iter<'a, BackgroundSprite>>,
     subpixel_sprites_start: usize,
     subpixel_sprites_iter: Peekable<slice::Iter<'a, SubpixelSprite>>,
     polychrome_sprites_start: usize,
@@ -289,6 +303,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.monochrome_sprites_iter.peek().map(|s| s.order),
                 PrimitiveKind::MonochromeSprite,
+            ),
+            (
+                self.background_sprites_iter.peek().map(|s| s.order),
+                PrimitiveKind::BackgroundSprite,
             ),
             (
                 self.subpixel_sprites_iter.peek().map(|s| s.order),
@@ -391,6 +409,27 @@ impl<'a> Iterator for BatchIterator<'a> {
                     range: sprites_start..sprites_end,
                 })
             }
+            PrimitiveKind::BackgroundSprite => {
+                let texture_id = self.background_sprites_iter.peek().unwrap().tile.texture_id;
+                let sprites_start = self.background_sprites_start;
+                let mut sprites_end = sprites_start + 1;
+                self.background_sprites_iter.next();
+                while self
+                    .background_sprites_iter
+                    .next_if(|sprite| {
+                        (sprite.order, batch_kind) < max_order_and_kind
+                            && sprite.tile.texture_id == texture_id
+                    })
+                    .is_some()
+                {
+                    sprites_end += 1;
+                }
+                self.background_sprites_start = sprites_end;
+                Some(PrimitiveBatch::BackgroundSprites {
+                    texture_id,
+                    range: sprites_start..sprites_end,
+                })
+            }
             PrimitiveKind::SubpixelSprite => {
                 let texture_id = self.subpixel_sprites_iter.peek().unwrap().tile.texture_id;
                 let sprites_start = self.subpixel_sprites_start;
@@ -466,6 +505,10 @@ pub enum PrimitiveBatch {
     Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
+        texture_id: AtlasTextureId,
+        range: Range<usize>,
+    },
+    BackgroundSprites {
         texture_id: AtlasTextureId,
         range: Range<usize>,
     },
@@ -668,6 +711,26 @@ pub struct MonochromeSprite {
 impl From<MonochromeSprite> for Primitive {
     fn from(sprite: MonochromeSprite) -> Self {
         Primitive::MonochromeSprite(sprite)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct BackgroundSprite {
+    pub order: DrawOrder,
+    pub pad: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub background_bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub background: Background,
+    pub tile: AtlasTile,
+    pub transformation: TransformationMatrix,
+}
+
+impl From<BackgroundSprite> for Primitive {
+    fn from(sprite: BackgroundSprite) -> Self {
+        Primitive::BackgroundSprite(sprite)
     }
 }
 

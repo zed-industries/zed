@@ -7,9 +7,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, BackgroundSprite, Bounds, ContentMask, DevicePixels,
+    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -123,6 +123,7 @@ pub(crate) struct MetalRenderer {
     quads_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
+    background_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
@@ -302,6 +303,14 @@ impl MetalRenderer {
             "monochrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let background_sprites_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "background_sprites",
+            "background_sprite_vertex",
+            "background_sprite_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -338,6 +347,7 @@ impl MetalRenderer {
             quads_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
+            background_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
             unit_vertices,
@@ -826,6 +836,15 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
+                PrimitiveBatch::BackgroundSprites { texture_id, range } => self
+                    .draw_background_sprites(
+                        texture_id,
+                        &scene.background_sprites[range],
+                        instance_buffer,
+                        &mut instance_offset,
+                        viewport_size,
+                        command_encoder,
+                    ),
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => self
                     .draw_polychrome_sprites(
                         texture_id,
@@ -847,12 +866,13 @@ impl MetalRenderer {
             if !ok {
                 command_encoder.end_encoding();
                 anyhow::bail!(
-                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} poly, {} surfaces",
+                    "scene too large: {} paths, {} shadows, {} quads, {} underlines, {} mono, {} bg, {} poly, {} surfaces",
                     scene.paths.len(),
                     scene.shadows.len(),
                     scene.quads.len(),
                     scene.underlines.len(),
                     scene.monochrome_sprites.len(),
+                    scene.background_sprites.len(),
                     scene.polychrome_sprites.len(),
                     scene.surfaces.len(),
                 );
@@ -1262,6 +1282,80 @@ impl MetalRenderer {
             DevicePixels(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            SpriteInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            SpriteInputIndex::Sprites as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            SpriteInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_vertex_bytes(
+            SpriteInputIndex::AtlasTextureSize as u64,
+            mem::size_of_val(&texture_size) as u64,
+            &texture_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_buffer(
+            SpriteInputIndex::Sprites as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
+
+        unsafe {
+            ptr::copy_nonoverlapping(
+                sprites.as_ptr() as *const u8,
+                buffer_contents,
+                sprite_bytes_len,
+            );
+        }
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            sprites.len() as u64,
+        );
+        *instance_offset = next_offset;
+        true
+    }
+
+    fn draw_background_sprites(
+        &self,
+        texture_id: AtlasTextureId,
+        sprites: &[BackgroundSprite],
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        if sprites.is_empty() {
+            return true;
+        }
+        align_offset(instance_offset);
+
+        let sprite_bytes_len = mem::size_of_val(sprites);
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+
+        let next_offset = *instance_offset + sprite_bytes_len;
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+
+        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let texture_size = size(
+            DevicePixels(texture.width() as i32),
+            DevicePixels(texture.height() as i32),
+        );
+        command_encoder.set_render_pipeline_state(&self.background_sprites_pipeline_state);
         command_encoder.set_vertex_buffer(
             SpriteInputIndex::Vertices as u64,
             Some(&self.unit_vertices),

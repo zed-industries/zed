@@ -659,6 +659,86 @@ fragment float4 monochrome_sprite_fragment(
   return color;
 }
 
+struct BackgroundSpriteVertexOutput {
+  uint sprite_id [[flat]];
+  float4 position [[position]];
+  float2 tile_position;
+  float4 background_solid [[flat]];
+  float4 background_color0 [[flat]];
+  float4 background_color1 [[flat]];
+  float4 clip_distance;
+};
+
+struct BackgroundSpriteFragmentInput {
+  uint sprite_id [[flat]];
+  float4 position [[position]];
+  float2 tile_position;
+  float4 background_solid [[flat]];
+  float4 background_color0 [[flat]];
+  float4 background_color1 [[flat]];
+  float4 clip_distance;
+};
+
+vertex BackgroundSpriteVertexOutput background_sprite_vertex(
+    uint unit_vertex_id [[vertex_id]], uint sprite_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(SpriteInputIndex_Vertices)]],
+    constant BackgroundSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(SpriteInputIndex_ViewportSize)]],
+    constant Size_DevicePixels *atlas_size
+    [[buffer(SpriteInputIndex_AtlasTextureSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  BackgroundSprite sprite = sprites[sprite_id];
+  float4 device_position =
+      to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation, viewport_size);
+  float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds,
+                                                 sprite.content_mask.bounds, sprite.transformation);
+  float2 tile_position = to_tile_position(unit_vertex, sprite.tile, atlas_size);
+
+  GradientColor gradient = prepare_fill_color(
+    sprite.background.tag,
+    sprite.background.color_space,
+    sprite.background.solid,
+    sprite.background.colors[0].color,
+    sprite.background.colors[1].color
+  );
+
+  return BackgroundSpriteVertexOutput{
+      sprite_id,
+      device_position,
+      tile_position,
+      gradient.solid,
+      gradient.color0,
+      gradient.color1,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment float4 background_sprite_fragment(
+    BackgroundSpriteFragmentInput input [[stage_in]],
+    constant BackgroundSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
+    texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
+  if (any(input.clip_distance < float4(0.0))) {
+    return float4(0.0);
+  }
+
+  BackgroundSprite sprite = sprites[input.sprite_id];
+  float4 color = fill_color(
+    sprite.background,
+    input.position.xy,
+    sprite.background_bounds,
+    input.background_solid,
+    input.background_color0,
+    input.background_color1
+  );
+
+  constexpr sampler atlas_texture_sampler(mag_filter::linear,
+                                          min_filter::linear);
+  float4 sample =
+      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+  color.a *= sample.a;
+  return color;
+}
+
 struct PolychromeSpriteVertexOutput {
   float4 position [[position]];
   float2 tile_position;

@@ -1300,6 +1300,10 @@ impl WgpuRenderer {
                                 &mut instance_offset,
                                 &mut pass,
                             ),
+                        PrimitiveBatch::BackgroundSprites { .. } => {
+                            // `background-clip: text` rendering is currently macOS-only.
+                            true
+                        }
                         PrimitiveBatch::Surfaces(_surfaces) => {
                             // Surfaces are macOS-only for video playback
                             // Not implemented for Linux/wgpu

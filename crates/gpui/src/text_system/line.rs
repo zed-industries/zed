@@ -1,7 +1,7 @@
 use crate::{
-    App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
-    ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window,
-    WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
+    App, Background, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point,
+    RenderGlyphParams, Result, ShapedGlyph, ShapedRun, SharedString, StrikethroughStyle, TextAlign,
+    UnderlineStyle, Window, WrapBoundary, WrappedLineLayout, black, fill, point, px, size,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -97,6 +97,34 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            None,
+            window,
+            cx,
+        )?;
+
+        Ok(())
+    }
+
+    /// Paint the line of text to the window using `background` as the glyph fill.
+    pub fn paint_with_clip_background(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        align_width: Option<Pixels>,
+        background: Background,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
+        paint_line(
+            origin,
+            &self.layout,
+            line_height,
+            align,
+            align_width,
+            &self.decoration_runs,
+            &[],
+            Some(background),
             window,
             cx,
         )?;
@@ -293,6 +321,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            None,
             window,
             cx,
         )?;
@@ -339,6 +368,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    clip_background: Option<Background>,
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
@@ -530,6 +560,15 @@ fn paint_line(
                             run.font_id,
                             glyph.id,
                             layout.font_size,
+                        )?;
+                    } else if let Some(clip_background) = clip_background {
+                        window.paint_glyph_with_background(
+                            glyph_origin + baseline_offset + vertical_offset,
+                            run.font_id,
+                            glyph.id,
+                            layout.font_size,
+                            clip_background,
+                            line_bounds,
                         )?;
                     } else {
                         window.paint_glyph(
