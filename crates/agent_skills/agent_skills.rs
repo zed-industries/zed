@@ -545,8 +545,8 @@ async fn find_skill_files(fs: &Arc<dyn Fs>, directory: &Path) -> Vec<PathBuf> {
 
 /// Read `skill_file_path` from disk and parse its frontmatter. The
 /// SKILL.md body is parsed away by `parse_skill_frontmatter` and not
-/// surfaced here — it's re-read on demand via `read_skill_body` when a
-/// skill is actually being materialized for the model.
+/// surfaced here; it's re-read on demand via `read_skill_body` when a
+/// skill is actually being loaded for the model.
 ///
 /// We load the whole file in one go rather than streaming up to the
 /// closing `---`. `MAX_SKILL_FILE_SIZE` is 100KB and the metadata check
@@ -559,9 +559,7 @@ pub async fn load_skill_frontmatter(
 ) -> Result<Skill, SkillLoadError> {
     // Short-circuit on oversized files before reading any of their
     // contents, so a stray multi-GB file named `SKILL.md` can't OOM the
-    // app. If metadata is unavailable, refuse to read blind — better to
-    // surface the metadata failure than to slurp an unknown-sized file
-    // into memory.
+    // app. If metadata is unavailable, refuse to read.
     let metadata = fs
         .metadata(&skill_file_path)
         .await
