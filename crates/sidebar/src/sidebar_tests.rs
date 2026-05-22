@@ -4740,6 +4740,97 @@ async fn test_thread_title_update_propagates_to_sidebar(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Hi there!".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+    cx.run_until_parked();
+
+    let (entry_ix, thread_id, title) = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .enumerate()
+            .find_map(|(ix, entry)| match entry {
+                ListEntry::Thread(thread) => Some((
+                    ix,
+                    thread.metadata.thread_id,
+                    thread.metadata.display_title(),
+                )),
+                ListEntry::ProjectHeader { .. } | ListEntry::Terminal(_) => None,
+            })
+            .expect("sidebar should have a thread entry")
+    });
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.start_renaming_thread(entry_ix, thread_id, title, window, cx);
+        sidebar.thread_rename_editor.update(cx, |editor, cx| {
+            editor.set_text("Renamed from sidebar", window, cx);
+        });
+        sidebar.confirm_thread_rename(window, cx);
+    });
+    cx.run_until_parked();
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(thread_id)
+            .cloned()
+            .expect("thread metadata should exist")
+    });
+    assert_eq!(
+        metadata.title_override.as_deref(),
+        Some("Renamed from sidebar")
+    );
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Renamed from sidebar *  <== selected",
+        ]
+    );
+
+    let active_thread = panel.read_with(cx, |panel, cx| panel.active_agent_thread(cx).unwrap());
+    assert_eq!(
+        active_thread.read_with(cx, |thread, _| thread.title()),
+        Some("Renamed from sidebar".into())
+    );
+    let active_thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+    let title_editor_text =
+        active_thread_view.read_with(cx, |view, cx| view.title_editor.read(cx).text(cx));
+    assert_eq!(title_editor_text, "Renamed from sidebar");
+
+    active_thread.update(cx, |thread, cx| {
+        thread
+            .set_title("Generated after rename".into(), cx)
+            .detach();
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            //
+            "v [my-project]",
+            "  Renamed from sidebar *  <== selected",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_focused_thread_tracks_user_intent(cx: &mut TestAppContext) {
     let project_a = init_test_project_with_agent_panel("/project-a", cx).await;
     let (multi_workspace, cx) =
