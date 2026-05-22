@@ -53,6 +53,7 @@ use crate::parser::CodeBlockKind;
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
+pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 
@@ -1079,6 +1080,7 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
@@ -1097,6 +1099,7 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
             image_resolver: None,
@@ -1139,6 +1142,14 @@ impl MarkdownElement {
         self
     }
 
+    pub fn on_code_span_link(
+        mut self,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+    ) -> Self {
+        self.code_span_link = Some(Arc::new(callback));
+        self
+    }
+
     pub fn on_source_click(
         mut self,
         handler: impl Fn(usize, usize, &mut Window, &mut App) -> bool + 'static,
@@ -1171,6 +1182,41 @@ impl MarkdownElement {
     pub fn scroll_handle(mut self, scroll_handle: ScrollHandle) -> Self {
         self.autoscroll = AutoscrollBehavior::Controlled(scroll_handle);
         self
+    }
+
+    fn push_markdown_code_span(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        text: &str,
+        range: Range<usize>,
+        cx: &App,
+    ) {
+        let link_url = if builder.code_block_stack.is_empty() && builder.link_depth == 0 {
+            self.code_span_link
+                .as_ref()
+                .and_then(|callback| callback(text, cx))
+        } else {
+            None
+        };
+
+        if let Some(url) = link_url {
+            builder.push_link(url.clone(), range.clone());
+            let link_style = self
+                .style
+                .link_callback
+                .as_ref()
+                .and_then(|callback| callback(url.as_ref(), cx))
+                .unwrap_or_else(|| self.style.link.clone());
+            builder.push_text_style(self.style.inline_code.clone());
+            builder.push_text_style(link_style);
+            builder.push_text(text, range);
+            builder.pop_text_style();
+            builder.pop_text_style();
+        } else {
+            builder.push_text_style(self.style.inline_code.clone());
+            builder.push_text(text, range);
+            builder.pop_text_style();
+        }
     }
 
     fn push_markdown_image(
@@ -2013,6 +2059,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
+                                builder.link_depth += 1;
                                 builder.push_link(dest_url.clone(), range.clone());
                                 let style = self
                                     .style
@@ -2239,6 +2286,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
+                            builder.link_depth = builder.link_depth.saturating_sub(1);
                             builder.pop_text_style()
                         }
                     }
@@ -2273,9 +2321,12 @@ impl Element for MarkdownElement {
                     builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
-                    builder.push_text_style(self.style.inline_code.clone());
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
-                    builder.pop_text_style();
+                    self.push_markdown_code_span(
+                        &mut builder,
+                        &parsed_markdown.source[range.clone()],
+                        range.clone(),
+                        cx,
+                    );
                 }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
@@ -2293,6 +2344,19 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::InlineHtml => {
                     let html = &parsed_markdown.source[range.clone()];
+                    if let Some(code) = html
+                        .strip_prefix("<code>")
+                        .and_then(|html| html.strip_suffix("</code>"))
+                    {
+                        let code_start = range.start + "<code>".len();
+                        self.push_markdown_code_span(
+                            &mut builder,
+                            code,
+                            code_start..code_start + code.len(),
+                            cx,
+                        );
+                        continue;
+                    }
                     if html.starts_with("<code>") {
                         builder.push_text_style(self.style.inline_code.clone());
                         continue;
@@ -2653,6 +2717,7 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
+    link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
@@ -2691,6 +2756,7 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
+            link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
@@ -3470,6 +3536,40 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    fn render_markdown_with_code_span_link(
+        markdown: &str,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .on_code_span_link(callback)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
+        rendered.text
+    }
+
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -4103,6 +4203,50 @@ mod tests {
         assert!(rendered.links.is_empty());
         assert!(rendered.link_for_source_index(0).is_none());
         assert!(rendered.link_for_source_index(5).is_none());
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_detected_for_source_index(cx: &mut TestAppContext) {
+        let source = "see `foo.rs` for details";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/foo.rs");
+
+        let code_index = source.find("foo.rs").unwrap();
+        let link = rendered.link_for_source_index(code_index);
+        assert!(link.is_some());
+        assert_eq!(link.unwrap().destination_url, "file:///tmp/foo.rs");
+
+        assert!(
+            rendered
+                .link_for_source_index(source.find("see").unwrap())
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_without_callback(cx: &mut TestAppContext) {
+        let rendered = render_markdown("see `foo.rs` for details", cx);
+
+        assert!(rendered.links.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_inside_markdown_link(cx: &mut TestAppContext) {
+        let source = "see [`foo.rs`](https://example.com) for details";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "https://example.com");
     }
 
     #[gpui::test]

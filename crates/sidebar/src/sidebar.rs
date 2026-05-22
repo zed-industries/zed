@@ -50,10 +50,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    AgentThreadStatus, CommonAnimationExt, ContextMenu, Divider, GradientFade, HighlightedLabel,
-    KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes, Scrollbars, Tab,
-    ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar, prelude::*,
-    render_modifiers,
+    AgentThreadStatus, CommonAnimationExt, ContextMenu, ContextMenuEntry, Divider, GradientFade,
+    HighlightedLabel, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState, ScrollAxes,
+    Scrollbars, Tab, ThreadItem, ThreadItemWorktreeInfo, TintColor, Tooltip, WithScrollbar,
+    prelude::*, render_modifiers,
 };
 use util::ResultExt as _;
 use util::path_list::PathList;
@@ -303,6 +303,7 @@ enum ListEntry {
         highlight_positions: Vec<usize>,
         has_running_threads: bool,
         waiting_thread_count: usize,
+        has_notifications: bool,
         is_active: bool,
         has_threads: bool,
     },
@@ -654,6 +655,10 @@ pub struct Sidebar {
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
+    /// Persists live thread statuses across rebuilds so that Running→Completed
+    /// transitions can be detected even when the group is collapsed (and
+    /// thread entries are not present in the list).
+    live_thread_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)>,
     view: SidebarView,
     restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
@@ -762,6 +767,7 @@ impl Sidebar {
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
+            live_thread_statuses: HashMap::new(),
             view: SidebarView::default(),
             restoring_tasks: HashMap::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
@@ -1205,21 +1211,13 @@ impl Sidebar {
 
         let previous = mem::take(&mut self.contents);
 
-        let old_statuses: HashMap<acp::SessionId, AgentThreadStatus> = previous
-            .entries
-            .iter()
-            .filter_map(|entry| match entry {
-                ListEntry::Thread(thread) if thread.is_live => {
-                    let sid = thread.metadata.session_id.clone()?;
-                    Some((sid, thread.status))
-                }
-                _ => None,
-            })
-            .collect();
+        let old_statuses = &self.live_thread_statuses;
 
         let mut entries = Vec::new();
         let mut notified_threads = previous.notified_threads;
         let mut notified_terminals: HashSet<TerminalId> = HashSet::new();
+        let mut new_live_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)> =
+            HashMap::new();
         let mut current_session_ids: HashSet<acp::SessionId> = HashSet::new();
         let mut current_thread_ids: HashSet<agent_ui::ThreadId> = HashSet::new();
         let mut current_terminal_ids: HashSet<TerminalId> = HashSet::new();
@@ -1566,9 +1564,12 @@ impl Sidebar {
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
-                    if let Some(session_id) = &thread.metadata.session_id {
-                        if let Some(info) = live_info_by_session.get(session_id) {
+                    if let Some(session_id) = thread.metadata.session_id.clone() {
+                        if let Some(&info) = live_info_by_session.get(&session_id) {
+                            let status = info.status;
+                            let thread_id = thread.metadata.thread_id;
                             thread.apply_active_info(info);
+                            new_live_statuses.insert(session_id, (status, thread_id));
                         }
                     }
 
@@ -1582,8 +1583,10 @@ impl Sidebar {
 
                     if thread.status == AgentThreadStatus::Completed
                         && !is_active_thread
-                        && session_id.as_ref().and_then(|sid| old_statuses.get(sid))
-                            == Some(&AgentThreadStatus::Running)
+                        && session_id
+                            .as_ref()
+                            .and_then(|sid| old_statuses.get(sid))
+                            .is_some_and(|(s, _)| *s == AgentThreadStatus::Running)
                     {
                         notified_threads.insert(thread.metadata.thread_id);
                     }
@@ -1599,13 +1602,41 @@ impl Sidebar {
                     b_time.cmp(&a_time)
                 });
             } else {
-                for info in live_infos {
+                for info in &live_infos {
                     if info.status == AgentThreadStatus::Running {
                         has_running_threads = true;
                     }
                     if info.status == AgentThreadStatus::WaitingForConfirmation {
                         waiting_thread_count += 1;
                     }
+                    // Resolve the thread_id for this session so we can
+                    // track its status and detect transitions even while
+                    // the group is collapsed.
+                    let thread_id = old_statuses
+                        .get(&info.session_id)
+                        .map(|(_, tid)| *tid)
+                        .or_else(|| {
+                            ThreadMetadataStore::global(cx)
+                                .read(cx)
+                                .entry_by_session(&info.session_id)
+                                .map(|m| m.thread_id)
+                        });
+
+                    if let Some(thread_id) = thread_id {
+                        let old_status = old_statuses.get(&info.session_id).map(|(s, _)| *s);
+                        new_live_statuses.insert(info.session_id.clone(), (info.status, thread_id));
+                        if info.status == AgentThreadStatus::Completed
+                            && old_status == Some(AgentThreadStatus::Running)
+                        {
+                            notified_threads.insert(thread_id);
+                        }
+                    }
+                }
+
+                if is_active
+                    && let Some(ActiveEntry::Thread { thread_id, .. }) = self.active_entry.as_ref()
+                {
+                    notified_threads.remove(thread_id);
                 }
             }
 
@@ -1698,6 +1729,14 @@ impl Sidebar {
                     continue;
                 }
 
+                // Check for notifications: threads that completed while not active.
+                let has_thread_notifications = matched_threads
+                    .iter()
+                    .any(|t| notified_threads.contains(&t.metadata.thread_id));
+                let has_terminal_notifications = matched_terminals
+                    .iter()
+                    .any(|t| notified_terminals.contains(&t.metadata.terminal_id));
+
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
@@ -1705,6 +1744,7 @@ impl Sidebar {
                     highlight_positions: workspace_highlight_positions,
                     has_running_threads,
                     waiting_thread_count,
+                    has_notifications: has_thread_notifications || has_terminal_notifications,
                     is_active,
                     has_threads,
                 });
@@ -1717,6 +1757,32 @@ impl Sidebar {
                     &mut current_thread_ids,
                 );
             } else {
+                let has_terminal_notifications = terminals
+                    .iter()
+                    .any(|t| notified_terminals.contains(&t.metadata.terminal_id));
+
+                // When collapsed, threads aren't loaded into `threads`, so we
+                // query the store for thread IDs to check notifications and
+                // to prevent the retain below from purging them.
+                let has_thread_notifications = if threads.is_empty() && !notified_threads.is_empty()
+                {
+                    let thread_store = ThreadMetadataStore::global(cx);
+                    let store = thread_store.read(cx);
+                    let group_thread_ids = store
+                        .entries_for_main_worktree_path(group_key.path_list(), group_host.as_ref())
+                        .chain(store.entries_for_path(group_key.path_list(), group_host.as_ref()))
+                        .map(|m| m.thread_id)
+                        .collect::<HashSet<_>>();
+                    current_thread_ids.extend(group_thread_ids.iter());
+                    group_thread_ids
+                        .iter()
+                        .any(|id| notified_threads.contains(id))
+                } else {
+                    threads
+                        .iter()
+                        .any(|t| notified_threads.contains(&t.metadata.thread_id))
+                };
+
                 project_header_indices.push(entries.len());
                 entries.push(ListEntry::ProjectHeader {
                     key: group_key.clone(),
@@ -1724,6 +1790,7 @@ impl Sidebar {
                     highlight_positions: Vec::new(),
                     has_running_threads,
                     waiting_thread_count,
+                    has_notifications: has_thread_notifications || has_terminal_notifications,
                     is_active,
                     has_threads,
                 });
@@ -1748,6 +1815,8 @@ impl Sidebar {
             .retain(|id, _| current_thread_ids.contains(id));
         self.terminal_last_accessed
             .retain(|id, _| current_terminal_ids.contains(id));
+
+        self.live_thread_statuses = new_live_statuses;
 
         self.contents = SidebarContents {
             entries,
@@ -1862,6 +1931,7 @@ impl Sidebar {
                 highlight_positions,
                 has_running_threads,
                 waiting_thread_count,
+                has_notifications,
                 is_active: is_active_group,
                 has_threads,
             } => {
@@ -1885,6 +1955,7 @@ impl Sidebar {
                     highlight_positions,
                     *has_running_threads,
                     *waiting_thread_count,
+                    *has_notifications,
                     *is_active_group,
                     is_selected,
                     *has_threads,
@@ -1943,6 +2014,7 @@ impl Sidebar {
         highlight_positions: &[usize],
         has_running_threads: bool,
         waiting_thread_count: usize,
+        has_notifications: bool,
         is_active: bool,
         is_focused: bool,
         has_threads: bool,
@@ -2054,6 +2126,16 @@ impl Sidebar {
                                     .tooltip(Tooltip::text(tooltip_text)),
                             )
                         })
+                        .when(
+                            has_notifications && !has_running_threads && waiting_thread_count == 0,
+                            |this| {
+                                this.child(
+                                    Icon::new(IconName::Circle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Accent),
+                                )
+                            },
+                        )
                     })
                     .child(
                         div()
@@ -2225,6 +2307,19 @@ impl Sidebar {
                             .unwrap_or_default()
                     })
                     .unwrap_or_default();
+
+                // Compute reorder state at menu-open time so it reflects the
+                // most recent group ordering.
+                let (group_index, total_groups) = multi_workspace
+                    .read_with(cx, |mw, _| {
+                        let keys = mw.project_group_keys();
+                        let index = keys.iter().position(|k| k == &project_group_key);
+                        (index, keys.len())
+                    })
+                    .unwrap_or((None, 0));
+                let show_reorder_entries = total_groups >= 2;
+                let can_move_up = group_index.is_some_and(|i| i > 0);
+                let can_move_down = group_index.is_some_and(|i| i + 1 < total_groups);
 
                 let active_workspace = multi_workspace
                     .read_with(cx, |multi_workspace, _cx| {
@@ -2445,19 +2540,57 @@ impl Sidebar {
                             menu
                         };
 
+                        let menu = menu.when(show_reorder_entries, |this| {
+                            let move_up_multi_workspace = multi_workspace.clone();
+                            let move_up_key = project_group_key.clone();
+                            let move_up_weak_menu = weak_menu.clone();
+                            let move_down_multi_workspace = multi_workspace.clone();
+                            let move_down_key = project_group_key.clone();
+                            let move_down_weak_menu = weak_menu.clone();
+
+                            this.separator()
+                                .item(
+                                    ContextMenuEntry::new("Move Up")
+                                        .disabled(!can_move_up)
+                                        .handler(move |_window, cx| {
+                                            move_up_multi_workspace
+                                                .update(cx, |mw, cx| {
+                                                    mw.move_project_group_up(&move_up_key, cx);
+                                                })
+                                                .ok();
+                                            move_up_weak_menu
+                                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        }),
+                                )
+                                .item(
+                                    ContextMenuEntry::new("Move Down")
+                                        .disabled(!can_move_down)
+                                        .handler(move |_window, cx| {
+                                            move_down_multi_workspace
+                                                .update(cx, |mw, cx| {
+                                                    mw.move_project_group_down(&move_down_key, cx);
+                                                })
+                                                .ok();
+                                            move_down_weak_menu
+                                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                                .ok();
+                                        }),
+                                )
+                        });
+
                         let project_group_key = project_group_key.clone();
                         let remove_multi_workspace = multi_workspace.clone();
-                        menu.separator()
-                            .entry("Remove Project", None, move |window, cx| {
-                                remove_multi_workspace
-                                    .update(cx, |multi_workspace, cx| {
-                                        multi_workspace
-                                            .remove_project_group(&project_group_key, window, cx)
-                                            .detach_and_log_err(cx);
-                                    })
-                                    .ok();
-                                weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                            })
+                        menu.separator().entry("Remove", None, move |window, cx| {
+                            remove_multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace
+                                        .remove_project_group(&project_group_key, window, cx)
+                                        .detach_and_log_err(cx);
+                                })
+                                .ok();
+                            weak_menu.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+                        })
                     });
 
                 let this = this.clone();
@@ -2509,6 +2642,7 @@ impl Sidebar {
             highlight_positions,
             has_running_threads,
             waiting_thread_count,
+            has_notifications,
             is_active,
             has_threads,
         } = self.contents.entries.get(header_idx)?
@@ -2538,6 +2672,7 @@ impl Sidebar {
             &highlight_positions,
             *has_running_threads,
             *waiting_thread_count,
+            *has_notifications,
             *is_active,
             is_selected,
             *has_threads,

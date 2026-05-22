@@ -10,7 +10,7 @@ use std::{
 };
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
-use agent::{ContextServerRegistry, SharedThread, ThreadStore};
+use agent::{ContextServerRegistry, SharedThread, ThreadStore, UserAgentsMd};
 use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
 use collections::HashSet;
@@ -3070,10 +3070,42 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let this = cx.weak_entity();
+        let on_saved = Rc::new(move |cx: &mut App| {
+            this.update(cx, |this, cx| {
+                if !this.has_open_project(cx) {
+                    return;
+                }
+
+                this.ensure_native_agent_connection(cx);
+                let Some(connect_task) = this.connection_store.update(cx, |store, cx| {
+                    store
+                        .entry(&Agent::NativeAgent)
+                        .map(|entry| entry.read(cx).wait_for_connection())
+                }) else {
+                    return;
+                };
+                let project = this.project.clone();
+                cx.spawn(async move |_this, cx| -> Result<()> {
+                    let connected = connect_task.await?;
+                    if let Some(native_connection) = connected
+                        .connection
+                        .downcast::<agent::NativeAgentConnection>()
+                    {
+                        cx.update(|cx| native_connection.refresh_skills_for_project(project, cx));
+                    }
+                    Ok(())
+                })
+                .detach_and_log_err(cx);
+            })
+            .ok();
+        });
+
         open_skill_creator(
             Some(self.workspace.clone()),
             self.language_registry.clone(),
             self.fs.clone(),
+            Some(on_saved),
             cx,
         )
         .detach_and_log_err(cx);
@@ -4780,6 +4812,28 @@ impl AgentPanel {
             .active_conversation_view()
             .is_some_and(|conversation_view| conversation_view.read(cx).supports_logout(cx));
 
+        let project_agents_md_path: Option<PathBuf> = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .and_then(|worktree| {
+                let worktree = worktree.read(cx);
+                let rel_path = util::rel_path::RelPath::unix("AGENTS.md").ok()?;
+                let entry = worktree.entry_for_path(rel_path)?;
+                if entry.is_file() {
+                    Some(worktree.absolutize(rel_path))
+                } else {
+                    None
+                }
+            });
+
+        let global_agents_md_loaded = UserAgentsMd::global(cx)
+            .and_then(|md| md.content())
+            .is_some();
+
+        let workspace = self.workspace.clone();
+
         PopoverMenu::new("agent-options-menu")
             .trigger_with_tooltip(
                 IconButton::new("agent-options-menu", IconName::Ellipsis)
@@ -4821,8 +4875,9 @@ impl AgentPanel {
                         if !showing_terminal {
                             menu = menu
                                 .header("MCP Servers")
+                                .action("Add Custom Server…", Box::new(AddContextServer))
                                 .action(
-                                    "View Server Extensions",
+                                    "Install New Servers…",
                                     Box::new(zed_actions::Extensions {
                                         category_filter: Some(
                                             zed_actions::ExtensionCategoryFilter::ContextServers,
@@ -4830,16 +4885,81 @@ impl AgentPanel {
                                         id: None,
                                     }),
                                 )
-                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .separator()
+                                .header("Skills")
+                                .entry(
+                                    "Create Skill…",
+                                    Some(Box::new(OpenRulesLibrary::default())),
+                                    |window, cx| {
+                                        window.dispatch_action(Box::new(OpenSkillCreator), cx);
+                                    },
+                                )
+                                .entry("Manage Skills…", None, |window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(zed_actions::OpenSettingsAt {
+                                            path: "agent.skills".to_string(),
+                                        }),
+                                        cx,
+                                    );
+                                })
                                 .separator();
 
-                            menu = menu.entry(
-                                "Skills",
-                                Some(Box::new(OpenRulesLibrary::default())),
-                                |window, cx| {
-                                    window.dispatch_action(Box::new(OpenSkillCreator), cx);
-                                },
-                            );
+                            if project_agents_md_path.is_some() || global_agents_md_loaded {
+                                menu = menu.header("Rules");
+
+                                if global_agents_md_loaded {
+                                    let workspace = workspace.clone();
+                                    menu = menu.entry(
+                                        "Open Global AGENTS.md",
+                                        None,
+                                        move |window, cx| {
+                                            workspace
+                                                .update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            paths::agents_file().clone(),
+                                                            workspace::OpenOptions {
+                                                                focus: Some(true),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx);
+                                                })
+                                                .log_err();
+                                        },
+                                    );
+                                }
+
+                                if let Some(path) = project_agents_md_path.clone() {
+                                    let workspace = workspace.clone();
+                                    menu = menu.entry(
+                                        "Open Project AGENTS.md",
+                                        None,
+                                        move |window, cx| {
+                                            let path = path.clone();
+                                            workspace
+                                                .update(cx, |workspace, cx| {
+                                                    workspace
+                                                        .open_abs_path(
+                                                            path,
+                                                            workspace::OpenOptions {
+                                                                focus: Some(true),
+                                                                ..Default::default()
+                                                            },
+                                                            window,
+                                                            cx,
+                                                        )
+                                                        .detach_and_log_err(cx);
+                                                })
+                                                .log_err();
+                                        },
+                                    );
+                                }
+
+                                menu = menu.separator();
+                            }
 
                             menu = menu.action("Profiles", Box::new(ManageProfiles::default()));
                         }
@@ -4849,6 +4969,9 @@ impl AgentPanel {
                             .separator()
                             .action("Toggle Threads Sidebar", Box::new(ToggleWorkspaceSidebar));
 
+                        if has_auth_methods || supports_logout {
+                            menu = menu.separator()
+                        }
                         if has_auth_methods {
                             menu = menu.action("Reauthenticate", Box::new(ReauthenticateAgent))
                         }
@@ -8173,12 +8296,12 @@ mod tests {
         cx.run_until_parked();
 
         assert!(
-            cx.debug_bounds("MENU_ITEM-Skills").is_some(),
-            "Skills menu item should be visible"
+            cx.debug_bounds("MENU_ITEM-Create Skill…").is_some(),
+            "Create Skill… menu item should be visible"
         );
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
-            "Skills menu item should show the OpenRulesLibrary shortcut"
+            "Create Skill… menu item should show the OpenRulesLibrary shortcut"
         );
     }
 

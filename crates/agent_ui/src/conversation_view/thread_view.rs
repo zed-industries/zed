@@ -1,17 +1,19 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
 use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
-use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated, UserAgentsMd};
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
 
+use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
 use gpui::List;
@@ -329,6 +331,10 @@ pub struct ThreadView {
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
+    /// Cache + worktree snapshot for resolving paths in markdown code spans.
+    /// Cloned from the parent `ConversationView` so the cache is shared and the
+    /// snapshot stays in sync via the parent's project-event subscription.
+    pub(crate) code_span_resolver: AgentCodeSpanResolver,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
     pub multi_root_callout_dismissed: bool,
@@ -381,6 +387,7 @@ impl ThreadView {
         session_capabilities: SharedSessionCapabilities,
         resumed_without_history: bool,
         project: WeakEntity<Project>,
+        code_span_resolver: AgentCodeSpanResolver,
         thread_store: Option<Entity<ThreadStore>>,
         prompt_store: Option<Entity<PromptStore>>,
         initial_content: Option<AgentInitialContent>,
@@ -447,6 +454,23 @@ impl ThreadView {
         let show_codex_windows_warning = cfg!(windows)
             && project.upgrade().is_some_and(|p| p.read(cx).is_local())
             && agent_id.as_ref() == "Codex";
+
+        if let Some(project) = project.upgrade() {
+            subscriptions.push(cx.subscribe(&project, {
+                let resolver = code_span_resolver.clone();
+                move |_this: &mut Self, _project, event: &project::Event, cx| {
+                    if matches!(
+                        event,
+                        project::Event::WorktreeAdded(_)
+                            | project::Event::WorktreeRemoved(_)
+                            | project::Event::WorktreeUpdatedEntries(_, _)
+                    ) {
+                        resolver.clear_cache();
+                        cx.notify();
+                    }
+                }
+            }));
+        }
 
         let title_editor = {
             let metadata = ThreadMetadataStore::try_global(cx)
@@ -600,6 +624,7 @@ impl ThreadView {
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             project,
+            code_span_resolver,
             show_external_source_prompt_warning,
             show_codex_windows_warning,
             multi_root_callout_dismissed: false,
@@ -3607,12 +3632,10 @@ impl ThreadView {
 
         let tooltip_separator_color = Color::Custom(cx.theme().colors().text_disabled.opacity(0.6));
 
-        let (user_rules_count, first_user_rules_id, project_rules_count, project_entry_ids) = self
+        let (project_rules_count, project_entry_ids) = self
             .as_native_thread(cx)
             .map(|thread| {
                 let project_context = thread.read(cx).project_context().read(cx);
-                let user_rules_count = project_context.user_rules.len();
-                let first_user_rules_id = project_context.user_rules.first().map(|r| r.uuid.0);
                 let project_entry_ids = project_context
                     .worktrees
                     .iter()
@@ -3620,14 +3643,13 @@ impl ThreadView {
                     .map(|rf| ProjectEntryId::from_usize(rf.project_entry_id))
                     .collect::<Vec<_>>();
                 let project_rules_count = project_entry_ids.len();
-                (
-                    user_rules_count,
-                    first_user_rules_id,
-                    project_rules_count,
-                    project_entry_ids,
-                )
+                (project_rules_count, project_entry_ids)
             })
             .unwrap_or_default();
+
+        let global_agents_md_loaded = UserAgentsMd::global(cx)
+            .and_then(|md| md.content())
+            .is_some();
 
         let workspace = self.workspace.clone();
 
@@ -3663,8 +3685,7 @@ impl ThreadView {
                     show_split,
                     cost_label,
                     separator_color: tooltip_separator_color,
-                    user_rules_count,
-                    first_user_rules_id,
+                    global_agents_md_loaded,
                     project_rules_count,
                     project_entry_ids,
                     workspace,
@@ -4157,6 +4178,8 @@ impl ThreadView {
         let session_capabilities = self.session_capabilities.read();
         let supports_images = session_capabilities.supports_images();
         let supports_embedded_context = session_capabilities.supports_embedded_context();
+        let available_skills = session_capabilities.completion_skills();
+        drop(session_capabilities);
 
         let has_editor_selection = workspace
             .upgrade()
@@ -4180,7 +4203,6 @@ impl ThreadView {
 
         ContextMenu::build(window, cx, move |menu, _window, _cx| {
             menu.key_context("AddContextMenu")
-                .header("Context")
                 .item(
                     ContextMenuEntry::new("Files & Directories")
                         .icon(IconName::File)
@@ -4226,21 +4248,19 @@ impl ThreadView {
                             }
                         }),
                 )
-                .item(
-                    ContextMenuEntry::new("Skills")
-                        .icon(IconName::Sparkle)
-                        .icon_color(Color::Muted)
-                        .icon_size(IconSize::XSmall)
-                        .handler({
-                            let message_editor = message_editor.clone();
-                            move |window, cx| {
-                                message_editor.focus_handle(cx).focus(window, cx);
-                                message_editor.update(cx, |editor, cx| {
-                                    editor.insert_context_type("skill", window, cx);
-                                });
+                .when(!available_skills.is_empty(), |this| {
+                    this.submenu_with_colored_icon("Skills", IconName::Sparkle, Color::Muted, {
+                        let message_editor = message_editor.clone();
+                        let available_skills = available_skills.clone();
+                        move |mut menu, _window, _cx| {
+                            for skill in &available_skills {
+                                menu = menu
+                                    .item(Self::skill_menu_entry(skill, message_editor.clone()));
                             }
-                        }),
-                )
+                            menu
+                        }
+                    })
+                })
                 .item(
                     ContextMenuEntry::new("Image")
                         .icon(IconName::Image)
@@ -4287,6 +4307,25 @@ impl ThreadView {
                         }),
                 )
         })
+    }
+
+    fn skill_menu_entry(
+        skill: &AvailableSkill,
+        message_editor: Entity<crate::message_editor::MessageEditor>,
+    ) -> ContextMenuEntry {
+        let label = format!("{} ({})", skill.name, skill.source);
+        let skill = skill.clone();
+
+        ContextMenuEntry::new(label)
+            .icon(IconName::Sparkle)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::XSmall)
+            .handler(move |window, cx| {
+                message_editor.focus_handle(cx).focus(window, cx);
+                message_editor.update(cx, |editor, cx| {
+                    editor.insert_skill_crease(&skill, window, cx);
+                });
+            })
     }
 
     fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4340,8 +4379,7 @@ struct TokenUsageTooltip {
     show_split: bool,
     cost_label: Option<String>,
     separator_color: Color,
-    user_rules_count: usize,
-    first_user_rules_id: Option<uuid::Uuid>,
+    global_agents_md_loaded: bool,
     project_rules_count: usize,
     project_entry_ids: Vec<ProjectEntryId>,
     workspace: WeakEntity<Workspace>,
@@ -4359,8 +4397,7 @@ impl Render for TokenUsageTooltip {
         let output_max = self.output_max.clone();
         let show_split = self.show_split;
         let cost_label = self.cost_label.clone();
-        let user_rules_count = self.user_rules_count;
-        let first_user_rules_id = self.first_user_rules_id;
+        let global_agents_md_loaded = self.global_agents_md_loaded;
         let project_rules_count = self.project_rules_count;
         let project_entry_ids = self.project_entry_ids.clone();
         let workspace = self.workspace.clone();
@@ -4423,7 +4460,7 @@ impl Render for TokenUsageTooltip {
                     )
                 })
                 .when(
-                    user_rules_count > 0 || project_rules_count > 0,
+                    global_agents_md_loaded || project_rules_count > 0,
                     move |this| {
                         this.child(
                             v_flex()
@@ -4441,26 +4478,39 @@ impl Render for TokenUsageTooltip {
                                 .child(
                                     v_flex()
                                         .mx_neg_1()
-                                        .when(user_rules_count > 0, move |this| {
-                                            this.child(
-                                                Button::new(
-                                                    "open-user-rules",
-                                                    format!("{} user rules", user_rules_count),
+                                        .when(global_agents_md_loaded, {
+                                            let workspace = workspace.clone();
+                                            move |this| {
+                                                this.child(
+                                                    Button::new(
+                                                        "open-global-agents-md",
+                                                        "1 global rule",
+                                                    )
+                                                    .end_icon(
+                                                        Icon::new(IconName::ArrowUpRight)
+                                                            .color(Color::Muted)
+                                                            .size(IconSize::XSmall),
+                                                    )
+                                                    .on_click(move |_, window, cx| {
+                                                        workspace
+                                                            .update(cx, |workspace, cx| {
+                                                                workspace
+                                                                    .open_abs_path(
+                                                                        paths::agents_file()
+                                                                            .clone(),
+                                                                        workspace::OpenOptions {
+                                                                            focus: Some(true),
+                                                                            ..Default::default()
+                                                                        },
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                    .detach_and_log_err(cx);
+                                                            })
+                                                            .log_err();
+                                                    }),
                                                 )
-                                                .end_icon(
-                                                    Icon::new(IconName::ArrowUpRight)
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
-                                                )
-                                                .on_click(move |_, window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(OpenRulesLibrary {
-                                                            prompt_to_select: first_user_rules_id,
-                                                        }),
-                                                        cx,
-                                                    );
-                                                }),
-                                            )
+                                            }
                                         })
                                         .when(project_rules_count > 0, move |this| {
                                             let workspace = workspace.clone();
@@ -8682,7 +8732,13 @@ impl ThreadView {
         style: MarkdownStyle,
         cx: &App,
     ) -> MarkdownElement {
-        render_agent_markdown(markdown, style, &self.workspace, &self.project, cx)
+        render_agent_markdown(
+            markdown,
+            style,
+            &self.workspace,
+            &self.code_span_resolver,
+            cx,
+        )
     }
 
     fn create_copy_button(&self, message: impl Into<String>) -> impl IntoElement {
@@ -9353,39 +9409,27 @@ pub(crate) fn open_link(
                 abs_path: path,
                 line_range,
                 ..
+            } => {
+                open_abs_path_at_point(
+                    workspace,
+                    path,
+                    Point::new(*line_range.start(), 0),
+                    window,
+                    cx,
+                );
             }
-            | MentionUri::Selection {
+            MentionUri::Selection {
                 abs_path: Some(path),
                 line_range,
+                column,
             } => {
-                let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(path, cx))
-                else {
-                    return;
-                };
-
-                let item = workspace.open_path(path, None, true, window, cx);
-                window
-                    .spawn(cx, async move |cx| {
-                        let Some(editor) = item.await?.downcast::<Editor>() else {
-                            return Ok(());
-                        };
-                        let range =
-                            Point::new(*line_range.start(), 0)..Point::new(*line_range.start(), 0);
-                        editor
-                            .update_in(cx, |editor, window, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::scroll(Autoscroll::center()),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges(vec![range]),
-                                );
-                            })
-                            .ok();
-                        anyhow::Ok(())
-                    })
-                    .detach_and_log_err(cx);
+                open_abs_path_at_point(
+                    workspace,
+                    path,
+                    Point::new(*line_range.start(), column.unwrap_or(0)),
+                    window,
+                    cx,
+                );
             }
             MentionUri::Selection { abs_path: None, .. } => {}
             MentionUri::Thread { id, name } => {
