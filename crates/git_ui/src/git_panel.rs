@@ -4985,8 +4985,7 @@ impl GitPanel {
                                     )
                                 })
                                 .on_click(|_, window, cx| {
-                                    window
-                                        .dispatch_action(crate::git_graph::Open.boxed_clone(), cx)
+                                    window.dispatch_action(crate::git_graph::Open.boxed_clone(), cx)
                                 }),
                         ),
                 ),

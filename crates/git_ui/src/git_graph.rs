@@ -1,3 +1,8 @@
+use crate::{
+    commit_tooltip::{CommitAvatar, CommitTooltip},
+    commit_view::CommitView,
+    git_status_icon,
+};
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use git::{
@@ -7,11 +12,6 @@ use git::{
         SearchCommitArgs,
     },
     status::{FileStatus, StatusCode, TrackedStatus},
-};
-use crate::{
-    commit_tooltip::{CommitAvatar, CommitTooltip},
-    commit_view::CommitView,
-    git_status_icon,
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
@@ -924,33 +924,29 @@ pub fn init(cx: &mut App) {
                                 .ok();
                         }
                     })
-                    .on_action(
-                        move |action: &OpenAtCommit, window, cx| {
-                            let sha = action.sha.clone();
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    let Some(repo) =
-                                        workspace.project().read(cx).active_repository(cx)
-                                    else {
-                                        return;
-                                    };
-                                    let selected_repo_id = repo.read(cx).id;
+                    .on_action(move |action: &OpenAtCommit, window, cx| {
+                        let sha = action.sha.clone();
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                let Some(repo) = workspace.project().read(cx).active_repository(cx)
+                                else {
+                                    return;
+                                };
+                                let selected_repo_id = repo.read(cx).id;
 
-                                    let git_store =
-                                        workspace.project().read(cx).git_store().clone();
-                                    open_or_reuse_graph(
-                                        workspace,
-                                        selected_repo_id,
-                                        git_store,
-                                        LogSource::All,
-                                        Some(sha),
-                                        window,
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        },
-                    )
+                                let git_store = workspace.project().read(cx).git_store().clone();
+                                open_or_reuse_graph(
+                                    workspace,
+                                    selected_repo_id,
+                                    git_store,
+                                    LogSource::All,
+                                    Some(sha),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
                 },
             )
         });
@@ -4775,24 +4771,14 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                LogSource::default(),
-                LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
         cx.run_until_parked();
 
         let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                LogSource::default(),
-                LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            )
-            .commits
-            .to_vec()
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx)
+                .commits
+                .to_vec()
         });
 
         let mut graph_data = GraphData::new(8);
@@ -4846,12 +4832,7 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                LogSource::default(),
-                LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
 
         project
@@ -4908,12 +4889,7 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(
-                LogSource::default(),
-                LogOrder::default(),
-                0..usize::MAX,
-                cx,
-            );
+            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
         });
 
         cx.run_until_parked();
