@@ -1021,8 +1021,49 @@ pub trait PlatformAtlas {
         &self,
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
-    ) -> Result<Option<AtlasTile>>;
+    ) -> Result<Option<AtlasTileRef>>;
     fn remove(&self, key: &AtlasKey);
+}
+
+/// Type-erased keep-alive owned by an [`AtlasTileRef`]. Backends implement this
+/// to release the underlying atlas slot when the last [`AtlasTileRef`] holding
+/// it is dropped.
+#[doc(hidden)]
+pub trait AtlasTileKeepAlive: std::fmt::Debug + Send + Sync + 'static {}
+
+/// A reference-counted handle to an [`AtlasTile`].
+///
+/// The atlas hands out exactly one keep-alive per tile; the surrounding `Arc`
+/// is what makes the handle cloneable and what releases the slot when the last
+/// clone is dropped. Callers (the image cache, the scene, etc.) keep the slot
+/// alive simply by holding onto an `AtlasTileRef` clone.
+///
+/// `tile` is the raw `#[repr(C)]` data that the GPU consumes verbatim; copying
+/// it out via `Deref` or `.tile` is allowed and does not affect the refcount.
+/// What must not happen is using the raw `AtlasTile` after every `AtlasTileRef`
+/// for it has been dropped.
+#[derive(Clone, Debug)]
+pub struct AtlasTileRef {
+    /// Raw GPU-side tile data. Safe to copy into instance buffers as long as
+    /// at least one `AtlasTileRef` is kept alive for the duration of the use.
+    pub tile: AtlasTile,
+    #[allow(dead_code)]
+    keep_alive: std::sync::Arc<dyn AtlasTileKeepAlive>,
+}
+
+impl AtlasTileRef {
+    /// Wrap a raw tile together with the backend-provided keep-alive.
+    pub fn new(tile: AtlasTile, keep_alive: std::sync::Arc<dyn AtlasTileKeepAlive>) -> Self {
+        Self { tile, keep_alive }
+    }
+}
+
+impl ops::Deref for AtlasTileRef {
+    type Target = AtlasTile;
+
+    fn deref(&self) -> &AtlasTile {
+        &self.tile
+    }
 }
 
 #[doc(hidden)]

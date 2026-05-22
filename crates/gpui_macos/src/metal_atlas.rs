@@ -3,28 +3,41 @@ use collections::FxHashMap;
 use derive_more::{Deref, DerefMut};
 use etagere::BucketedAtlasAllocator;
 use gpui::{
-    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, Bounds, DevicePixels,
-    PlatformAtlas, Point, Size,
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTextureList, AtlasTile, AtlasTileKeepAlive,
+    AtlasTileRef, Bounds, DevicePixels, PlatformAtlas, Point, Size,
 };
 use metal::Device;
 use parking_lot::Mutex;
 use std::borrow::Cow;
+use std::sync::{Arc, Weak};
 
-pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
+pub(crate) struct MetalAtlas {
+    state: Arc<Mutex<MetalAtlasState>>,
+}
 
 impl MetalAtlas {
     pub(crate) fn new(device: Device, is_apple_gpu: bool) -> Self {
-        MetalAtlas(Mutex::new(MetalAtlasState {
-            device: AssertSend(device),
-            is_apple_gpu,
-            monochrome_textures: Default::default(),
-            polychrome_textures: Default::default(),
-            tiles_by_key: Default::default(),
-        }))
+        MetalAtlas {
+            state: Arc::new(Mutex::new(MetalAtlasState {
+                device: AssertSend(device),
+                is_apple_gpu,
+                monochrome_textures: Default::default(),
+                polychrome_textures: Default::default(),
+                tiles_by_key: Default::default(),
+            })),
+        }
     }
 
     pub(crate) fn metal_texture(&self, id: AtlasTextureId) -> metal::Texture {
-        self.0.lock().texture(id).metal_texture.clone()
+        self.state.lock().texture(id).metal_texture.clone()
+    }
+
+    fn make_tile_ref(&self, tile: AtlasTile) -> AtlasTileRef {
+        let keep_alive: Arc<dyn AtlasTileKeepAlive> = Arc::new(MetalAtlasTileKeepAlive {
+            state: Arc::downgrade(&self.state),
+            texture_id: tile.texture_id,
+        });
+        AtlasTileRef::new(tile, keep_alive)
     }
 }
 
@@ -33,7 +46,30 @@ struct MetalAtlasState {
     is_apple_gpu: bool,
     monochrome_textures: AtlasTextureList<MetalAtlasTexture>,
     polychrome_textures: AtlasTextureList<MetalAtlasTexture>,
-    tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
+    /// Cache of currently-live tiles, keyed by their atlas key. Holding an
+    /// `AtlasTileRef` here is what keeps a cached slot alive between paints.
+    tiles_by_key: FxHashMap<AtlasKey, AtlasTileRef>,
+}
+
+#[derive(Debug)]
+struct MetalAtlasTileKeepAlive {
+    state: Weak<Mutex<MetalAtlasState>>,
+    texture_id: AtlasTextureId,
+}
+
+impl AtlasTileKeepAlive for MetalAtlasTileKeepAlive {}
+
+impl Drop for MetalAtlasTileKeepAlive {
+    fn drop(&mut self) {
+        // Slot release is driven entirely by the keep-alive Drop. By the time
+        // the last `AtlasTileRef` for this tile goes out of scope, no scene
+        // primitive or cache entry can still be referring to the slot, so it
+        // is safe to free.
+        let Some(state) = self.state.upgrade() else {
+            return;
+        };
+        state.lock().release_slot(self.texture_id);
+    }
 }
 
 impl PlatformAtlas for MetalAtlas {
@@ -41,33 +77,44 @@ impl PlatformAtlas for MetalAtlas {
         &self,
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
-    ) -> Result<Option<AtlasTile>> {
-        let mut lock = self.0.lock();
-        if let Some(tile) = lock.tiles_by_key.get(key) {
-            Ok(Some(*tile))
-        } else {
-            let Some((size, bytes)) = build()? else {
-                return Ok(None);
-            };
-            let tile = lock
-                .allocate(size, key.texture_kind())
-                .context("failed to allocate")?;
-            let texture = lock.texture(tile.texture_id);
-            texture.upload(tile.bounds, &bytes);
-            lock.tiles_by_key.insert(key.clone(), tile);
-            Ok(Some(tile))
+    ) -> Result<Option<AtlasTileRef>> {
+        let mut lock = self.state.lock();
+        if let Some(tile_ref) = lock.tiles_by_key.get(key) {
+            return Ok(Some(tile_ref.clone()));
         }
+        let Some((size, bytes)) = build()? else {
+            return Ok(None);
+        };
+        let tile = lock
+            .allocate(size, key.texture_kind())
+            .context("failed to allocate")?;
+        let texture = lock.texture(tile.texture_id);
+        texture.upload(tile.bounds, &bytes);
+        // Drop the state lock before wrapping the tile, because constructing
+        // the keep-alive does not need the lock and we want to keep the
+        // critical section short.
+        drop(lock);
+        let tile_ref = self.make_tile_ref(tile);
+        self.state
+            .lock()
+            .tiles_by_key
+            .insert(key.clone(), tile_ref.clone());
+        Ok(Some(tile_ref))
     }
 
     fn remove(&self, key: &AtlasKey) {
-        let mut lock = self.0.lock();
-        let Some(id) = lock.tiles_by_key.remove(key).map(|v| v.texture_id) else {
-            return;
-        };
+        // Just drop the cache's reference. The underlying slot is released
+        // when (and only when) the last `AtlasTileRef` for the tile — held by
+        // the scene, the cache, or both — is dropped.
+        self.state.lock().tiles_by_key.remove(key);
+    }
+}
 
+impl MetalAtlasState {
+    fn release_slot(&mut self, id: AtlasTextureId) {
         let textures = match id.kind {
-            AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
-            AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+            AtlasTextureKind::Monochrome => &mut self.monochrome_textures,
+            AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Subpixel => unreachable!(),
         };
 
@@ -88,9 +135,7 @@ impl PlatformAtlas for MetalAtlas {
             }
         }
     }
-}
 
-impl MetalAtlasState {
     fn allocate(
         &mut self,
         size: Size<DevicePixels>,
@@ -288,7 +333,7 @@ mod tests {
         })
     }
 
-    fn insert_tile(atlas: &MetalAtlas, key: &AtlasKey, size: Size<DevicePixels>) -> AtlasTile {
+    fn insert_tile(atlas: &MetalAtlas, key: &AtlasKey, size: Size<DevicePixels>) -> AtlasTileRef {
         atlas
             .get_or_insert_with(key, &mut || {
                 let byte_count = (size.width.0 as usize) * (size.height.0 as usize) * 4;
@@ -336,6 +381,35 @@ mod tests {
 
         // The texture must actually exist — this would panic before the fix.
         let _texture = atlas.metal_texture(tile_a2.texture_id);
+    }
+
+    /// A tile handed out by `get_or_insert_with` and captured by a caller
+    /// (for example, baked into a scene's primitives) must remain resolvable
+    /// via `metal_texture` even if the corresponding key is removed before
+    /// the caller is done with it. The caller's `AtlasTileRef` is what keeps
+    /// the slot alive across the remove.
+    #[test]
+    fn test_metal_texture_lookup_after_remove_does_not_panic() {
+        let Some(atlas) = create_atlas() else {
+            return;
+        };
+
+        let small = Size {
+            width: DevicePixels(64),
+            height: DevicePixels(64),
+        };
+        let key = make_image_key(42, 0);
+
+        // Equivalent of `paint_image`: tile captured by the scene.
+        let tile = insert_tile(&atlas, &key, small);
+        let captured_id = tile.texture_id;
+
+        // Equivalent of `drop_image` mid-frame.
+        atlas.remove(&key);
+
+        // The scene's `AtlasTileRef` (`tile`) is still alive, so the slot
+        // must still be resolvable.
+        let _texture = atlas.metal_texture(captured_id);
     }
 
     #[test]

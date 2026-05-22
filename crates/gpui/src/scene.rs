@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, AtlasTileRef, Background, Bounds, ContentMask, Corners, Edges,
+    Hsla, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -36,6 +36,11 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    /// Keep-alive handles for every atlas tile referenced by any sprite in
+    /// this scene. Holding these here ensures the underlying texture slots
+    /// stay alive until the scene is cleared (which happens after the
+    /// renderer has finished uploading the primitives to the GPU).
+    pub(crate) tile_refs: Vec<AtlasTileRef>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +57,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.tile_refs.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -103,17 +109,20 @@ impl Scene {
                 underline.order = order;
                 self.underlines.push(*underline);
             }
-            Primitive::MonochromeSprite(sprite) => {
+            Primitive::MonochromeSprite { sprite, tile_ref } => {
                 sprite.order = order;
                 self.monochrome_sprites.push(*sprite);
+                self.tile_refs.push(tile_ref.clone());
             }
-            Primitive::SubpixelSprite(sprite) => {
+            Primitive::SubpixelSprite { sprite, tile_ref } => {
                 sprite.order = order;
                 self.subpixel_sprites.push(*sprite);
+                self.tile_refs.push(tile_ref.clone());
             }
-            Primitive::PolychromeSprite(sprite) => {
+            Primitive::PolychromeSprite { sprite, tile_ref } => {
                 sprite.order = order;
                 self.polychrome_sprites.push(*sprite);
+                self.tile_refs.push(tile_ref.clone());
             }
             Primitive::Surface(surface) => {
                 surface.order = order;
@@ -210,9 +219,22 @@ pub enum Primitive {
     Quad(Quad),
     Path(Path<ScaledPixels>),
     Underline(Underline),
-    MonochromeSprite(MonochromeSprite),
-    SubpixelSprite(SubpixelSprite),
-    PolychromeSprite(PolychromeSprite),
+    /// Sprite primitives carry the [`AtlasTileRef`] keep-alive alongside the
+    /// raw `#[repr(C)]` GPU data so the underlying atlas slot stays live for
+    /// as long as the primitive is part of any scene (including scenes
+    /// produced by `Scene::replay`).
+    MonochromeSprite {
+        sprite: MonochromeSprite,
+        tile_ref: AtlasTileRef,
+    },
+    SubpixelSprite {
+        sprite: SubpixelSprite,
+        tile_ref: AtlasTileRef,
+    },
+    PolychromeSprite {
+        sprite: PolychromeSprite,
+        tile_ref: AtlasTileRef,
+    },
     Surface(PaintSurface),
 }
 
@@ -224,9 +246,9 @@ impl Primitive {
             Primitive::Quad(quad) => &quad.bounds,
             Primitive::Path(path) => &path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
-            Primitive::MonochromeSprite(sprite) => &sprite.bounds,
-            Primitive::SubpixelSprite(sprite) => &sprite.bounds,
-            Primitive::PolychromeSprite(sprite) => &sprite.bounds,
+            Primitive::MonochromeSprite { sprite, .. } => &sprite.bounds,
+            Primitive::SubpixelSprite { sprite, .. } => &sprite.bounds,
+            Primitive::PolychromeSprite { sprite, .. } => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
     }
@@ -237,9 +259,9 @@ impl Primitive {
             Primitive::Quad(quad) => &quad.content_mask,
             Primitive::Path(path) => &path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
-            Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
-            Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
-            Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
+            Primitive::MonochromeSprite { sprite, .. } => &sprite.content_mask,
+            Primitive::SubpixelSprite { sprite, .. } => &sprite.content_mask,
+            Primitive::PolychromeSprite { sprite, .. } => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
         }
     }
@@ -652,6 +674,24 @@ impl Default for TransformationMatrix {
     }
 }
 
+impl From<(MonochromeSprite, AtlasTileRef)> for Primitive {
+    fn from((sprite, tile_ref): (MonochromeSprite, AtlasTileRef)) -> Self {
+        Primitive::MonochromeSprite { sprite, tile_ref }
+    }
+}
+
+impl From<(SubpixelSprite, AtlasTileRef)> for Primitive {
+    fn from((sprite, tile_ref): (SubpixelSprite, AtlasTileRef)) -> Self {
+        Primitive::SubpixelSprite { sprite, tile_ref }
+    }
+}
+
+impl From<(PolychromeSprite, AtlasTileRef)> for Primitive {
+    fn from((sprite, tile_ref): (PolychromeSprite, AtlasTileRef)) -> Self {
+        Primitive::PolychromeSprite { sprite, tile_ref }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 #[expect(missing_docs)]
@@ -663,12 +703,6 @@ pub struct MonochromeSprite {
     pub color: Hsla,
     pub tile: AtlasTile,
     pub transformation: TransformationMatrix,
-}
-
-impl From<MonochromeSprite> for Primitive {
-    fn from(sprite: MonochromeSprite) -> Self {
-        Primitive::MonochromeSprite(sprite)
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -684,12 +718,6 @@ pub struct SubpixelSprite {
     pub transformation: TransformationMatrix,
 }
 
-impl From<SubpixelSprite> for Primitive {
-    fn from(sprite: SubpixelSprite) -> Self {
-        Primitive::SubpixelSprite(sprite)
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 #[repr(C)]
 #[expect(missing_docs)]
@@ -702,12 +730,6 @@ pub struct PolychromeSprite {
     pub content_mask: ContentMask<ScaledPixels>,
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
-}
-
-impl From<PolychromeSprite> for Primitive {
-    fn from(sprite: PolychromeSprite) -> Self {
-        Primitive::PolychromeSprite(sprite)
-    }
 }
 
 #[derive(Clone, Debug)]

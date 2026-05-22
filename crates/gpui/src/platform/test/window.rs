@@ -1,5 +1,6 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTileKeepAlive, AtlasTileRef,
+    Bounds, DevicePixels,
     DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
@@ -336,8 +337,12 @@ impl PlatformWindow for TestWindow {
 
 pub(crate) struct TestAtlasState {
     next_id: u32,
-    tiles: HashMap<AtlasKey, AtlasTile>,
+    tiles: HashMap<AtlasKey, AtlasTileRef>,
 }
+
+#[derive(Debug)]
+struct TestTileKeepAlive;
+impl AtlasTileKeepAlive for TestTileKeepAlive {}
 
 pub(crate) struct TestAtlas(Mutex<TestAtlasState>);
 
@@ -357,10 +362,10 @@ impl PlatformAtlas for TestAtlas {
         build: &mut dyn FnMut() -> anyhow::Result<
             Option<(Size<crate::DevicePixels>, std::borrow::Cow<'a, [u8]>)>,
         >,
-    ) -> anyhow::Result<Option<crate::AtlasTile>> {
+    ) -> anyhow::Result<Option<crate::AtlasTileRef>> {
         let mut state = self.0.lock();
-        if let Some(&tile) = state.tiles.get(key) {
-            return Ok(Some(tile));
+        if let Some(tile_ref) = state.tiles.get(key) {
+            return Ok(Some(tile_ref.clone()));
         }
         drop(state);
 
@@ -374,23 +379,22 @@ impl PlatformAtlas for TestAtlas {
         state.next_id += 1;
         let tile_id = state.next_id;
 
-        state.tiles.insert(
-            key.clone(),
-            crate::AtlasTile {
-                texture_id: AtlasTextureId {
-                    index: texture_id,
-                    kind: crate::AtlasTextureKind::Monochrome,
-                },
-                tile_id: TileId(tile_id),
-                padding: 0,
-                bounds: crate::Bounds {
-                    origin: Point::default(),
-                    size,
-                },
+        let tile = crate::AtlasTile {
+            texture_id: AtlasTextureId {
+                index: texture_id,
+                kind: crate::AtlasTextureKind::Monochrome,
             },
-        );
+            tile_id: TileId(tile_id),
+            padding: 0,
+            bounds: crate::Bounds {
+                origin: Point::default(),
+                size,
+            },
+        };
+        let tile_ref = AtlasTileRef::new(tile, std::sync::Arc::new(TestTileKeepAlive));
+        state.tiles.insert(key.clone(), tile_ref.clone());
 
-        Ok(Some(state.tiles[key]))
+        Ok(Some(tile_ref))
     }
 
     fn remove(&self, key: &AtlasKey) {

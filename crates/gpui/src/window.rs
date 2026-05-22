@@ -3647,25 +3647,31 @@ impl Window {
             let content_mask = self.snapped_content_mask();
 
             if subpixel_rendering {
-                self.next_frame.scene.insert_primitive(SubpixelSprite {
-                    order: 0,
-                    pad: 0,
-                    bounds,
-                    content_mask,
-                    color: color.opacity(element_opacity),
+                self.next_frame.scene.insert_primitive((
+                    SubpixelSprite {
+                        order: 0,
+                        pad: 0,
+                        bounds,
+                        content_mask,
+                        color: color.opacity(element_opacity),
+                        tile: tile.tile,
+                        transformation: TransformationMatrix::unit(),
+                    },
                     tile,
-                    transformation: TransformationMatrix::unit(),
-                });
+                ));
             } else {
-                self.next_frame.scene.insert_primitive(MonochromeSprite {
-                    order: 0,
-                    pad: 0,
-                    bounds,
-                    content_mask,
-                    color: color.opacity(element_opacity),
+                self.next_frame.scene.insert_primitive((
+                    MonochromeSprite {
+                        order: 0,
+                        pad: 0,
+                        bounds,
+                        content_mask,
+                        color: color.opacity(element_opacity),
+                        tile: tile.tile,
+                        transformation: TransformationMatrix::unit(),
+                    },
                     tile,
-                    transformation: TransformationMatrix::unit(),
-                });
+                ));
             }
         }
         Ok(())
@@ -3738,16 +3744,19 @@ impl Window {
             let content_mask = self.snapped_content_mask();
             let opacity = self.element_opacity();
 
-            self.next_frame.scene.insert_primitive(PolychromeSprite {
-                order: 0,
-                pad: 0,
-                grayscale: false,
-                bounds,
-                corner_radii: Default::default(),
-                content_mask,
+            self.next_frame.scene.insert_primitive((
+                PolychromeSprite {
+                    order: 0,
+                    pad: 0,
+                    grayscale: false,
+                    bounds,
+                    corner_radii: Default::default(),
+                    content_mask,
+                    tile: tile.tile,
+                    opacity,
+                },
                 tile,
-                opacity,
-            });
+            ));
         }
         Ok(())
     }
@@ -3804,15 +3813,18 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_toward_zero(value.0)))
             .map_size(|size| size.ceil());
 
-        self.next_frame.scene.insert_primitive(MonochromeSprite {
-            order: 0,
-            pad: 0,
-            bounds: final_bounds,
-            content_mask,
-            color: color.opacity(element_opacity),
+        self.next_frame.scene.insert_primitive((
+            MonochromeSprite {
+                order: 0,
+                pad: 0,
+                bounds: final_bounds,
+                content_mask,
+                color: color.opacity(element_opacity),
+                tile: tile.tile,
+                transformation,
+            },
             tile,
-            transformation,
-        });
+        ));
 
         Ok(())
     }
@@ -3853,16 +3865,19 @@ impl Window {
         let corner_radii = corner_radii.scale(self.scale_factor());
         let opacity = self.element_opacity();
 
-        self.next_frame.scene.insert_primitive(PolychromeSprite {
-            order: 0,
-            pad: 0,
-            grayscale,
-            bounds,
-            content_mask,
-            corner_radii,
+        self.next_frame.scene.insert_primitive((
+            PolychromeSprite {
+                order: 0,
+                pad: 0,
+                grayscale,
+                bounds,
+                content_mask,
+                corner_radii,
+                tile: tile.tile,
+                opacity,
+            },
             tile,
-            opacity,
-        });
+        ));
         Ok(())
     }
 
