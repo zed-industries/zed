@@ -7,7 +7,8 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use std::{
-    borrow::Cow, ops,
+    borrow::Cow,
+    ops,
     sync::{Arc, Weak},
 };
 
@@ -44,9 +45,9 @@ struct WgpuAtlasState {
     pending_uploads: Vec<PendingUpload>,
 }
 
-    /// Backend-specific keep-alive carried by every [`AtlasTileRef`] for a
-    /// tile in this atlas. When the last clone is dropped its `Drop` impl
-    /// releases the slot in the originating atlas (if it still exists).
+/// Backend-specific keep-alive carried by every [`AtlasTileRef`] for a
+/// tile in this atlas. When the last clone is dropped its `Drop` impl
+/// releases the slot in the originating atlas (if it still exists).
 #[derive(Debug)]
 struct WgpuAtlasTileKeepAlive {
     state: Weak<Mutex<WgpuAtlasState>>,

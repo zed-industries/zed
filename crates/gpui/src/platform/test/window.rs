@@ -1,7 +1,6 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTileKeepAlive, AtlasTileRef,
-    Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTileKeepAlive, AtlasTileRef, Bounds,
+    DevicePixels, DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
