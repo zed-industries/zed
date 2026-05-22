@@ -1373,7 +1373,9 @@ impl FileFinderDelegate {
     ///
     /// If the query path resolves to an absolute file that exists in the project,
     /// this method will find the corresponding worktree and relative path, create a
-    /// match for it, and update the picker's search results.
+    /// match for it, and update the picker's search results. If the file exists on
+    /// disk but lies outside any of the project's worktrees, a synthetic match is
+    /// pushed so that pressing Enter opens it via `workspace.open_abs_path`.
     ///
     /// Returns `true` if the absolute path exists, otherwise returns `false`.
     fn lookup_absolute_path(
@@ -1393,15 +1395,16 @@ impl FileFinderDelegate {
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
-            let abs_file_exists = project
+            let resolved_path = project
                 .update(cx, |this, cx| {
                     this.resolve_abs_file_path(query.path_query(), cx)
                 })
-                .await
-                .is_some();
+                .await;
+            let abs_file_exists = resolved_path.is_some();
+            let mut external_abs_path = None;
 
-            if abs_file_exists {
-                project.update(cx, |project, cx| {
+            if let Some(resolved) = resolved_path {
+                let found_in_worktree = project.update(cx, |project, cx| {
                     if let Some((worktree, relative_path)) = project.find_worktree(query_path, cx) {
                         path_matches.push(ProjectPanelOrdMatch(PathMatch {
                             score: 1.0,
@@ -1412,8 +1415,17 @@ impl FileFinderDelegate {
                             is_dir: false, // File finder doesn't support directories
                             distance_to_relative_ancestor: usize::MAX,
                         }));
+                        true
+                    } else {
+                        false
                     }
                 });
+
+                if !found_in_worktree
+                    && let Some(abs_path) = resolved.into_abs_path()
+                {
+                    external_abs_path = Some(PathBuf::from(abs_path));
+                }
             }
 
             picker
@@ -1421,6 +1433,26 @@ impl FileFinderDelegate {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
                     picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
+
+                    if let Some(absolute) = external_abs_path {
+                        picker_delegate.matches.matches.insert(
+                            0,
+                            Match::History {
+                                path: FoundPath::new(
+                                    ProjectPath {
+                                        // A sentinel id that won't resolve to any worktree, so
+                                        // rendering falls back to the absolute path and `confirm`
+                                        // opens via `workspace.open_abs_path`.
+                                        worktree_id: WorktreeId::from_usize(usize::MAX),
+                                        path: RelPath::empty().into(),
+                                    },
+                                    absolute,
+                                ),
+                                panel_match: None,
+                            },
+                        );
+                        picker_delegate.selected_index = 0;
+                    }
 
                     anyhow::Ok(())
                 })

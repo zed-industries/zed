@@ -398,6 +398,63 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_absolute_path_outside_worktrees(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "lib.rs": "",
+                },
+            }),
+        )
+        .await;
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/outside"),
+            json!({
+                "elsewhere.rs": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/project").as_ref()], cx).await;
+
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    let outside_path = path!("/outside/elsewhere.rs").to_string();
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.update_matches(outside_path.clone(), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            picker.delegate.matches.matches.len(),
+            1,
+            "Existing absolute path outside any worktree should produce one synthetic match"
+        );
+        match &picker.delegate.matches.matches[0] {
+            Match::History { path, panel_match } => {
+                assert!(panel_match.is_none(), "Synthetic match should have no panel_match");
+                assert_eq!(path.absolute, PathBuf::from(path!("/outside/elsewhere.rs")));
+            }
+            other => panic!("Expected History match, got {other:?}"),
+        }
+    });
+    cx.dispatch_action(Confirm);
+    cx.read(|cx| {
+        let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
+        assert_eq!(active_editor.read(cx).title(cx), "elsewhere.rs");
+    });
+}
+
+#[gpui::test]
 async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
