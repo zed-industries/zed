@@ -606,6 +606,55 @@ fn visible_entries_as_strings(
 }
 
 #[gpui::test]
+async fn test_sticky_header_top_offset_uses_cached_position_while_list_remeasures(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        let scroll_top = ListOffset {
+            item_ix: 1,
+            offset_in_item: px(12.),
+        };
+        sidebar.sticky_header_position = Some(StickyHeaderPosition {
+            header_index: 0,
+            next_header_index: Some(2),
+            entry_count: 3,
+            scroll_top_item_index: scroll_top.item_ix,
+            scroll_top_offset_in_item: scroll_top.offset_in_item,
+            top_offset: px(-8.),
+        });
+
+        sidebar.list_state.reset(3);
+        sidebar.list_state.scroll_to(scroll_top);
+
+        assert_eq!(
+            sidebar.sticky_header_top_offset(0, Some(2), 3, scroll_top),
+            px(-8.)
+        );
+        assert_eq!(
+            sidebar.sticky_header_top_offset(
+                0,
+                Some(2),
+                3,
+                ListOffset {
+                    item_ix: 1,
+                    offset_in_item: px(13.),
+                },
+            ),
+            px(0.)
+        );
+        assert_eq!(
+            sidebar.sticky_header_top_offset(0, Some(2), 4, scroll_top),
+            px(0.)
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_serialization_round_trip(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
