@@ -2881,9 +2881,10 @@ impl Sidebar {
         if !new_title.is_empty() {
             let title = SharedString::from(new_title);
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.set_title_override(thread_id, title.clone(), cx);
+                store
+                    .rename_thread(thread_id, title, cx)
+                    .detach_and_log_err(cx);
             });
-            self.update_loaded_thread_title(thread_id, title, window, cx);
         }
 
         self.focus_handle.focus(window, cx);
@@ -2895,56 +2896,6 @@ impl Sidebar {
         if self.renaming_thread_id.take().is_some() {
             self.focus_handle.focus(window, cx);
             cx.notify();
-        }
-    }
-
-    fn update_loaded_thread_title(
-        &self,
-        thread_id: ThreadId,
-        title: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
-            return;
-        };
-        let panels = multi_workspace
-            .read(cx)
-            .workspaces()
-            .filter_map(|workspace| workspace.read(cx).panel::<AgentPanel>(cx))
-            .collect::<Vec<_>>();
-
-        for panel in panels {
-            let mut conversation_views = Vec::new();
-            panel.read_with(cx, |panel, cx| {
-                if panel.active_thread_id(cx) == Some(thread_id)
-                    && let Some(conversation_view) = panel.active_conversation_view()
-                {
-                    conversation_views.push(conversation_view.clone());
-                }
-                if let Some(conversation_view) = panel.retained_threads().get(&thread_id) {
-                    conversation_views.push(conversation_view.clone());
-                }
-            });
-
-            for conversation_view in conversation_views {
-                let Some(thread_view) = conversation_view.read(cx).root_thread_view() else {
-                    continue;
-                };
-                let (title_editor, thread) = thread_view.read_with(cx, |thread_view, _| {
-                    (thread_view.title_editor.clone(), thread_view.thread.clone())
-                });
-                title_editor.update(cx, |editor, cx| {
-                    if editor.text(cx) != title {
-                        editor.set_text(title.clone(), window, cx);
-                    }
-                });
-                thread.update(cx, |thread, cx| {
-                    if thread.can_set_title(cx) {
-                        thread.set_title(title.clone(), cx).detach_and_log_err(cx);
-                    }
-                });
-            }
         }
     }
 
@@ -3117,7 +3068,7 @@ impl Sidebar {
                     Agent::from(metadata.agent_id.clone()),
                     metadata.thread_id,
                     Some(metadata.folder_paths().clone()),
-                    metadata.title.clone(),
+                    metadata.title(),
                     focus,
                     AgentThreadSource::Sidebar,
                     window,

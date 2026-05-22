@@ -704,18 +704,50 @@ impl ThreadMetadataStore {
         thread_id: ThreadId,
         title_override: SharedString,
         cx: &mut Context<Self>,
-    ) {
-        let Some(existing) = self.entry(thread_id) else {
-            return;
+    ) -> bool {
+        let Some(existing) = self.entry(thread_id).cloned() else {
+            return false;
         };
         if existing.title_override.as_ref() == Some(&title_override) {
-            return;
+            return false;
         }
         let metadata = ThreadMetadata {
-            title_override: Some(title_override),
-            ..existing.clone()
+            title_override: Some(title_override.clone()),
+            ..existing
         };
         self.save(metadata, cx);
+        cx.emit(ThreadMetadataStoreEvent::ThreadTitleUpdated {
+            thread_id,
+            title: title_override,
+        });
+        true
+    }
+
+    pub fn rename_thread(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let metadata = self.entry(thread_id).cloned();
+        self.set_title_override(thread_id, title.clone(), cx);
+
+        let Some(metadata) = metadata else {
+            return Task::ready(Ok(()));
+        };
+        let Some(session_id) = metadata.session_id else {
+            return Task::ready(Ok(()));
+        };
+        if metadata.agent_id.as_ref() != ZED_AGENT_ID.as_ref() {
+            return Task::ready(Ok(()));
+        }
+        let Some(thread_store) = ThreadStore::try_global(cx) else {
+            return Task::ready(Ok(()));
+        };
+        let update_title = thread_store.update(cx, |store, cx| {
+            store.update_thread_title(session_id, title, cx)
+        });
+        cx.spawn(async move |_, _| update_title.await.map(|_| ()))
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
@@ -1341,6 +1373,10 @@ impl Global for ThreadMetadataStore {}
 #[derive(Clone, Debug)]
 pub enum ThreadMetadataStoreEvent {
     ThreadArchived(ThreadId),
+    ThreadTitleUpdated {
+        thread_id: ThreadId,
+        title: SharedString,
+    },
 }
 
 impl gpui::EventEmitter<ThreadMetadataStoreEvent> for ThreadMetadataStore {}
@@ -1982,6 +2018,60 @@ mod tests {
             assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
             assert_eq!(metadata.display_title().as_ref(), "User Title");
         });
+    }
+
+    #[gpui::test]
+    async fn test_rename_thread_updates_native_thread_database(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let session_id = acp::SessionId::new("session-1");
+        let updated_at = Utc::now();
+        let save_task = cx.update(|cx| {
+            ThreadStore::global(cx).update(cx, |store, cx| {
+                store.save_thread(
+                    session_id.clone(),
+                    make_db_thread("Agent Generated Title", updated_at),
+                    PathList::default(),
+                    cx,
+                )
+            })
+        });
+        save_task.await.unwrap();
+
+        let metadata = make_metadata(
+            "session-1",
+            "Agent Generated Title",
+            updated_at,
+            PathList::default(),
+        );
+        let thread_id = metadata.thread_id;
+        let rename_task = cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            store.update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.rename_thread(thread_id, "User Title".into(), cx)
+            })
+        });
+        rename_task.await.unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let store = ThreadMetadataStore::global(cx);
+            let metadata = store
+                .read(cx)
+                .entry(thread_id)
+                .expect("metadata should be cached")
+                .clone();
+            assert_eq!(metadata.title.as_deref(), Some("Agent Generated Title"));
+            assert_eq!(metadata.title_override.as_deref(), Some("User Title"));
+        });
+
+        let load_task = cx.update(|cx| {
+            ThreadStore::global(cx).update(cx, |store, cx| store.load_thread(session_id, cx))
+        });
+        let loaded_thread = load_task.await.unwrap().expect("thread should load");
+        assert_eq!(loaded_thread.title.as_ref(), "User Title");
+        assert_eq!(loaded_thread.updated_at, updated_at);
     }
 
     #[gpui::test]
