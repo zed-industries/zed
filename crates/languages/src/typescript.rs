@@ -718,7 +718,7 @@ impl LspInstaller for TypeScriptLspAdapter {
 
     fn fetch_server_binary(
         &self,
-        latest_version: Self::BinaryVersion,
+        _latest_version: Self::BinaryVersion,
         container_dir: PathBuf,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
@@ -726,15 +726,10 @@ impl LspInstaller for TypeScriptLspAdapter {
 
         async move {
             let server_path = container_dir.join(Self::NEW_SERVER_PATH);
-            let typescript_version = latest_version.typescript_version.to_string();
-            let server_version = latest_version.server_version.to_string();
 
-            node.npm_install_packages(
+            node.npm_install_latest_packages(
                 &container_dir,
-                &[
-                    (Self::PACKAGE_NAME, typescript_version.as_str()),
-                    (Self::SERVER_PACKAGE_NAME, server_version.as_str()),
-                ],
+                &[Self::PACKAGE_NAME, Self::SERVER_PACKAGE_NAME],
             )
             .await?;
 
