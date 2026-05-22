@@ -3,7 +3,7 @@ use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
-use git::{GitRemote, commit::ParsedCommitMessage};
+use git::{GitHostingProviderRegistry, GitRemote, commit::ParsedCommitMessage};
 use gpui::{
     AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
@@ -224,6 +224,42 @@ impl CommitTooltip {
             scroll_handle: ScrollHandle::new(),
             markdown,
         }
+    }
+
+    /// Builds a tooltip from raw commit fields, resolving the remote URL and
+    /// hosting provider via the given repository.
+    pub fn from_commit_data(
+        sha: SharedString,
+        author_name: SharedString,
+        author_email: SharedString,
+        commit_timestamp: i64,
+        message: SharedString,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let remote_url = repository.read(cx).default_remote_url();
+        let provider_registry = GitHostingProviderRegistry::default_global(cx);
+        let commit_time = OffsetDateTime::from_unix_timestamp(commit_timestamp)
+            .unwrap_or_else(|_| OffsetDateTime::now_utc());
+        let message = Some(ParsedCommitMessage::parse(
+            sha.to_string(),
+            message.to_string(),
+            remote_url.as_deref(),
+            Some(provider_registry),
+        ));
+        Self::new(
+            CommitDetails {
+                sha,
+                author_name,
+                author_email,
+                commit_time,
+                message,
+            },
+            repository,
+            workspace,
+            cx,
+        )
     }
 }
 

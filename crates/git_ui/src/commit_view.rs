@@ -5,10 +5,7 @@ use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
-use git::{
-    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, ParsedGitRemote,
-    parse_git_remote_url,
-};
+use git::{BuildCommitPermalinkParams, GitRemote, ParsedGitRemote};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
@@ -445,20 +442,7 @@ impl CommitView {
         })
         .detach();
 
-        let snapshot = repository.read(cx).snapshot();
-        let remote_url = snapshot
-            .remote_upstream_url
-            .as_ref()
-            .or(snapshot.remote_origin_url.as_ref());
-
-        let remote = remote_url.and_then(|url| {
-            let provider_registry = GitHostingProviderRegistry::default_global(cx);
-            parse_git_remote_url(provider_registry, url).map(|(host, parsed)| GitRemote {
-                host,
-                owner: parsed.owner.into(),
-                repo: parsed.repo.into(),
-            })
-        });
+        let remote = repository.update(cx, |repo, cx| crate::git_remote_for_repository(repo, cx));
 
         Self {
             commit,

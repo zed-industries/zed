@@ -1,9 +1,7 @@
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use git::{
-    BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
-    commit::ParsedCommitMessage,
-    parse_git_remote_url,
+    BuildCommitPermalinkParams, Oid, ParsedGitRemote,
     repository::{
         CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
         SearchCommitArgs,
@@ -11,7 +9,7 @@ use git::{
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
     git_status_icon,
 };
@@ -42,12 +40,12 @@ use std::{
     cell::Cell,
     ops::Range,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
-use time::{OffsetDateTime, UtcOffset};
+use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     ButtonLike, Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry,
     DiffStat, Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
@@ -418,16 +416,25 @@ pub struct OpenAtCommit {
     pub sha: String,
 }
 
+fn timestamp_format() -> &'static [BorrowedFormatItem<'static>] {
+    static FORMAT: OnceLock<Vec<BorrowedFormatItem<'static>>> = OnceLock::new();
+    FORMAT.get_or_init(|| {
+        time::format_description::parse("[day] [month repr:short] [year] [hour]:[minute]")
+            .unwrap_or_default()
+    })
+}
+
 fn format_timestamp(timestamp: i64) -> String {
-    let datetime = OffsetDateTime::from_unix_timestamp(timestamp)
-        .unwrap_or_else(|_| OffsetDateTime::now_utc());
+    let Ok(datetime) = OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return "Unknown".to_string();
+    };
+
     let local_offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-    time_format::format_localized_timestamp(
-        datetime,
-        OffsetDateTime::now_utc(),
-        local_offset,
-        time_format::TimestampFormat::MediumAbsolute,
-    )
+    let local_datetime = datetime.to_offset(local_offset);
+
+    local_datetime
+        .format(timestamp_format())
+        .unwrap_or_default()
 }
 
 fn accent_colors_count(accents: &AccentColors) -> usize {
@@ -1624,27 +1631,13 @@ impl GitGraph {
                                 let workspace = self.workspace.clone();
                                 let repository = repository.clone();
                                 this.hoverable_tooltip(move |_window, cx| {
-                                    let remote_url = repository.read(cx).default_remote_url();
-                                    let provider_registry =
-                                        GitHostingProviderRegistry::default_global(cx);
-                                    let commit_details = CommitDetails {
-                                        sha: sha.clone().into(),
-                                        author_name: author_name.clone(),
-                                        author_email: author_email.clone(),
-                                        commit_time: OffsetDateTime::from_unix_timestamp(
-                                            commit_timestamp,
-                                        )
-                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                                        message: Some(ParsedCommitMessage::parse(
-                                            sha.clone(),
-                                            message.to_string(),
-                                            remote_url.as_deref(),
-                                            Some(provider_registry),
-                                        )),
-                                    };
                                     cx.new(|cx| {
-                                        CommitTooltip::new(
-                                            commit_details,
+                                        CommitTooltip::from_commit_data(
+                                            sha.clone().into(),
+                                            author_name.clone(),
+                                            author_email.clone(),
+                                            commit_timestamp,
+                                            message.clone(),
                                             repository.clone(),
                                             workspace.clone(),
                                             cx,
@@ -2317,22 +2310,6 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn get_remote(
-        &self,
-        repository: &Repository,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> Option<GitRemote> {
-        let remote_url = repository.default_remote_url()?;
-        let provider_registry = GitHostingProviderRegistry::default_global(cx);
-        let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
-        Some(GitRemote {
-            host: provider,
-            owner: parsed.owner.into(),
-            repo: parsed.repo.into(),
-        })
-    }
-
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let color = cx.theme().colors();
         let query_focus_handle = self
@@ -2539,7 +2516,7 @@ impl GitGraph {
             })
             .unwrap_or_default();
 
-        let remote = repository.update(cx, |repo, cx| self.get_remote(repo, window, cx));
+        let remote = repository.update(cx, |repo, cx| crate::git_remote_for_repository(repo, cx));
 
         let avatar = {
             let author_email_for_avatar = if author_email.is_empty() {
