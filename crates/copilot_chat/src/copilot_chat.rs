@@ -1,8 +1,9 @@
 pub mod responses;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
@@ -16,6 +17,7 @@ use http_client::HttpRequestExt;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
+use sqlez::connection::Connection;
 
 use settings::watch_config_dir;
 
@@ -549,17 +551,20 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
+        // Watch legacy hosts.json/apps.json
+        let fs_for_json = fs.clone();
         cx.spawn(async move |this, cx| {
             let mut parent_watch_rx = watch_config_dir(
                 cx.background_executor(),
-                fs.clone(),
+                fs_for_json,
                 dir_path.clone(),
                 config_paths,
             );
             while let Some(contents) = parent_watch_rx.next().await {
                 let oauth_domain =
                     this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain);
+                let oauth_token = extract_oauth_token(contents, &oauth_domain)
+                    .or_else(|| extract_oauth_token_from_db(&oauth_domain));
 
                 this.update(cx, |this, cx| {
                     this.oauth_token = oauth_token.clone();
@@ -574,8 +579,49 @@ impl CopilotChat {
         })
         .detach_and_log_err(cx);
 
+        // Watch auth.db for token changes (Copilot LSP 1.494.0+)
+        let auth_db_dir = copilot_chat_config_dir().clone();
+        let auth_db_path = auth_db_dir.join("auth.db");
+        cx.spawn(async move |this, cx| {
+            let (events, _watcher) = cx
+                .background_executor()
+                .spawn({
+                    let auth_db_dir = auth_db_dir.clone();
+                    async move { fs.watch(&auth_db_dir, Duration::from_millis(500)).await }
+                })
+                .await;
+
+            futures::pin_mut!(events);
+            while let Some(event_batch) = events.next().await {
+                let has_db_change = event_batch.iter().any(|e| e.path == auth_db_path);
+                if !has_db_change {
+                    continue;
+                }
+
+                let oauth_domain =
+                    this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
+                let oauth_token = extract_oauth_token_from_db(&oauth_domain);
+
+                let had_token = this.read_with(cx, |this, _| this.oauth_token.is_some())?;
+
+                if oauth_token.is_some() && !had_token {
+                    this.update(cx, |this, cx| {
+                        this.oauth_token = oauth_token;
+                        cx.notify();
+                    })?;
+                    Self::update_models(&this, cx).await?;
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        let oauth_token = std::env::var(COPILOT_OAUTH_ENV_VAR)
+            .ok()
+            .or_else(|| extract_oauth_token_from_db(&configuration.oauth_domain()));
+
         let this = Self {
-            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+            oauth_token,
             api_endpoint: None,
             models: None,
             configuration,
@@ -932,6 +978,28 @@ fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
         })
         .ok()
         .flatten()
+}
+
+/// Read the OAuth token from the Copilot Language Server's auth.db (SQLite).
+/// Newer versions of the Copilot LSP (1.494.0+) store credentials here instead
+/// of hosts.json/apps.json.
+fn extract_oauth_token_from_db(domain: &str) -> Option<String> {
+    let db_path = copilot_chat_config_dir().join("auth.db");
+    extract_oauth_token_from_db_at(&db_path, domain)
+}
+
+fn extract_oauth_token_from_db_at(db_path: &Path, domain: &str) -> Option<String> {
+    let db_path_str = db_path.to_str()?;
+    let connection = Connection::open_file(db_path_str);
+
+    let token_bytes: Option<Vec<u8>> = connection
+        .select_row_bound::<&str, Vec<u8>>(
+            "SELECT token_ciphertext FROM oauth_tokens WHERE auth_authority LIKE ('%' || ?) LIMIT 1",
+        )
+        .ok()
+        .and_then(|mut query| query(domain).ok().flatten());
+
+    token_bytes.and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
 async fn stream_completion(
@@ -1750,5 +1818,65 @@ mod tests {
             serde_json::to_string(&ToolChoice::None).unwrap(),
             "\"none\""
         );
+    }
+
+    #[test]
+    fn test_extract_oauth_token_from_db_returns_token_when_matching_domain() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("auth.db");
+
+        let token = "ghu_test_token_value_1234567890";
+        let connection = sqlez::connection::Connection::open_file(db_path.to_str().unwrap());
+        connection
+            .exec(
+                "CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);",
+            )
+            .unwrap()()
+        .unwrap();
+        connection
+            .exec_bound::<(&str, Vec<u8>)>(
+                "INSERT INTO oauth_tokens (auth_authority, token_ciphertext) VALUES (?, ?);",
+            )
+            .unwrap()(("https://api.enterprise.githubcopilot.com", token.as_bytes().to_vec()))
+        .unwrap();
+        drop(connection);
+
+        let extracted =
+            extract_oauth_token_from_db_at(&db_path, "api.enterprise.githubcopilot.com");
+        assert_eq!(extracted.as_deref(), Some(token));
+    }
+
+    #[test]
+    fn test_extract_oauth_token_from_db_returns_none_when_domain_does_not_match() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("auth.db");
+
+        let connection = sqlez::connection::Connection::open_file(db_path.to_str().unwrap());
+        connection
+            .exec(
+                "CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);",
+            )
+            .unwrap()()
+        .unwrap();
+        connection
+            .exec_bound::<(&str, Vec<u8>)>(
+                "INSERT INTO oauth_tokens (auth_authority, token_ciphertext) VALUES (?, ?);",
+            )
+            .unwrap()(("https://api.githubcopilot.com", b"some_token".to_vec()))
+        .unwrap();
+        drop(connection);
+
+        let extracted =
+            extract_oauth_token_from_db_at(&db_path, "api.enterprise.githubcopilot.com");
+        assert_eq!(extracted, None);
+    }
+
+    #[test]
+    fn test_extract_oauth_token_from_db_returns_none_when_db_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("nonexistent.db");
+
+        let extracted = extract_oauth_token_from_db_at(&db_path, "api.githubcopilot.com");
+        assert_eq!(extracted, None);
     }
 }
