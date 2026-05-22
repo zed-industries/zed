@@ -3489,6 +3489,10 @@ async fn run_askpass_command(
     mut ask_pass: AskPassSession,
     git_process: util::command::Child,
 ) -> anyhow::Result<RemoteCommandOutput> {
+    // Create the future once, then reference it in both branches
+    let git_output_future = git_process.output().fuse();
+    futures::pin_mut!(git_output_future);
+
     select_biased! {
         result = ask_pass.run().fuse() => {
             match result {
@@ -3496,11 +3500,23 @@ async fn run_askpass_command(
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
-                    Err(anyhow!("Connecting to host timed out"))?
+                    // Askpass timed out (no SSH prompt within 17s)
+                    // BUT git process might still be running (e.g., GPG signing)
+                    // Continue waiting for git to complete
+                    let output = git_output_future.await?;
+                    anyhow::ensure!(
+                        output.status.success(),
+                        "{}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    Ok(RemoteCommandOutput {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                    })
                 }
             }
         }
-        output = git_process.output().fuse() => {
+        output = &mut git_output_future => {
             let output = output?;
             anyhow::ensure!(
                 output.status.success(),
