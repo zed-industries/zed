@@ -391,9 +391,8 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff = cx.new(|cx| {
-            branch_diff::BranchDiff::new(initial_diff_base, project.clone(), window, cx)
-        });
+        let branch_diff = cx
+            .new(|cx| branch_diff::BranchDiff::new(initial_diff_base, project.clone(), window, cx));
         Self::new_impl(branch_diff, project, workspace, window, cx)
     }
 
@@ -886,9 +885,7 @@ impl ProjectDiff {
                 // instead of the snapshot buffer (story 38).
                 let project_paths: Vec<ProjectPath> = selections_by_buffer
                     .keys()
-                    .filter_map(|buffer_id| {
-                        self.worktree_project_path_for_buffer(*buffer_id, cx)
-                    })
+                    .filter_map(|buffer_id| self.worktree_project_path_for_buffer(*buffer_id, cx))
                     .collect();
                 self.workspace
                     .update(cx, |workspace, cx| {
@@ -1589,6 +1586,11 @@ mod persistence {
 pub struct ProjectDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
     workspace: WeakEntity<Workspace>,
+    // Re-render when the active `ProjectDiff` changes its diff base in place (e.g.
+    // the filter dropdown switches to/from Branch). `set_active_pane_item` is not
+    // re-run on an in-place base change, so the live render guard below only works
+    // if something drives a re-render.
+    _diff_base_subscription: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1631,33 +1633,12 @@ impl ProjectDiffToolbar {
         Self {
             project_diff: None,
             workspace: workspace.weak_handle(),
+            _diff_base_subscription: None,
         }
     }
 
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
         self.project_diff.as_ref()?.upgrade()
-    }
-
-    fn selected_diff_filter(&self, cx: &App) -> Option<DiffFilter> {
-        let project_diff = self.project_diff(cx)?;
-        Some(DiffFilter::from_diff_base(
-            project_diff.read(cx).diff_base(cx),
-        ))
-    }
-
-    fn select_diff_filter(
-        &mut self,
-        diff_filter: DiffFilter,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(project_diff) = self.project_diff(cx) else {
-            return;
-        };
-        project_diff.update(cx, |project_diff, cx| {
-            project_diff.select_diff_filter(diff_filter, window, cx);
-        });
-        cx.notify();
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -1693,6 +1674,263 @@ impl ProjectDiffToolbar {
                 });
             })
             .log_err();
+    }
+}
+
+impl EventEmitter<ToolbarItemEvent> for ProjectDiffToolbar {}
+
+impl ToolbarItemView for ProjectDiffToolbar {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn ItemHandle>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> ToolbarItemLocation {
+        let project_diff = active_pane_item.and_then(|item| item.act_as::<ProjectDiff>(cx));
+        self._diff_base_subscription = project_diff
+            .as_ref()
+            .map(|entity| cx.observe(entity, |_, _, cx| cx.notify()));
+        self.project_diff = project_diff.map(|entity| entity.downgrade());
+        if self.project_diff.is_some() {
+            ToolbarItemLocation::PrimaryRight
+        } else {
+            ToolbarItemLocation::Hidden
+        }
+    }
+
+    fn pane_focus_update(
+        &mut self,
+        _pane_focused: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+    }
+}
+
+struct ButtonStates {
+    stage: bool,
+    unstage: bool,
+    prev_next: bool,
+    selection: bool,
+    stage_all: bool,
+    unstage_all: bool,
+}
+
+impl Render for ProjectDiffToolbar {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return div();
+        };
+        // The branch (merge) diff has no per-hunk staging actions, so hide the
+        // action cluster there and let `BranchDiffToolbar` own the right side.
+        // This is checked live on every render rather than via the toolbar
+        // location, because the filter dropdown can switch the diff base in place
+        // without re-running `set_active_pane_item`.
+        if matches!(project_diff.read(cx).diff_base(cx), DiffBase::Merge { .. }) {
+            return div();
+        }
+        let focus_handle = project_diff.focus_handle(cx);
+        let button_states = project_diff.read(cx).button_states(cx);
+        let review_count = project_diff.read(cx).total_review_comment_count();
+
+        h_group_xl()
+            // `vertical_divider()` is `h_full`, so it only paints when its parent
+            // has a definite height. The toolbar's right container is `h_8`, and
+            // `h_group_xl` is centered (not stretched) inside it, so without this
+            // the in-cluster divider (before "Unstage All") resolves to 0 height
+            // and vanishes.
+            .h_full()
+            .my_neg_1()
+            .py_1()
+            .items_center()
+            .flex_wrap()
+            .justify_between()
+            .child(
+                h_group_sm()
+                    .when(button_states.selection, |el| {
+                        el.child(
+                            Button::new("stage", "Toggle Staged")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Toggle Staged",
+                                    &ToggleStaged,
+                                    &focus_handle,
+                                ))
+                                .disabled(!button_states.stage && !button_states.unstage)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&ToggleStaged, window, cx)
+                                })),
+                        )
+                    })
+                    .when(!button_states.selection, |el| {
+                        el.child(
+                            Button::new("stage", "Stage")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Stage and go to next hunk",
+                                    &StageAndNext,
+                                    &focus_handle,
+                                ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&StageAndNext, window, cx)
+                                })),
+                        )
+                        .child(
+                            Button::new("unstage", "Unstage")
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Unstage and go to next hunk",
+                                    &UnstageAndNext,
+                                    &focus_handle,
+                                ))
+                                .disabled(
+                                    !button_states.prev_next
+                                        && !button_states.stage_all
+                                        && !button_states.unstage_all,
+                                )
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                })),
+                        )
+                    }),
+            )
+            // n.b. the only reason these arrows are here is because we don't
+            // support "undo" for staging so we need a way to go back.
+            .child(
+                h_group_sm()
+                    .child(
+                        IconButton::new("up", IconName::ArrowUp)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to previous hunk",
+                                &GoToPreviousHunk,
+                                &focus_handle,
+                            ))
+                            .disabled(!button_states.prev_next)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToPreviousHunk, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("down", IconName::ArrowDown)
+                            .shape(ui::IconButtonShape::Square)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to next hunk",
+                                &GoToHunk,
+                                &focus_handle,
+                            ))
+                            .disabled(!button_states.prev_next)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToHunk, window, cx)
+                            })),
+                    ),
+            )
+            .child(vertical_divider())
+            .child(
+                h_group_sm()
+                    .when(
+                        button_states.unstage_all && !button_states.stage_all,
+                        |el| {
+                            el.child(
+                                Button::new("unstage-all", "Unstage All")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Unstage all changes",
+                                        &UnstageAll,
+                                        &focus_handle,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.unstage_all(window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .when(
+                        !button_states.unstage_all || button_states.stage_all,
+                        |el| {
+                            el.child(
+                                // todo make it so that changing to say "Unstaged"
+                                // doesn't change the position.
+                                div().child(
+                                    Button::new("stage-all", "Stage All")
+                                        .disabled(!button_states.stage_all)
+                                        .tooltip(Tooltip::for_action_title_in(
+                                            "Stage all changes",
+                                            &StageAll,
+                                            &focus_handle,
+                                        ))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.stage_all(window, cx)
+                                        })),
+                                ),
+                            )
+                        },
+                    )
+                    .child(
+                        Button::new("commit", "Commit")
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Commit",
+                                &Commit,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&Commit, window, cx);
+                            })),
+                    ),
+            )
+            .when(review_count > 0, |el| {
+                el.child(vertical_divider()).child(
+                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
+                        cx.listener(|this, _, window, cx| {
+                            this.dispatch_action(&SendReviewToAgent, window, cx)
+                        }),
+                    ),
+                )
+            })
+    }
+}
+
+pub struct DiffFilterToolbar {
+    project_diff: Option<WeakEntity<ProjectDiff>>,
+    // Re-render when the active `ProjectDiff` changes its diff base in place, so the
+    // dropdown label stays in sync with bases set by other paths (an async Branch
+    // resolution, the git panel staging everything, the branch base picker).
+    _diff_base_subscription: Option<Subscription>,
+}
+
+impl DiffFilterToolbar {
+    pub fn new(_: &mut Context<Self>) -> Self {
+        Self {
+            project_diff: None,
+            _diff_base_subscription: None,
+        }
+    }
+
+    fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
+        self.project_diff.as_ref()?.upgrade()
+    }
+
+    fn selected_diff_filter(&self, cx: &App) -> Option<DiffFilter> {
+        let project_diff = self.project_diff(cx)?;
+        Some(DiffFilter::from_diff_base(
+            project_diff.read(cx).diff_base(cx),
+        ))
+    }
+
+    fn select_diff_filter(
+        &mut self,
+        diff_filter: DiffFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return;
+        };
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.select_diff_filter(diff_filter, window, cx);
+        });
+        cx.notify();
     }
 
     fn render_diff_filter_dropdown(
@@ -1730,20 +1968,24 @@ impl ProjectDiffToolbar {
     }
 }
 
-impl EventEmitter<ToolbarItemEvent> for ProjectDiffToolbar {}
+impl EventEmitter<ToolbarItemEvent> for DiffFilterToolbar {}
 
-impl ToolbarItemView for ProjectDiffToolbar {
+impl ToolbarItemView for DiffFilterToolbar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.project_diff = active_pane_item
-            .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .map(|entity| entity.downgrade());
+        // The filter stays pinned to the left edge in every diff mode (including
+        // branch), so it never shifts when the action cluster on the right reflows.
+        let project_diff = active_pane_item.and_then(|item| item.act_as::<ProjectDiff>(cx));
+        self._diff_base_subscription = project_diff
+            .as_ref()
+            .map(|entity| cx.observe(entity, |_, _, cx| cx.notify()));
+        self.project_diff = project_diff.map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
-            ToolbarItemLocation::PrimaryRight
+            ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Hidden
         }
@@ -1758,179 +2000,27 @@ impl ToolbarItemView for ProjectDiffToolbar {
     }
 }
 
-struct ButtonStates {
-    stage: bool,
-    unstage: bool,
-    prev_next: bool,
-    selection: bool,
-    stage_all: bool,
-    unstage_all: bool,
-}
-
-impl Render for ProjectDiffToolbar {
+impl Render for DiffFilterToolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(project_diff) = self.project_diff(cx) else {
+        if self.project_diff(cx).is_none() {
             return div();
-        };
-        let focus_handle = project_diff.focus_handle(cx);
-        let button_states = project_diff.read(cx).button_states(cx);
-        let review_count = project_diff.read(cx).total_review_comment_count();
-        let is_branch_diff = matches!(project_diff.read(cx).diff_base(cx), DiffBase::Merge { .. });
-
+        }
         h_group_xl()
+            // Give the row a definite height so the `h_full` divider resolves: the
+            // toolbar's left container is only `min_h_8`, which is not a definite
+            // height for percentage-sized children (unlike the `h_8` right cluster).
+            .h_8()
             .my_neg_1()
             .py_1()
+            // Match the `gap_2` between the divider and the dropdown on its left side
+            // too: the divider is the first child, so without this it sits flush
+            // against the editor's leading controls and reads lopsided.
+            .pl_2()
             .items_center()
-            .flex_wrap()
-            .justify_between()
+            // Separate the editor's leading controls from the filter so it reads as
+            // its own section.
+            .child(vertical_divider())
             .child(self.render_diff_filter_dropdown(window, cx))
-            .when(!is_branch_diff, |toolbar| {
-                toolbar
-                    .child(vertical_divider())
-                    .child(
-                        h_group_sm()
-                            .when(button_states.selection, |el| {
-                                el.child(
-                                    Button::new("stage", "Toggle Staged")
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Toggle Staged",
-                                            &ToggleStaged,
-                                            &focus_handle,
-                                        ))
-                                        .disabled(!button_states.stage && !button_states.unstage)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.dispatch_action(&ToggleStaged, window, cx)
-                                        })),
-                                )
-                            })
-                            .when(!button_states.selection, |el| {
-                                el.child(
-                                    Button::new("stage", "Stage")
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Stage and go to next hunk",
-                                            &StageAndNext,
-                                            &focus_handle,
-                                        ))
-                                        .disabled(
-                                            !button_states.prev_next
-                                                && !button_states.stage_all
-                                                && !button_states.unstage_all,
-                                        )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.dispatch_action(&StageAndNext, window, cx)
-                                        })),
-                                )
-                                .child(
-                                    Button::new("unstage", "Unstage")
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Unstage and go to next hunk",
-                                            &UnstageAndNext,
-                                            &focus_handle,
-                                        ))
-                                        .disabled(
-                                            !button_states.prev_next
-                                                && !button_states.stage_all
-                                                && !button_states.unstage_all,
-                                        )
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.dispatch_action(&UnstageAndNext, window, cx)
-                                        })),
-                                )
-                            }),
-                    )
-                    // n.b. the only reason these arrows are here is because we don't
-                    // support "undo" for staging so we need a way to go back.
-                    .child(
-                        h_group_sm()
-                            .child(
-                                IconButton::new("up", IconName::ArrowUp)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Go to previous hunk",
-                                        &GoToPreviousHunk,
-                                        &focus_handle,
-                                    ))
-                                    .disabled(!button_states.prev_next)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.dispatch_action(&GoToPreviousHunk, window, cx)
-                                    })),
-                            )
-                            .child(
-                                IconButton::new("down", IconName::ArrowDown)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Go to next hunk",
-                                        &GoToHunk,
-                                        &focus_handle,
-                                    ))
-                                    .disabled(!button_states.prev_next)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.dispatch_action(&GoToHunk, window, cx)
-                                    })),
-                            ),
-                    )
-                    .child(vertical_divider())
-                    .child(
-                        h_group_sm()
-                            .when(
-                                button_states.unstage_all && !button_states.stage_all,
-                                |el| {
-                                    el.child(
-                                        Button::new("unstage-all", "Unstage All")
-                                            .tooltip(Tooltip::for_action_title_in(
-                                                "Unstage all changes",
-                                                &UnstageAll,
-                                                &focus_handle,
-                                            ))
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.unstage_all(window, cx)
-                                            })),
-                                    )
-                                },
-                            )
-                            .when(
-                                !button_states.unstage_all || button_states.stage_all,
-                                |el| {
-                                    el.child(
-                                        // todo make it so that changing to say "Unstaged"
-                                        // doesn't change the position.
-                                        div().child(
-                                            Button::new("stage-all", "Stage All")
-                                                .disabled(!button_states.stage_all)
-                                                .tooltip(Tooltip::for_action_title_in(
-                                                    "Stage all changes",
-                                                    &StageAll,
-                                                    &focus_handle,
-                                                ))
-                                                .on_click(cx.listener(|this, _, window, cx| {
-                                                    this.stage_all(window, cx)
-                                                })),
-                                        ),
-                                    )
-                                },
-                            )
-                            .child(
-                                Button::new("commit", "Commit")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Commit",
-                                        &Commit,
-                                        &focus_handle,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.dispatch_action(&Commit, window, cx);
-                                    })),
-                            ),
-                    )
-            })
-            .when(!is_branch_diff && review_count > 0, |el| {
-                el.child(vertical_divider()).child(
-                    render_send_review_to_agent_button(review_count, &focus_handle).on_click(
-                        cx.listener(|this, _, window, cx| {
-                            this.dispatch_action(&SendReviewToAgent, window, cx)
-                        }),
-                    ),
-                )
-            })
     }
 }
 
@@ -1953,11 +2043,18 @@ fn render_send_review_to_agent_button(review_count: usize, focus_handle: &FocusH
 
 pub struct BranchDiffToolbar {
     project_diff: Option<WeakEntity<ProjectDiff>>,
+    // Re-render (and re-evaluate the live `DiffBase::Merge` render guard) when the
+    // active `ProjectDiff` changes its diff base in place — e.g. the filter dropdown
+    // switching into branch mode, which does not re-run `set_active_pane_item`.
+    _diff_base_subscription: Option<Subscription>,
 }
 
 impl BranchDiffToolbar {
     pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self { project_diff: None }
+        Self {
+            project_diff: None,
+            _diff_base_subscription: None,
+        }
     }
 
     fn project_diff(&self, _: &App) -> Option<Entity<ProjectDiff>> {
@@ -1984,10 +2081,15 @@ impl ToolbarItemView for BranchDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.project_diff = active_pane_item
-            .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }))
-            .map(|entity| entity.downgrade());
+        // Bind for every diff base and gate visibility in `render` (which returns an
+        // empty element unless the base is `Merge`). Filtering the location on the
+        // base here would go stale, because the dropdown can switch into branch mode
+        // in place without re-running `set_active_pane_item`.
+        let project_diff = active_pane_item.and_then(|item| item.act_as::<ProjectDiff>(cx));
+        self._diff_base_subscription = project_diff
+            .as_ref()
+            .map(|entity| cx.observe(entity, |_, _, cx| cx.notify()));
+        self.project_diff = project_diff.map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {
@@ -2145,7 +2247,7 @@ mod tests {
     use project::{FakeFs, Fs};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
-    use std::{path::Path, sync::Arc};
+    use std::{cell::Cell, path::Path, rc::Rc, sync::Arc};
     use unindent::Unindent as _;
     use util::{
         path,
@@ -2222,12 +2324,20 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
-        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+        let filter_toolbar = cx.new(DiffFilterToolbar::new);
+        let action_toolbar = cx.new(|cx| ProjectDiffToolbar {
             project_diff: None,
             workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
         });
 
         for diff_base in [
@@ -2244,13 +2354,89 @@ mod tests {
                 });
             });
 
-            let location = cx.update(|window, cx| {
-                toolbar.update(cx, |toolbar, cx| {
+            let (filter_location, action_location) = cx.update(|window, cx| {
+                let filter_location = filter_toolbar.update(cx, |toolbar, cx| {
                     toolbar.set_active_pane_item(Some(&diff), window, cx)
-                })
+                });
+                let action_location = action_toolbar.update(cx, |toolbar, cx| {
+                    toolbar.set_active_pane_item(Some(&diff), window, cx)
+                });
+                (filter_location, action_location)
             });
-            assert_eq!(location, ToolbarItemLocation::PrimaryRight);
+
+            // The filter stays pinned to the left edge in every diff mode.
+            assert_eq!(filter_location, ToolbarItemLocation::PrimaryLeft);
+            // The action toolbar stays attached on the right for every filter; in
+            // branch mode it hides its staging buttons at render time rather than
+            // by detaching, so the location must not depend on the diff base.
+            assert_eq!(action_location, ToolbarItemLocation::PrimaryRight);
         }
+    }
+
+    // Because the action toolbar hides its staging buttons in branch mode via a live
+    // render guard (not by detaching), it must re-render when the diff base changes in
+    // place. The filter dropdown switches the base without re-running
+    // `set_active_pane_item`, so the toolbar relies on observing the `ProjectDiff`.
+    #[gpui::test]
+    async fn test_project_diff_toolbar_rerenders_on_in_place_diff_base_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let (project, _) = build_project(cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let action_toolbar = cx.new(|cx| ProjectDiffToolbar {
+            project_diff: None,
+            workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
+        });
+
+        // Bind once, as the workspace toolbar does. `set_active_pane_item` is not
+        // re-run on the later in-place base change.
+        cx.update(|window, cx| {
+            action_toolbar.update(cx, |toolbar, cx| {
+                toolbar.set_active_pane_item(Some(&diff), window, cx);
+            });
+        });
+
+        let notify_count = Rc::new(Cell::new(0usize));
+        let _observer = cx.update(|_, cx| {
+            cx.observe(&action_toolbar, {
+                let notify_count = notify_count.clone();
+                move |_, _| notify_count.set(notify_count.get() + 1)
+            })
+        });
+
+        diff.update(cx, |diff, cx| {
+            diff.branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.set_diff_base(
+                    DiffBase::Merge {
+                        base_ref: "main".into(),
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        assert!(
+            notify_count.get() > 0,
+            "action toolbar should re-render when the diff base changes in place"
+        );
     }
 
     #[gpui::test]
@@ -2265,7 +2451,13 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
 
@@ -2325,7 +2517,13 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
 
@@ -2367,7 +2565,13 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
 
@@ -2407,12 +2611,18 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
-        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+        let toolbar = cx.new(|_| DiffFilterToolbar {
             project_diff: Some(diff.downgrade()),
-            workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
         });
 
         assert_eq!(
@@ -2475,12 +2685,18 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
-        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+        let toolbar = cx.new(|_| DiffFilterToolbar {
             project_diff: Some(diff.downgrade()),
-            workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
         });
 
         cx.update(|window, cx| {
@@ -2527,12 +2743,18 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
-        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+        let toolbar = cx.new(|_| DiffFilterToolbar {
             project_diff: Some(diff.downgrade()),
-            workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
         });
 
         cx.update(|window, cx| {
@@ -2566,12 +2788,18 @@ mod tests {
         let workspace =
             multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
         let diff = cx.new_window_entity(|window, cx| {
-            ProjectDiff::new(project.clone(), workspace.clone(), DiffBase::Head, window, cx)
+            ProjectDiff::new(
+                project.clone(),
+                workspace.clone(),
+                DiffBase::Head,
+                window,
+                cx,
+            )
         });
         cx.run_until_parked();
-        let toolbar = cx.new(|cx| ProjectDiffToolbar {
+        let toolbar = cx.new(|_| DiffFilterToolbar {
             project_diff: Some(diff.downgrade()),
-            workspace: workspace.read(cx).weak_handle(),
+            _diff_base_subscription: None,
         });
 
         cx.update(|window, cx| {
@@ -4329,8 +4557,7 @@ mod tests {
         let (project, _) = build_project(cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -4366,16 +4593,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_deploy_at_does_not_retarget_existing_view_to_new_base(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_deploy_at_does_not_retarget_existing_view_to_new_base(cx: &mut TestAppContext) {
         init_test(cx);
 
         let (project, _) = build_project(cx).await;
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace =
-            multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
