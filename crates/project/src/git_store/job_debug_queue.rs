@@ -113,6 +113,10 @@ impl GitJobDebugQueue {
     }
 
     pub fn to_debug_string(&self) -> String {
+        serde_json::to_string_pretty(&self.to_debug_value()).unwrap_or_default()
+    }
+
+    pub fn to_debug_value(&self) -> serde_json::Value {
         let mut entries = Vec::new();
 
         let mut pending_count = 0u64;
@@ -141,7 +145,7 @@ impl GitJobDebugQueue {
         let json_entries: Vec<serde_json::Value> =
             entries.into_iter().map(|(_, json)| json).collect();
 
-        let json = serde_json::json!({
+        serde_json::json!({
             "summary": {
                 "pending": pending_count,
                 "running": running_count,
@@ -149,9 +153,7 @@ impl GitJobDebugQueue {
                 "skipped": skipped_count,
             },
             "entries": json_entries,
-        });
-
-        serde_json::to_string_pretty(&json).unwrap_or_default()
+        })
     }
 
     fn format_pending(&self, job: &PendingJob) -> serde_json::Value {

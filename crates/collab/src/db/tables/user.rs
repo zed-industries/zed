@@ -1,6 +1,4 @@
 use crate::db::UserId;
-use chrono::NaiveDateTime;
-use rpc::proto;
 use sea_orm::entity::prelude::*;
 use serde::Serialize;
 
@@ -12,39 +10,8 @@ pub struct Model {
     pub id: UserId,
     pub github_login: String,
     pub github_user_id: i32,
-    pub github_user_created_at: Option<NaiveDateTime>,
-    pub email_address: Option<String>,
-    pub name: Option<String>,
     pub admin: bool,
     pub connected_once: bool,
-    pub created_at: NaiveDateTime,
-}
-
-impl From<Model> for crate::entities::User {
-    fn from(user: Model) -> Self {
-        crate::entities::User {
-            id: user.id,
-            github_login: user.github_login,
-            github_user_id: user.github_user_id,
-            name: user.name,
-            admin: user.admin,
-            connected_once: user.connected_once,
-        }
-    }
-}
-
-impl From<Model> for proto::User {
-    fn from(user: Model) -> Self {
-        Self {
-            id: user.id.to_proto(),
-            avatar_url: format!(
-                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
-                user.github_user_id
-            ),
-            github_login: user.github_login,
-            name: user.name,
-        }
-    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

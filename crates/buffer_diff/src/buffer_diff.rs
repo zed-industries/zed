@@ -267,6 +267,10 @@ impl BufferDiffSnapshot {
             .then(|| self.inner.base_text.text())
     }
 
+    pub fn base_text_exists(&self) -> bool {
+        self.inner.base_text_exists
+    }
+
     pub fn secondary_diff(&self) -> Option<&BufferDiffSnapshot> {
         self.secondary_diff.as_deref()
     }

@@ -334,6 +334,7 @@ struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     _reconnect_task: Option<Task<()>>,
+    _cloud_connection_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -435,6 +436,7 @@ impl Default for ClientState {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
             _reconnect_task: None,
+            _cloud_connection_task: None,
         }
     }
 }
@@ -607,6 +609,7 @@ impl Client {
     pub fn teardown(&self) {
         let mut state = self.state.write();
         state._reconnect_task.take();
+        state._cloud_connection_task.take();
         self.handler_set.lock().clear();
         self.peer.teardown();
     }
@@ -724,6 +727,7 @@ impl Client {
             Status::SignedOut | Status::UpgradeRequired => {
                 self.telemetry.set_authenticated_user_info(None, false);
                 state._reconnect_task.take();
+                state._cloud_connection_task.take();
             }
             _ => {}
         }
@@ -957,28 +961,56 @@ impl Client {
         }
     }
 
-    /// Establishes a WebSocket connection with Cloud for receiving updates from the server.
-    async fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) -> Result<()> {
+    /// Maintains a WebSocket connection with Cloud for receiving updates from the server.
+    ///
+    /// The connection is re-established with exponential backoff if it drops or fails to
+    /// establish.
+    fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) {
+        let this = self.clone();
+        let task = cx.spawn(async move |cx| {
+            #[cfg(any(test, feature = "test-support"))]
+            let mut rng = StdRng::seed_from_u64(0);
+            #[cfg(not(any(test, feature = "test-support")))]
+            let mut rng = StdRng::from_os_rng();
+
+            let mut delay = INITIAL_RECONNECTION_DELAY;
+            loop {
+                match Self::run_cloud_connection(&this, cx).await {
+                    Ok(()) => {
+                        log::info!("cloud websocket disconnected, will reconnect");
+                        delay = INITIAL_RECONNECTION_DELAY;
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "cloud websocket connect failed: {err:#}; retrying in {delay:?}"
+                        );
+                    }
+                }
+
+                let jitter = Duration::from_millis(rng.random_range(0..delay.as_millis() as u64));
+                cx.background_executor().timer(delay + jitter).await;
+                delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
+            }
+        });
+        self.state.write()._cloud_connection_task = Some(task);
+    }
+
+    /// Runs a single attempt of the cloud websocket connection, returning once the connection
+    /// closes (cleanly or otherwise) or fails to establish.
+    async fn run_cloud_connection(self: &Arc<Self>, cx: &mut AsyncApp) -> Result<()> {
         let connect_task = cx.update({
             let cloud_client = self.cloud_client.clone();
             move |cx| cloud_client.connect(cx)
         })?;
         let connection = connect_task.await?;
 
-        let (mut messages, task) = cx.update(|cx| connection.spawn(cx));
-        task.detach();
+        let (mut messages, _cloud_io_task) = cx.update(|cx| connection.spawn(cx));
 
-        cx.spawn({
-            let this = self.clone();
-            async move |cx| {
-                while let Some(message) = messages.next().await {
-                    if let Some(message) = message.log_err() {
-                        this.handle_message_to_client(message, cx);
-                    }
-                }
+        while let Some(message) = messages.next().await {
+            if let Some(message) = message.log_err() {
+                self.handle_message_to_client(message, cx);
             }
-        })
-        .detach();
+        }
 
         Ok(())
     }
@@ -1009,7 +1041,7 @@ impl Client {
 
         let credentials = self.sign_in(try_provider, cx).await?;
 
-        self.connect_to_cloud(cx).await.log_err();
+        self.connect_to_cloud(cx);
 
         cx.update(move |cx| {
             cx.spawn({
@@ -1396,7 +1428,7 @@ impl Client {
                     // any other app running on the user's device.
                     let (public_key, private_key) =
                         rpc::auth::keypair().context("failed to generate keypair for auth")?;
-                    let public_key_string = String::try_from(public_key)
+                    let public_key = String::try_from(public_key)
                         .context("failed to serialize public key for auth")?;
 
                     if let Some((login, token)) =
@@ -1420,11 +1452,22 @@ impl Client {
                         .context("server not bound to a TCP address")?
                         .port();
 
+                    #[derive(Serialize)]
+                    struct NativeAppSignInQueryParams {
+                        native_app_port: u16,
+                        native_app_public_key: String,
+                        system_id: Option<Arc<str>>,
+                    }
+
                     // Open the Zed sign-in page in the user's browser, with query parameters that indicate
                     // that the user is signing in from a Zed app running on the same device.
                     let url = http.build_url(&format!(
-                        "/native_app_signin?native_app_port={}&native_app_public_key={}",
-                        port, public_key_string
+                        "/native_app_signin?{}",
+                        serde_urlencoded::to_string(&NativeAppSignInQueryParams {
+                            native_app_port: port,
+                            native_app_public_key: public_key,
+                            system_id: this.telemetry.system_id(),
+                        })?
                     ));
 
                     open_url_tx.send(url).log_err();
@@ -1539,7 +1582,7 @@ impl Client {
         })
     }
 
-    pub async fn acquire_llm_token(
+    pub async fn cached_llm_token(
         &self,
         llm_token: &LlmApiToken,
         organization_id: Option<OrganizationId>,
@@ -1547,7 +1590,7 @@ impl Client {
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
         match llm_token
-            .acquire(&cloud_client, system_id, organization_id)
+            .cached(&cloud_client, system_id, organization_id)
             .await
         {
             Ok(token) => Ok(token),
@@ -1557,6 +1600,31 @@ impl Client {
             }
             Err(err) => Err(anyhow::Error::from(err)),
         }
+    }
+
+    /// Sends an authenticated request to the Zed LLM service, retrying once
+    /// with a refreshed token if the server signals that the cached LLM
+    /// token is expired or otherwise rejected. Returns the raw response so
+    /// callers can inspect headers and stream the body.
+    pub async fn authenticated_llm_request(
+        &self,
+        llm_token: &LlmApiToken,
+        organization_id: Option<OrganizationId>,
+        build_request: impl Fn(&str) -> Result<http_client::Request<http_client::AsyncBody>>,
+    ) -> Result<http_client::Response<http_client::AsyncBody>> {
+        let http_client = self.http_client();
+        let token = self
+            .cached_llm_token(llm_token, organization_id.clone())
+            .await?;
+        let response = http_client.send(build_request(&token)?).await?;
+        if !response.needs_llm_token_refresh()
+            && response.status() != http_client::http::StatusCode::UNAUTHORIZED
+        {
+            return Ok(response);
+        }
+        log::info!("LLM token rejected; refreshing and retrying request");
+        let token = self.refresh_llm_token(llm_token, organization_id).await?;
+        http_client.send(build_request(&token)?).await
     }
 
     pub async fn refresh_llm_token(

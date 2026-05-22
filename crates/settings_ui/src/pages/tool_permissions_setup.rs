@@ -74,6 +74,12 @@ const TOOLS: &[ToolInfo] = &[
         description: "Web search queries",
         regex_explanation: "Patterns are matched against the search query.",
     },
+    ToolInfo {
+        id: "skill",
+        name: "Skill",
+        description: "Loading agent skill instructions",
+        regex_explanation: "Patterns are matched against the absolute path to the skill's SKILL.md file.",
+    },
 ];
 
 pub(crate) struct ToolInfo {
@@ -1417,6 +1423,9 @@ mod tests {
             // update_plan updates UI-visible planning state but does not use
             // tool permission rules.
             "update_plan",
+            // update_title updates UI-visible session metadata but
+            // does not use tool permission rules.
+            "update_title",
         ];
 
         let tool_info_ids: Vec<&str> = TOOLS.iter().map(|t| t.id).collect();

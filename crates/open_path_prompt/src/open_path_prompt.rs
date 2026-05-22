@@ -10,7 +10,8 @@ use fuzzy::{CharBag, StringMatch, StringMatchCandidate};
 use gpui::{HighlightStyle, StyledText, Task};
 use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
-use settings::Settings;
+use project_panel::project_panel_settings::ProjectPanelSettings;
+use settings::{ProjectPanelSortMode, Settings};
 use std::{
     path::{self, Path, PathBuf},
     sync::{
@@ -42,6 +43,7 @@ pub struct OpenPathDelegate {
     render_footer:
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
     hidden_entries: bool,
+    sort_mode: ProjectPanelSortMode,
 }
 
 impl OpenPathDelegate {
@@ -52,6 +54,9 @@ impl OpenPathDelegate {
         cx: &App,
     ) -> Self {
         let path_style = lister.path_style(cx);
+        let sort_mode = ProjectPanelSettings::try_get(cx)
+            .map(|s| s.sort_mode)
+            .unwrap_or_default();
         Self {
             tx: Some(tx),
             lister,
@@ -70,6 +75,7 @@ impl OpenPathDelegate {
             replace_prompt: Task::ready(()),
             render_footer: Arc::new(|_, _| None),
             hidden_entries: false,
+            sort_mode,
         }
     }
 
@@ -313,6 +319,7 @@ impl PickerDelegate for OpenPathDelegate {
         let hidden_entries = self.hidden_entries;
         let parent_path_is_root = self.prompt_root == dir;
         let current_dir = self.current_dir();
+        let sort_mode = self.sort_mode;
         cx.spawn_in(window, async move |this, cx| {
             if let Some(query) = query {
                 let paths = query.await;
@@ -326,7 +333,7 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: false }
                             | DirectoryState::List { .. } => match paths {
                                 Ok(paths) => DirectoryState::List {
-                                    entries: path_candidates(parent_path_is_root, paths),
+                                    entries: path_candidates(parent_path_is_root, paths, sort_mode),
                                     parent_path: dir.clone(),
                                     error: None,
                                 },
@@ -339,7 +346,8 @@ impl PickerDelegate for OpenPathDelegate {
                             DirectoryState::None { create: true }
                             | DirectoryState::Create { .. } => match paths {
                                 Ok(paths) => {
-                                    let mut entries = path_candidates(parent_path_is_root, paths);
+                                    let mut entries =
+                                        path_candidates(parent_path_is_root, paths, sort_mode);
                                     let mut exists = false;
                                     let mut is_dir = false;
                                     let mut new_id = None;
@@ -701,25 +709,35 @@ impl PickerDelegate for OpenPathDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
         let candidate = self.get_entry(ix)?;
-        let mut match_positions = match &self.directory_state {
-            DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
+        let string_match = match &self.directory_state {
+            DirectoryState::List { .. } => self.string_matches.get(ix),
             DirectoryState::Create { user_input, .. } => {
                 if let Some(user_input) = user_input {
                     if !user_input.exists || !user_input.is_dir {
                         if ix == 0 {
-                            Vec::new()
+                            None
                         } else {
-                            self.string_matches.get(ix - 1)?.positions.clone()
+                            self.string_matches.get(ix - 1)
                         }
                     } else {
-                        self.string_matches.get(ix)?.positions.clone()
+                        self.string_matches.get(ix)
                     }
                 } else {
-                    self.string_matches.get(ix)?.positions.clone()
+                    self.string_matches.get(ix)
                 }
             }
-            DirectoryState::None { .. } => Vec::new(),
+            DirectoryState::None { .. } => None,
         };
+
+        // Directory entries and string matches can briefly go out of sync during
+        // async updates. When that happens, render the row without highlights.
+        let mut match_positions = string_match
+            .filter(|string_match| {
+                string_match.candidate_id == candidate.path.id
+                    && string_match.string == candidate.path.string
+            })
+            .map(|string_match| string_match.positions.clone())
+            .unwrap_or_default();
 
         let is_current_dir_candidate = candidate.path.string == self.current_dir();
 
@@ -877,6 +895,7 @@ impl PickerDelegate for OpenPathDelegate {
 fn path_candidates(
     parent_path_is_root: bool,
     mut children: Vec<DirectoryItem>,
+    sort_mode: ProjectPanelSortMode,
 ) -> Vec<CandidateInfo> {
     if parent_path_is_root {
         children.push(DirectoryItem {
@@ -885,7 +904,14 @@ fn path_candidates(
         });
     }
 
-    children.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
+    children.sort_by(|a, b| {
+        let (a_is_file, b_is_file) = match sort_mode {
+            ProjectPanelSortMode::DirectoriesFirst => (!a.is_dir, !b.is_dir),
+            ProjectPanelSortMode::FilesFirst => (a.is_dir, b.is_dir),
+            ProjectPanelSortMode::Mixed => (true, true),
+        };
+        compare_paths((&a.path, a_is_file), (&b.path, b_is_file))
+    });
     children
         .iter()
         .enumerate()
