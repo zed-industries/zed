@@ -8884,7 +8884,7 @@ impl ThreadView {
             .thread
             .read(cx)
             .connection()
-            .supports_session_additional_directories(cx)
+            .supports_session_additional_directories()
         {
             return None;
         }
