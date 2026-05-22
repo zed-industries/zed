@@ -16,13 +16,19 @@ use feature_flags::AcpBetaFeatureFlag;
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
 
+use db::kvp::KeyValueStore;
 use gpui::List;
 use gpui::TaskExt;
 use heapless::Vec as ArrayVec;
-use language_model::{LanguageModelEffortLevel, Speed};
+use language_model::{
+    FastModeConfirmation, LanguageModelEffortLevel, LanguageModelId, LanguageModelProviderId,
+    LanguageModelRegistry, Speed,
+};
 use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
+use workspace::notifications::NotificationId;
+use workspace::notifications::simple_message_notification::MessageNotification;
 
 use super::*;
 
@@ -9502,11 +9508,36 @@ impl ThreadView {
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
+        let (current_speed, model_identity) = {
+            let thread = thread.read(cx);
+            (
+                thread.speed().unwrap_or_default(),
+                thread
+                    .model()
+                    .map(|model| (model.provider_id(), model.id())),
+            )
+        };
+        let new_speed = current_speed.toggle();
+
+        if new_speed == Speed::Fast
+            && let Some((provider_id, model_id)) = model_identity
+            && let Some(confirmation) = LanguageModelRegistry::read_global(cx)
+                .provider(&provider_id)
+                .and_then(|provider| provider.fast_mode_confirmation(cx))
+            && !fast_mode_warning_dismissed(&provider_id, &model_id, cx)
+        {
+            self.show_fast_mode_warning(provider_id, model_id, confirmation, cx);
+            return;
+        }
+
+        self.apply_fast_mode_speed(new_speed, cx);
+    }
+
+    fn apply_fast_mode_speed(&mut self, new_speed: Speed, cx: &mut Context<Self>) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
         thread.update(cx, |thread, cx| {
-            let new_speed = thread
-                .speed()
-                .map(|speed| speed.toggle())
-                .unwrap_or(Speed::Fast);
             thread.set_speed(new_speed, cx);
 
             let favorite_key = thread
@@ -9524,6 +9555,55 @@ impl ThreadView {
                         });
                     }
                 }
+            });
+        });
+    }
+
+    fn show_fast_mode_warning(
+        &mut self,
+        provider_id: LanguageModelProviderId,
+        model_id: LanguageModelId,
+        confirmation: FastModeConfirmation,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            self.apply_fast_mode_speed(Speed::Fast, cx);
+            return;
+        };
+        let weak_self = cx.entity().downgrade();
+        workspace.update(cx, |workspace, cx| {
+            let notification_id = NotificationId::composite::<FastModeWarning>(SharedString::from(
+                fast_mode_warning_id(&provider_id, &model_id),
+            ));
+            workspace.show_notification(notification_id, cx, move |cx| {
+                cx.new(move |cx| {
+                    let weak_self_primary = weak_self.clone();
+                    let weak_self_secondary = weak_self;
+                    let dismiss_target = (provider_id, model_id);
+                    MessageNotification::new(confirmation.message, cx)
+                        .with_title(confirmation.title)
+                        .primary_message("Enable Fast Mode")
+                        .primary_icon(IconName::FastForward)
+                        .primary_icon_color(Color::Accent)
+                        .primary_on_click(move |_window, cx| {
+                            weak_self_primary
+                                .update(cx, |this, cx| {
+                                    this.apply_fast_mode_speed(Speed::Fast, cx);
+                                })
+                                .log_err();
+                        })
+                        .secondary_message("Enable and Don't Show Again")
+                        .secondary_icon(IconName::Close)
+                        .secondary_on_click(move |_window, cx| {
+                            weak_self_secondary
+                                .update(cx, |this, cx| {
+                                    this.apply_fast_mode_speed(Speed::Fast, cx);
+                                })
+                                .log_err();
+                            let (provider_id, model_id) = &dismiss_target;
+                            set_fast_mode_warning_dismissed(provider_id, model_id, cx);
+                        })
+                })
             });
         });
     }
@@ -9923,4 +10003,55 @@ pub(crate) fn open_link(
     } else {
         cx.open_url(&url);
     }
+}
+
+struct FastModeWarning;
+
+const FAST_MODE_WARNING_NAMESPACE: &str = "fast-mode-warning-dismissed";
+
+fn fast_mode_warning_id(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+) -> String {
+    format!("{}:{}", provider_id.0, model_id.0)
+}
+
+fn fast_mode_warning_dismissed(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+    cx: &App,
+) -> bool {
+    KeyValueStore::global(cx)
+        .scoped(FAST_MODE_WARNING_NAMESPACE)
+        .read(&fast_mode_warning_id(provider_id, model_id))
+        .log_err()
+        .flatten()
+        .is_some()
+}
+
+fn set_fast_mode_warning_dismissed(
+    provider_id: &LanguageModelProviderId,
+    model_id: &LanguageModelId,
+    cx: &mut App,
+) {
+    let key = fast_mode_warning_id(provider_id, model_id);
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        kvp.scoped(FAST_MODE_WARNING_NAMESPACE)
+            .write(key, "1".to_string())
+            .await
+            .log_err();
+    })
+    .detach();
+}
+
+pub(crate) fn reset_fast_mode_warnings(cx: &mut App) {
+    let kvp = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        kvp.scoped(FAST_MODE_WARNING_NAMESPACE)
+            .delete_all()
+            .await
+            .log_err();
+    })
+    .detach();
 }
