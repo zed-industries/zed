@@ -2034,7 +2034,7 @@ impl Sidebar {
             IconName::ChevronDown
         };
 
-        let key_for_toggle = key.clone();
+        let key_for_disclosure = key.clone();
         let key_for_focus = key.clone();
 
         let label = if highlight_positions.is_empty() {
@@ -2139,7 +2139,15 @@ impl Sidebar {
                     })
                     .child(
                         div()
+                            .id(format!("{id_prefix}project-header-disclosure-{ix}"))
                             .when(!is_focused, |this| this.visible_on_hover(&group_name))
+                            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.toggle_collapse(&key_for_disclosure, window, cx);
+                            }))
                             .child(
                                 Icon::new(disclosure_icon)
                                     .size(IconSize::Small)
@@ -2214,12 +2222,8 @@ impl Sidebar {
                 }
             })
             .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.modifiers().secondary() {
-                        this.activate_or_open_workspace_for_group(&key_for_focus, window, cx);
-                    } else {
-                        this.toggle_collapse(&key_for_toggle, window, cx);
-                    }
+                cx.listener(move |this, _event: &gpui::ClickEvent, window, cx| {
+                    this.activate_or_open_workspace_for_group(&key_for_focus, window, cx);
                 }),
             );
 
@@ -2902,7 +2906,7 @@ impl Sidebar {
         match entry {
             ListEntry::ProjectHeader { key, .. } => {
                 let key = key.clone();
-                self.toggle_collapse(&key, window, cx);
+                self.activate_or_open_workspace_for_group(&key, window, cx);
             }
             ListEntry::Thread(thread) => {
                 let metadata = thread.metadata.clone();

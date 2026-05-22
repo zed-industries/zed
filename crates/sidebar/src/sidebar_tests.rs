@@ -1249,54 +1249,56 @@ async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
-async fn test_keyboard_confirm_on_project_header_toggles_collapse(cx: &mut TestAppContext) {
-    let project = init_test_project("/my-project", cx).await;
+async fn test_keyboard_confirm_on_project_header_activates_project(cx: &mut TestAppContext) {
+    let (fs, project) = init_multi_project_test(&["/project-a", "/project-b"], cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let sidebar = setup_sidebar(&multi_workspace, cx);
 
     save_n_test_threads(1, &project, cx).await;
+    let workspace_a = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let workspace_b = add_test_project("/project-b", &fs, &multi_workspace, cx).await;
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_b.clone(), None, window, cx);
+    });
     multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
     cx.run_until_parked();
 
     assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_b
+    );
+    assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "v [my-project]",
-            "  Thread 1",
-        ]
+        vec!["v [project-b]", "v [project-a]", "  Thread 1",]
     );
 
-    // Focus the sidebar and select the header
-    focus_sidebar(&sidebar, cx);
-    sidebar.update_in(cx, |sidebar, _window, _cx| {
-        sidebar.selection = Some(0);
+    let project_a_header_index = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(entry, ListEntry::ProjectHeader { label, .. } if label.as_ref() == "project-a")
+            })
+            .expect("project-a header should exist")
     });
 
-    // Confirm on project header collapses the group
+    focus_sidebar(&sidebar, cx);
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(project_a_header_index);
+    });
+
     cx.dispatch_action(Confirm);
     cx.run_until_parked();
 
     assert_eq!(
-        visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "> [my-project]  <== selected",
-        ]
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone()),
+        workspace_a
     );
-
-    // Confirm again expands the group
-    cx.dispatch_action(Confirm);
-    cx.run_until_parked();
-
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        vec![
-            //
-            "v [my-project]  <== selected",
-            "  Thread 1",
-        ]
+        vec!["v [project-b]", "v [project-a]", "  Thread 1",]
     );
 }
 
@@ -14151,12 +14153,12 @@ async fn test_collab_guest_move_thread_paths_is_noop(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_workspace(
+async fn test_project_header_activation_returns_to_last_active_linked_worktree_workspace(
     cx: &mut TestAppContext,
 ) {
-    // Regression test for: cmd-clicking a project group header should return
-    // the user to the workspace they most recently had active in that group,
-    // including workspaces rooted at a linked worktree.
+    // Activating a project group header should return the user to the
+    // workspace they most recently had active in that group, including
+    // workspaces rooted at a linked worktree.
     init_test(cx);
     let fs = FakeFs::new(cx.executor());
 
@@ -14251,8 +14253,8 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
         "group B's workspace should be active after step 2"
     );
 
-    // Step 3: simulate cmd-click on group A's header. The project group key
-    // for group A is derived from the *main-paths* workspace (linked-worktree
+    // Step 3: simulate activating group A's header. The project group key for
+    // group A is derived from the *main-paths* workspace (linked-worktree
     // workspaces share the same key because it normalizes to main-worktree
     // paths).
     let group_a_key = main_workspace_a.read_with(cx, |ws, cx| ws.project_group_key(cx));
@@ -14263,15 +14265,16 @@ async fn test_cmd_click_project_header_returns_to_last_active_linked_worktree_wo
 
     // Expected: we're back in the linked-worktree workspace, not the
     // main-paths one.
-    let active_after_cmd_click = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let active_after_header_activation =
+        multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     assert_eq!(
-        active_after_cmd_click, worktree_workspace_a,
-        "cmd-click on group A's header should return to the last-active \
+        active_after_header_activation, worktree_workspace_a,
+        "activating group A's header should return to the last-active \
          linked-worktree workspace, not the main-paths workspace"
     );
     assert_ne!(
-        active_after_cmd_click, main_workspace_a,
-        "cmd-click must not fall back to the main-paths workspace when a \
+        active_after_header_activation, main_workspace_a,
+        "header activation must not fall back to the main-paths workspace when a \
          linked-worktree workspace was the last-active one for the group"
     );
 }
