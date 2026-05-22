@@ -7,6 +7,7 @@ mod ssh_config;
 
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -22,6 +23,7 @@ pub use remote_connection::{RemoteConnectionModal, connect};
 pub use remote_connections::{navigate_to_positions, open_remote_project};
 
 use disconnected_overlay::DisconnectedOverlay;
+use editor::Editor;
 use fuzzy_nucleo::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -54,7 +56,12 @@ use zed_actions::{OpenDevContainer, OpenRecent, OpenRemote};
 
 actions!(
     recent_projects,
-    [ToggleActionsMenu, RemoveSelected, AddToWorkspace,]
+    [
+        ToggleActionsMenu,
+        RemoveSelected,
+        AddToWorkspace,
+        RenameSelected,
+    ]
 );
 
 #[derive(Clone, Debug)]
@@ -64,6 +71,130 @@ pub struct RecentProjectEntry {
     pub paths: Vec<PathBuf>,
     pub workspace_id: WorkspaceId,
     pub timestamp: DateTime<Utc>,
+}
+
+type ProjectRenamedCallback = Rc<dyn Fn(&ProjectGroupKey, &mut Window, &mut App)>;
+
+pub struct RenameProjectModal {
+    key: ProjectGroupKey,
+    editor: Entity<Editor>,
+    on_renamed: Option<ProjectRenamedCallback>,
+    is_saving: bool,
+}
+
+impl ModalView for RenameProjectModal {}
+
+impl EventEmitter<DismissEvent> for RenameProjectModal {}
+
+impl Focusable for RenameProjectModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl RenameProjectModal {
+    pub fn new(
+        key: ProjectGroupKey,
+        current_name: SharedString,
+        on_renamed: Option<ProjectRenamedCallback>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Use folder name", window, cx);
+            editor.set_text(current_name.to_string(), window, cx);
+            editor
+        });
+
+        Self {
+            key,
+            editor,
+            on_renamed,
+            is_saving: false,
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_saving {
+            return;
+        }
+
+        let name = self.editor.read(cx).text(cx);
+        let name = name.trim();
+        let name = (!name.is_empty()).then(|| name.to_string());
+        let key = self.key.clone();
+        let save = workspace::set_project_name_for_key(&key, name, cx);
+        let on_renamed = self.on_renamed.clone();
+
+        self.is_saving = true;
+        cx.notify();
+
+        cx.spawn_in(window, async move |this, cx| {
+            save.await.log_err();
+            this.update_in(cx, move |this, window, cx| {
+                this.is_saving = false;
+                if let Some(on_renamed) = on_renamed {
+                    on_renamed(&key, window, cx);
+                }
+                cx.emit(DismissEvent);
+            })
+            .ok();
+        })
+        .detach();
+    }
+}
+
+impl Render for RenameProjectModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RenameProjectModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_3(cx)
+            .w_96()
+            .overflow_hidden()
+            .child(
+                v_flex()
+                    .p_3()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(Label::new("Rename Project"))
+                    .child(self.editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .p_2()
+                    .gap_1()
+                    .justify_between()
+                    .child(
+                        Label::new("Leave blank to use the folder name.")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(Button::new("cancel", "Cancel").on_click(cx.listener(
+                                |this, _, window, cx| {
+                                    this.cancel(&menu::Cancel, window, cx);
+                                },
+                            )))
+                            .child(
+                                Button::new("save", "Save")
+                                    .disabled(self.is_saving)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.confirm(&menu::Confirm, window, cx);
+                                    })),
+                            ),
+                    ),
+            )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -251,6 +382,30 @@ fn get_open_folders(workspace: &Workspace, cx: &App) -> Vec<OpenFolderEntry> {
 
     entries.sort_by_key(|entry| entry.name.to_lowercase());
     entries
+}
+
+fn default_project_name(key: &ProjectGroupKey) -> SharedString {
+    let names = key
+        .path_list()
+        .ordered_paths()
+        .filter_map(|path| {
+            let display_path = if path.extension() == Some(std::ffi::OsStr::new("git")) {
+                std::borrow::Cow::Owned(path.with_extension(""))
+            } else {
+                std::borrow::Cow::Borrowed(path.as_path())
+            };
+            display_path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .filter(|name| !name.is_empty())
+        .collect::<Vec<_>>();
+
+    if names.is_empty() {
+        "Empty Workspace".into()
+    } else {
+        names.join(", ").into()
+    }
 }
 
 fn get_branch_for_worktree(
@@ -812,6 +967,17 @@ impl RecentProjects {
             }
         });
     }
+
+    fn handle_rename_selected(
+        &mut self,
+        _: &RenameSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.rename_selected_project(window, cx);
+        });
+    }
 }
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
@@ -829,6 +995,7 @@ impl Render for RecentProjects {
             .on_action(cx.listener(Self::handle_toggle_open_menu))
             .on_action(cx.listener(Self::handle_remove_selected))
             .on_action(cx.listener(Self::handle_add_to_workspace))
+            .on_action(cx.listener(Self::handle_rename_selected))
             .w(rems(self.rem_width))
             .child(self.picker.clone())
     }
@@ -976,12 +1143,18 @@ impl PickerDelegate for RecentProjectsDelegate {
             .iter()
             .enumerate()
             .map(|(id, key)| {
-                let combined_string = key
-                    .path_list()
-                    .ordered_paths()
-                    .map(|path| path.compact().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join("");
+                let mut parts = Vec::new();
+                if let Some(name) = workspace::project_name_for_key(key, cx) {
+                    parts.push(name.to_string());
+                }
+                parts.push(
+                    key.path_list()
+                        .ordered_paths()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(""),
+                );
+                let combined_string = parts.join(" ");
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -999,15 +1172,25 @@ impl PickerDelegate for RecentProjectsDelegate {
             .workspaces
             .iter()
             .enumerate()
-            .filter(|(_, workspace)| self.is_valid_recent_candidate(workspace, cx))
-            .map(|(id, workspace)| {
-                let combined_string = workspace
-                    .identity_paths
-                    .ordered_paths()
-                    .map(|path| path.compact().to_string_lossy().into_owned())
-                    .collect::<Vec<_>>()
-                    .join("");
-                StringMatchCandidate::new(id, &combined_string)
+            .filter_map(|(id, workspace)| {
+                if !self.is_valid_recent_candidate(workspace, cx) {
+                    return None;
+                }
+                let key = workspace.project_group_key();
+                let mut parts = Vec::new();
+                if let Some(name) = workspace::project_name_for_key(&key, cx) {
+                    parts.push(name.to_string());
+                }
+                parts.push(
+                    workspace
+                        .identity_paths
+                        .ordered_paths()
+                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(""),
+                );
+                let combined_string = parts.join(" ");
+                Some(StringMatchCandidate::new(id, &combined_string))
             })
             .collect();
 
@@ -1319,6 +1502,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let key = self.window_project_groups.get(hit.candidate_id)?;
                 let is_active = self.is_active_project_group(key, cx);
                 let paths = key.path_list();
+                let custom_name = workspace::project_name_for_key(key, cx);
                 let ordered_paths: Vec<_> = paths
                     .ordered_paths()
                     .map(|p| p.compact().to_string_lossy().to_string())
@@ -1327,7 +1511,38 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let icon = icon_for_remote_connection(self.project_connection_options.as_ref());
 
                 let mut path_start_offset = 0;
-                let (match_labels, path_highlights): (Vec<_>, Vec<_>) = paths
+                let match_label = if let Some(custom_name) = custom_name.as_ref() {
+                    let name = custom_name.to_string();
+                    path_start_offset = name.len() + 1;
+                    let name_len = name.len();
+                    HighlightedMatch {
+                        text: name,
+                        highlight_positions: hit
+                            .positions
+                            .iter()
+                            .copied()
+                            .filter(|position| *position < name_len)
+                            .collect(),
+                        color: Color::Default,
+                    }
+                } else {
+                    let (match_labels, _): (Vec<_>, Vec<_>) = paths
+                        .ordered_paths()
+                        .map(|p| p.compact())
+                        .map(|path| {
+                            let highlighted_text = highlights_for_path(
+                                path.as_ref(),
+                                &hit.positions,
+                                path_start_offset,
+                            );
+                            path_start_offset += highlighted_text.1.text.len();
+                            highlighted_text
+                        })
+                        .unzip();
+                    path_start_offset = 0;
+                    HighlightedMatch::join(match_labels.into_iter().flatten(), ", ")
+                };
+                let (_, path_highlights): (Vec<_>, Vec<_>) = paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
@@ -1340,7 +1555,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix: None,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label,
                     paths: path_highlights,
                     active: is_active,
                 };
@@ -1435,6 +1650,8 @@ impl PickerDelegate for RecentProjectsDelegate {
                 let location = &workspace.location;
                 let raw_paths = &workspace.paths;
                 let identity_paths = &workspace.identity_paths;
+                let project_group_key = workspace.project_group_key();
+                let custom_name = workspace::project_name_for_key(&project_group_key, cx);
                 let is_local = matches!(location, SerializedWorkspaceLocation::Local);
                 let paths_to_add = raw_paths.paths().to_vec();
                 let ordered_paths: Vec<_> = identity_paths
@@ -1454,7 +1671,38 @@ impl PickerDelegate for RecentProjectsDelegate {
                 };
 
                 let mut path_start_offset = 0;
-                let (match_labels, paths): (Vec<_>, Vec<_>) = identity_paths
+                let match_label = if let Some(custom_name) = custom_name.as_ref() {
+                    let name = custom_name.to_string();
+                    path_start_offset = name.len() + 1;
+                    let name_len = name.len();
+                    HighlightedMatch {
+                        text: name,
+                        highlight_positions: hit
+                            .positions
+                            .iter()
+                            .copied()
+                            .filter(|position| *position < name_len)
+                            .collect(),
+                        color: Color::Default,
+                    }
+                } else {
+                    let (match_labels, _): (Vec<_>, Vec<_>) = identity_paths
+                        .ordered_paths()
+                        .map(|p| p.compact())
+                        .map(|path| {
+                            let highlighted_text = highlights_for_path(
+                                path.as_ref(),
+                                &hit.positions,
+                                path_start_offset,
+                            );
+                            path_start_offset += highlighted_text.1.text.len();
+                            highlighted_text
+                        })
+                        .unzip();
+                    path_start_offset = 0;
+                    HighlightedMatch::join(match_labels.into_iter().flatten(), ", ")
+                };
+                let (_, paths): (Vec<_>, Vec<_>) = identity_paths
                     .ordered_paths()
                     .map(|p| p.compact())
                     .map(|path| {
@@ -1480,7 +1728,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
                 let highlighted_match = HighlightedMatchWithPaths {
                     prefix,
-                    match_label: HighlightedMatch::join(match_labels.into_iter().flatten(), ", "),
+                    match_label,
                     paths,
                     active: false,
                 };
@@ -1837,6 +2085,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     .unwrap_or(false),
                                 _ => false,
                             };
+                            let show_rename_project = matches!(
+                                selected_entry,
+                                Some(
+                                    ProjectPickerEntry::ProjectGroup(_)
+                                        | ProjectPickerEntry::RecentProject(_)
+                                )
+                            );
 
                             move |window, cx| {
                                 Some(ContextMenu::build(window, cx, {
@@ -1849,6 +2104,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                                 menu.action(
                                                     "Add Folder to this Project",
                                                     AddToWorkspace.boxed_clone(),
+                                                )
+                                                .separator()
+                                            })
+                                            .when(show_rename_project, |menu| {
+                                                menu.action(
+                                                    "Rename Project",
+                                                    RenameSelected.boxed_clone(),
                                                 )
                                                 .separator()
                                             })
@@ -2023,6 +2285,50 @@ fn open_local_project(
 }
 
 impl RecentProjectsDelegate {
+    fn selected_project_key(&self) -> Option<ProjectGroupKey> {
+        match self.filtered_entries.get(self.selected_index)? {
+            ProjectPickerEntry::ProjectGroup(hit) => {
+                self.window_project_groups.get(hit.candidate_id).cloned()
+            }
+            ProjectPickerEntry::RecentProject(hit) => self
+                .workspaces
+                .get(hit.candidate_id)
+                .map(RecentWorkspace::project_group_key),
+            _ => None,
+        }
+    }
+
+    fn rename_selected_project(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(key) = self.selected_project_key() else {
+            return;
+        };
+        let current_name =
+            workspace::project_name_for_key(&key, cx).unwrap_or_else(|| default_project_name(&key));
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let picker = cx.entity().downgrade();
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RenameProjectModal::new(
+                    key,
+                    current_name,
+                    Some(Rc::new(move |_, window, cx| {
+                        if let Some(picker) = picker.upgrade() {
+                            picker.update(cx, |picker, cx| {
+                                let query = picker.query(cx);
+                                picker.update_matches(query, window, cx);
+                            });
+                        }
+                    })),
+                    window,
+                    cx,
+                )
+            });
+        });
+    }
+
     fn open_recent_projects(
         &mut self,
         candidate_id: usize,

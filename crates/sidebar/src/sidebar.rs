@@ -1447,7 +1447,7 @@ impl Sidebar {
                 continue;
             }
 
-            let label = group_key.display_name(&path_detail_map);
+            let label = workspace::project_display_name(group_key, &path_detail_map, cx);
 
             let is_collapsed = self.is_group_collapsed(group_key, cx);
             let should_load_threads = !is_collapsed || !query.is_empty();
@@ -2200,18 +2200,32 @@ impl Sidebar {
                     .child(
                         div()
                             .id(format!("{id_prefix}project-header-disclosure-{ix}"))
+                            .flex_1()
+                            .min_w(px(24.))
                             .when(!is_focused, |this| this.visible_on_hover(&group_name))
                             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| {
                                 cx.stop_propagation();
                             })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.toggle_collapse(&key_for_disclosure, window, cx);
-                            }))
                             .child(
-                                Icon::new(disclosure_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
+                                IconButton::new(
+                                    format!("{id_prefix}project-header-disclosure-button-{ix}"),
+                                    disclosure_icon,
+                                )
+                                .full_width()
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                .tooltip(Tooltip::text(if is_collapsed {
+                                    "Expand Project"
+                                } else {
+                                    "Collapse Project"
+                                }))
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.toggle_collapse(&key_for_disclosure, window, cx);
+                                    },
+                                )),
                             ),
                     ),
             )
@@ -2262,6 +2276,7 @@ impl Sidebar {
                         ix,
                         id_prefix,
                         key,
+                        &label_text,
                         is_active,
                         has_threads,
                         &group_name,
@@ -2350,6 +2365,7 @@ impl Sidebar {
         ix: usize,
         id_prefix: &str,
         project_group_key: &ProjectGroupKey,
+        project_label: &SharedString,
         is_active: bool,
         has_threads: bool,
         group_name: &SharedString,
@@ -2357,6 +2373,7 @@ impl Sidebar {
     ) -> AnyElement {
         let multi_workspace = self.multi_workspace.clone();
         let project_group_key = project_group_key.clone();
+        let project_label = project_label.clone();
 
         let show_multi_project_entries = multi_workspace
             .read_with(cx, |mw, _| {
@@ -2432,10 +2449,51 @@ impl Sidebar {
                     .map(|workspace| active_workspace.as_ref() == Some(workspace))
                     .collect();
 
+                let project_label_for_menu = project_label.clone();
                 let menu =
                     ContextMenu::build_persistent(window, cx, move |menu, _window, menu_cx| {
                         let menu = menu.end_slot_action(Box::new(menu::SecondaryConfirm));
                         let weak_menu = menu_cx.weak_entity();
+
+                        let rename_key = project_group_key.clone();
+                        let rename_label = project_label_for_menu.clone();
+                        let rename_multi_workspace = multi_workspace.clone();
+                        let rename_weak_menu = weak_menu.clone();
+                        let rename_sidebar = this_for_menu.clone();
+                        let menu = menu.entry("Rename Project", None, move |window, cx| {
+                            let rename_key = rename_key.clone();
+                            let rename_label = rename_label.clone();
+                            let rename_sidebar = rename_sidebar.clone();
+                            rename_multi_workspace
+                                .update(cx, |multi_workspace, cx| {
+                                    multi_workspace.toggle_modal(window, cx, {
+                                        let rename_key = rename_key.clone();
+                                        let rename_label = rename_label.clone();
+                                        move |window, cx| {
+                                            recent_projects::RenameProjectModal::new(
+                                                rename_key.clone(),
+                                                rename_label.clone(),
+                                                Some(Rc::new({
+                                                    let rename_sidebar = rename_sidebar.clone();
+                                                    move |_, _, cx| {
+                                                        rename_sidebar
+                                                            .update(cx, |sidebar, cx| {
+                                                                sidebar.update_entries(cx);
+                                                            })
+                                                            .ok();
+                                                    }
+                                                })),
+                                                window,
+                                                cx,
+                                            )
+                                        }
+                                    });
+                                })
+                                .ok();
+                            rename_weak_menu
+                                .update(cx, |_, cx| cx.emit(DismissEvent))
+                                .ok();
+                        });
 
                         let menu = menu.when(show_multi_project_entries, |this| {
                             this.entry(

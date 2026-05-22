@@ -1346,6 +1346,34 @@ async fn test_project_header_drop_reorders_project_groups(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_project_header_uses_custom_project_name(cx: &mut TestAppContext) {
+    let project = init_test_project("/custom-name-project", cx).await;
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    let save_name = cx.update(|_, cx| {
+        workspace::set_project_name_for_key(
+            &project_group_key,
+            Some("Customer API".to_string()),
+            cx,
+        )
+    });
+    save_name.await.expect("custom project name should save");
+
+    sidebar.update_in(cx, |sidebar, _window, cx| {
+        sidebar.update_entries(cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [Customer API]"]
+    );
+}
+
+#[gpui::test]
 async fn test_keyboard_expand_and_collapse_selected_entry(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =

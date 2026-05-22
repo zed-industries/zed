@@ -19,7 +19,7 @@ use db::{
     sqlez::{connection::Connection, domain::Domain},
     sqlez_macros::sql,
 };
-use gpui::{Axis, Bounds, Task, WindowBounds, WindowId, point, size};
+use gpui::{AppContext as _, Axis, Bounds, Task, WindowBounds, WindowId, point, size};
 use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
@@ -184,6 +184,62 @@ impl Column for SerializedWindowBounds {
 }
 
 const DEFAULT_WINDOW_BOUNDS_KEY: &str = "default_window_bounds";
+const PROJECT_NAMES_NAMESPACE: &str = "project_names";
+
+#[derive(Serialize)]
+struct SerializedProjectNameKey {
+    path_list: SerializedPathList,
+    host: Option<RemoteConnectionIdentity>,
+}
+
+fn project_name_key(project_group_key: &ProjectGroupKey) -> Result<String> {
+    serde_json::to_string(&SerializedProjectNameKey {
+        path_list: project_group_key.path_list().serialize(),
+        host: project_group_key
+            .host()
+            .as_ref()
+            .map(remote_connection_identity),
+    })
+    .context("serializing project name key")
+}
+
+pub fn project_name_for_key(project_group_key: &ProjectGroupKey, cx: &App) -> Option<SharedString> {
+    let key = project_name_key(project_group_key).log_err()?;
+    KeyValueStore::global(cx)
+        .scoped(PROJECT_NAMES_NAMESPACE)
+        .read(&key)
+        .log_err()
+        .flatten()
+        .map(SharedString::from)
+}
+
+pub fn project_display_name(
+    project_group_key: &ProjectGroupKey,
+    path_detail_map: &std::collections::HashMap<PathBuf, usize>,
+    cx: &App,
+) -> SharedString {
+    project_name_for_key(project_group_key, cx)
+        .unwrap_or_else(|| project_group_key.display_name(path_detail_map))
+}
+
+pub fn set_project_name_for_key(
+    project_group_key: &ProjectGroupKey,
+    name: Option<String>,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    let key = match project_name_key(project_group_key) {
+        Ok(key) => key,
+        Err(error) => return Task::ready(Err(error)),
+    };
+    let store = KeyValueStore::global(cx);
+    cx.background_spawn(async move {
+        let names = store.scoped(PROJECT_NAMES_NAMESPACE);
+        match name {
+            Some(name) => names.write(key, name).await,
+            None => names.delete(key).await,
+        }
+    })
+}
 
 pub fn read_default_window_bounds(kvp: &KeyValueStore) -> Option<(Uuid, WindowBounds)> {
     let json_str = kvp
