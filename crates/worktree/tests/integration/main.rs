@@ -618,12 +618,9 @@ async fn test_scan_symlinks_always(cx: &mut TestAppContext) {
     )
     .await;
 
-    fs.create_symlink(
-        "/root/dir1/deps/dep-dir2".as_ref(),
-        "../../dir2".into(),
-    )
-    .await
-    .unwrap();
+    fs.create_symlink("/root/dir1/deps/dep-dir2".as_ref(), "../../dir2".into())
+        .await
+        .unwrap();
 
     let tree = Worktree::local(
         Path::new("/root/dir1"),
@@ -687,12 +684,9 @@ async fn test_scan_symlinks_expanded(cx: &mut TestAppContext) {
     )
     .await;
 
-    fs.create_symlink(
-        "/root/dir1/deps/dep-dir2".as_ref(),
-        "../../dir2".into(),
-    )
-    .await
-    .unwrap();
+    fs.create_symlink("/root/dir1/deps/dep-dir2".as_ref(), "../../dir2".into())
+        .await
+        .unwrap();
 
     let tree = Worktree::local(
         Path::new("/root/dir1"),
@@ -758,7 +752,9 @@ async fn test_scan_symlinks_expanded(cx: &mut TestAppContext) {
         );
 
         assert_eq!(
-            tree.entry_for_path(rel_path("deps/dep-dir2/src")).unwrap().kind,
+            tree.entry_for_path(rel_path("deps/dep-dir2/src"))
+                .unwrap()
+                .kind,
             EntryKind::UnloadedDir
         );
     });

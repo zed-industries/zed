@@ -162,7 +162,6 @@ pub struct WorktreeSettingsContent {
     /// external dependencies that should not be modified directly.
     /// Default: []
     pub read_only_files: Option<Vec<String>>,
-
 }
 
 #[with_fallible_options]
