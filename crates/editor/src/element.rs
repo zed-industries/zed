@@ -4813,8 +4813,7 @@ impl EditorElement {
     ) -> Option<ContextMenuLayout> {
         let mut min_menu_height = Pixels::ZERO;
         let mut max_menu_height = Pixels::ZERO;
-        let mut height_above_menu = Pixels::ZERO;
-        let height_below_menu = Pixels::ZERO;
+        let mut edit_prediction_height = Pixels::ZERO;
         let mut edit_prediction_popover_visible = false;
         let mut context_menu_visible = false;
         let context_menu_placement;
@@ -4824,7 +4823,7 @@ impl EditorElement {
             let editor = self.editor.read(cx);
             if editor.edit_prediction_visible_in_cursor_popover(editor.has_active_edit_prediction())
             {
-                height_above_menu +=
+                edit_prediction_height +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
                 edit_prediction_popover_visible = true;
             }
@@ -4882,14 +4881,13 @@ impl EditorElement {
                 ..Default::default()
             });
 
-        // Account for the gap drawn between the two popovers when both are present.
         let popover_gap = if edit_prediction_popover_visible && context_menu_visible {
             MENU_GAP
         } else {
             Pixels::ZERO
         };
-        let min_height = height_above_menu + min_menu_height + height_below_menu + popover_gap;
-        let max_height = height_above_menu + max_menu_height + height_below_menu + popover_gap;
+        let min_height = edit_prediction_height + min_menu_height + popover_gap;
+        let max_height = edit_prediction_height + max_menu_height + popover_gap;
         let (laid_out_popovers, y_flipped) = self.layout_popovers_above_or_below_line(
             target_position,
             line_height,
@@ -4903,7 +4901,7 @@ impl EditorElement {
             |height, max_width_for_stable_x, y_flipped, window, cx| {
                 // First layout the menu to get its size - others can be at least this wide.
                 let context_menu = if context_menu_visible {
-                    let menu_height = height - height_above_menu - height_below_menu - popover_gap;
+                    let menu_height = height - edit_prediction_height - popover_gap;
                     let mut element = self
                         .render_context_menu(menu_line_height, menu_height, window, cx)
                         .expect("Visible context menu should always render.");
