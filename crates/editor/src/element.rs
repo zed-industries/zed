@@ -181,9 +181,9 @@ struct RenderBlocksOutput {
 }
 
 pub struct EditorElement {
-    pub(crate) editor: Entity<Editor>,
-    pub(crate) style: EditorStyle,
-    pub(crate) split_side: Option<SplitSide>,
+    pub(super) editor: Entity<Editor>,
+    pub(super) style: EditorStyle,
+    pub(super) split_side: Option<SplitSide>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
