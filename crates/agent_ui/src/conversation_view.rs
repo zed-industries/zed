@@ -7046,6 +7046,130 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_running_mcp_tool_call_with_raw_input_is_collapsible(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("mcp-running-raw-input");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Search docs")
+            .kind(acp::ToolKind::Other)
+            .status(acp::ToolCallStatus::InProgress)
+            .raw_input(json!({
+                "query": "gpui disclosure state"
+            }));
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Search the docs", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let active_thread = view.active_thread().expect("Thread should exist");
+            let thread_view = active_thread.read(cx);
+            let thread = thread_view.thread.read(cx);
+            let tool_call = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::ToolCall(tool_call) if tool_call.id == tool_call_id => {
+                        Some(tool_call)
+                    }
+                    _ => None,
+                })
+                .expect("Expected a running MCP tool call entry");
+
+            assert!(
+                tool_call.raw_input_markdown.is_some(),
+                "Raw input markdown should be built for running MCP calls"
+            );
+            assert_eq!(
+                thread_view.is_tool_call_collapsible(&tool_call_id, cx),
+                Some(true),
+                "Running MCP call with raw input should expose the top-level disclosure"
+            );
+        });
+
+        conversation_view.update(cx, |view, cx| {
+            view.expand_tool_call(tool_call_id.clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let active_thread = view.active_thread().expect("Thread should exist");
+            let thread_view = active_thread.read(cx);
+            assert!(
+                thread_view.expanded_tool_calls.contains(&tool_call_id),
+                "Expanded state should accept the running MCP tool call"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_running_mcp_tool_call_without_raw_input_is_not_collapsible(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId::new("mcp-running-empty");
+        let tool_call = acp::ToolCall::new(tool_call_id.clone(), "Search docs")
+            .kind(acp::ToolKind::Other)
+            .status(acp::ToolCallStatus::InProgress);
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::ToolCall(tool_call)]);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Search the docs", window, cx);
+        });
+
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+
+        cx.run_until_parked();
+
+        conversation_view.read_with(cx, |view, cx| {
+            let active_thread = view.active_thread().expect("Thread should exist");
+            let thread_view = active_thread.read(cx);
+            let thread = thread_view.thread.read(cx);
+            let tool_call = thread
+                .entries()
+                .iter()
+                .find_map(|entry| match entry {
+                    AgentThreadEntry::ToolCall(tool_call) if tool_call.id == tool_call_id => {
+                        Some(tool_call)
+                    }
+                    _ => None,
+                })
+                .expect("Expected a running MCP tool call entry");
+
+            assert!(
+                tool_call.raw_input_markdown.is_none(),
+                "Control case should not have raw input markdown"
+            );
+            assert_eq!(
+                thread_view.is_tool_call_collapsible(&tool_call_id, cx),
+                Some(false),
+                "Running MCP call without raw input or output should stay non-collapsible"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_authorize_tool_call_action_triggers_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
