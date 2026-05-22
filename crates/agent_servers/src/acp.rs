@@ -15,10 +15,13 @@ use futures::channel::mpsc;
 use futures::future::Shared;
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, Future, FutureExt as _, StreamExt as _};
-use project::agent_server_store::{AgentServerCommand, AgentServerStore};
+use project::agent_server_store::{
+    AgentServerCommand, AgentServerStore, AllAgentServersSettings, CustomAgentServerSettings,
+};
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
+use settings::SettingsStore;
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
@@ -32,7 +35,7 @@ use util::path_list::PathList;
 use util::process::Child;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Subscription, Task, WeakEntity};
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
@@ -425,6 +428,7 @@ pub struct AcpConnection {
     child: Option<Child>,
     session_list: Option<Rc<AcpSessionList>>,
     debug_log: AcpDebugLog,
+    _settings_subscription: Subscription,
     _io_task: Task<()>,
     _dispatch_task: Task<()>,
     _wait_task: Task<Result<()>>,
@@ -455,29 +459,63 @@ impl AcpConnectionDefaults {
         self.mode.borrow().clone()
     }
 
-    fn set_mode(&self, mode: Option<acp::SessionModeId>) {
-        *self.mode.borrow_mut() = mode;
-    }
-
     fn model(&self) -> Option<acp::ModelId> {
         self.model.borrow().clone()
-    }
-
-    fn set_model(&self, model: Option<acp::ModelId>) {
-        *self.model.borrow_mut() = model;
     }
 
     fn config_option(&self, config_id: &str) -> Option<String> {
         self.config_options.borrow().get(config_id).cloned()
     }
 
-    fn set_config_option(&self, config_id: &str, value_id: Option<&str>) {
-        let mut config_options = self.config_options.borrow_mut();
-        if let Some(value_id) = value_id {
-            config_options.insert(config_id.to_string(), value_id.to_string());
-        } else {
-            config_options.remove(config_id);
+    fn set(
+        &self,
+        mode: Option<acp::SessionModeId>,
+        model: Option<acp::ModelId>,
+        config_options: HashMap<String, String>,
+    ) {
+        *self.mode.borrow_mut() = mode;
+        *self.model.borrow_mut() = model;
+        *self.config_options.borrow_mut() = config_options;
+    }
+
+    fn refresh_from_settings(&self, agent_id: &AgentId, cx: &App) {
+        let Some(settings_store) = cx.try_global::<SettingsStore>() else {
+            self.set(None, None, HashMap::default());
+            return;
+        };
+        let settings = settings_store.get::<AllAgentServersSettings>(None);
+        let Some(agent_settings) = settings.get(agent_id.as_ref()) else {
+            self.set(None, None, HashMap::default());
+            return;
+        };
+
+        let default_config_options = match agent_settings {
+            CustomAgentServerSettings::Custom {
+                default_config_options,
+                ..
+            }
+            | CustomAgentServerSettings::Registry {
+                default_config_options,
+                ..
+            } => default_config_options.clone(),
+        };
+        self.set(
+            agent_settings.default_mode().map(acp::SessionModeId::new),
+            agent_settings.default_model().map(acp::ModelId::new),
+            default_config_options,
+        );
+    }
+
+    fn observe_settings(&self, agent_id: AgentId, cx: &mut App) -> Subscription {
+        if cx.try_global::<SettingsStore>().is_none() {
+            return Subscription::new(|| {});
         }
+
+        self.refresh_from_settings(&agent_id, cx);
+        let defaults = self.clone();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            defaults.refresh_from_settings(&agent_id, cx);
+        })
     }
 }
 
@@ -1044,6 +1082,14 @@ impl AcpConnection {
         } else {
             response.auth_methods
         };
+        let defaults =
+            AcpConnectionDefaults::new(default_mode, default_model, default_config_options);
+        let settings_subscription = cx.update({
+            let agent_id = agent_id.clone();
+            let defaults = defaults.clone();
+            move |cx| defaults.observe_settings(agent_id, cx)
+        });
+
         Ok(Self {
             id: agent_id,
             auth_methods,
@@ -1054,13 +1100,10 @@ impl AcpConnection {
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
             agent_capabilities: response.agent_capabilities,
-            defaults: AcpConnectionDefaults::new(
-                default_mode,
-                default_model,
-                default_config_options,
-            ),
+            defaults,
             session_list,
             debug_log,
+            _settings_subscription: settings_subscription,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: wait_task,
@@ -1073,18 +1116,6 @@ impl AcpConnection {
         &self.agent_capabilities.prompt_capabilities
     }
 
-    pub fn set_default_mode(&self, mode: Option<acp::SessionModeId>) {
-        self.defaults.set_mode(mode);
-    }
-
-    pub fn set_default_model(&self, model: Option<acp::ModelId>) {
-        self.defaults.set_model(model);
-    }
-
-    pub fn set_default_config_option(&self, config_id: &str, value_id: Option<&str>) {
-        self.defaults.set_config_option(config_id, value_id);
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     fn new_for_test(
         connection: ConnectionTo<Agent>,
@@ -1093,10 +1124,14 @@ impl AcpConnection {
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
         dispatch_task: Task<()>,
-        _cx: &mut App,
+        cx: &mut App,
     ) -> Self {
+        let agent_id = AgentId::new("test");
+        let defaults = AcpConnectionDefaults::default();
+        let settings_subscription = defaults.observe_settings(agent_id.clone(), cx);
+
         Self {
-            id: AgentId::new("test"),
+            id: agent_id,
             telemetry_id: "test".into(),
             agent_version: None,
             connection,
@@ -1105,10 +1140,11 @@ impl AcpConnection {
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
-            defaults: AcpConnectionDefaults::default(),
+            defaults,
             child: None,
             session_list: None,
             debug_log: AcpDebugLog::default(),
+            _settings_subscription: settings_subscription,
             _io_task: io_task,
             _dispatch_task: dispatch_task,
             _wait_task: Task::ready(Ok(())),
@@ -2559,6 +2595,7 @@ mod tests {
 
     use super::*;
     use gpui::UpdateGlobal as _;
+    use settings::Settings as _;
 
     #[test]
     fn terminal_auth_task_builds_spawn_from_prebuilt_command() {
@@ -3029,7 +3066,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn setting_defaults_refreshes_active_connection_cache(cx: &mut gpui::TestAppContext) {
+    async fn settings_changes_refresh_active_connection_defaults(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
@@ -3040,21 +3077,54 @@ mod tests {
         let project = project::Project::test(fs, [std::path::Path::new("/a")], cx).await;
         let harness = test_support::connect_fake_acp_connection(project, cx).await;
 
-        let mode_id = acp::SessionModeId::new("manual");
-        harness.connection.set_default_mode(Some(mode_id.clone()));
-        assert_eq!(harness.connection.defaults.mode(), Some(mode_id));
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::from_iter([(
+                    "test".to_string(),
+                    settings::CustomAgentServerSettings::Custom {
+                        path: PathBuf::from("test-agent"),
+                        args: Vec::new(),
+                        env: HashMap::default(),
+                        default_mode: Some("manual".to_string()),
+                        default_model: Some("claude-sonnet-4".to_string()),
+                        favorite_models: Vec::new(),
+                        default_config_options: HashMap::from_iter([(
+                            "mode".to_string(),
+                            "manual".to_string(),
+                        )]),
+                        favorite_config_option_values: HashMap::default(),
+                    }
+                    .into(),
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
 
-        let model_id = acp::ModelId::new("manual");
-        harness.connection.set_default_model(Some(model_id.clone()));
-        assert_eq!(harness.connection.defaults.model(), Some(model_id));
-
-        harness
-            .connection
-            .set_default_config_option("mode", Some("manual"));
+        assert_eq!(
+            harness.connection.defaults.mode(),
+            Some(acp::SessionModeId::new("manual"))
+        );
+        assert_eq!(
+            harness.connection.defaults.model(),
+            Some(acp::ModelId::new("claude-sonnet-4"))
+        );
         assert_eq!(
             harness.connection.defaults.config_option("mode").as_deref(),
             Some("manual")
         );
+
+        cx.update(|cx| {
+            AllAgentServersSettings::override_global(
+                AllAgentServersSettings(HashMap::default()),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(harness.connection.defaults.mode(), None);
+        assert_eq!(harness.connection.defaults.model(), None);
+        assert_eq!(harness.connection.defaults.config_option("mode"), None);
     }
 
     #[gpui::test]

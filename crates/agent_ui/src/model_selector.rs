@@ -2,7 +2,7 @@ use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::{AgentModelIcon, AgentModelInfo, AgentModelList, AgentModelSelector};
 use agent_client_protocol::schema as acp;
-use agent_servers::{AcpConnection, AgentServer};
+use agent_servers::AgentServer;
 
 use anyhow::Result;
 use collections::{HashSet, IndexMap};
@@ -31,20 +31,11 @@ pub fn acp_model_selector(
     selector: Rc<dyn AgentModelSelector>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
-    acp_connection: Option<Rc<AcpConnection>>,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut Context<ModelSelector>,
 ) -> ModelSelector {
-    let delegate = ModelPickerDelegate::new(
-        selector,
-        agent_server,
-        fs,
-        acp_connection,
-        focus_handle,
-        window,
-        cx,
-    );
+    let delegate = ModelPickerDelegate::new(selector, agent_server, fs, focus_handle, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
@@ -60,7 +51,6 @@ pub struct ModelPickerDelegate {
     selector: Rc<dyn AgentModelSelector>,
     agent_server: Rc<dyn AgentServer>,
     fs: Arc<dyn Fs>,
-    acp_connection: Option<Rc<AcpConnection>>,
     filtered_entries: Vec<ModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
@@ -77,7 +67,6 @@ impl ModelPickerDelegate {
         selector: Rc<dyn AgentModelSelector>,
         agent_server: Rc<dyn AgentServer>,
         fs: Arc<dyn Fs>,
-        acp_connection: Option<Rc<AcpConnection>>,
         focus_handle: FocusHandle,
         window: &mut Window,
         cx: &mut Context<ModelSelector>,
@@ -134,7 +123,6 @@ impl ModelPickerDelegate {
             selector,
             agent_server,
             fs,
-            acp_connection,
             filtered_entries: Vec::new(),
             models: None,
             selected_model: None,
@@ -195,9 +183,6 @@ impl ModelPickerDelegate {
 
         self.agent_server
             .set_default_model(Some(next_model.id.clone()), self.fs.clone(), cx);
-        if let Some(connection) = &self.acp_connection {
-            connection.set_default_model(Some(next_model.id.clone()));
-        }
 
         self.selector
             .select_model(next_model.id.clone(), cx)
@@ -296,9 +281,6 @@ impl PickerDelegate for ModelPickerDelegate {
         {
             self.agent_server
                 .set_default_model(Some(model_info.id.clone()), self.fs.clone(), cx);
-            if let Some(connection) = &self.acp_connection {
-                connection.set_default_model(Some(model_info.id.clone()));
-            }
 
             self.selector
                 .select_model(model_info.id.clone(), cx)
@@ -629,15 +611,7 @@ mod tests {
             move |window, cx| {
                 let selector: Rc<dyn AgentModelSelector> = model_selector.clone();
                 let agent_server: Rc<dyn AgentServer> = agent_server.clone();
-                acp_model_selector(
-                    selector,
-                    agent_server,
-                    fs,
-                    None,
-                    cx.focus_handle(),
-                    window,
-                    cx,
-                )
+                acp_model_selector(selector, agent_server, fs, cx.focus_handle(), window, cx)
             }
         });
         cx.run_until_parked();

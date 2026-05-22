@@ -1,6 +1,6 @@
 use acp_thread::AgentSessionModes;
 use agent_client_protocol::schema as acp;
-use agent_servers::{AcpConnection, AgentServer};
+use agent_servers::AgentServer;
 
 use fs::Fs;
 use gpui::{Context, Entity, WeakEntity, Window, prelude::*};
@@ -16,7 +16,6 @@ use crate::{CycleModeSelector, ToggleProfileSelector, ui::documentation_aside_si
 pub struct ModeSelector {
     connection: Rc<dyn AgentSessionModes>,
     agent_server: Rc<dyn AgentServer>,
-    acp_connection: Option<Rc<AcpConnection>>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
     setting_mode: bool,
@@ -26,13 +25,11 @@ impl ModeSelector {
     pub fn new(
         session_modes: Rc<dyn AgentSessionModes>,
         agent_server: Rc<dyn AgentServer>,
-        acp_connection: Option<Rc<AcpConnection>>,
         fs: Arc<dyn Fs>,
     ) -> Self {
         Self {
             connection: session_modes,
             agent_server,
-            acp_connection,
             menu_handle: PopoverMenuHandle::default(),
             fs,
             setting_mode: false,
@@ -68,9 +65,6 @@ impl ModeSelector {
     pub fn set_mode(&mut self, mode: acp::SessionModeId, cx: &mut Context<Self>) {
         self.agent_server
             .set_default_mode(Some(mode.clone()), self.fs.clone(), cx);
-        if let Some(connection) = &self.acp_connection {
-            connection.set_default_mode(Some(mode.clone()));
-        }
 
         let task = self.connection.set_mode(mode, cx);
         self.setting_mode = true;
@@ -220,7 +214,7 @@ mod tests {
         cx.update(|cx| {
             let session_modes: Rc<dyn AgentSessionModes> = session_modes.clone();
             let agent_server: Rc<dyn AgentServer> = agent_server.clone();
-            let selector = cx.new(|_| ModeSelector::new(session_modes, agent_server, None, fs));
+            let selector = cx.new(|_| ModeSelector::new(session_modes, agent_server, fs));
 
             selector.update(cx, |selector, cx| {
                 selector.set_mode(acp::SessionModeId::new("manual"), cx);
