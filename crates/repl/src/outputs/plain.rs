@@ -136,19 +136,16 @@ impl TerminalOutput {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal_bounds = terminal_size(window, cx);
         let background_executor = cx.background_executor().clone();
-        let terminal = match TerminalBuilder::new_display_only(
+        let terminal = match TerminalBuilder::new_display_only_with_bounds(
             TerminalSettings::get_global(cx).cursor_shape,
             TerminalSettings::get_global(cx).alternate_scroll,
             TerminalSettings::get_global(cx).max_scroll_history_lines,
             0,
             &background_executor,
             PathStyle::local(),
+            terminal_bounds,
         ) {
-            Ok(builder) => Some(cx.new(|cx| {
-                let mut terminal = builder.subscribe(cx);
-                terminal.set_size(terminal_bounds);
-                terminal
-            })),
+            Ok(builder) => Some(cx.new(|cx| builder.subscribe(cx))),
             Err(error) => {
                 log::error!("failed to initialize REPL terminal output: {error}");
                 None
@@ -298,6 +295,37 @@ mod tests {
         let result_f32: f32 = result.into();
         let expected_f32: f32 = expected.into();
         assert!((result_f32 - expected_f32).abs() < 0.01);
+    }
+
+    #[gpui::test]
+    fn test_append_text_preserves_split_ansi_sequence(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let text = cx.update(|window, cx| {
+            let output = cx.new(|cx| TerminalOutput::new(window, cx));
+            output.update(cx, |output, cx| {
+                output.append_text("\x1b[", cx);
+                output.append_text("31mred\x1b[0m", cx);
+                output.full_text()
+            })
+        });
+
+        assert_eq!(text, "red\n");
+    }
+
+    #[gpui::test]
+    fn test_initial_text_uses_repl_terminal_size(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let (text, expected) = cx.update(|window, cx| {
+            let columns = ReplSettings::get_global(cx).max_columns;
+            let input = format!("\x1b[{columns}Gx");
+            let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
+            (
+                output.read(cx).full_text(),
+                format!("{}x\n", " ".repeat(columns - 1)),
+            )
+        });
+
+        assert_eq!(text, expected);
     }
 }
 

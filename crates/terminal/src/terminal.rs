@@ -72,7 +72,7 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use vte::ansi::{CursorShape as AlacCursorShape, Rgb as VteRgb};
+use vte::ansi::{CursorShape as AlacCursorShape, Processor, Rgb as VteRgb, StdSyncHandler};
 
 use gpui::{
     App, AppContext as _, BackgroundExecutor, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
@@ -348,6 +348,12 @@ fn window_size_from_terminal_bounds(bounds: TerminalBounds) -> WindowSize {
     }
 }
 
+fn normalize_terminal_bounds(mut bounds: TerminalBounds) -> TerminalBounds {
+    bounds.bounds.size.height = cmp::max(bounds.line_height, bounds.height());
+    bounds.bounds.size.width = cmp::max(bounds.cell_width, bounds.width());
+    bounds
+}
+
 fn alacritty_cursor_shape(cursor_shape: CursorShape) -> AlacCursorShape {
     match cursor_shape {
         CursorShape::Block => AlacCursorShape::Block,
@@ -457,6 +463,28 @@ impl TerminalBuilder {
         background_executor: &BackgroundExecutor,
         path_style: PathStyle,
     ) -> Result<TerminalBuilder> {
+        Self::new_display_only_with_bounds(
+            cursor_shape,
+            alternate_scroll,
+            max_scroll_history_lines,
+            window_id,
+            background_executor,
+            path_style,
+            TerminalBounds::default(),
+        )
+    }
+
+    pub fn new_display_only_with_bounds(
+        cursor_shape: CursorShape,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        window_id: u64,
+        background_executor: &BackgroundExecutor,
+        path_style: PathStyle,
+        terminal_bounds: TerminalBounds,
+    ) -> Result<TerminalBuilder> {
+        let terminal_bounds = normalize_terminal_bounds(terminal_bounds);
+
         // Create a display-only terminal (no actual PTY).
         let default_cursor_style = alacritty_cursor_style(cursor_shape);
         let scrolling_history = max_scroll_history_lines
@@ -469,11 +497,7 @@ impl TerminalBuilder {
         };
 
         let (events_tx, events_rx) = unbounded();
-        let mut term = Term::new(
-            config.clone(),
-            &TerminalBounds::default(),
-            ZedListener(events_tx),
-        );
+        let mut term = Term::new(config.clone(), &terminal_bounds, ZedListener(events_tx));
 
         if let AlternateScroll::Off = alternate_scroll {
             term.unset_private_mode(PrivateMode::Named(NamedPrivateMode::AlternateScroll));
@@ -487,9 +511,13 @@ impl TerminalBuilder {
             completion_tx: None,
             term,
             term_config: config,
+            output_processor: Processor::<StdSyncHandler>::new(),
             title_override: None,
             events: VecDeque::with_capacity(10),
-            last_content: Default::default(),
+            last_content: TerminalContent {
+                terminal_bounds,
+                ..Default::default()
+            },
             last_mouse: None,
             matches: Vec::new(),
 
@@ -722,6 +750,7 @@ impl TerminalBuilder {
                 completion_tx,
                 term,
                 term_config: config,
+                output_processor: Processor::<StdSyncHandler>::new(),
                 title_override: terminal_title_override,
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
@@ -930,6 +959,7 @@ pub struct Terminal {
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
+    output_processor: Processor<StdSyncHandler>,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(TerminalPoint, TerminalSelectionSide)>,
@@ -1106,11 +1136,9 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) {
         match event {
-            &InternalEvent::Resize(mut new_bounds) => {
+            &InternalEvent::Resize(new_bounds) => {
+                let new_bounds = normalize_terminal_bounds(new_bounds);
                 trace!("Resizing: new_bounds={new_bounds:?}");
-                new_bounds.bounds.size.height =
-                    cmp::max(new_bounds.line_height, new_bounds.height());
-                new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
 
                 self.last_content.terminal_bounds = new_bounds;
 
@@ -1410,9 +1438,8 @@ impl Terminal {
             prev_byte = byte;
         }
 
-        let mut processor = vte::ansi::Processor::<vte::ansi::StdSyncHandler>::new();
         let mut term = self.term.lock();
-        processor.advance(&mut *term, &converted);
+        self.output_processor.advance(&mut *term, &converted);
         cx.emit(Event::Wakeup);
     }
 
@@ -1528,9 +1555,7 @@ impl Terminal {
 
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
-        let mut new_bounds = new_bounds;
-        new_bounds.bounds.size.height = cmp::max(new_bounds.line_height, new_bounds.height());
-        new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
+        let new_bounds = normalize_terminal_bounds(new_bounds);
 
         let old_bounds = self.last_content.terminal_bounds;
         self.last_content.terminal_bounds = new_bounds;
