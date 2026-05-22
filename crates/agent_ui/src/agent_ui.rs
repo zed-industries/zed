@@ -742,7 +742,7 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
 
-        if !disable_ai && agent_enabled && sidebar_enabled {
+        if !disable_ai && sidebar_enabled {
             filter.show_namespace("multi_workspace");
         } else {
             filter.hide_namespace("multi_workspace");

@@ -2056,11 +2056,11 @@ impl MultiWorkspace {
 
 impl Render for MultiWorkspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let multi_workspace_enabled = self.enabled(cx);
+        let enabled = self.enabled(cx);
         let sidebar_side = self.sidebar_side(cx);
         let sidebar_on_right = sidebar_side == SidebarSide::Right;
 
-        let sidebar: Option<AnyElement> = if multi_workspace_enabled && self.sidebar_open() {
+        let sidebar: Option<AnyElement> = if enabled && self.sidebar_open() {
             self.sidebar.as_ref().map(|sidebar_handle| {
                 let weak = cx.weak_entity();
 
@@ -2239,8 +2239,8 @@ impl Render for MultiWorkspace {
             window,
             cx,
             Tiling {
-                left: !sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
-                right: sidebar_on_right && multi_workspace_enabled && self.sidebar_open(),
+                left: !sidebar_on_right && enabled && self.sidebar_open(),
+                right: sidebar_on_right && enabled && self.sidebar_open(),
                 ..Tiling::default()
             },
         )
