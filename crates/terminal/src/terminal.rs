@@ -21,7 +21,7 @@ use alacritty_terminal::{
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
     sync::FairMutex,
     term::{
-        Config,
+        Config, Osc52,
         cell::{Cell as AlacCell, Flags},
         search::{Match, RegexIter, RegexSearch},
     },
@@ -493,6 +493,7 @@ impl TerminalBuilder {
         let config = Config {
             scrolling_history,
             default_cursor_style,
+            osc52: Osc52::Disabled,
             ..Config::default()
         };
 
@@ -2704,7 +2705,7 @@ mod tests {
     use collections::HashMap;
     use gpui::MouseMoveEvent;
     use gpui::{
-        Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
+        ClipboardItem, Entity, Modifiers, MouseButton, MouseDownEvent, MouseUpEvent, Pixels, Point,
         TestAppContext, bounds, point, size,
     };
     use parking_lot::Mutex;
@@ -3430,6 +3431,36 @@ mod tests {
             "Bare CR should allow overwriting: got '{}'",
             text
         );
+    }
+
+    #[gpui::test]
+    async fn test_display_only_write_output_ignores_osc52(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            cx.write_to_clipboard(ClipboardItem::new_string("original".to_string()));
+        });
+
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"\x1b]52;c;b3ZlcndyaXR0ZW4=\x07", cx);
+        });
+        cx.run_until_parked();
+
+        let clipboard_text = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+        assert_eq!(clipboard_text.as_deref(), Some("original"));
     }
 
     #[gpui::test]

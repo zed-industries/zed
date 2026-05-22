@@ -139,7 +139,7 @@ impl TerminalOutput {
         let terminal = match TerminalBuilder::new_display_only_with_bounds(
             TerminalSettings::get_global(cx).cursor_shape,
             TerminalSettings::get_global(cx).alternate_scroll,
-            TerminalSettings::get_global(cx).max_scroll_history_lines,
+            None,
             0,
             &background_executor,
             PathStyle::local(),
@@ -323,6 +323,29 @@ mod tests {
                 output.read(cx).full_text(),
                 format!("{}x\n", " ".repeat(columns - 1)),
             )
+        });
+
+        assert_eq!(text, expected);
+    }
+
+    #[gpui::test]
+    fn test_repl_history_ignores_terminal_scrollback_setting(cx: &mut TestAppContext) {
+        let cx = init_test(cx);
+        let (text, expected) = cx.update(|window, cx| {
+            cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .max_scroll_history_lines = Some(0);
+                });
+            });
+
+            let input = (0..40)
+                .map(|line| format!("line-{line}\n"))
+                .collect::<String>();
+            let output = cx.new(|cx| TerminalOutput::from(&input, window, cx));
+            (output.read(cx).full_text(), input)
         });
 
         assert_eq!(text, expected);
