@@ -1263,6 +1263,16 @@
     },
   },
   {
+    "context": "Terminal && screen == alt",
+    "use_key_equivalents": true,
+    "bindings": {
+      "shift-up": ["terminal::SendKeystroke", "shift-up"],
+      "shift-down": ["terminal::SendKeystroke", "shift-down"],
+      "shift-home": ["terminal::SendKeystroke", "shift-home"],
+      "shift-end": ["terminal::SendKeystroke", "shift-end"],
+    },
+  },
+  {
     "context": "AgentPanel > Terminal",
     "use_key_equivalents": true,
     "bindings": {
