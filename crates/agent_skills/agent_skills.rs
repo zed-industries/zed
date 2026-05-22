@@ -638,7 +638,10 @@ pub async fn load_skill_frontmatter(
                 break;
             }
             accumulated.extend_from_slice(&chunk[..n]);
-            if closing_delimiter_end(&accumulated).is_some() {
+            if let Some(end) = closing_delimiter_end(&accumulated) {
+                // Discard body bytes swept up in the last chunk so that e.g. multi-byte
+                // graphemes split at the boundary won't cause `str::from_utf8` to fail.
+                accumulated.truncate(end);
                 break;
             }
             if accumulated.len() > MAX_SKILL_FILE_SIZE {
