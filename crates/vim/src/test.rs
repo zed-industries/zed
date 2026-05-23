@@ -8,7 +8,7 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, MultiBufferOffset,
-    actions::{DeleteLine, WrapSelectionsInTag},
+    actions::{DeleteLine, HandleInput, WrapSelectionsInTag},
     code_context_menus::CodeContextMenu,
     display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
@@ -1434,7 +1434,7 @@ async fn test_pending_input_mapping_output_undo(cx: &mut gpui::TestAppContext) {
     cx.update(|_, cx| {
         cx.bind_keys([KeyBinding::new(
             "a b c",
-            workspace::SendKeystrokes("d".to_string()),
+            HandleInput("d".to_string()),
             Some("vim_mode == insert"),
         )])
     });
