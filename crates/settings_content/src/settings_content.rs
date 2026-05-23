@@ -716,6 +716,14 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 72
     pub commit_title_max_length: Option<usize>,
+
+    /// Whether opening a conflicted file from the git panel uses the
+    /// dedicated 3-way merge editor (Ours / Result / Theirs side panes).
+    /// When disabled, conflicted files open in the regular project diff
+    /// view, matching Zed's behavior before the merge editor existed.
+    ///
+    /// Default: false
+    pub merge_editor: Option<bool>,
 }
 
 #[derive(

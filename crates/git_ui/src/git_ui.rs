@@ -24,7 +24,10 @@ use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::prelude::*;
-use workspace::{ModalView, OpenMode, Workspace, notifications::DetachAndPromptErr};
+use workspace::{
+    ModalView, OpenMode, Workspace,
+    notifications::{DetachAndPromptErr, NotifyResultExt},
+};
 use zed_actions;
 
 use crate::{commit_view::CommitView, git_panel::GitPanel, text_diff_view::TextDiffView};
@@ -37,6 +40,7 @@ pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
 pub mod git_panel;
+pub mod merge_editor;
 mod git_panel_settings;
 pub mod git_picker;
 mod git_runtime_diagnostics;
@@ -198,6 +202,37 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(
+            |workspace, _: &zed_actions::git::OpenMergeEditor, window, cx| {
+                use settings::Settings as _;
+                if !git_panel_settings::GitPanelSettings::get_global(cx).merge_editor {
+                    return;
+                }
+                let Some(project_path) = workspace
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                else {
+                    return;
+                };
+                let workspace_weak = workspace.weak_handle();
+                let open_workspace = workspace_weak.clone();
+                cx.spawn_in(window, async move |_, mut cx| {
+                    let task = cx.update(|window, cx| {
+                        crate::merge_editor::MergeEditor::open(
+                            project_path,
+                            open_workspace,
+                            window,
+                            cx,
+                        )
+                    })?;
+                    task.await
+                        .notify_workspace_async_err(workspace_weak, &mut cx);
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            },
+        );
+
         workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;

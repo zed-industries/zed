@@ -1361,6 +1361,19 @@ impl GitPanel {
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
 
+            // Unmerged paths get the dedicated 3-way merge editor in place of
+            // the project-wide diff view, regardless of click vs. alt-click —
+            // but only when the user has opted in via `git_panel.merge_editor`.
+            if entry.status.is_conflicted()
+                && GitPanelSettings::get_global(cx).merge_editor
+            {
+                let path = git_repo
+                    .read(cx)
+                    .repo_path_to_project_path(&entry.repo_path, cx)?;
+                self.open_merge_editor_for(path, window, cx);
+                return Some(());
+            }
+
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
                 && Some(&entry.repo_path)
@@ -1385,6 +1398,24 @@ impl GitPanel {
         });
     }
 
+    fn open_merge_editor_for(
+        &self,
+        path: project::ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        let open_workspace = workspace.clone();
+        cx.spawn_in(window, async move |_, mut cx| {
+            let task = cx.update(|window, cx| {
+                crate::merge_editor::MergeEditor::open(path, open_workspace, window, cx)
+            })?;
+            task.await.notify_workspace_async_err(workspace, &mut cx);
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn open_file(
         &mut self,
         _: &menu::SecondaryConfirm,
@@ -1399,6 +1430,16 @@ impl GitPanel {
                 .repo_path_to_project_path(&entry.repo_path, cx)?;
             if entry.status.is_deleted() {
                 return None;
+            }
+
+            // Unmerged paths get the 3-way merge editor instead of a plain
+            // editor, but only when the user has opted in via the
+            // `git_panel.merge_editor` setting.
+            if entry.status.is_conflicted()
+                && GitPanelSettings::get_global(cx).merge_editor
+            {
+                self.open_merge_editor_for(path, window, cx);
+                return Some(());
             }
 
             let open_task = self

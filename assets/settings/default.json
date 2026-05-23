@@ -1000,6 +1000,12 @@
     //
     // Default: 72
     "commit_title_max_length": 72,
+    // Whether opening a conflicted file from the git panel uses the dedicated
+    // 3-way merge editor (Ours / Result / Theirs side panes). When disabled,
+    // conflicted files open in the regular project diff view.
+    //
+    // Default: false
+    "merge_editor": false,
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

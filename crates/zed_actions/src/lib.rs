@@ -318,7 +318,9 @@ pub mod git {
             /// Opens the git worktree selector.
             Worktree,
             /// Creates a pull request for the current branch.
-            CreatePullRequest
+            CreatePullRequest,
+            /// Opens the active conflicted file in a 3-way merge editor.
+            OpenMergeEditor,
         ]
     );
 }

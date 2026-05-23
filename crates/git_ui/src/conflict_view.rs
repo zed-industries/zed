@@ -1,12 +1,12 @@
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
 use editor::{
-    ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
-    Editor, EditorEvent, MultiBuffer, RowHighlightOptions,
+    ConflictsBase, ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs,
+    ConflictsTheirsMarker, Editor, EditorEvent, MultiBuffer, RowHighlightOptions,
     display_map::{BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
 };
 use gpui::{
-    App, ClickEvent, Context, Empty, Entity, InteractiveElement as _, ParentElement as _,
+    App, ClickEvent, Context, Empty, Entity, Hsla, InteractiveElement as _, ParentElement as _,
     Subscription, Task, WeakEntity,
 };
 use language::{Anchor, Buffer, BufferId};
@@ -17,11 +17,29 @@ use project::{
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
-use util::{ResultExt as _, debug_panic, maybe};
+use util::{ResultExt as _, maybe};
 use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
 };
+
+/// Optional addon registered on an editor by the 3-way merge editor to
+/// override the default conflict-region row colors. When present, the
+/// inline conflict view uses these instead of the theme's
+/// `version_control_conflict_marker_*` tokens, and additionally paints
+/// the base section if the conflict carries one.
+#[derive(Clone, Copy)]
+pub struct ConflictHighlightPalette {
+    pub ours: Hsla,
+    pub theirs: Hsla,
+    pub base: Hsla,
+}
+
+impl editor::Addon for ConflictHighlightPalette {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
 
 pub(crate) struct ConflictAddon {
     buffers: HashMap<BufferId, BufferConflicts>,
@@ -154,7 +172,14 @@ fn conflicts_updated(
         match buffer_conflicts.block_ids.get(event.old_range.clone()) {
             Some(_) => Some(event.old_range.clone()),
             None => {
-                debug_panic!(
+                // The update's `old_range` indexes into the conflict set, not
+                // this editor's `block_ids`; an editor that opened mid-stream
+                // (after a buffer rewrite, a tab reuse, or a `set_text`)
+                // legitimately ends up with a `block_ids` len that doesn't
+                // match the conflict set's prior snapshot. Clamp instead of
+                // panicking — the splice below will treat the truncated
+                // range as a no-op for the missing entries and proceed.
+                log::warn!(
                     "conflicts updated event old range is invalid for buffer conflicts view (block_ids len is {:?}, old_range is {:?})",
                     buffer_conflicts.block_ids.len(),
                     event.old_range,
@@ -195,6 +220,7 @@ fn conflicts_updated(
         editor.remove_highlighted_rows::<ConflictsOurs>(removed_highlighted_ranges.clone(), cx);
         editor
             .remove_highlighted_rows::<ConflictsOursMarker>(removed_highlighted_ranges.clone(), cx);
+        editor.remove_highlighted_rows::<ConflictsBase>(removed_highlighted_ranges.clone(), cx);
         editor.remove_highlighted_rows::<ConflictsTheirs>(removed_highlighted_ranges.clone(), cx);
         editor.remove_highlighted_rows::<ConflictsTheirsMarker>(
             removed_highlighted_ranges.clone(),
@@ -254,9 +280,28 @@ fn update_conflict_highlighting(
     let outer = buffer.buffer_anchor_range_to_anchor_range(conflict.range.clone())?;
     let ours = buffer.buffer_anchor_range_to_anchor_range(conflict.ours.clone())?;
     let theirs = buffer.buffer_anchor_range_to_anchor_range(conflict.theirs.clone())?;
+    let base = conflict
+        .base
+        .as_ref()
+        .and_then(|range| buffer.buffer_anchor_range_to_anchor_range(range.clone()));
 
-    let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
-    let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
+    let palette = editor.addon::<ConflictHighlightPalette>().copied();
+    let ours_background = palette
+        .map(|p| p.ours)
+        .unwrap_or_else(|| cx.theme().colors().version_control_conflict_marker_ours);
+    let theirs_background = palette
+        .map(|p| p.theirs)
+        .unwrap_or_else(|| cx.theme().colors().version_control_conflict_marker_theirs);
+    // Fill color for the "outer" row band that backgrounds the entire
+    // conflict region. With a palette, use the editor background so the
+    // explicit ours / base / theirs highlights stand on their own; without,
+    // keep the historical behavior of bleeding the theirs color across the
+    // whole region.
+    let outer_background = if palette.is_some() {
+        cx.theme().colors().editor_background
+    } else {
+        theirs_background
+    };
 
     let options = RowHighlightOptions {
         include_gutter: true,
@@ -270,7 +315,7 @@ fn update_conflict_highlighting(
     );
 
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(outer.clone(), theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOuter>(outer.clone(), outer_background, options, cx);
     editor.highlight_rows::<ConflictsOurs>(ours.clone(), ours_background, options, cx);
     editor.highlight_rows::<ConflictsOursMarker>(
         outer.start..ours.start,
@@ -278,6 +323,11 @@ fn update_conflict_highlighting(
         options,
         cx,
     );
+    if let Some(base_range) = base
+        && let Some(base_color) = palette.map(|p| p.base)
+    {
+        editor.highlight_rows::<ConflictsBase>(base_range, base_color, options, cx);
+    }
     editor.highlight_rows::<ConflictsTheirs>(theirs.clone(), theirs_background, options, cx);
     editor.highlight_rows::<ConflictsTheirsMarker>(
         theirs.end..outer.end,
@@ -477,6 +527,7 @@ pub(crate) fn resolve_conflict(
 
                 editor.remove_highlighted_rows::<ConflictsOuter>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOurs>(vec![range.clone()], cx);
+                editor.remove_highlighted_rows::<ConflictsBase>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirs>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
