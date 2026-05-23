@@ -1002,11 +1002,18 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
-        let mut a11y = self.state.a11y.borrow_mut();
-        if let Some(a11y) = a11y.as_mut() {
-            if let Some(events) = a11y.adapter.update_if_active(|| tree_update) {
-                events.raise();
-            }
+        let events = {
+            let mut a11y = self.state.a11y.borrow_mut();
+            a11y.as_mut()
+                .and_then(|a11y| a11y.adapter.update_if_active(|| tree_update))
+        };
+        // The borrow must be dropped before raising events, because
+        // `events.raise()` calls `UiaRaiseAutomationPropertyChangedEvent`
+        // which may send a nested `WM_GETOBJECT` back into this window
+        // procedure, re-entering `handle_wm_getobject` which also borrows
+        // `self.state.a11y`.
+        if let Some(events) = events {
+            events.raise();
         }
     }
 
