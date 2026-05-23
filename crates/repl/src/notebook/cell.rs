@@ -8,7 +8,7 @@ use gpui::{
     StatefulInteractiveElement, Task, prelude::*,
 };
 use language::{Buffer, Language, LanguageRegistry};
-use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use nbformat::v4::{CellId, CellMetadata, CellType};
 use runtimelib::{JupyterMessage, JupyterMessageContent};
 use settings::Settings as _;
@@ -595,10 +595,7 @@ impl Render for MarkdownCell {
 
         // Preview mode - show rendered markdown
 
-        let style = MarkdownStyle {
-            base_text_style: window.text_style(),
-            ..Default::default()
-        };
+        let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
 
         v_flex()
             .size_full()
