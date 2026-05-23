@@ -115,6 +115,8 @@ pub enum Model {
     Gemini3_1Pro,
     #[serde(rename = "gemini-3-flash")]
     Gemini3Flash,
+    #[serde(rename = "gemini-3.5-flash")]
+    Gemini3_5Flash,
 
     // -- OpenAI Chat Completions protocol models --
     #[serde(rename = "deepseek-v4-pro")]
@@ -243,6 +245,7 @@ impl Model {
 
             Self::Gemini3_1Pro => "gemini-3.1-pro",
             Self::Gemini3Flash => "gemini-3-flash",
+            Self::Gemini3_5Flash => "gemini-3.5-flash",
 
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
@@ -294,6 +297,7 @@ impl Model {
 
             Self::Gemini3_1Pro => "Gemini 3.1 Pro",
             Self::Gemini3Flash => "Gemini 3 Flash",
+            Self::Gemini3_5Flash => "Gemini 3.5 Flash",
 
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
@@ -355,7 +359,7 @@ impl Model {
             | Self::Gpt5Codex
             | Self::Gpt5Nano => ApiProtocol::OpenAiResponses,
 
-            Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
+            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => ApiProtocol::Google,
 
             Self::Glm5
             | Self::Glm5_1
@@ -421,6 +425,7 @@ impl Model {
             // Google models
             Self::Gemini3_1Pro => 1_048_576,
             Self::Gemini3Flash => 1_048_576,
+            Self::Gemini3_5Flash => 1_048_576,
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
@@ -475,7 +480,7 @@ impl Model {
             | Self::Gpt5Nano => Some(128_000),
 
             // Google models
-            Self::Gemini3_1Pro | Self::Gemini3Flash => Some(65_536),
+            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => Some(65_536),
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
@@ -544,7 +549,7 @@ impl Model {
             Self::Gpt5_3Spark => false,
 
             // Google models support images
-            Self::Gemini3_1Pro | Self::Gemini3Flash => true,
+            Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => true,
 
             // OpenAI-compatible models with image support
             Self::KimiK2_6
