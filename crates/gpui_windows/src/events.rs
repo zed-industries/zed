@@ -735,11 +735,7 @@ impl WindowsWindowInner {
             .a11y
             .try_borrow_mut()
             .ok()
-            .and_then(|mut a11y| {
-                a11y.as_mut()?
-                    .adapter
-                    .update_window_focus_state(activated)
-            });
+            .and_then(|mut a11y| a11y.as_mut()?.adapter.update_window_focus_state(activated));
         if let Some(events) = events {
             events.raise();
         }
