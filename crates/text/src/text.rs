@@ -34,7 +34,7 @@ use std::{
     ops::{self, Deref, Range, Sub},
     str,
     sync::{Arc, LazyLock},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
@@ -55,6 +55,9 @@ static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
 const MAX_INSERTION_LEN: usize = if cfg!(test) { 16 } else { u32::MAX as usize };
 
 pub type TransactionId = clock::Lamport;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct UndoNodeId(usize);
 
 pub struct Buffer {
     snapshot: BufferSnapshot,
@@ -150,11 +153,46 @@ impl HistoryEntry {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct UndoTreeSnapshot {
+    pub nodes: Vec<UndoTreeNodeSnapshot>,
+    pub root: UndoNodeId,
+    pub current: UndoNodeId,
+    pub latest_saved: Option<UndoNodeId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct UndoTreeNodeSnapshot {
+    pub id: UndoNodeId,
+    pub transaction_id: Option<TransactionId>,
+    pub parent: Option<UndoNodeId>,
+    pub children: Vec<UndoNodeId>,
+    pub active_child: Option<usize>,
+    pub first_edit_at: Option<SystemTime>,
+    pub last_edit_at: Option<SystemTime>,
+    pub saved: bool,
+    pub latest_saved: bool,
+}
+
+#[derive(Clone, Debug)]
+struct HistoryNode {
+    id: UndoNodeId,
+    parent: Option<UndoNodeId>,
+    children: Vec<UndoNodeId>,
+    active_child: Option<usize>,
+    entry: Option<HistoryEntry>,
+    first_edit_timestamp: Option<SystemTime>,
+    last_edit_timestamp: Option<SystemTime>,
+    saved: bool,
+}
+
 struct History {
     base_text: Rope,
     operations: TreeMap<clock::Lamport, Operation>,
-    undo_stack: Vec<HistoryEntry>,
-    redo_stack: Vec<HistoryEntry>,
+    nodes: Vec<Option<HistoryNode>>,
+    root_node: UndoNodeId,
+    current_node: UndoNodeId,
+    latest_saved_node: Option<UndoNodeId>,
     transaction_depth: usize,
     group_interval: Duration,
 }
@@ -216,11 +254,23 @@ impl InsertionSlice {
 
 impl History {
     pub fn new(base_text: Rope) -> Self {
+        let root_node = UndoNodeId(0);
         Self {
             base_text,
             operations: Default::default(),
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
+            nodes: vec![Some(HistoryNode {
+                id: root_node,
+                parent: None,
+                children: Vec::new(),
+                active_child: None,
+                entry: None,
+                first_edit_timestamp: None,
+                last_edit_timestamp: None,
+                saved: false,
+            })],
+            root_node,
+            current_node: root_node,
+            latest_saved_node: None,
             transaction_depth: 0,
             // Don't group transactions in tests unless we opt in, because it's a footgun.
             group_interval: if cfg!(any(test, feature = "test-support")) {
@@ -235,6 +285,189 @@ impl History {
         self.operations.insert(op.timestamp(), op);
     }
 
+    fn node(&self, id: UndoNodeId) -> Option<&HistoryNode> {
+        self.nodes.get(id.0)?.as_ref()
+    }
+
+    fn node_mut(&mut self, id: UndoNodeId) -> Option<&mut HistoryNode> {
+        self.nodes.get_mut(id.0)?.as_mut()
+    }
+
+    fn current_entry(&self) -> Option<&HistoryEntry> {
+        self.node(self.current_node)?.entry.as_ref()
+    }
+
+    fn current_entry_mut(&mut self) -> Option<&mut HistoryEntry> {
+        self.node_mut(self.current_node)?.entry.as_mut()
+    }
+
+    fn active_child(&self, parent: UndoNodeId) -> Option<UndoNodeId> {
+        let parent = self.node(parent)?;
+        let child_ix = parent.active_child?;
+        parent.children.get(child_ix).copied()
+    }
+
+    fn set_active_child(&mut self, parent: UndoNodeId, child: UndoNodeId) -> bool {
+        let Some(child_ix) = self
+            .node(parent)
+            .and_then(|parent| parent.children.iter().position(|id| *id == child))
+        else {
+            return false;
+        };
+        if let Some(parent) = self.node_mut(parent) {
+            parent.active_child = Some(child_ix);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn path_to_root(&self, node_id: UndoNodeId) -> Option<Vec<UndoNodeId>> {
+        let mut path = Vec::new();
+        let mut node_id = node_id;
+        for _ in 0..self.nodes.len() {
+            path.push(node_id);
+            if node_id == self.root_node {
+                return Some(path);
+            }
+            node_id = self.node(node_id)?.parent?;
+        }
+        None
+    }
+
+    fn current_path_entries(&self) -> Vec<&HistoryEntry> {
+        let mut path = self.path_to_root(self.current_node).unwrap_or_default();
+        path.reverse();
+        path.into_iter()
+            .filter_map(|node_id| self.node(node_id)?.entry.as_ref())
+            .collect()
+    }
+
+    fn node_id_for_transaction(&self, transaction_id: TransactionId) -> Option<UndoNodeId> {
+        self.nodes
+            .iter()
+            .flatten()
+            .find(|node| {
+                node.entry
+                    .as_ref()
+                    .is_some_and(|entry| entry.transaction.id == transaction_id)
+            })
+            .map(|node| node.id)
+    }
+
+    fn adjusted_active_child(
+        active_child: Option<usize>,
+        removed_child_ix: usize,
+        original_len: usize,
+        inserted_len: usize,
+        replacement_active_child: Option<usize>,
+    ) -> Option<usize> {
+        match active_child?.cmp(&removed_child_ix) {
+            Ordering::Less => active_child,
+            Ordering::Equal => {
+                if inserted_len > 0 {
+                    replacement_active_child
+                        .filter(|active_child| *active_child < inserted_len)
+                        .map(|active_child| removed_child_ix + active_child)
+                } else {
+                    let remaining_len = original_len.checked_sub(1)?;
+                    if remaining_len == 0 {
+                        None
+                    } else {
+                        Some(removed_child_ix.min(remaining_len - 1))
+                    }
+                }
+            }
+            Ordering::Greater => {
+                if inserted_len == 0 {
+                    active_child.and_then(|active_child| active_child.checked_sub(1))
+                } else {
+                    active_child.map(|active_child| active_child + inserted_len - 1)
+                }
+            }
+        }
+    }
+
+    fn detach_node(&mut self, node_id: UndoNodeId, reparent_children: bool) -> Option<HistoryNode> {
+        if node_id == self.root_node {
+            return None;
+        }
+
+        let (parent_id, children, active_child) = {
+            let node = self.node(node_id)?;
+            if !reparent_children && !node.children.is_empty() {
+                return None;
+            }
+            (node.parent?, node.children.clone(), node.active_child)
+        };
+        let child_ix = self
+            .node(parent_id)?
+            .children
+            .iter()
+            .position(|child_id| *child_id == node_id)?;
+        let original_len = self.node(parent_id)?.children.len();
+
+        if reparent_children {
+            for child_id in &children {
+                if let Some(child) = self.node_mut(*child_id) {
+                    child.parent = Some(parent_id);
+                }
+            }
+        }
+
+        let inserted_len = if reparent_children { children.len() } else { 0 };
+        if let Some(parent) = self.node_mut(parent_id) {
+            if reparent_children {
+                parent
+                    .children
+                    .splice(child_ix..child_ix + 1, children.iter().copied());
+            } else {
+                parent.children.remove(child_ix);
+            }
+            parent.active_child = Self::adjusted_active_child(
+                parent.active_child,
+                child_ix,
+                original_len,
+                inserted_len,
+                active_child,
+            );
+        } else {
+            return None;
+        }
+
+        let node = self.nodes.get_mut(node_id.0)?.take()?;
+        if self.current_node == node_id {
+            self.current_node = parent_id;
+        }
+        if self.latest_saved_node == Some(node_id) {
+            self.latest_saved_node = None;
+        }
+        Some(node)
+    }
+
+    fn push_child_node(&mut self, parent_id: UndoNodeId, entry: HistoryEntry) -> UndoNodeId {
+        let node_id = UndoNodeId(self.nodes.len());
+        let edit_timestamp = SystemTime::now();
+        if let Some(parent) = self.node_mut(parent_id) {
+            parent.children.push(node_id);
+            parent.active_child = Some(parent.children.len() - 1);
+        } else {
+            debug_panic!("missing parent undo node");
+        }
+        self.nodes.push(Some(HistoryNode {
+            id: node_id,
+            parent: Some(parent_id),
+            children: Vec::new(),
+            active_child: None,
+            entry: Some(entry),
+            first_edit_timestamp: Some(edit_timestamp),
+            last_edit_timestamp: Some(edit_timestamp),
+            saved: false,
+        }));
+        self.current_node = node_id;
+        node_id
+    }
+
     fn start_transaction(
         &mut self,
         start: clock::Global,
@@ -244,16 +477,19 @@ impl History {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
             let id = clock.tick();
-            self.undo_stack.push(HistoryEntry {
-                transaction: Transaction {
-                    id,
-                    start,
-                    edit_ids: Default::default(),
+            self.push_child_node(
+                self.current_node,
+                HistoryEntry {
+                    transaction: Transaction {
+                        id,
+                        start,
+                        edit_ids: Default::default(),
+                    },
+                    first_edit_at: now,
+                    last_edit_at: now,
+                    suppress_grouping: false,
                 },
-                first_edit_at: now,
-                last_edit_at: now,
-                suppress_grouping: false,
-            });
+            );
             Some(id)
         } else {
             None
@@ -264,80 +500,208 @@ impl History {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
         if self.transaction_depth == 0 {
-            if self
-                .undo_stack
-                .last()
-                .unwrap()
-                .transaction
-                .edit_ids
-                .is_empty()
-            {
-                self.undo_stack.pop();
+            let current_node = self.current_node;
+            let is_empty = self
+                .node(current_node)
+                .and_then(|node| node.entry.as_ref())
+                .is_none_or(|entry| entry.transaction.edit_ids.is_empty());
+
+            if is_empty {
+                self.detach_node(current_node, false);
                 None
             } else {
-                self.redo_stack.clear();
-                let entry = self.undo_stack.last_mut().unwrap();
-                entry.last_edit_at = now;
-                Some(entry)
+                if let Some(node) = self.node_mut(current_node) {
+                    if let Some(entry) = node.entry.as_mut() {
+                        entry.last_edit_at = now;
+                    }
+                    node.last_edit_timestamp = Some(SystemTime::now());
+                }
+                self.node(current_node)?.entry.as_ref()
             }
         } else {
             None
         }
     }
 
-    fn group(&mut self) -> Option<TransactionId> {
-        let mut count = 0;
-        let mut entries = self.undo_stack.iter();
-        if let Some(mut entry) = entries.next_back() {
-            while let Some(prev_entry) = entries.next_back() {
-                if !prev_entry.suppress_grouping
-                    && entry.first_edit_at - prev_entry.last_edit_at < self.group_interval
-                {
-                    entry = prev_entry;
-                    count += 1;
-                } else {
-                    break;
-                }
-            }
+    fn can_group_into_parent(&self, child_id: UndoNodeId) -> Option<UndoNodeId> {
+        let child = self.node(child_id)?;
+        let parent_id = child.parent?;
+        if parent_id == self.root_node {
+            return None;
         }
-        self.group_trailing(count)
+        let parent = self.node(parent_id)?;
+        if parent.children.len() == 1
+            && parent.children.first().copied() == Some(child_id)
+            && parent.entry.is_some()
+            && child.entry.is_some()
+            && !parent.saved
+        {
+            Some(parent_id)
+        } else {
+            None
+        }
+    }
+
+    fn group_nodes_into(
+        &mut self,
+        target_node_id: UndoNodeId,
+        nodes_to_merge: &[UndoNodeId],
+    ) -> Option<TransactionId> {
+        if nodes_to_merge.is_empty() {
+            return self
+                .node(target_node_id)?
+                .entry
+                .as_ref()
+                .map(|entry| entry.transaction.id);
+        }
+
+        let mut edit_ids = Vec::new();
+        let mut last_edit_at = None;
+        let mut last_edit_timestamp = None;
+        for node_id in nodes_to_merge.iter().rev() {
+            let node = self.node(*node_id)?;
+            let entry = node.entry.as_ref()?;
+            edit_ids.extend(entry.transaction.edit_ids.iter().copied());
+            last_edit_at = Some(entry.last_edit_at);
+            last_edit_timestamp = node.last_edit_timestamp;
+        }
+
+        {
+            let target_node = self.node_mut(target_node_id)?;
+            let target_entry = target_node.entry.as_mut()?;
+            target_entry.transaction.edit_ids.extend(edit_ids);
+            if let Some(last_edit_at) = last_edit_at {
+                target_entry.last_edit_at = last_edit_at;
+            }
+            target_node.last_edit_timestamp = last_edit_timestamp;
+        }
+
+        for node_id in nodes_to_merge {
+            self.detach_node(*node_id, true)?;
+        }
+        self.current_node = target_node_id;
+        self.node(target_node_id)?
+            .entry
+            .as_ref()
+            .map(|entry| entry.transaction.id)
+    }
+
+    fn group(&mut self) -> Option<TransactionId> {
+        let mut nodes_to_merge = Vec::new();
+        let mut child_id = self.current_node;
+        while let Some(parent_id) = self.can_group_into_parent(child_id) {
+            let Some(child_entry) = self.node(child_id).and_then(|node| node.entry.as_ref()) else {
+                break;
+            };
+            let Some(parent_entry) = self.node(parent_id).and_then(|node| node.entry.as_ref())
+            else {
+                break;
+            };
+            if parent_entry.suppress_grouping
+                || child_entry
+                    .first_edit_at
+                    .saturating_duration_since(parent_entry.last_edit_at)
+                    >= self.group_interval
+            {
+                break;
+            }
+            nodes_to_merge.push(child_id);
+            child_id = parent_id;
+        }
+        self.group_nodes_into(child_id, &nodes_to_merge)
     }
 
     fn group_until(&mut self, transaction_id: TransactionId) {
-        let mut count = 0;
-        for entry in self.undo_stack.iter().rev() {
+        let mut nodes_to_merge = Vec::new();
+        let mut node_id = self.current_node;
+        while node_id != self.root_node {
+            let Some(entry) = self.node(node_id).and_then(|node| node.entry.as_ref()) else {
+                break;
+            };
             if entry.transaction_id() == transaction_id {
-                self.group_trailing(count);
+                self.group_nodes_into(node_id, &nodes_to_merge);
                 break;
-            } else if entry.suppress_grouping {
-                break;
-            } else {
-                count += 1;
             }
+            if entry.suppress_grouping {
+                break;
+            }
+            let Some(parent_id) = self.can_group_into_parent(node_id) else {
+                break;
+            };
+            nodes_to_merge.push(node_id);
+            node_id = parent_id;
         }
     }
 
-    fn group_trailing(&mut self, n: usize) -> Option<TransactionId> {
-        let new_len = self.undo_stack.len() - n;
-        let (entries_to_keep, entries_to_merge) = self.undo_stack.split_at_mut(new_len);
-        if let Some(last_entry) = entries_to_keep.last_mut() {
-            for entry in &*entries_to_merge {
-                for edit_id in &entry.transaction.edit_ids {
-                    last_entry.transaction.edit_ids.push(*edit_id);
-                }
-            }
+    fn undo(&mut self) -> Option<Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if self.current_node == self.root_node {
+            return None;
+        }
+        let current_node = self.current_node;
+        let parent_id = self.node(current_node)?.parent?;
+        self.set_active_child(parent_id, current_node);
+        self.current_node = parent_id;
+        self.node(current_node)?
+            .entry
+            .as_ref()
+            .map(|entry| entry.transaction.clone())
+    }
 
-            if let Some(entry) = entries_to_merge.last_mut() {
-                last_entry.last_edit_at = entry.last_edit_at;
-            }
+    fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if self.current_entry()?.transaction.id == transaction_id {
+            return self.undo();
         }
 
-        self.undo_stack.truncate(new_len);
-        self.undo_stack.last().map(|e| e.transaction.id)
+        let path = self.path_to_root(self.current_node)?;
+        let node_id = path.into_iter().find(|node_id| {
+            self.node(*node_id)
+                .and_then(|node| node.entry.as_ref())
+                .is_some_and(|entry| entry.transaction.id == transaction_id)
+        })?;
+        self.detach_node(node_id, true)?
+            .entry
+            .map(|entry| entry.transaction)
+    }
+
+    fn undo_until(&mut self, transaction_id: TransactionId) -> Vec<Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        let Some(path) = self.path_to_root(self.current_node) else {
+            return Vec::new();
+        };
+        let Some(target_ix) = path.iter().position(|node_id| {
+            self.node(*node_id)
+                .and_then(|node| node.entry.as_ref())
+                .is_some_and(|entry| entry.transaction.id == transaction_id)
+        }) else {
+            return Vec::new();
+        };
+
+        let nodes_to_undo = &path[..=target_ix];
+        let transactions = nodes_to_undo
+            .iter()
+            .filter_map(|node_id| {
+                self.node(*node_id)
+                    .and_then(|node| node.entry.as_ref())
+                    .map(|entry| entry.transaction.clone())
+            })
+            .collect::<Vec<_>>();
+
+        for node_id in nodes_to_undo {
+            if let Some(parent_id) = self.node(*node_id).and_then(|node| node.parent) {
+                self.set_active_child(parent_id, *node_id);
+            }
+        }
+        self.current_node = self
+            .node(path[target_ix])
+            .and_then(|node| node.parent)
+            .unwrap_or(self.root_node);
+        transactions
     }
 
     fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
-        self.undo_stack.last_mut().map(|entry| {
+        self.current_entry_mut().map(|entry| {
             entry.transaction.edit_ids.shrink_to_fit();
             entry.suppress_grouping = true;
             &entry.transaction
@@ -346,12 +710,15 @@ impl History {
 
     fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         assert_eq!(self.transaction_depth, 0);
-        self.undo_stack.push(HistoryEntry {
-            transaction,
-            first_edit_at: now,
-            last_edit_at: now,
-            suppress_grouping: false,
-        });
+        self.push_child_node(
+            self.current_node,
+            HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: false,
+            },
+        );
     }
 
     /// Differs from `push_transaction` in that it does not clear the redo
@@ -378,136 +745,222 @@ impl History {
             start,
             edit_ids: Vec::new(),
         };
-        self.undo_stack.push(HistoryEntry {
-            transaction,
-            first_edit_at: now,
-            last_edit_at: now,
-            suppress_grouping: false,
-        });
+        self.push_child_node(
+            self.current_node,
+            HistoryEntry {
+                transaction,
+                first_edit_at: now,
+                last_edit_at: now,
+                suppress_grouping: false,
+            },
+        );
         id
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {
         assert_ne!(self.transaction_depth, 0);
         if let Some(Operation::Edit(_)) = self.operations.get(&op_id) {
-            let last_transaction = self.undo_stack.last_mut().unwrap();
-            last_transaction.transaction.edit_ids.push(op_id);
+            if let Some(last_transaction) = self.current_entry_mut() {
+                last_transaction.transaction.edit_ids.push(op_id);
+            } else {
+                debug_panic!("missing current transaction");
+            }
         }
-    }
-
-    fn pop_undo(&mut self) -> Option<&HistoryEntry> {
-        assert_eq!(self.transaction_depth, 0);
-        if let Some(entry) = self.undo_stack.pop() {
-            self.redo_stack.push(entry);
-            self.redo_stack.last()
-        } else {
-            None
-        }
-    }
-
-    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
-        assert_eq!(self.transaction_depth, 0);
-
-        let entry_ix = self
-            .undo_stack
-            .iter()
-            .rposition(|entry| entry.transaction.id == transaction_id)?;
-        let entry = self.undo_stack.remove(entry_ix);
-        self.redo_stack.push(entry);
-        self.redo_stack.last()
-    }
-
-    fn remove_from_undo_until(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
-        assert_eq!(self.transaction_depth, 0);
-
-        let redo_stack_start_len = self.redo_stack.len();
-        if let Some(entry_ix) = self
-            .undo_stack
-            .iter()
-            .rposition(|entry| entry.transaction.id == transaction_id)
-        {
-            self.redo_stack
-                .extend(self.undo_stack.drain(entry_ix..).rev());
-        }
-        &self.redo_stack[redo_stack_start_len..]
     }
 
     fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry_ix) = self
-            .undo_stack
-            .iter()
-            .rposition(|entry| entry.transaction.id == transaction_id)
-        {
-            Some(self.undo_stack.remove(entry_ix).transaction)
-        } else if let Some(entry_ix) = self
-            .redo_stack
-            .iter()
-            .rposition(|entry| entry.transaction.id == transaction_id)
-        {
-            Some(self.redo_stack.remove(entry_ix).transaction)
-        } else {
-            None
-        }
+        let node_id = self.node_id_for_transaction(transaction_id)?;
+        let node = self.detach_node(node_id, false)?;
+        node.entry.map(|entry| entry.transaction)
     }
 
     fn transaction(&self, transaction_id: TransactionId) -> Option<&Transaction> {
-        let entry = self
-            .undo_stack
-            .iter()
-            .rfind(|entry| entry.transaction.id == transaction_id)
-            .or_else(|| {
-                self.redo_stack
-                    .iter()
-                    .rfind(|entry| entry.transaction.id == transaction_id)
-            })?;
-        Some(&entry.transaction)
+        self.node(self.node_id_for_transaction(transaction_id)?)?
+            .entry
+            .as_ref()
+            .map(|entry| &entry.transaction)
     }
 
-    fn transaction_mut(&mut self, transaction_id: TransactionId) -> Option<&mut Transaction> {
-        let entry = self
-            .undo_stack
-            .iter_mut()
-            .rfind(|entry| entry.transaction.id == transaction_id)
-            .or_else(|| {
-                self.redo_stack
-                    .iter_mut()
-                    .rfind(|entry| entry.transaction.id == transaction_id)
-            })?;
-        Some(&mut entry.transaction)
-    }
-
-    fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction)
-            && let Some(destination) = self.transaction_mut(destination)
+    fn merge_transactions(&mut self, transaction_id: TransactionId, destination_id: TransactionId) {
+        if transaction_id == destination_id {
+            return;
+        }
+        assert_eq!(self.transaction_depth, 0);
+        let Some(transaction_node_id) = self.node_id_for_transaction(transaction_id) else {
+            return;
+        };
+        let Some(destination_node_id) = self.node_id_for_transaction(destination_id) else {
+            return;
+        };
+        let Some(transaction_node) = self.detach_node(transaction_node_id, false) else {
+            return;
+        };
+        let Some(transaction_entry) = transaction_node.entry else {
+            return;
+        };
+        if let Some(destination_node) = self.node_mut(destination_node_id)
+            && let Some(destination) = destination_node.entry.as_mut()
         {
-            destination.edit_ids.extend(transaction.edit_ids);
+            destination
+                .transaction
+                .edit_ids
+                .extend(transaction_entry.transaction.edit_ids);
+            destination.last_edit_at = transaction_entry.last_edit_at;
+            destination_node.last_edit_timestamp = transaction_node.last_edit_timestamp;
         }
     }
 
-    fn pop_redo(&mut self) -> Option<&HistoryEntry> {
+    fn redo(&mut self) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(entry) = self.redo_stack.pop() {
-            self.undo_stack.push(entry);
-            self.undo_stack.last()
+        let child_id = self.active_child(self.current_node)?;
+        self.current_node = child_id;
+        self.node(child_id)?
+            .entry
+            .as_ref()
+            .map(|entry| entry.transaction.clone())
+    }
+
+    fn redo_to(&mut self, transaction_id: TransactionId) -> Vec<Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        let mut node_id = self.current_node;
+        let mut nodes_to_redo = Vec::new();
+        loop {
+            let Some(child_id) = self.active_child(node_id) else {
+                return Vec::new();
+            };
+            nodes_to_redo.push(child_id);
+            if self
+                .node(child_id)
+                .and_then(|node| node.entry.as_ref())
+                .is_some_and(|entry| entry.transaction.id == transaction_id)
+            {
+                break;
+            }
+            node_id = child_id;
+        }
+
+        let transactions = nodes_to_redo
+            .iter()
+            .filter_map(|node_id| {
+                self.node(*node_id)
+                    .and_then(|node| node.entry.as_ref())
+                    .map(|entry| entry.transaction.clone())
+            })
+            .collect::<Vec<_>>();
+        if let Some(target_node) = nodes_to_redo.last().copied() {
+            self.current_node = target_node;
+        }
+        transactions
+    }
+
+    fn jump_to_node(&mut self, target: UndoNodeId) -> Vec<Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if self.node(target).is_none() || target == self.current_node {
+            return Vec::new();
+        }
+
+        let Some(current_path) = self.path_to_root(self.current_node) else {
+            return Vec::new();
+        };
+        let Some(target_path) = self.path_to_root(target) else {
+            return Vec::new();
+        };
+        let Some(lca) = current_path
+            .iter()
+            .copied()
+            .find(|node_id| target_path.contains(node_id))
+        else {
+            return Vec::new();
+        };
+
+        let mut transactions = Vec::new();
+        for node_id in current_path
+            .iter()
+            .copied()
+            .take_while(|node_id| *node_id != lca)
+        {
+            if let Some(parent_id) = self.node(node_id).and_then(|node| node.parent) {
+                self.set_active_child(parent_id, node_id);
+            }
+            if let Some(transaction) = self
+                .node(node_id)
+                .and_then(|node| node.entry.as_ref())
+                .map(|entry| entry.transaction.clone())
+            {
+                transactions.push(transaction);
+            }
+        }
+
+        let redo_nodes = target_path
+            .iter()
+            .copied()
+            .take_while(|node_id| *node_id != lca)
+            .collect::<Vec<_>>();
+        for node_id in redo_nodes.iter().rev().copied() {
+            if let Some(parent_id) = self.node(node_id).and_then(|node| node.parent) {
+                self.set_active_child(parent_id, node_id);
+            }
+            if let Some(transaction) = self
+                .node(node_id)
+                .and_then(|node| node.entry.as_ref())
+                .map(|entry| entry.transaction.clone())
+            {
+                transactions.push(transaction);
+            }
+        }
+
+        self.current_node = target;
+        transactions
+    }
+
+    fn switch_branch(&mut self, parent: UndoNodeId, child_index: usize) -> bool {
+        let child_exists = self
+            .node(parent)
+            .is_some_and(|parent| child_index < parent.children.len());
+        if !child_exists {
+            return false;
+        }
+        if let Some(parent) = self.node_mut(parent) {
+            parent.active_child = Some(child_index);
+            true
         } else {
-            None
+            false
         }
     }
 
-    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
-        assert_eq!(self.transaction_depth, 0);
-
-        let undo_stack_start_len = self.undo_stack.len();
-        if let Some(entry_ix) = self
-            .redo_stack
-            .iter()
-            .rposition(|entry| entry.transaction.id == transaction_id)
-        {
-            self.undo_stack
-                .extend(self.redo_stack.drain(entry_ix..).rev());
+    fn snapshot(&self) -> UndoTreeSnapshot {
+        let latest_saved = self
+            .latest_saved_node
+            .filter(|node_id| self.node(*node_id).is_some());
+        UndoTreeSnapshot {
+            nodes: self
+                .nodes
+                .iter()
+                .flatten()
+                .map(|node| UndoTreeNodeSnapshot {
+                    id: node.id,
+                    transaction_id: node.entry.as_ref().map(|entry| entry.transaction.id),
+                    parent: node.parent,
+                    children: node.children.clone(),
+                    active_child: node.active_child,
+                    first_edit_at: node.first_edit_timestamp,
+                    last_edit_at: node.last_edit_timestamp,
+                    saved: node.saved,
+                    latest_saved: latest_saved == Some(node.id),
+                })
+                .collect(),
+            root: self.root_node,
+            current: self.current_node,
+            latest_saved,
         }
-        &self.undo_stack[undo_stack_start_len..]
+    }
+
+    fn mark_current_node_saved(&mut self) {
+        if let Some(node) = self.node_mut(self.current_node) {
+            node.saved = true;
+            self.latest_saved_node = Some(node.id);
+        }
     }
 }
 
@@ -1498,11 +1951,44 @@ impl Buffer {
     }
 
     pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
-        self.history.undo_stack.last()
+        self.history.current_entry()
     }
 
     pub fn peek_redo_stack(&self) -> Option<&HistoryEntry> {
-        self.history.redo_stack.last()
+        let child_id = self.history.active_child(self.history.current_node)?;
+        self.history.node(child_id)?.entry.as_ref()
+    }
+
+    pub fn undo_tree_snapshot(&self) -> UndoTreeSnapshot {
+        self.history.snapshot()
+    }
+
+    pub fn current_undo_node(&self) -> UndoNodeId {
+        self.history.current_node
+    }
+
+    pub fn root_undo_node(&self) -> UndoNodeId {
+        self.history.root_node
+    }
+
+    pub fn latest_saved_undo_node(&self) -> Option<UndoNodeId> {
+        self.history.latest_saved_node
+    }
+
+    pub fn switch_undo_branch(&mut self, parent: UndoNodeId, child_index: usize) -> bool {
+        self.history.switch_branch(parent, child_index)
+    }
+
+    pub fn jump_to_undo_node(&mut self, target: UndoNodeId) -> Vec<Operation> {
+        self.history
+            .jump_to_node(target)
+            .into_iter()
+            .map(|transaction| self.undo_or_redo(transaction))
+            .collect()
+    }
+
+    pub fn mark_current_undo_node_saved(&mut self) {
+        self.history.mark_current_node_saved();
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
@@ -1521,7 +2007,8 @@ impl Buffer {
     pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
         if let Some(entry) = self.history.end_transaction(now) {
             let since = entry.transaction.start.clone();
-            let id = self.history.group().unwrap();
+            let entry_id = entry.transaction.id;
+            let id = self.history.group().unwrap_or(entry_id);
             Some((id, since))
         } else {
             None
@@ -1545,8 +2032,7 @@ impl Buffer {
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(entry) = self.history.pop_undo() {
-            let transaction = entry.transaction.clone();
+        if let Some(transaction) = self.history.undo() {
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
@@ -1556,23 +2042,13 @@ impl Buffer {
     }
 
     pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        let transaction = self
-            .history
-            .remove_from_undo(transaction_id)?
-            .transaction
-            .clone();
+        let transaction = self.history.undo_transaction(transaction_id)?;
         Some(self.undo_or_redo(transaction))
     }
 
     pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
-        let transactions = self
-            .history
-            .remove_from_undo_until(transaction_id)
-            .iter()
-            .map(|entry| entry.transaction.clone())
-            .collect::<Vec<_>>();
-
-        transactions
+        self.history
+            .undo_until(transaction_id)
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction))
             .collect()
@@ -1591,8 +2067,7 @@ impl Buffer {
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(entry) = self.history.pop_redo() {
-            let transaction = entry.transaction.clone();
+        if let Some(transaction) = self.history.redo() {
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction);
             Some((transaction_id, op))
@@ -1602,14 +2077,8 @@ impl Buffer {
     }
 
     pub fn redo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
-        let transactions = self
-            .history
-            .remove_from_redo(transaction_id)
-            .iter()
-            .map(|entry| entry.transaction.clone())
-            .collect::<Vec<_>>();
-
-        transactions
+        self.history
+            .redo_to(transaction_id)
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction))
             .collect()
@@ -1997,7 +2466,8 @@ impl Buffer {
 
         let mut ops = Vec::new();
         for _ in 0..rng.random_range(1..=5) {
-            if let Some(entry) = self.history.undo_stack.choose(rng) {
+            let entries = self.history.current_path_entries();
+            if let Some(entry) = entries.choose(rng) {
                 let transaction = entry.transaction.clone();
                 log::info!(
                     "undoing buffer {:?} transaction {:?}",

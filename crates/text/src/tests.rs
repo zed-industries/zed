@@ -14,6 +14,34 @@ fn init_logger() {
     zlog::init_test();
 }
 
+fn undo_snapshot_node(snapshot: &UndoTreeSnapshot, node_id: UndoNodeId) -> &UndoTreeNodeSnapshot {
+    snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id == node_id)
+        .expect("missing undo node")
+}
+
+fn undo_snapshot_node_for_transaction(
+    snapshot: &UndoTreeSnapshot,
+    transaction_id: TransactionId,
+) -> &UndoTreeNodeSnapshot {
+    snapshot
+        .nodes
+        .iter()
+        .find(|node| node.transaction_id == Some(transaction_id))
+        .expect("missing undo transaction node")
+}
+
+fn live_transaction_node_count(buffer: &Buffer) -> usize {
+    buffer
+        .undo_tree_snapshot()
+        .nodes
+        .iter()
+        .filter(|node| node.transaction_id.is_some())
+        .count()
+}
+
 #[test]
 fn test_edit() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
@@ -556,7 +584,12 @@ fn test_undo_redo() {
     buffer.edit([(3..5, "cd")]);
     assert_eq!(buffer.text(), "1abcdef234");
 
-    let entries = buffer.history.undo_stack.clone();
+    let entries = buffer
+        .history
+        .current_path_entries()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
     assert_eq!(entries.len(), 3);
 
     buffer.undo_or_redo(entries[0].transaction.clone());
@@ -579,6 +612,186 @@ fn test_undo_redo() {
     assert_eq!(buffer.text(), "1yzef234");
     buffer.undo_or_redo(entries[1].transaction.clone());
     assert_eq!(buffer.text(), "1234");
+}
+
+#[test]
+fn test_undo_tree_preserves_branches_and_switches_active_child() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.undo();
+    buffer.edit([(1..1, "C")]);
+    let transaction_c = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_eq!(buffer.text(), "AC");
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    let node_b_id = node_b.id;
+    let node_c_id = node_c.id;
+
+    assert_eq!(node_a.parent, Some(snapshot.root));
+    assert_eq!(node_a.children, vec![node_b_id, node_c_id]);
+    assert_eq!(node_a.active_child, Some(1));
+    assert_eq!(node_b.parent, Some(node_a.id));
+    assert_eq!(node_c.parent, Some(node_a.id));
+    assert_eq!(snapshot.current, node_c_id);
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "A");
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_c)
+    );
+    buffer.redo();
+    assert_eq!(buffer.text(), "AC");
+
+    buffer.undo();
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let transaction_b_index = node_a
+        .children
+        .iter()
+        .position(|child_id| *child_id == node_b_id)
+        .unwrap();
+    assert!(buffer.switch_undo_branch(node_a.id, transaction_b_index));
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
+    );
+    buffer.redo();
+    assert_eq!(buffer.text(), "AB");
+}
+
+#[test]
+fn test_undo_tree_jump_to_node() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.undo();
+    buffer.edit([(1..1, "C")]);
+    let transaction_c = buffer.peek_undo_stack().unwrap().transaction_id();
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let root = snapshot.root;
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a).id;
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b).id;
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c).id;
+
+    let operations = buffer.jump_to_undo_node(node_b);
+    assert_eq!(operations.len(), 2);
+    assert_eq!(buffer.text(), "AB");
+    assert_eq!(buffer.current_undo_node(), node_b);
+
+    let operations = buffer.jump_to_undo_node(root);
+    assert_eq!(operations.len(), 2);
+    assert_eq!(buffer.text(), "");
+    assert_eq!(buffer.current_undo_node(), root);
+
+    let operations = buffer.jump_to_undo_node(node_c);
+    assert_eq!(operations.len(), 2);
+    assert_eq!(buffer.text(), "AC");
+    assert_eq!(buffer.current_undo_node(), node_c);
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node(&snapshot, node_a);
+    let node_c_index = node_a
+        .children
+        .iter()
+        .position(|child_id| *child_id == node_c)
+        .unwrap();
+    assert_eq!(node_a.active_child, Some(node_c_index));
+}
+
+#[test]
+fn test_undo_tree_jump_to_root_and_branch_head_helpers() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+    let root = buffer.root_undo_node();
+    assert_eq!(root, buffer.undo_tree_snapshot().root);
+
+    buffer.edit([(0..0, "A")]);
+    buffer.edit([(1..1, "B")]);
+    buffer.undo();
+    buffer.edit([(1..1, "C")]);
+    let branch_head = buffer.current_undo_node();
+    buffer.mark_current_undo_node_saved();
+    assert_eq!(buffer.latest_saved_undo_node(), Some(branch_head));
+    assert_eq!(buffer.text(), "AC");
+
+    let operations = buffer.jump_to_undo_node(root);
+    assert_eq!(operations.len(), 2);
+    assert_eq!(buffer.text(), "");
+    assert_eq!(buffer.current_undo_node(), root);
+
+    let operations = buffer.jump_to_undo_node(branch_head);
+    assert_eq!(operations.len(), 2);
+    assert_eq!(buffer.text(), "AC");
+    assert_eq!(buffer.current_undo_node(), branch_head);
+}
+
+#[test]
+fn test_undo_tree_saved_node_metadata() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    let now = Instant::now();
+    buffer.set_group_interval(Duration::from_millis(300));
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.end_transaction_at(now).unwrap().0;
+    buffer.mark_current_undo_node_saved();
+
+    let within_group_interval = now + Duration::from_millis(100);
+    buffer.start_transaction_at(within_group_interval);
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.end_transaction_at(within_group_interval).unwrap().0;
+    assert_ne!(transaction_a, transaction_b);
+    buffer.mark_current_undo_node_saved();
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
+    assert!(node_a.saved);
+    assert!(node_b.saved);
+    assert!(!node_a.latest_saved);
+    assert!(node_b.latest_saved);
+    assert_eq!(snapshot.latest_saved, Some(node_b.id));
+}
+
+#[test]
+fn test_undo_tree_grouping_within_active_path() {
+    let mut now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::from_millis(300));
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(0..0, "A")]);
+    buffer.end_transaction_at(now);
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(1..1, "B")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(live_transaction_node_count(&buffer), 1);
+
+    now += Duration::from_millis(400);
+    buffer.start_transaction_at(now);
+    buffer.edit([(2..2, "C")]);
+    buffer.end_transaction_at(now);
+    assert_eq!(live_transaction_node_count(&buffer), 2);
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "AB");
+    buffer.undo();
+    assert_eq!(buffer.text(), "");
 }
 
 #[test]
@@ -625,7 +838,7 @@ fn test_history() {
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
 
-    // Redo stack gets cleared after performing an edit.
+    // Editing after undo creates a new active branch.
     buffer.start_transaction_at(now);
     buffer.edit([(0..0, "X")]);
     buffer.end_transaction_at(now);
@@ -637,15 +850,238 @@ fn test_history() {
     buffer.undo();
     assert_eq!(buffer.text(), "123456");
 
-    // Transactions can be grouped manually.
+    // Manual grouping does not merge across the branch point created above.
     buffer.redo();
     buffer.redo();
     assert_eq!(buffer.text(), "X12cde6");
     buffer.group_until_transaction(transaction_1);
     buffer.undo();
+    assert_eq!(buffer.text(), "12cde6");
+    buffer.undo();
     assert_eq!(buffer.text(), "123456");
     buffer.redo();
+    assert_eq!(buffer.text(), "12cde6");
+    buffer.redo();
     assert_eq!(buffer.text(), "X12cde6");
+}
+
+#[test]
+fn test_undo_tree_group_until_on_linear_path() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.end_transaction_at(now).unwrap().0;
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.end_transaction_at(now).unwrap().0;
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(2..2, "C")]);
+    let transaction_c = buffer.end_transaction_at(now).unwrap().0;
+    assert_eq!(buffer.text(), "ABC");
+
+    buffer.group_until_transaction(transaction_a);
+    assert_eq!(
+        buffer.peek_undo_stack().unwrap().transaction_id(),
+        transaction_a
+    );
+    assert!(buffer.get_transaction(transaction_b).is_none());
+    assert!(buffer.get_transaction(transaction_c).is_none());
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "");
+    buffer.redo();
+    assert_eq!(buffer.text(), "ABC");
+}
+
+#[test]
+fn test_undo_tree_grouping_does_not_cross_branch_points() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::from_millis(300));
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.end_transaction_at(now).unwrap().0;
+
+    let later = now + buffer.transaction_group_interval() + Duration::from_millis(1);
+    buffer.start_transaction_at(later);
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.end_transaction_at(later).unwrap().0;
+
+    buffer.undo();
+    let within_group_interval = now + Duration::from_millis(100);
+    buffer.start_transaction_at(within_group_interval);
+    buffer.edit([(1..1, "C")]);
+    let transaction_c = buffer.end_transaction_at(within_group_interval).unwrap().0;
+
+    assert_ne!(transaction_a, transaction_c);
+    assert_eq!(buffer.text(), "AC");
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    assert_eq!(node_a.children, vec![node_b.id, node_c.id]);
+    assert_eq!(snapshot.current, node_c.id);
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "A");
+}
+
+#[test]
+fn test_undo_tree_empty_and_merged_transactions() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
+    buffer.set_group_interval(Duration::ZERO);
+
+    let empty_transaction = buffer.push_empty_transaction(now);
+    assert_eq!(
+        buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
+        Some(empty_transaction)
+    );
+    assert!(buffer.forget_transaction(empty_transaction).is_some());
+    assert!(buffer.peek_undo_stack().is_none());
+    assert_eq!(buffer.text(), "abc");
+
+    let formatting_transaction = buffer.push_empty_transaction(now);
+    buffer.finalize_last_transaction();
+    buffer.start_transaction_at(now);
+    buffer.edit([(3..3, "def")]);
+    let edit_transaction = buffer.end_transaction_at(now).unwrap().0;
+    buffer.merge_transactions(edit_transaction, formatting_transaction);
+
+    assert!(buffer.get_transaction(edit_transaction).is_none());
+    let transaction = buffer.get_transaction(formatting_transaction).unwrap();
+    assert!(!transaction.edit_ids.is_empty());
+    assert_eq!(
+        buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
+        Some(formatting_transaction)
+    );
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "abc");
+    buffer.redo();
+    assert_eq!(buffer.text(), "abcdef");
+}
+
+#[test]
+fn test_undo_tree_forgetting_active_empty_child_preserves_redo_sibling() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.undo();
+    assert_eq!(buffer.text(), "A");
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
+    );
+
+    let empty_transaction = buffer.push_empty_transaction(now);
+    assert!(buffer.forget_transaction(empty_transaction).is_some());
+    assert_eq!(buffer.text(), "A");
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
+    );
+
+    buffer.redo();
+    assert_eq!(buffer.text(), "AB");
+}
+
+#[test]
+fn test_undo_tree_undo_non_current_transaction_reparents_current_path() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(2..2, "C")]);
+    let transaction_c = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_eq!(buffer.text(), "ABC");
+
+    assert!(buffer.undo_transaction(transaction_b).is_some());
+    assert_eq!(buffer.text(), "AC");
+
+    let snapshot = buffer.undo_tree_snapshot();
+    assert!(
+        !snapshot
+            .nodes
+            .iter()
+            .any(|node| node.transaction_id == Some(transaction_b))
+    );
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    assert_eq!(node_c.parent, Some(node_a.id));
+    assert_eq!(snapshot.current, node_c.id);
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "A");
+    buffer.redo();
+    assert_eq!(buffer.text(), "AC");
+}
+
+#[test]
+fn test_undo_tree_node_ids_are_stable_after_forget() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let node_a = buffer.current_undo_node();
+
+    let empty_transaction = buffer.push_empty_transaction(now);
+    let forgotten_node = buffer.current_undo_node();
+    assert!(buffer.forget_transaction(empty_transaction).is_some());
+
+    buffer.edit([(1..1, "B")]);
+    let node_b = buffer.current_undo_node();
+    assert_ne!(node_b, forgotten_node);
+    assert_ne!(node_b, node_a);
+}
+
+#[test]
+fn test_undo_tree_peek_compatibility() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    assert!(buffer.peek_undo_stack().is_none());
+    assert!(buffer.peek_redo_stack().is_none());
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_eq!(
+        buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_a)
+    );
+    assert!(buffer.peek_redo_stack().is_none());
+
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_eq!(
+        buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
+    );
+
+    buffer.undo();
+    assert_eq!(
+        buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_a)
+    );
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
+    );
 }
 
 #[test]
