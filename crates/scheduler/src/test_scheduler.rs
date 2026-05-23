@@ -1,6 +1,6 @@
 use crate::{
-    BackgroundExecutor, Clock, ForegroundExecutor, Instant, Priority, RunnableMeta, Scheduler,
-    SessionId, TestClock, Timer,
+    BackgroundExecutor, Clock, Instant, LocalExecutor, Priority, RunnableMeta, Scheduler,
+    SessionId, Task, TestClock, Timer,
 };
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFrame};
@@ -160,10 +160,30 @@ impl TestScheduler {
         state.next_session_id
     }
 
-    /// Create a foreground executor for this scheduler
-    pub fn foreground(self: &Arc<Self>) -> ForegroundExecutor {
+    /// Spawn work on a fresh foreground session. In the test world this
+    /// is just a new session driven by the test scheduler's run loop
+    /// alongside everything else; the returned future may be `!Send`.
+    pub fn spawn_dedicated<F, Fut>(self: &Arc<Self>, f: F) -> Task<Fut::Output>
+    where
+        F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
+        Fut: Future + 'static,
+        Fut::Output: Send + 'static,
+    {
         let session_id = self.allocate_session_id();
-        ForegroundExecutor::new(session_id, self.clone())
+        let scheduler = self.clone();
+        let executor = LocalExecutor::new(session_id, self.clone(), move |runnable| {
+            scheduler.schedule_local(session_id, runnable);
+        });
+        executor.spawn(f(executor.clone()))
+    }
+
+    /// Create a local executor for this scheduler.
+    pub fn foreground(self: &Arc<Self>) -> LocalExecutor {
+        let session_id = self.allocate_session_id();
+        let scheduler = self.clone();
+        LocalExecutor::new(session_id, self.clone(), move |runnable| {
+            scheduler.schedule_local(session_id, runnable);
+        })
     }
 
     /// Create a background executor for this scheduler
@@ -585,7 +605,7 @@ impl Scheduler for TestScheduler {
         completed
     }
 
-    fn schedule_foreground(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+    fn schedule_local(&self, session_id: SessionId, runnable: Runnable<RunnableMeta>) {
         assert_correct_thread(&self.thread, &self.state);
         let mut state = self.state.lock();
         let ix = if state.randomize_order {

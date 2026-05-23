@@ -7,7 +7,7 @@ use scheduler::Scheduler;
 use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
 pub use scheduler::{
-    FallibleTask, ForegroundExecutor as SchedulerForegroundExecutor, Priority, Task,
+    FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
 };
 
 /// A pointer to the executor that is currently running,
@@ -22,7 +22,7 @@ pub struct BackgroundExecutor {
 /// for spawning tasks on the main thread.
 #[derive(Clone)]
 pub struct ForegroundExecutor {
-    inner: scheduler::ForegroundExecutor,
+    inner: scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
     not_send: PhantomData<Rc<()>>,
 }
@@ -291,7 +291,12 @@ impl ForegroundExecutor {
             (platform_scheduler, session_id)
         };
 
-        let inner = scheduler::ForegroundExecutor::new(session_id, scheduler);
+        let inner = {
+            let scheduler_for_dispatch = scheduler.clone();
+            scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {
+                scheduler_for_dispatch.schedule_local(session_id, runnable);
+            })
+        };
 
         Self {
             inner,
@@ -366,7 +371,7 @@ impl ForegroundExecutor {
     }
 
     #[doc(hidden)]
-    pub fn scheduler_executor(&self) -> SchedulerForegroundExecutor {
+    pub fn scheduler_executor(&self) -> SchedulerLocalExecutor {
         self.inner.clone()
     }
 }

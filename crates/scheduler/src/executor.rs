@@ -1,4 +1,5 @@
 use crate::{Instant, Priority, RunnableMeta, Scheduler, SessionId, Timer};
+use async_task::Runnable;
 use std::{
     future::Future,
     marker::PhantomData,
@@ -12,18 +13,39 @@ use std::{
     time::Duration,
 };
 
+/// A `!Send` executor pinned to a single session. Tasks spawned on it run in
+/// order on whichever thread drains the dispatch destination supplied at
+/// construction time — typically the main thread for the default session, or
+/// a dedicated OS thread for sessions created by `spawn_dedicated_thread`.
 #[derive(Clone)]
-pub struct ForegroundExecutor {
+pub struct LocalExecutor {
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,
+    // Spawned tasks' schedule callbacks each hold an `Arc` clone of this
+    // closure, so the destination it captures stays alive as long as work
+    // could still land on it.
+    dispatch: Arc<dyn Fn(Runnable<RunnableMeta>) + Send + Sync>,
     not_send: PhantomData<Rc<()>>,
 }
 
-impl ForegroundExecutor {
-    pub fn new(session_id: SessionId, scheduler: Arc<dyn Scheduler>) -> Self {
+impl LocalExecutor {
+    /// Constructs a local executor that runs spawned tasks by sending their
+    /// runnables through `dispatch`. The `scheduler` is retained for access to
+    /// clocks, timers, and other scheduler-level services.
+    ///
+    /// For the common case of routing runnables through
+    /// `Scheduler::schedule_local`, callers pass a closure that does exactly
+    /// that. `spawn_dedicated_thread` instead passes a closure that sends to
+    /// the dedicated thread's channel.
+    pub fn new(
+        session_id: SessionId,
+        scheduler: Arc<dyn Scheduler>,
+        dispatch: impl Fn(Runnable<RunnableMeta>) + Send + Sync + 'static,
+    ) -> Self {
         Self {
             session_id,
             scheduler,
+            dispatch: Arc::new(dispatch),
             not_send: PhantomData,
         }
     }
@@ -42,16 +64,11 @@ impl ForegroundExecutor {
         F: Future + 'static,
         F::Output: 'static,
     {
-        let session_id = self.session_id;
-        let scheduler = Arc::downgrade(&self.scheduler);
+        let dispatch = self.dispatch.clone();
         let location = Location::caller();
         let (runnable, task) = spawn_local_with_source_location(
             future,
-            move |runnable| {
-                if let Some(scheduler) = scheduler.upgrade() {
-                    scheduler.schedule_foreground(session_id, runnable);
-                }
-            },
+            move |runnable| dispatch(runnable),
             RunnableMeta { location },
         );
         runnable.schedule();
