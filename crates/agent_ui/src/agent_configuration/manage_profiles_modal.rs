@@ -250,7 +250,11 @@ impl ManageProfilesModal {
                                     .iter()
                                     .find(|m| m.id().0 == selection.model.as_str())?
                                     .clone();
-                                Some(language_model::ConfiguredModel { provider, model })
+                                Some(language_model::ConfiguredModel {
+                                    provider,
+                                    model,
+                                    service_tier: None,
+                                })
                             })
                     }
                 },

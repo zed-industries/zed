@@ -216,7 +216,11 @@ impl TerminalInlineAssistant {
         assist_id: TerminalInlineAssistId,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
-        let ConfiguredModel { model, .. } = LanguageModelRegistry::read_global(cx)
+        let ConfiguredModel {
+            model,
+            service_tier,
+            ..
+        } = LanguageModelRegistry::read_global(cx)
             .inline_assistant_model()
             .context("No inline assistant model")?;
 
@@ -246,6 +250,7 @@ impl TerminalInlineAssistant {
         )?;
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let service_tier = AgentSettings::service_tier_for_model(&model, cx).or(service_tier);
 
         let mention_set = prompt_editor.read(cx).mention_set().clone();
         let load_context_task = load_context(&mention_set, cx);
@@ -275,7 +280,7 @@ impl TerminalInlineAssistant {
                 temperature,
                 thinking_allowed: false,
                 thinking_effort: None,
-                service_tier: None,
+                service_tier,
                 speed: None,
             }
         }))

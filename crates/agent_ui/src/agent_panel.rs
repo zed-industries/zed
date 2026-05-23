@@ -3562,21 +3562,39 @@ impl AgentPanel {
                     && let Some(model) = provider.default_model(cx)
                 {
                     update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                        let language_model = model.clone();
                         let provider = model.provider_id().0.to_string();
                         let enable_thinking = model.supports_thinking();
                         let effort = model
                             .default_effort_level()
                             .map(|effort| effort.value.to_string());
-                        let model = model.id().0.to_string();
+                        let model_name = model.id().0.to_string();
+                        let current_selection = settings
+                            .agent
+                            .as_ref()
+                            .and_then(|a| a.default_model.as_ref());
+                        let service_tier = current_selection
+                            .and_then(|s| s.service_tier.clone())
+                            .filter(|tier| {
+                                language_model
+                                    .supported_service_tiers()
+                                    .iter()
+                                    .any(|t| t.value.as_ref() == tier.as_str())
+                            })
+                            .or_else(|| {
+                                language_model
+                                    .default_service_tier()
+                                    .map(|t| t.value.to_string())
+                            });
                         settings
                             .agent
                             .get_or_insert_default()
                             .set_model(LanguageModelSelection {
                                 provider: LanguageModelProviderSetting(provider),
-                                model,
+                                model: model_name,
                                 enable_thinking,
                                 effort,
-                                service_tier: None,
+                                service_tier,
                                 speed: None,
                             })
                     });

@@ -985,6 +985,7 @@ pub struct Thread {
     pub(crate) templates: Arc<Templates>,
     model: Option<Arc<dyn LanguageModel>>,
     summarization_model: Option<Arc<dyn LanguageModel>>,
+    summarization_service_tier: Option<String>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
     service_tier: Option<String>,
@@ -1120,6 +1121,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            summarization_service_tier: None,
             thinking_enabled: enable_thinking,
             speed,
             thinking_effort,
@@ -1148,6 +1150,7 @@ impl Thread {
         self.thinking_enabled = parent.thinking_enabled;
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
+        self.summarization_service_tier = parent.summarization_service_tier.clone();
         self.profile_id = parent.profile_id.clone();
     }
 
@@ -1402,6 +1405,7 @@ impl Thread {
                     let model = SelectedModel {
                         provider: model.provider.clone().into(),
                         model: model.model.into(),
+                        service_tier: db_thread.service_tier.clone(),
                     };
                     registry.select_model(&model, cx)
                 })
@@ -1450,6 +1454,7 @@ impl Thread {
             templates,
             model,
             summarization_model: None,
+            summarization_service_tier: None,
             thinking_enabled: db_thread.thinking_enabled,
             thinking_effort: db_thread.thinking_effort,
             service_tier: db_thread.service_tier,
@@ -1590,14 +1595,16 @@ impl Thread {
     pub fn set_summarization_model(
         &mut self,
         model: Option<Arc<dyn LanguageModel>>,
+        service_tier: Option<String>,
         cx: &mut Context<Self>,
     ) {
         self.summarization_model = model.clone();
+        self.summarization_service_tier = service_tier.clone();
 
         for subagent in &self.running_subagents {
             subagent
                 .update(cx, |thread, cx| {
-                    thread.set_summarization_model(model.clone(), cx)
+                    thread.set_summarization_model(model.clone(), service_tier.clone(), cx)
                 })
                 .ok();
         }
@@ -1925,6 +1932,7 @@ impl Thread {
         let selected = SelectedModel {
             provider: LanguageModelProviderId::from(selection.provider.0.clone()),
             model: LanguageModelId::from(selection.model.clone()),
+            service_tier: selection.service_tier.clone(),
         };
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry
@@ -2801,6 +2809,8 @@ impl Thread {
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadContextSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
+            service_tier: AgentSettings::service_tier_for_model(&model, cx)
+                .or_else(|| self.summarization_service_tier.clone()),
             ..Default::default()
         };
 
@@ -2864,6 +2874,8 @@ impl Thread {
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
+            service_tier: AgentSettings::service_tier_for_model(&model, cx)
+                .or_else(|| self.summarization_service_tier.clone()),
             ..Default::default()
         };
 
@@ -3040,7 +3052,8 @@ impl Thread {
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
-            service_tier: self.service_tier().cloned(),
+            service_tier: AgentSettings::service_tier_for_model(model, cx)
+                .or_else(|| self.service_tier().cloned()),
             speed: self.speed(),
         };
 
@@ -4877,7 +4890,7 @@ mod tests {
 
         cx.update(|cx| {
             parent.update(cx, |thread, cx| {
-                thread.set_summarization_model(Some(summary_model), cx);
+                thread.set_summarization_model(Some(summary_model), None, cx);
             });
 
             for subagent in &subagents {
@@ -4954,6 +4967,38 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_set_service_tier_propagates_to_subagents(cx: &mut TestAppContext) {
+        let (parent, _event_stream) = setup_thread_for_test(cx).await;
+        let subagents = setup_parent_with_subagents(cx, &parent, 2);
+
+        cx.update(|cx| {
+            parent.update(cx, |thread, cx| {
+                thread.set_service_tier(Some("priority".to_string()), cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).service_tier().map(|s| s.as_str()),
+                    Some("priority"),
+                    "Subagent service tier should match parent after set_service_tier"
+                );
+            }
+
+            parent.update(cx, |thread, cx| {
+                thread.set_service_tier(None, cx);
+            });
+
+            for subagent in &subagents {
+                assert_eq!(
+                    subagent.read(cx).service_tier(),
+                    None,
+                    "Subagent service tier should be None after parent clears it"
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
     async fn test_subagent_inherits_settings_at_creation(cx: &mut TestAppContext) {
         let (parent, _event_stream) = setup_thread_for_test(cx).await;
 
@@ -4962,6 +5007,7 @@ mod tests {
                 thread.set_speed(Speed::Fast, cx);
                 thread.set_thinking_enabled(true, cx);
                 thread.set_thinking_effort(Some("high".to_string()), cx);
+                thread.set_service_tier(Some("flex".to_string()), cx);
                 thread.set_profile(AgentProfileId("custom-profile".into()), cx);
             });
         });
@@ -4973,6 +5019,11 @@ mod tests {
             assert_eq!(sub.speed(), Some(Speed::Fast));
             assert!(sub.thinking_enabled());
             assert_eq!(sub.thinking_effort().map(|s| s.as_str()), Some("high"));
+            assert_eq!(
+                sub.service_tier().map(|s| s.as_str()),
+                Some("flex"),
+                "Subagent should inherit service tier at creation"
+            );
             assert_eq!(sub.profile(), &AgentProfileId("custom-profile".into()));
         });
     }
@@ -4994,6 +5045,38 @@ mod tests {
                     "Subagent speed should match parent after set_speed"
                 );
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_service_tier_includes_in_completion_request(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+
+        let model = Arc::new(FakeLanguageModel::default());
+        model.set_service_tiers(vec![
+            language_model::ServiceTierInfo {
+                name: SharedString::new_static("Standard"),
+                value: SharedString::new_static("default"),
+                is_default: true,
+            },
+            language_model::ServiceTierInfo {
+                name: SharedString::new_static("Priority"),
+                value: SharedString::new_static("priority"),
+                is_default: false,
+            },
+        ]);
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.set_service_tier(Some("priority".to_string()), cx);
+            });
+
+            let request = thread
+                .read(cx)
+                .build_completion_request(CompletionIntent::UserPrompt, cx)
+                .unwrap();
+            assert_eq!(request.service_tier, Some("priority".to_string()));
         });
     }
 

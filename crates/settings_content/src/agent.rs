@@ -230,13 +230,18 @@ impl AgentSettingsContent {
         self.default_model = Some(language_model)
     }
 
-    pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
+    pub fn set_inline_assistant_model(
+        &mut self,
+        provider: String,
+        model: String,
+        service_tier: Option<String>,
+    ) {
         self.inline_assistant_model = Some(LanguageModelSelection {
             provider: provider.into(),
             model,
             enable_thinking: false,
             effort: None,
-            service_tier: None,
+            service_tier,
             speed: None,
         });
     }
@@ -407,6 +412,7 @@ pub struct LanguageModelParameters {
     pub model: Option<String>,
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
+    pub service_tier: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]

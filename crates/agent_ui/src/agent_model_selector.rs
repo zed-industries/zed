@@ -37,13 +37,31 @@ impl AgentModelSelector {
                         move |model, cx| {
                             let provider = model.provider_id().0.to_string();
                             let model_id = model.id().0.to_string();
+                            let model = model.clone();
                             match &model_usage_context {
                                 ModelUsageContext::InlineAssistant => {
                                     update_settings_file(fs.clone(), cx, move |settings, _cx| {
-                                        settings
-                                            .agent
-                                            .get_or_insert_default()
-                                            .set_inline_assistant_model(provider.clone(), model_id);
+                                        let agent = settings.agent.get_or_insert_default();
+                                        let current_selection =
+                                            agent.inline_assistant_model.as_ref();
+                                        let service_tier = current_selection
+                                            .and_then(|s| s.service_tier.clone())
+                                            .filter(|tier| {
+                                                model
+                                                    .supported_service_tiers()
+                                                    .iter()
+                                                    .any(|t| t.value.as_ref() == tier.as_str())
+                                            })
+                                            .or_else(|| {
+                                                model
+                                                    .default_service_tier()
+                                                    .map(|t| t.value.to_string())
+                                            });
+                                        agent.set_inline_assistant_model(
+                                            provider.clone(),
+                                            model_id,
+                                            service_tier,
+                                        );
                                     });
                                 }
                             }

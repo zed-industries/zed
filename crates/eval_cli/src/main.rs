@@ -483,7 +483,11 @@ async fn run_agent(
 
         registry.update(cx, |registry, cx| {
             registry.set_default_model(
-                Some(language_model::ConfiguredModel { provider, model }),
+                Some(language_model::ConfiguredModel {
+                    provider,
+                    model,
+                    service_tier: None,
+                }),
                 cx,
             );
         });

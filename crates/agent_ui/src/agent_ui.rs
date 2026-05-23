@@ -789,6 +789,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         language_model::SelectedModel {
             provider: LanguageModelProviderId::from(selection.provider.0.clone()),
             model: LanguageModelId::from(selection.model.clone()),
+            service_tier: selection.service_tier.clone(),
         }
     }
 

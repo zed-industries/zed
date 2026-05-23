@@ -158,6 +158,7 @@ mod tests {
                         Some(&language_model::SelectedModel {
                             provider: language_model::ANTHROPIC_PROVIDER_ID,
                             model: language_model::LanguageModelId("claude-sonnet-4-latest".into()),
+                            service_tier: None,
                         }),
                         cx,
                     );

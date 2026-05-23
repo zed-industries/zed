@@ -126,6 +126,7 @@ pub struct FakeLanguageModel {
     supports_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    service_tiers: Mutex<Vec<language_model_core::ServiceTierInfo>>,
 }
 
 impl Default for FakeLanguageModel {
@@ -140,6 +141,7 @@ impl Default for FakeLanguageModel {
             supports_thinking: AtomicBool::new(false),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            service_tiers: Mutex::new(Vec::new()),
         }
     }
 }
@@ -178,6 +180,10 @@ impl FakeLanguageModel {
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_service_tiers(&self, tiers: Vec<language_model_core::ServiceTierInfo>) {
+        *self.service_tiers.lock() = tiers;
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -295,6 +301,10 @@ impl LanguageModel for FakeLanguageModel {
 
     fn supports_streaming_tools(&self) -> bool {
         self.supports_streaming_tools.load(SeqCst)
+    }
+
+    fn supported_service_tiers(&self) -> Vec<language_model_core::ServiceTierInfo> {
+        self.service_tiers.lock().clone()
     }
 
     fn telemetry_id(&self) -> String {

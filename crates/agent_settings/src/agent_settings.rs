@@ -193,6 +193,26 @@ impl AgentSettings {
         return None;
     }
 
+    pub fn service_tier_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<String> {
+        let settings = Self::get_global(cx);
+        for setting in settings.model_parameters.iter().rev() {
+            if let Some(provider) = &setting.provider
+                && provider.0 != model.provider_id().0
+            {
+                continue;
+            }
+            if let Some(setting_model) = &setting.model
+                && *setting_model != model.id().0
+            {
+                continue;
+            }
+            if let Some(service_tier) = &setting.service_tier {
+                return Some(service_tier.clone());
+            }
+        }
+        return None;
+    }
+
     pub fn sidebar_side(&self) -> SidebarSide {
         match self.sidebar_side {
             SidebarDockPosition::Left => SidebarSide::Left,

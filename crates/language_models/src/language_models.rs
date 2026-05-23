@@ -167,7 +167,11 @@ pub fn update_environment_fallback_model(cx: &mut App) {
                 let model = provider
                     .default_model(cx)
                     .or_else(|| provider.recommended_models(cx).first().cloned())?;
-                Some(ConfiguredModel { provider, model })
+                Some(ConfiguredModel {
+                    provider,
+                    model,
+                    service_tier: None,
+                })
             })
         } else {
             registry
@@ -181,6 +185,7 @@ pub fn update_environment_fallback_model(cx: &mut App) {
                     Some(ConfiguredModel {
                         provider: provider.clone(),
                         model,
+                        service_tier: None,
                     })
                 })
         }

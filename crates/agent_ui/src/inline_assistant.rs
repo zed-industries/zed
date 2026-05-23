@@ -1252,8 +1252,11 @@ impl InlineAssistant {
             self.prompt_history.pop_front();
         }
 
-        let Some(ConfiguredModel { model, .. }) =
-            LanguageModelRegistry::read_global(cx).inline_assistant_model()
+        let Some(ConfiguredModel {
+            model,
+            service_tier,
+            ..
+        }) = LanguageModelRegistry::read_global(cx).inline_assistant_model()
         else {
             return;
         };
@@ -1262,7 +1265,7 @@ impl InlineAssistant {
         assist
             .codegen
             .update(cx, |codegen, cx| {
-                codegen.start(model, user_prompt, context_task, cx)
+                codegen.start(model, service_tier, user_prompt, context_task, cx)
             })
             .log_err();
     }

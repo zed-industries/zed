@@ -3309,7 +3309,7 @@ async fn test_title_generation(cx: &mut TestAppContext) {
 
     let summary_model = Arc::new(FakeLanguageModel::default());
     thread.update(cx, |thread, cx| {
-        thread.set_summarization_model(Some(summary_model.clone()), cx)
+        thread.set_summarization_model(Some(summary_model.clone()), None, cx)
     });
 
     let send = thread
@@ -3360,7 +3360,7 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     let summary_model = Arc::new(FakeLanguageModel::default());
     let fake_summary_model = summary_model.as_fake();
     thread.update(cx, |thread, cx| {
-        thread.set_summarization_model(Some(summary_model.clone()), cx)
+        thread.set_summarization_model(Some(summary_model.clone()), None, cx)
     });
 
     let send = thread
@@ -3818,7 +3818,7 @@ async fn test_update_title_tool_sets_thread_title(cx: &mut TestAppContext) {
     });
     thread.update(cx, |thread, cx| {
         thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
+        thread.set_summarization_model(Some(summary_model.clone()), None, cx);
     });
 
     let mut events = thread
@@ -3897,7 +3897,7 @@ async fn test_update_title_availability_suppresses_summary_title_generation(
     });
     thread.update(cx, |thread, cx| {
         thread.add_tool(UpdateTitleTool::new(cx.weak_entity()));
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
+        thread.set_summarization_model(Some(summary_model.clone()), None, cx);
     });
 
     let send = thread
@@ -3930,7 +3930,7 @@ async fn test_update_title_flag_without_available_tool_falls_back_to_summary_tit
         cx.update_flags(true, vec!["update-title-tool".to_string()]);
     });
     thread.update(cx, |thread, cx| {
-        thread.set_summarization_model(Some(summary_model.clone()), cx);
+        thread.set_summarization_model(Some(summary_model.clone()), None, cx)
     });
 
     let send = thread

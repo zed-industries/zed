@@ -576,12 +576,15 @@ impl NativeAgent {
         });
 
         let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model(cx).map(|c| c.model);
+        let summarization = registry.thread_summary_model(cx);
+        let summarization_model = summarization.as_ref().map(|c| c.model.clone());
+        let summarization_service_tier =
+            summarization.as_ref().and_then(|c| c.service_tier.clone());
 
         let weak = cx.weak_entity();
         let weak_thread = thread_handle.downgrade();
         thread_handle.update(cx, |thread, cx| {
-            thread.set_summarization_model(summarization_model, cx);
+            thread.set_summarization_model(summarization_model, summarization_service_tier, cx);
             thread.add_default_tools(
                 Rc::new(NativeThreadEnvironment {
                     acp_thread: acp_thread.downgrade(),
@@ -1142,7 +1145,10 @@ impl NativeAgent {
 
         let registry = LanguageModelRegistry::read_global(cx);
         let default_model = registry.default_model().map(|m| m.model);
-        let summarization_model = registry.thread_summary_model(cx).map(|m| m.model);
+        let summarization = registry.thread_summary_model(cx);
+        let summarization_model = summarization.as_ref().map(|m| m.model.clone());
+        let summarization_service_tier =
+            summarization.as_ref().and_then(|c| c.service_tier.clone());
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
@@ -1156,7 +1162,11 @@ impl NativeAgent {
                     if thread.summarization_model().is_none()
                         || matches!(event, language_model::Event::ThreadSummaryModelChanged)
                     {
-                        thread.set_summarization_model(Some(model), cx);
+                        thread.set_summarization_model(
+                            Some(model),
+                            summarization_service_tier.clone(),
+                            cx,
+                        );
                     }
                 }
             });
@@ -1343,9 +1353,10 @@ impl NativeAgent {
                     .projects
                     .get(&project_id)
                     .context("project state not found")?;
-                let summarization_model = LanguageModelRegistry::read_global(cx)
-                    .thread_summary_model(cx)
-                    .map(|c| c.model);
+                let summarization = LanguageModelRegistry::read_global(cx).thread_summary_model(cx);
+                let summarization_model = summarization.as_ref().map(|c| c.model.clone());
+                let summarization_service_tier =
+                    summarization.as_ref().and_then(|c| c.service_tier.clone());
 
                 Ok(cx.new(|cx| {
                     let mut thread = Thread::from_db(
@@ -1357,7 +1368,11 @@ impl NativeAgent {
                         this.templates.clone(),
                         cx,
                     );
-                    thread.set_summarization_model(summarization_model, cx);
+                    thread.set_summarization_model(
+                        summarization_model,
+                        summarization_service_tier,
+                        cx,
+                    );
                     thread
                 }))
             })?
@@ -4738,7 +4753,7 @@ mod internal_tests {
         let summary_model = Arc::new(FakeLanguageModel::default());
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
-            thread.set_summarization_model(Some(summary_model.clone()), cx);
+            thread.set_summarization_model(Some(summary_model.clone()), None, cx);
         });
         cx.run_until_parked();
         assert_eq!(thread_entries(&thread_store, cx), vec![]);
@@ -5000,7 +5015,7 @@ mod internal_tests {
         let summary_model = Arc::new(FakeLanguageModel::default());
         thread.update(cx, |thread, cx| {
             thread.set_model(model.clone(), cx);
-            thread.set_summarization_model(Some(summary_model.clone()), cx);
+            thread.set_summarization_model(Some(summary_model.clone()), None, cx);
         });
 
         let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));

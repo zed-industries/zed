@@ -2705,8 +2705,11 @@ impl GitPanel {
             return;
         }
 
-        let Some(ConfiguredModel { provider, model }) =
-            LanguageModelRegistry::read_global(cx).commit_message_model(cx)
+        let Some(ConfiguredModel {
+            provider,
+            model,
+            service_tier,
+        }) = LanguageModelRegistry::read_global(cx).commit_message_model(cx)
         else {
             return;
         };
@@ -2726,6 +2729,7 @@ impl GitPanel {
         });
 
         let temperature = AgentSettings::temperature_for_model(&model, cx);
+        let service_tier = AgentSettings::service_tier_for_model(&model, cx).or(service_tier);
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
@@ -2806,7 +2810,7 @@ impl GitPanel {
                     temperature,
                     thinking_allowed: false,
                     thinking_effort: None,
-                    service_tier: None,
+                    service_tier,
                     speed: None,
                 };
 
