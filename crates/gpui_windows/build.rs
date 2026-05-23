@@ -36,6 +36,7 @@ mod shader_compilation {
             "path_sprite",
             "underline",
             "monochrome_sprite",
+            "background_sprite",
             "subpixel_sprite",
             "polychrome_sprite",
         ];

@@ -88,6 +88,7 @@ struct DirectXRenderPipelines {
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
+    bg_sprites: PipelineState<BackgroundSprite>,
     subpixel_sprites: PipelineState<SubpixelSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
 }
@@ -337,17 +338,20 @@ impl DirectXRenderer {
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
-                PrimitiveBatch::BackgroundSprites { .. } => Ok(()),
+                PrimitiveBatch::BackgroundSprites { texture_id, range } => {
+                    self.draw_background_sprites(texture_id, range.start, range.len())
+                }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
             .context(format!(
                 "scene too large:\
-                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} subpixel, {} poly, {} surfaces",
+                {} paths, {} shadows, {} quads, {} underlines, {} mono, {} bg, {} subpixel, {} poly, {} surfaces",
                 scene.paths.len(),
                 scene.shadows.len(),
                 scene.quads.len(),
                 scene.underlines.len(),
                 scene.monochrome_sprites.len(),
+                scene.background_sprites.len(),
                 scene.subpixel_sprites.len(),
                 scene.polychrome_sprites.len(),
                 scene.surfaces.len(),
@@ -432,6 +436,14 @@ impl DirectXRenderer {
                 &devices.device,
                 &devices.device_context,
                 &scene.monochrome_sprites,
+            )?;
+        }
+
+        if !scene.background_sprites.is_empty() {
+            self.pipelines.bg_sprites.update_buffer(
+                &devices.device,
+                &devices.device_context,
+                &scene.background_sprites,
             )?;
         }
 
@@ -639,6 +651,30 @@ impl DirectXRenderer {
         let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
         self.pipelines.mono_sprites.draw_range_with_texture(
+            &devices.device,
+            &devices.device_context,
+            &texture_view,
+            slice::from_ref(&resources.viewport),
+            slice::from_ref(&self.globals.global_params_buffer),
+            slice::from_ref(&self.globals.sampler),
+            start as u32,
+            len as u32,
+        )
+    }
+
+    fn draw_background_sprites(
+        &mut self,
+        texture_id: AtlasTextureId,
+        start: usize,
+        len: usize,
+    ) -> Result<()> {
+        if len == 0 {
+            return Ok(());
+        }
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_ref().context("resources missing")?;
+        let texture_view = self.atlas.get_texture_view(texture_id);
+        self.pipelines.bg_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
             &texture_view,
@@ -868,6 +904,13 @@ impl DirectXRenderPipelines {
             512,
             create_blend_state(device)?,
         )?;
+        let bg_sprites = PipelineState::new(
+            device,
+            "background_sprite_pipeline",
+            ShaderModule::BackgroundSprite,
+            64,
+            create_blend_state(device)?,
+        )?;
         let subpixel_sprites = PipelineState::new(
             device,
             "subpixel_sprite_pipeline",
@@ -890,6 +933,7 @@ impl DirectXRenderPipelines {
             path_sprite_pipeline,
             underline_pipeline,
             mono_sprites,
+            bg_sprites,
             subpixel_sprites,
             poly_sprites,
         })
@@ -1602,6 +1646,7 @@ pub(crate) mod shader_resources {
         PathRasterization,
         PathSprite,
         MonochromeSprite,
+        BackgroundSprite,
         SubpixelSprite,
         PolychromeSprite,
         EmojiRasterization,
@@ -1669,6 +1714,10 @@ pub(crate) mod shader_resources {
                 ShaderModule::MonochromeSprite => match target {
                     ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => MONOCHROME_SPRITE_FRAGMENT_BYTES,
+                },
+                ShaderModule::BackgroundSprite => match target {
+                    ShaderTarget::Vertex => BACKGROUND_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => BACKGROUND_SPRITE_FRAGMENT_BYTES,
                 },
                 ShaderModule::SubpixelSprite => match target {
                     ShaderTarget::Vertex => SUBPIXEL_SPRITE_VERTEX_BYTES,
@@ -1766,6 +1815,7 @@ pub(crate) mod shader_resources {
                 ShaderModule::PathRasterization => "path_rasterization",
                 ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
+                ShaderModule::BackgroundSprite => "background_sprite",
                 ShaderModule::SubpixelSprite => "subpixel_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
                 ShaderModule::EmojiRasterization => "emoji_rasterization",

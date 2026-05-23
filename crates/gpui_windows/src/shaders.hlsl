@@ -1172,6 +1172,81 @@ SubpixelSpriteFragmentOutput subpixel_sprite_fragment(MonochromeSpriteFragmentIn
 
 /*
 **
+**              Background sprites
+**
+*/
+
+struct BackgroundSprite {
+    uint order;
+    uint pad;
+    Bounds bounds;
+    Bounds background_bounds;
+    Bounds content_mask;
+    Background background;
+    AtlasTile tile;
+    TransformationMatrix transformation;
+};
+
+struct BackgroundSpriteVertexOutput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    nointerpolation uint sprite_id: TEXCOORD0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+struct BackgroundSpriteFragmentInput {
+    float4 position: SV_Position;
+    float2 tile_position: POSITION;
+    nointerpolation uint sprite_id: TEXCOORD0;
+    nointerpolation float4 background_solid: COLOR1;
+    nointerpolation float4 background_color0: COLOR2;
+    nointerpolation float4 background_color1: COLOR3;
+    float4 clip_distance: SV_ClipDistance;
+};
+
+StructuredBuffer<BackgroundSprite> bg_sprites: register(t1);
+
+BackgroundSpriteVertexOutput background_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    BackgroundSprite sprite = bg_sprites[sprite_id];
+    float4 device_position =
+        to_device_position_transformed(unit_vertex, sprite.bounds, sprite.transformation);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, sprite.bounds, sprite.content_mask, sprite.transformation);
+    float2 tile_position = to_tile_position(unit_vertex, sprite.tile);
+
+    GradientColor gradient = prepare_gradient_color(
+        sprite.background.tag,
+        sprite.background.color_space,
+        sprite.background.solid,
+        sprite.background.colors
+    );
+
+    BackgroundSpriteVertexOutput output;
+    output.position = device_position;
+    output.tile_position = tile_position;
+    output.sprite_id = sprite_id;
+    output.background_solid = gradient.solid;
+    output.background_color0 = gradient.color0;
+    output.background_color1 = gradient.color1;
+    output.clip_distance = clip_distance;
+    return output;
+}
+
+float4 background_sprite_fragment(BackgroundSpriteFragmentInput input): SV_Target {
+    BackgroundSprite sprite = bg_sprites[input.sprite_id];
+    float4 color = gradient_color(sprite.background, input.position.xy, sprite.background_bounds,
+        input.background_solid, input.background_color0, input.background_color1);
+
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    return float4(color.rgb, color.a * alpha_corrected);
+}
+
+/*
+**
 **              Polychrome sprites
 **
 */
