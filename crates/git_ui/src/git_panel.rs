@@ -2806,6 +2806,7 @@ impl GitPanel {
                     temperature,
                     thinking_allowed: false,
                     thinking_effort: None,
+                    service_tier: None,
                     speed: None,
                 };
 

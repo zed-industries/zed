@@ -236,6 +236,7 @@ impl AgentSettingsContent {
             model,
             enable_thinking: false,
             effort: None,
+            service_tier: None,
             speed: None,
         });
     }
@@ -246,7 +247,7 @@ impl AgentSettingsContent {
 
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
         // Note: this is intentional to not compare using `PartialEq`here.
-        // Full equality would treat entries that differ just in thinking/effort/speed
+        // Full equality would treat entries that differ just in thinking/effort/speed/service_tier
         // as distinct and silently produce duplicates.
         if !self
             .favorite_models
@@ -395,6 +396,7 @@ pub struct LanguageModelSelection {
     #[serde(default)]
     pub enable_thinking: bool,
     pub effort: Option<String>,
+    pub service_tier: Option<String>,
     pub speed: Option<language_model_core::Speed>,
 }
 

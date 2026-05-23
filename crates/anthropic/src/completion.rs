@@ -562,6 +562,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            service_tier: None,
             speed: None,
         };
 
@@ -666,6 +667,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            service_tier: None,
             speed: None,
         };
 
@@ -736,6 +738,7 @@ mod tests {
             tool_choice: None,
             thinking_allowed: true,
             thinking_effort: None,
+            service_tier: None,
             speed: None,
         };
 
@@ -773,6 +776,7 @@ mod tests {
             tools: vec![],
             tool_choice: None,
             thinking_allowed: true,
+            service_tier: None,
             speed: None,
         };
         request.messages.push(LanguageModelRequestMessage {

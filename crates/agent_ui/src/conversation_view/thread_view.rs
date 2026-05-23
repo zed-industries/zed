@@ -597,6 +597,7 @@ pub struct ThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub service_tier_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
     /// Cloned from the parent `ConversationView` so the cache is shared and the
@@ -890,6 +891,7 @@ impl ThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            service_tier_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
             show_external_source_prompt_warning,
@@ -3647,7 +3649,8 @@ impl ThreadView {
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_fast_mode_control(cx))
-                                    .children(self.render_thinking_control(cx)),
+                                    .children(self.render_thinking_control(cx))
+                                    .children(self.render_service_tier_control(cx)),
                             )
                             .child(
                                 h_flex()
@@ -4319,6 +4322,186 @@ impl ThreadView {
                 y: px(-2.0),
             })
             .anchor(gpui::Anchor::BottomLeft)
+    }
+
+    fn service_tier_available(&self, cx: &Context<Self>) -> bool {
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .is_some_and(|model| model.supported_service_tiers().len() > 1)
+    }
+
+    fn render_service_tier_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.service_tier_available(cx) {
+            return None;
+        }
+
+        let thread = self.as_native_thread(cx)?;
+        let thread_ref = thread.read(cx);
+        let model = thread_ref.model()?;
+        let supported_tiers = model.supported_service_tiers();
+        let selected_tier = thread_ref.service_tier().cloned();
+        let weak_self = cx.weak_entity();
+
+        let selected = selected_tier
+            .as_ref()
+            .and_then(|tier| {
+                supported_tiers
+                    .iter()
+                    .find(|t| t.value.as_ref() == tier.as_str())
+            })
+            .cloned();
+
+        let default_tier = model.default_service_tier();
+
+        let label = selected
+            .clone()
+            .or(default_tier)
+            .map_or("Service Tier".into(), |tier| tier.name);
+
+        let (label_color, icon) = if self.service_tier_menu_handle.is_deployed() {
+            (Color::Accent, IconName::ChevronUp)
+        } else {
+            (Color::Muted, IconName::ChevronDown)
+        };
+
+        let focus_handle = self.message_editor.focus_handle(cx);
+        let show_cycle_row = supported_tiers.len() > 1;
+
+        let tooltip = Tooltip::element({
+            move |_, cx| {
+                let mut content = v_flex().gap_1().child(
+                    h_flex()
+                        .gap_2()
+                        .justify_between()
+                        .child(Label::new("Change Service Tier"))
+                        .child(KeyBinding::for_action_in(
+                            &ToggleServiceTierMenu,
+                            &focus_handle,
+                            cx,
+                        )),
+                );
+
+                if show_cycle_row {
+                    content = content.child(
+                        h_flex()
+                            .pt_1()
+                            .gap_2()
+                            .justify_between()
+                            .border_t_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Label::new("Cycle Service Tier"))
+                            .child(KeyBinding::for_action_in(
+                                &CycleServiceTier,
+                                &focus_handle,
+                                cx,
+                            )),
+                    );
+                }
+
+                content.into_any_element()
+            }
+        });
+
+        Some(
+            PopoverMenu::new("service-tier-selector")
+                .trigger_with_tooltip(
+                    ButtonLike::new_rounded_right("service-tier-selector-trigger")
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted)),
+                    tooltip,
+                )
+                .menu(move |window, cx| {
+                    let supported_tiers = supported_tiers.clone();
+                    let selected = selected.clone();
+                    let weak_self = weak_self.clone();
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                        menu = menu.header("Change Service Tier");
+
+                        for tier in &supported_tiers {
+                            let is_selected =
+                                selected.as_ref().is_some_and(|s| s.value == tier.value);
+                            let entry = ContextMenuEntry::new(tier.name.clone())
+                                .toggleable(IconPosition::End, is_selected);
+
+                            let tier_value = tier.value.clone();
+                            menu.push_item(entry.handler({
+                                let weak_self = weak_self.clone();
+                                let tier_value = tier_value.clone();
+                                move |_window, cx| {
+                                    let tier_value = tier_value.clone();
+                                    weak_self
+                                        .update(cx, |this, cx| {
+                                            if let Some(thread) = this.as_native_thread(cx) {
+                                                thread.update(cx, |thread, cx| {
+                                                    thread.set_service_tier(
+                                                        Some(tier_value.to_string()),
+                                                        cx,
+                                                    );
+
+                                                    let favorite_key =
+                                                        thread.model().map(|model| {
+                                                            (
+                                                                model.provider_id().0.to_string(),
+                                                                model.id().0.to_string(),
+                                                            )
+                                                        });
+                                                    let fs = thread.project().read(cx).fs().clone();
+                                                    update_settings_file(
+                                                        fs,
+                                                        cx,
+                                                        move |settings, _| {
+                                                            if let Some(agent) =
+                                                                settings.agent.as_mut()
+                                                            {
+                                                                if let Some(default_model) =
+                                                                    agent.default_model.as_mut()
+                                                                {
+                                                                    default_model.service_tier =
+                                                                        Some(
+                                                                            tier_value.to_string(),
+                                                                        );
+                                                                }
+                                                                if let Some((
+                                                                    provider_id,
+                                                                    model_id,
+                                                                )) = &favorite_key
+                                                                {
+                                                                    agent.update_favorite_model(
+                                                                        provider_id,
+                                                                        model_id,
+                                                                        |favorite| {
+                                                                            favorite.service_tier =
+                                                                                Some(
+                                                                                    tier_value
+                                                                                        .to_string(
+                                                                                        ),
+                                                                                )
+                                                                        },
+                                                                    );
+                                                                }
+                                                            }
+                                                        },
+                                                    );
+                                                });
+                                            }
+                                        })
+                                        .ok();
+                                }
+                            }));
+                        }
+
+                        menu
+                    }))
+                })
+                .with_handle(self.service_tier_menu_handle.clone())
+                .offset(gpui::Point {
+                    x: px(0.0),
+                    y: px(-2.0),
+                })
+                .anchor(gpui::Anchor::BottomLeft)
+                .into_any_element(),
+        )
     }
 
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -9457,6 +9640,66 @@ impl ThreadView {
             menu_handle.toggle(window, cx);
         });
     }
+
+    fn cycle_service_tier(&mut self, cx: &mut Context<Self>) {
+        let Some(thread) = self.as_native_thread(cx) else {
+            return;
+        };
+
+        let (tiers, current_tier) = {
+            let thread_ref = thread.read(cx);
+            let Some(model) = thread_ref.model() else {
+                return;
+            };
+            let tiers = model.supported_service_tiers();
+            if tiers.is_empty() {
+                return;
+            }
+            let current_tier = thread_ref.service_tier().cloned();
+            (tiers, current_tier)
+        };
+
+        let current_index =
+            current_tier.and_then(|current| tiers.iter().position(|tier| tier.value == current));
+        let next_index = match current_index {
+            Some(index) => (index + 1) % tiers.len(),
+            None => 0,
+        };
+        let next_tier = tiers[next_index].value.to_string();
+
+        thread.update(cx, |thread, cx| {
+            thread.set_service_tier(Some(next_tier.clone()), cx);
+
+            let favorite_key = thread
+                .model()
+                .map(|model| (model.provider_id().0.to_string(), model.id().0.to_string()));
+            let fs = thread.project().read(cx).fs().clone();
+            update_settings_file(fs, cx, move |settings, _| {
+                if let Some(agent) = settings.agent.as_mut() {
+                    if let Some(default_model) = agent.default_model.as_mut() {
+                        default_model.service_tier = Some(next_tier.clone());
+                    }
+                    if let Some((provider_id, model_id)) = &favorite_key {
+                        agent.update_favorite_model(provider_id, model_id, |favorite| {
+                            favorite.service_tier = Some(next_tier)
+                        });
+                    }
+                }
+            });
+        });
+    }
+
+    fn toggle_service_tier_menu(
+        &mut self,
+        _action: &ToggleServiceTierMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let menu_handle = self.service_tier_menu_handle.clone();
+        window.defer(cx, move |window, cx| {
+            menu_handle.toggle(window, cx);
+        });
+    }
 }
 
 impl Render for ThreadView {
@@ -9541,6 +9784,20 @@ impl Render for ThreadView {
                         return;
                     }
                     this.toggle_thinking_effort_menu(action, window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &CycleServiceTier, _window, cx| {
+                if this.thread.read(cx).status() != ThreadStatus::Idle {
+                    return;
+                }
+                this.cycle_service_tier(cx);
+            }))
+            .on_action(
+                cx.listener(|this, action: &ToggleServiceTierMenu, window, cx| {
+                    if this.thread.read(cx).status() != ThreadStatus::Idle {
+                        return;
+                    }
+                    this.toggle_service_tier_menu(action, window, cx);
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {

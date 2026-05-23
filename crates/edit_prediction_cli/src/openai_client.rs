@@ -49,6 +49,7 @@ impl PlainOpenAiClient {
             tools: Vec::new(),
             prompt_cache_key: None,
             reasoning_effort: None,
+            service_tier: None,
         };
 
         let response = non_streaming_completion(
@@ -509,6 +510,7 @@ impl BatchingOpenAiClient {
                     tools: Vec::new(),
                     prompt_cache_key: None,
                     reasoning_effort: None,
+                    service_tier: None,
                 };
 
                 let custom_id = format!("req_hash_{}", hash);

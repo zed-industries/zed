@@ -5749,6 +5749,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             model: "subagent-model".to_string(),
             enable_thinking: true,
             effort: Some("high".to_string()),
+            service_tier: None,
             speed: None,
         });
         agent_settings::AgentSettings::override_global(settings, cx);

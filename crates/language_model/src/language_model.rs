@@ -92,6 +92,18 @@ pub trait LanguageModel: Send + Sync {
             .find(|effort_level| effort_level.is_default)
     }
 
+    /// Returns the list of supported service tiers for this model.
+    fn supported_service_tiers(&self) -> Vec<ServiceTierInfo> {
+        Vec::new()
+    }
+
+    /// Returns the default service tier for this model.
+    fn default_service_tier(&self) -> Option<ServiceTierInfo> {
+        self.supported_service_tiers()
+            .into_iter()
+            .find(|tier| tier.is_default)
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 

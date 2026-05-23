@@ -987,6 +987,7 @@ pub struct Thread {
     summarization_model: Option<Arc<dyn LanguageModel>>,
     thinking_enabled: bool,
     thinking_effort: Option<String>,
+    service_tier: Option<String>,
     speed: Option<Speed>,
     prompt_capabilities_tx: watch::Sender<acp::PromptCapabilities>,
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
@@ -1084,6 +1085,10 @@ impl Thread {
             .default_model
             .as_ref()
             .and_then(|model| model.speed);
+        let service_tier = settings
+            .default_model
+            .as_ref()
+            .and_then(|model| model.service_tier.clone());
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
         Self {
@@ -1118,6 +1123,7 @@ impl Thread {
             thinking_enabled: enable_thinking,
             speed,
             thinking_effort,
+            service_tier,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
             project,
@@ -1138,6 +1144,7 @@ impl Thread {
     fn inherit_parent_settings(&mut self, parent_thread: &Entity<Thread>, cx: &mut Context<Self>) {
         let parent = parent_thread.read(cx);
         self.speed = parent.speed;
+        self.service_tier = parent.service_tier.clone();
         self.thinking_enabled = parent.thinking_enabled;
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
@@ -1162,6 +1169,20 @@ impl Thread {
         self.thinking_enabled = selection.enable_thinking && model.supports_thinking();
         self.thinking_effort = selection.effort.clone();
         self.speed = selection.speed.filter(|_| model.supports_fast_mode());
+        self.service_tier = selection
+            .service_tier
+            .clone()
+            .filter(|value| {
+                model
+                    .supported_service_tiers()
+                    .iter()
+                    .any(|tier| tier.value.as_ref() == value.as_str())
+            })
+            .or_else(|| {
+                model
+                    .default_service_tier()
+                    .map(|tier| tier.value.to_string())
+            });
         self.prompt_capabilities_tx
             .send(Self::prompt_capabilities(self.model.as_deref()))
             .log_err();
@@ -1431,6 +1452,7 @@ impl Thread {
             summarization_model: None,
             thinking_enabled: db_thread.thinking_enabled,
             thinking_effort: db_thread.thinking_effort,
+            service_tier: db_thread.service_tier,
             speed: db_thread.speed,
             project,
             action_log,
@@ -1469,6 +1491,7 @@ impl Thread {
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            service_tier: self.service_tier.clone(),
             draft_prompt: self.draft_prompt.clone(),
             ui_scroll_position: self.ui_scroll_position.map(|lo| {
                 crate::db::SerializedScrollPosition {
@@ -1631,6 +1654,25 @@ impl Thread {
                 .update(cx, |thread, cx| {
                     if thread.inherits_parent_model_settings {
                         thread.set_speed(speed, cx);
+                    }
+                })
+                .ok();
+        }
+        cx.notify();
+    }
+
+    pub fn service_tier(&self) -> Option<&String> {
+        self.service_tier.as_ref()
+    }
+
+    pub fn set_service_tier(&mut self, service_tier: Option<String>, cx: &mut Context<Self>) {
+        self.service_tier = service_tier.clone();
+
+        for subagent in &self.running_subagents {
+            subagent
+                .update(cx, |thread, cx| {
+                    if thread.inherits_parent_model_settings {
+                        thread.set_service_tier(service_tier.clone(), cx)
                     }
                 })
                 .ok();
@@ -2998,6 +3040,7 @@ impl Thread {
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: self.thinking_enabled,
             thinking_effort: self.thinking_effort.clone(),
+            service_tier: self.service_tier().cloned(),
             speed: self.speed(),
         };
 

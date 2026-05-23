@@ -367,6 +367,8 @@
       "cmd-alt-'": "agent::ToggleThinkingEffortMenu",
       "ctrl-'": "agent::CycleThinkingEffort",
       "cmd-alt-.": "agent::ToggleFastMode",
+      "cmd-alt-,": "agent::ToggleServiceTierMenu",
+      "cmd-,": "agent::CycleServiceTier",
     },
   },
   {

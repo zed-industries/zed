@@ -369,6 +369,7 @@ pub struct LanguageModelRequest {
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
     pub thinking_effort: Option<String>,
+    pub service_tier: Option<String>,
     pub speed: Option<Speed>,
 }
 

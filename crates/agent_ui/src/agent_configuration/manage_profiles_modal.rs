@@ -272,6 +272,7 @@ impl ManageProfilesModal {
                                         effort: model
                                             .default_effort_level()
                                             .map(|effort| effort.value.to_string()),
+                                        service_tier: None,
                                         speed: None,
                                     });
                                 }

@@ -981,6 +981,7 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
+            service_tier: None,
             speed: Default::default(),
         };
 
@@ -1017,6 +1018,7 @@ mod tests {
             stop: vec![],
             thinking_allowed: true,
             thinking_effort: None,
+            service_tier: None,
             speed: None,
         };
 

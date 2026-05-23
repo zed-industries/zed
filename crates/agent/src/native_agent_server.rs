@@ -112,6 +112,7 @@ fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSele
             model: model.to_owned(),
             enable_thinking: false,
             effort: None,
+            service_tier: None,
             speed: None,
         };
     };

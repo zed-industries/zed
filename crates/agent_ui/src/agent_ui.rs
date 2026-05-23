@@ -263,6 +263,10 @@ actions!(
         CycleThinkingEffort,
         /// Toggles the thinking effort selector menu open or closed.
         ToggleThinkingEffortMenu,
+        /// Cycles through available service tiers for the current model.
+        CycleServiceTier,
+        /// Toggles the service tier selector menu open or closed.
+        ToggleServiceTierMenu,
         /// Toggles fast mode for models that support it.
         ToggleFastMode,
         /// Scroll the output by one page up.

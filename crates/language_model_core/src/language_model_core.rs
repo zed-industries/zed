@@ -354,6 +354,13 @@ pub struct LanguageModelEffortLevel {
     pub is_default: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct ServiceTierInfo {
+    pub name: SharedString,
+    pub value: SharedString,
+    pub is_default: bool,
+}
+
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
 pub enum AuthenticateError {

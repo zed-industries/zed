@@ -1212,6 +1212,7 @@ fn into_copilot_responses(
         temperature,
         thinking_allowed,
         thinking_effort,
+        service_tier: _,
         speed: _,
     } = request;
 
