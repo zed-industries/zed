@@ -2,22 +2,26 @@
 //!
 //! Renders a conflicted file alongside the `ours` and `theirs` index stages
 //! (and optionally the common ancestor `base`) so the user can resolve the
-//! conflict with full side-by-side context.
+//! conflict with full side-by-side context. Side panes show per-stage diffs
+//! against the common ancestor when one is available.
 //!
-//! This module ships the skeleton: three (or four, with Base) read-only side
-//! panes around the working-tree buffer. Diff highlights between the stages
-//! and per-conflict accept buttons are added in a later step.
+//! The Result pane keeps Zed's existing inline conflict resolution buttons
+//! (registered globally via `git_ui::init`'s `observe_new(Editor)` hook) and
+//! gains the "Use Base" button alongside the existing Use Ours / Use Theirs /
+//! Use Both buttons whenever the conflict has a base section.
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
+use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer};
 use git::repository::UnmergedStages;
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, Subscription, Task, WeakEntity, Window,
+    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Buffer, Capability};
 use project::{ConflictRegion, ConflictSetUpdate, Project, ProjectItem as _, ProjectPath};
 use std::any::{Any, TypeId};
+use std::sync::Arc;
 use ui::prelude::*;
 use ui::{IconButtonShape, Tooltip};
 use util::paths::PathExt as _;
@@ -130,6 +134,16 @@ impl MergeEditor {
                 .update(cx, |repo, cx| repo.load_unmerged_stages(repo_path.clone(), cx))
                 .await?;
 
+            // No stages at all = file isn't actually unmerged in the index, or
+            // every stage is binary/non-UTF8. A 3-pane view with three empty
+            // editors would be misleading; better to surface the issue.
+            if stages == UnmergedStages::default() {
+                return Err(anyhow!(
+                    "Cannot open 3-way merge editor: no text stages in git index \
+                     (file may be binary, a submodule, or not actually conflicted)"
+                ));
+            }
+
             // If the working tree was written with 2-way markers (user's
             // `merge.conflictStyle` is `merge`), fetch the diff3-style merge
             // output now; we'll apply it to the buffer AFTER the result
@@ -169,13 +183,28 @@ impl MergeEditor {
                 )
             });
 
+            // Build the transient stage buffers and base↔ours / base↔theirs
+            // diffs up front (off the workspace update), so the editor
+            // construction itself stays synchronous.
+            let StageBuffers {
+                base_buffer,
+                ours_buffer,
+                theirs_buffer,
+                ours_diff,
+                theirs_diff,
+            } = build_stage_buffers(&result_buffer, &stages, cx).await?;
+
             workspace.update_in(cx, |workspace, window, cx| {
                 let project = workspace.project().clone();
                 let result_buffer_for_rewrite = result_buffer.clone();
                 let merge_editor = cx.new(|cx| {
                     MergeEditor::new(
                         result_buffer,
-                        stages,
+                        base_buffer,
+                        ours_buffer,
+                        theirs_buffer,
+                        ours_diff,
+                        theirs_diff,
                         ours_branch_label,
                         theirs_branch_label,
                         project,
@@ -206,9 +235,14 @@ impl MergeEditor {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         result_buffer: Entity<Buffer>,
-        stages: UnmergedStages,
+        base_buffer: Option<Entity<Buffer>>,
+        ours_buffer: Entity<Buffer>,
+        theirs_buffer: Entity<Buffer>,
+        ours_diff: Option<Entity<BufferDiff>>,
+        theirs_diff: Option<Entity<BufferDiff>>,
         ours_branch_label: SharedString,
         theirs_branch_label: SharedString,
         project: Entity<Project>,
@@ -238,23 +272,11 @@ impl MergeEditor {
             editor
         });
 
-        let ours_editor = build_stage_pane(
-            stages.ours.unwrap_or_default(),
-            result_buffer.clone(),
-            project.clone(),
-            window,
-            cx,
-        );
-        let theirs_editor = build_stage_pane(
-            stages.theirs.unwrap_or_default(),
-            result_buffer.clone(),
-            project.clone(),
-            window,
-            cx,
-        );
-        let base_editor = stages.base.map(|base_text| {
-            build_stage_pane(base_text, result_buffer.clone(), project.clone(), window, cx)
-        });
+        let ours_editor = build_stage_editor(ours_buffer, ours_diff, project.clone(), window, cx);
+        let theirs_editor =
+            build_stage_editor(theirs_buffer, theirs_diff, project.clone(), window, cx);
+        let base_editor =
+            base_buffer.map(|buffer| build_stage_editor(buffer, None, project.clone(), window, cx));
 
         let mut subscriptions = Vec::new();
         // Re-emit the inner editor's events as our own so the workspace's Item
@@ -414,6 +436,19 @@ impl MergeEditor {
             );
             *stored_blocks = new_blocks;
         }
+    }
+
+    /// Returns the underlying single buffer behind a side-pane editor.
+    /// Side-pane editors wrap their stage buffer in a `MultiBuffer::singleton`
+    /// so `as_singleton()` always succeeds.
+    #[cfg(test)]
+    fn stage_buffer(editor: &Entity<Editor>, cx: &App) -> Entity<Buffer> {
+        editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("side-pane multibuffer is a singleton")
     }
 
     fn toggle_base(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -631,34 +666,118 @@ fn build_side_pane_button_blocks(
     editor.update(cx, |editor, cx| editor.insert_blocks(block_properties, None, cx))
 }
 
-fn build_stage_pane(
-    content: String,
-    sibling: Entity<Buffer>,
+/// Builds an editor for one of the read-only side panes. If a `BufferDiff` is
+/// provided (i.e. we have a common ancestor to diff against), it's attached so
+/// the pane shows red/green hunks for what that stage changed vs. base.
+fn build_stage_editor(
+    stage_buffer: Entity<Buffer>,
+    diff: Option<Entity<BufferDiff>>,
     project: Entity<Project>,
     window: &mut Window,
     cx: &mut Context<MergeEditor>,
 ) -> Entity<Editor> {
-    // Transient in-memory buffer (no `ProjectPath`), so language servers don't
-    // get a phantom `didOpen` for a file that isn't on disk.
-    let language = sibling.read(cx).language().cloned();
-    let language_registry = sibling.read(cx).language_registry();
-
-    let stage_buffer = cx.new(|cx| {
-        let mut buffer = Buffer::local(content, cx);
-        buffer.set_language(language, cx);
-        if let Some(registry) = language_registry {
-            buffer.set_language_registry(registry);
-        }
-        buffer.set_capability(Capability::ReadOnly, cx);
-        buffer
-    });
-
     cx.new(|cx| {
-        let multibuffer = cx.new(|cx| MultiBuffer::singleton(stage_buffer, cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::singleton(stage_buffer, cx);
+            if let Some(diff) = diff {
+                multibuffer.add_diff(diff, cx);
+            }
+            multibuffer
+        });
         let mut editor = Editor::for_multibuffer(multibuffer, Some(project), window, cx);
         editor.set_read_only(true);
+        // Show all hunks expanded since the user is here to review every change.
+        editor.set_expand_all_diff_hunks(cx);
         editor
     })
+}
+
+struct StageBuffers {
+    base_buffer: Option<Entity<Buffer>>,
+    ours_buffer: Entity<Buffer>,
+    theirs_buffer: Entity<Buffer>,
+    /// `BufferDiff` of Ours against Base, attached to the Ours pane. `None`
+    /// when there's no base section to compare against.
+    ours_diff: Option<Entity<BufferDiff>>,
+    /// `BufferDiff` of Theirs against Base, attached to the Theirs pane.
+    theirs_diff: Option<Entity<BufferDiff>>,
+}
+
+async fn build_stage_buffers(
+    result_buffer: &Entity<Buffer>,
+    stages: &UnmergedStages,
+    cx: &mut AsyncApp,
+) -> Result<StageBuffers> {
+    let (language, language_registry) = result_buffer.read_with(cx, |buffer, _| {
+        (buffer.language().cloned(), buffer.language_registry())
+    });
+
+    // Transient in-memory buffers (no `ProjectPath`) so language servers don't
+    // see phantom `didOpen`s for files that don't exist on disk.
+    let make_buffer = |text: String, cx: &mut AsyncApp| -> Entity<Buffer> {
+        let language = language.clone();
+        let language_registry = language_registry.clone();
+        cx.new(|cx| {
+            let mut buffer = Buffer::local(text, cx);
+            buffer.set_language(language, cx);
+            if let Some(registry) = language_registry {
+                buffer.set_language_registry(registry);
+            }
+            buffer.set_capability(Capability::ReadOnly, cx);
+            buffer
+        })
+    };
+
+    let base_buffer = stages.base.clone().map(|text| make_buffer(text, cx));
+    let ours_buffer = make_buffer(stages.ours.clone().unwrap_or_default(), cx);
+    let theirs_buffer = make_buffer(stages.theirs.clone().unwrap_or_default(), cx);
+
+    let base_text: Option<Arc<str>> = stages.base.as_deref().map(Arc::from);
+
+    let ours_diff = match (&base_text, stages.ours.as_ref()) {
+        (Some(base), Some(_)) => Some(build_diff(&ours_buffer, base.clone(), cx).await?),
+        _ => None,
+    };
+    let theirs_diff = match (&base_text, stages.theirs.as_ref()) {
+        (Some(base), Some(_)) => Some(build_diff(&theirs_buffer, base.clone(), cx).await?),
+        _ => None,
+    };
+
+    Ok(StageBuffers {
+        base_buffer,
+        ours_buffer,
+        theirs_buffer,
+        ours_diff,
+        theirs_diff,
+    })
+}
+
+/// Builds a `BufferDiff` that compares `buffer`'s text against `base_text`.
+/// Highlights in the resulting diff are "what this side changed from base".
+async fn build_diff(
+    buffer: &Entity<Buffer>,
+    base_text: Arc<str>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<BufferDiff>> {
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let diff = cx.new(|cx| BufferDiff::new(&snapshot.text, cx));
+
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
+                snapshot.text.clone(),
+                Some(base_text),
+                Some(true),
+                snapshot.language().cloned(),
+                cx,
+            )
+        })
+        .await;
+
+    diff.update(cx, |diff, cx| diff.set_snapshot(update, &snapshot.text, cx))
+        .await;
+
+    Ok(diff)
 }
 
 impl EventEmitter<EditorEvent> for MergeEditor {}
@@ -947,22 +1066,16 @@ mod tests {
 
         merge_editor.read_with(cx, |merge_editor, cx| {
             assert_eq!(
-                merge_editor
-                    .ours_editor
+                MergeEditor::stage_buffer(&merge_editor.ours_editor, cx)
                     .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
+                    .snapshot()
                     .text(),
                 "our line\n",
             );
             assert_eq!(
-                merge_editor
-                    .theirs_editor
+                MergeEditor::stage_buffer(&merge_editor.theirs_editor, cx)
                     .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
+                    .snapshot()
                     .text(),
                 "their line\n",
             );
@@ -971,7 +1084,10 @@ mod tests {
                 .as_ref()
                 .expect("base editor should be created when stage 1 is present");
             assert_eq!(
-                base_editor.read(cx).buffer().read(cx).snapshot(cx).text(),
+                MergeEditor::stage_buffer(base_editor, cx)
+                    .read(cx)
+                    .snapshot()
+                    .text(),
                 "base line\n",
             );
             assert!(!merge_editor.base_visible, "Base hidden by default");
@@ -1003,5 +1119,62 @@ mod tests {
                 "focused_inner_editor should track on_focus_in subscriptions"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_refuses_to_open_when_no_stages(
+        _: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "binary.bin": "ignored",
+            }),
+        )
+        .await;
+
+        // Mark as unmerged but provide no stage contents — emulates a binary
+        // conflict where `load_unmerged_stages` returns all-`None`.
+        fs.set_unmerged_paths_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                repo_path("binary.bin"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.executor().run_until_parked();
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let project_path = ProjectPath {
+            worktree_id,
+            path: util::rel_path::rel_path("binary.bin").into(),
+        };
+
+        let err = workspace
+            .update_in(cx, |workspace, window, cx| {
+                MergeEditor::open(project_path, workspace.weak_handle(), window, cx)
+            })
+            .await
+            .expect_err("opening a stage-less unmerged path should error");
+        assert!(
+            err.to_string().contains("no text stages"),
+            "unexpected error: {err}"
+        );
     }
 }
