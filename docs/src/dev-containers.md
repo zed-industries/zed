@@ -42,8 +42,10 @@ Once connected, Zed operates inside the container environment for tasks, termina
 Files are linked from your workspace into the container according to the dev container specification.
 
 ## Extensions
+
 You can specify extensions in the .devcontainer/devcontainer.json under the "customizations" field like so:
-```json
+
+````json
 {
   ...
   "customizations": {
@@ -71,3 +73,4 @@ Note that extensions load for the Zed session, so these extensions will exist on
 
 - [Remote Development](./remote-development.md) for connecting to remote servers over SSH.
 - [Tasks](./tasks.md) for running commands in the integrated terminal.
+````
