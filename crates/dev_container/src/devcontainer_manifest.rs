@@ -2728,29 +2728,67 @@ fn dockerfile_inject_alias(
 }
 
 fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
-    dockerfile_contents
+    // Build a map of lowercase_alias -> base_image for all named FROM stages so we can
+    // resolve chains like `FROM base AS development` where "base" is itself a stage alias.
+    let alias_map: HashMap<String, String> = dockerfile_contents
+        .lines()
+        .filter(|line| line.starts_with("FROM"))
+        .filter_map(|from_line| {
+            let parts: Vec<&str> = from_line.split_whitespace().collect();
+            if parts.len() >= 4
+                && parts
+                    .get(parts.len() - 2)
+                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
+            {
+                let alias = parts.last()?.to_lowercase();
+                let base_image = parts.get(1)?.to_string();
+                Some((alias, base_image))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let start_image = dockerfile_contents
         .lines()
         .filter(|line| line.starts_with("FROM"))
         .rfind(|from_line| match &target {
             Some(target) => {
-                let parts = from_line.split(' ').collect::<Vec<&str>>();
-                if parts.len() >= 3
-                    && parts.get(parts.len() - 2).unwrap_or(&"").to_lowercase() == "as"
-                {
-                    parts.last().unwrap_or(&"").to_lowercase() == target.to_lowercase()
-                } else {
-                    false
-                }
+                let parts = from_line.split_whitespace().collect::<Vec<&str>>();
+                parts.len() >= 4
+                    && parts
+                        .get(parts.len() - 2)
+                        .map_or(false, |p| p.eq_ignore_ascii_case("as"))
+                    && parts
+                        .last()
+                        .map_or(false, |p| p.eq_ignore_ascii_case(target))
             }
             None => true,
         })
         .and_then(|from_line| {
             from_line
-                .split(' ')
+                .split_whitespace()
                 .collect::<Vec<&str>>()
                 .get(1)
                 .map(|s| s.to_string())
-        })
+        })?;
+
+    // Follow the alias chain to a concrete image. The step bound guards against cycles
+    // in malformed Dockerfiles — a valid acyclic chain visits each alias at most once.
+    let max_steps = alias_map.len() + 1;
+    let mut current = start_image;
+    for _ in 0..max_steps {
+        match alias_map.get(&current.to_lowercase()) {
+            Some(next_image) => current = next_image.clone(),
+            None => return Some(current),
+        }
+    }
+
+    log::warn!(
+        "Dockerfile alias chain appears cyclic; could not resolve base image for target {:?}",
+        target
+    );
+    None
 }
 
 fn get_remote_user_from_config(
@@ -5473,6 +5511,61 @@ FROM ${IMAGE} AS production
         .unwrap();
 
         assert_eq!(base_image, "docker.io/stuff/mybuild:latest".to_string());
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_resolves_one_hop_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base AS development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_resolves_deep_alias_chain() {
+        let dockerfile =
+            "FROM ubuntu:24.04 AS base\nFROM base AS mid\nFROM mid AS development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_no_target_resolves_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &None),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_detects_cycle() {
+        let dockerfile = "FROM a AS b\nFROM b AS a".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("a".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_case_insensitive_alias() {
+        let dockerfile = "FROM ubuntu:24.04 AS Base\nFROM Base AS Development".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_scratch_base() {
+        let dockerfile = "FROM scratch AS builder\nFROM builder AS final".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("final".to_string())),
+            Some("scratch".to_string())
+        );
     }
 
     #[gpui::test]
