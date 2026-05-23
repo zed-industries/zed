@@ -1,9 +1,9 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, BackgroundSprite, Bounds, DevicePixels, GpuSpecs, MonochromeSprite,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -88,6 +88,7 @@ struct WgpuPipelines {
     paths: wgpu::RenderPipeline,
     underlines: wgpu::RenderPipeline,
     mono_sprites: wgpu::RenderPipeline,
+    bg_sprites: wgpu::RenderPipeline,
     subpixel_sprites: Option<wgpu::RenderPipeline>,
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
@@ -820,6 +821,18 @@ impl WgpuRenderer {
             &shader_module,
         );
 
+        let bg_sprites = create_pipeline(
+            "bg_sprites",
+            "vs_bg_sprite",
+            "fs_bg_sprite",
+            &layouts.globals,
+            &layouts.instances_with_texture,
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(color_target.clone())],
+            1,
+            &shader_module,
+        );
+
         let subpixel_sprites = if let Some(subpixel_module) = &subpixel_shader_module {
             let subpixel_blend = wgpu::BlendState {
                 color: wgpu::BlendComponent {
@@ -884,6 +897,7 @@ impl WgpuRenderer {
             paths,
             underlines,
             mono_sprites,
+            bg_sprites,
             subpixel_sprites,
             poly_sprites,
             surfaces,
@@ -1300,10 +1314,13 @@ impl WgpuRenderer {
                                 &mut instance_offset,
                                 &mut pass,
                             ),
-                        PrimitiveBatch::BackgroundSprites { .. } => {
-                            // `background-clip: text` rendering is currently macOS-only.
-                            true
-                        }
+                        PrimitiveBatch::BackgroundSprites { texture_id, range } => self
+                            .draw_background_sprites(
+                                &scene.background_sprites[range],
+                                texture_id,
+                                &mut instance_offset,
+                                &mut pass,
+                            ),
                         PrimitiveBatch::Surfaces(_surfaces) => {
                             // Surfaces are macOS-only for video playback
                             // Not implemented for Linux/wgpu
@@ -1401,6 +1418,25 @@ impl WgpuRenderer {
             sprites.len() as u32,
             &tex_info.view,
             &self.resources().pipelines.mono_sprites,
+            instance_offset,
+            pass,
+        )
+    }
+
+    fn draw_background_sprites(
+        &self,
+        sprites: &[BackgroundSprite],
+        texture_id: AtlasTextureId,
+        instance_offset: &mut u64,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> bool {
+        let tex_info = self.atlas.get_texture_info(texture_id);
+        let data = unsafe { Self::instance_bytes(sprites) };
+        self.draw_instances_with_texture(
+            data,
+            sprites.len() as u32,
+            &tex_info.view,
+            &self.resources().pipelines.bg_sprites,
             instance_offset,
             pass,
         )
