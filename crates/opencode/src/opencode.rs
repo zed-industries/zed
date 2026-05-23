@@ -204,9 +204,7 @@ impl Model {
             | Self::DeepSeekV4Flash => &[OpenCodeSubscription::Go],
 
             // Free models
-            Self::Nemotron3SuperFree | Self::BigPickle => {
-                &[OpenCodeSubscription::Free]
-            }
+            Self::Nemotron3SuperFree | Self::BigPickle => &[OpenCodeSubscription::Free],
 
             // Custom models get their subscription from settings, not from here
             Self::Custom { .. } => &[],
