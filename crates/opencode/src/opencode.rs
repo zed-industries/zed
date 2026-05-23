@@ -123,8 +123,6 @@ pub enum Model {
     DeepSeekV4Flash,
     #[serde(rename = "minimax-m2.5")]
     MiniMaxM2_5,
-    #[serde(rename = "minimax-m2.5-free")]
-    MiniMaxM2_5Free,
     #[serde(rename = "glm-5")]
     Glm5,
     #[serde(rename = "glm-5.1")]
@@ -180,7 +178,7 @@ impl Model {
     }
 
     pub fn default_free_fast() -> Self {
-        Self::MiniMaxM2_5Free
+        Self::Nemotron3SuperFree
     }
 
     pub fn available_subscriptions(&self) -> &'static [OpenCodeSubscription] {
@@ -202,7 +200,7 @@ impl Model {
             | Self::DeepSeekV4Flash => &[OpenCodeSubscription::Go],
 
             // Free models
-            Self::MiniMaxM2_5Free | Self::Nemotron3SuperFree | Self::BigPickle => {
+            Self::Nemotron3SuperFree | Self::BigPickle => {
                 &[OpenCodeSubscription::Free]
             }
 
@@ -249,7 +247,6 @@ impl Model {
             Self::DeepSeekV4Pro => "deepseek-v4-pro",
             Self::DeepSeekV4Flash => "deepseek-v4-flash",
             Self::MiniMaxM2_5 => "minimax-m2.5",
-            Self::MiniMaxM2_5Free => "minimax-m2.5-free",
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
             Self::KimiK2_5 => "kimi-k2.5",
@@ -301,7 +298,6 @@ impl Model {
             Self::DeepSeekV4Pro => "DeepSeek V4 Pro",
             Self::DeepSeekV4Flash => "DeepSeek V4 Flash",
             Self::MiniMaxM2_5 => "MiniMax M2.5",
-            Self::MiniMaxM2_5Free => "MiniMax M2.5 Free",
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
             Self::KimiK2_5 => "Kimi K2.5",
@@ -361,8 +357,7 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash => ApiProtocol::Google,
 
-            Self::MiniMaxM2_5Free
-            | Self::Glm5
+            Self::Glm5
             | Self::Glm5_1
             | Self::KimiK2_5
             | Self::KimiK2_6
@@ -429,7 +424,7 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
-            Self::MiniMaxM2_5 | Self::MiniMaxM2_5Free => 204_800,
+            Self::MiniMaxM2_5 => 204_800,
             Self::Glm5 | Self::Glm5_1 => {
                 if subscription == OpenCodeSubscription::Go {
                     202_752
@@ -484,7 +479,6 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
-            Self::MiniMaxM2_5Free => Some(131_072),
             Self::MiniMaxM2_5 => {
                 if subscription == OpenCodeSubscription::Go {
                     Some(65_536)
@@ -561,7 +555,6 @@ impl Model {
 
             // OpenAI-compatible models without image support
             Self::MiniMaxM2_5
-            | Self::MiniMaxM2_5Free
             | Self::Glm5
             | Self::Glm5_1
             | Self::MiniMaxM2_7
