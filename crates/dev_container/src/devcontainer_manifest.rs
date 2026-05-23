@@ -370,6 +370,8 @@ impl DevContainerManifest {
         }
     }
 
+    /// Establishes a temp dir where listed features are downloaded. These are
+    /// combined with a generated Dockerfile to create the desired build resources.
     async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
@@ -569,7 +571,7 @@ impl DevContainerManifest {
             self.features.push(feature_manifest);
         }
 
-        // --- Phase 3: Generate extended Dockerfile from the inflated manifests ---
+        // Generate extended Dockerfile from the inflated manifests ---
 
         let is_compose = match dev_container.build_type() {
             DevContainerBuildType::DockerCompose => true,
@@ -628,6 +630,8 @@ impl DevContainerManifest {
         Ok(())
     }
 
+    /// Generate a first-layer dockerfile which packages the install instructions for features.
+    /// If update_remote_user_uuid is false (defaults to true), also generate the ENV directives.
     fn generate_dockerfile_extended(
         &self,
         container_user: &str,
@@ -1390,6 +1394,11 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
     ) -> Result<DockerInspect, DevContainerError> {
         Ok(image)
     }
+
+    /// Adds a dockerfile layer which performs the UID remapping
+    /// required by the updateRemoteUserUID field spec, see:
+    /// https://containers.dev/implementors/json_reference/#general-properties
+    /// Because this is the last layer built, it also generates the ENV directives.
     #[cfg(not(target_os = "windows"))]
     async fn update_remote_user_uid(
         &self,
