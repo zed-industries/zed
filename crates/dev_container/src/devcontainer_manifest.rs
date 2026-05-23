@@ -124,7 +124,7 @@ impl DevContainerManifest {
         format!("{:016x}", hasher.finish())
     }
 
-    /// The presense of and value of these labels identifies uniquely the devcontainer we want to connect to.
+    /// The presence of and value of these labels identifies uniquely the devcontainer we want to connect to.
     /// If a running container has these labels, we'll treat it as an existing container
     fn identifying_labels(&self) -> Vec<(&str, String)> {
         let labels = vec![
