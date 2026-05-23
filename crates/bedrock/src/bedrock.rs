@@ -10,6 +10,9 @@ pub use aws_sdk_bedrockruntime::types::{
     ToolSpecification as BedrockToolSpec,
 };
 use aws_sdk_bedrockruntime::types::{GuardrailStreamConfiguration, InferenceConfiguration};
+pub use aws_sdk_bedrockruntime::types::{
+    ServiceTier as BedrockServiceTier, ServiceTierType as BedrockServiceTierType,
+};
 pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
@@ -70,6 +73,25 @@ pub async fn stream_completion(
 
     if !additional_fields.is_empty() {
         response = response.additional_model_request_fields(Document::Object(additional_fields));
+    }
+
+    if let Some(ref service_tier) = request.service_tier {
+        let tier_type = match service_tier.as_str() {
+            "default" => Some(BedrockServiceTierType::Default),
+            "flex" => Some(BedrockServiceTierType::Flex),
+            "priority" => Some(BedrockServiceTierType::Priority),
+            "reserved" => Some(BedrockServiceTierType::Reserved),
+            _ => {
+                log::warn!("Unrecognized Bedrock service tier: {service_tier}");
+                None
+            }
+        };
+        if let Some(tier_type) = tier_type {
+            match BedrockServiceTier::builder().r#type(tier_type).build() {
+                Ok(tier) => response = response.service_tier(tier),
+                Err(error) => log::error!("Failed to build Bedrock service tier: {error}"),
+            }
+        }
     }
 
     if request.tools.as_ref().is_some_and(|t| !t.tools.is_empty()) {
@@ -217,6 +239,7 @@ pub struct Request {
     pub top_p: Option<f32>,
     pub guardrail_identifier: Option<String>,
     pub guardrail_version: Option<String>,
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

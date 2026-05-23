@@ -488,6 +488,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                             min_total_token: config.min_total_token,
                         }
                     }),
+                    service_tiers: model.service_tiers.clone(),
                 },
             );
         }
@@ -679,6 +680,10 @@ impl LanguageModel for BedrockModel {
         } else {
             Vec::new()
         }
+    }
+
+    fn supported_service_tiers(&self) -> Vec<language_model::ServiceTierInfo> {
+        self.model.supported_service_tiers()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -1146,6 +1151,7 @@ pub fn into_bedrock(
         top_p: None,
         guardrail_identifier,
         guardrail_version,
+        service_tier: request.service_tier,
     })
 }
 

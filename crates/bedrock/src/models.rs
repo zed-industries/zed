@@ -1,3 +1,4 @@
+use language_model_core::{ServiceTierInfo, SharedString};
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 
@@ -201,6 +202,7 @@ pub enum Model {
         max_output_tokens: Option<u64>,
         default_temperature: Option<f32>,
         cache_configuration: Option<BedrockModelCacheConfiguration>,
+        service_tiers: Option<Vec<String>>,
     },
 }
 
@@ -575,6 +577,122 @@ impl Model {
         }
     }
 
+    pub fn supported_service_tiers(&self) -> Vec<ServiceTierInfo> {
+        match self {
+            Self::Custom { service_tiers, .. } => service_tiers
+                .as_ref()
+                .map(|tiers| {
+                    tiers
+                        .iter()
+                        .filter_map(|tier| match tier.as_str() {
+                            "default" => Some(ServiceTierInfo {
+                                name: SharedString::new_static("Standard"),
+                                value: SharedString::new_static("default"),
+                                is_default: true,
+                            }),
+                            "flex" => Some(ServiceTierInfo {
+                                name: SharedString::new_static("Flex"),
+                                value: SharedString::new_static("flex"),
+                                is_default: false,
+                            }),
+                            "priority" => Some(ServiceTierInfo {
+                                name: SharedString::new_static("Priority"),
+                                value: SharedString::new_static("priority"),
+                                is_default: false,
+                            }),
+                            "reserved" => Some(ServiceTierInfo {
+                                name: SharedString::new_static("Reserved"),
+                                value: SharedString::new_static("reserved"),
+                                is_default: false,
+                            }),
+                            _ => None,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+
+            Self::ClaudeSonnet4
+            | Self::ClaudeOpus4_1
+            | Self::ClaudeOpus4_7
+            | Self::DeepSeekV3_1
+            | Self::DeepSeekR1
+            | Self::Llama4Scout17B
+            | Self::Llama4Maverick17B
+            | Self::NovaLite => vec![ServiceTierInfo {
+                name: SharedString::new_static("Standard"),
+                value: SharedString::new_static("default"),
+                is_default: true,
+            }],
+
+            Self::ClaudeHaiku4_5
+            | Self::ClaudeSonnet4_5
+            | Self::ClaudeOpus4_5
+            | Self::ClaudeOpus4_6
+            | Self::ClaudeSonnet4_6 => vec![
+                ServiceTierInfo {
+                    name: SharedString::new_static("Standard"),
+                    value: SharedString::new_static("default"),
+                    is_default: true,
+                },
+                ServiceTierInfo {
+                    name: SharedString::new_static("Reserved"),
+                    value: SharedString::new_static("reserved"),
+                    is_default: false,
+                },
+            ],
+
+            Self::DeepSeekV3_2
+            | Self::Gemma3_4B
+            | Self::Gemma3_12B
+            | Self::Gemma3_27B
+            | Self::MiniMaxM2
+            | Self::MiniMaxM2_1
+            | Self::MiniMaxM2_5
+            | Self::MagistralSmall
+            | Self::MistralLarge3
+            | Self::PixtralLarge
+            | Self::Devstral2_123B
+            | Self::Ministral14B
+            | Self::KimiK2_5
+            | Self::KimiK2Thinking
+            | Self::GLM5
+            | Self::GLM4_7
+            | Self::GLM4_7Flash
+            | Self::NemotronSuper3_120B
+            | Self::NemotronNano3_30B
+            | Self::GptOss120B
+            | Self::GptOss20B
+            | Self::Qwen3VL235B
+            | Self::Qwen3_32B
+            | Self::Qwen3_235B
+            | Self::Qwen3Next80B
+            | Self::Qwen3Coder30B
+            | Self::Qwen3CoderNext
+            | Self::Qwen3Coder480B
+            | Self::Nova2Lite
+            | Self::NovaPro
+            | Self::NovaPremier => {
+                vec![
+                    ServiceTierInfo {
+                        name: SharedString::new_static("Standard"),
+                        value: SharedString::new_static("default"),
+                        is_default: true,
+                    },
+                    ServiceTierInfo {
+                        name: SharedString::new_static("Priority"),
+                        value: SharedString::new_static("priority"),
+                        is_default: false,
+                    },
+                    ServiceTierInfo {
+                        name: SharedString::new_static("Flex"),
+                        value: SharedString::new_static("flex"),
+                        is_default: false,
+                    },
+                ]
+            }
+        }
+    }
+
     pub fn cross_region_inference_id(
         &self,
         region: &str,
@@ -929,6 +1047,7 @@ mod tests {
             max_output_tokens: Some(8192),
             default_temperature: Some(0.7),
             cache_configuration: None,
+            service_tiers: None,
         };
 
         assert_eq!(

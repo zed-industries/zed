@@ -534,7 +534,7 @@ aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.112.0", features = [
+aws-sdk-bedrockruntime = { version = "1.131.0", features = [
     "behavior-version-latest",
 ] }
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }

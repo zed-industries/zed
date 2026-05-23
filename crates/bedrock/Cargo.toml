@@ -20,6 +20,8 @@ anyhow.workspace = true
 aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"] }
 aws-smithy-types = {workspace = true}
 futures.workspace = true
+language_model_core.workspace = true
+log.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true

@@ -82,6 +82,7 @@ pub struct BedrockAvailableModel {
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_temperature: Option<f32>,
     pub mode: Option<ModelMode>,
+    pub service_tiers: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
