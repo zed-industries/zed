@@ -76,6 +76,21 @@ pub fn original_repo_path_from_common_dir(common_dir: &Path) -> Option<PathBuf> 
     }
 }
 
+/// Picks the incoming branch name out of `.git/MERGE_MSG`. Git writes the
+/// first line as `Merge branch 'foo' into bar` (or `Merge branches 'foo',
+/// 'baz'`); we just want `foo`. Returns `None` if the message doesn't match
+/// the standard shape — caller falls back to a generic label.
+fn parse_merge_msg_branch(msg: &str) -> Option<String> {
+    let first_line = msg.lines().next()?;
+    let after_quote = first_line.split_once('\'')?.1;
+    let branch = after_quote.split_once('\'')?.0;
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_owned())
+    }
+}
+
 /// Commit data needed for the git graph visualization.
 #[derive(Debug, Clone)]
 pub struct CommitData {
@@ -761,6 +776,21 @@ pub trait GitRepository: Send + Sync {
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
     fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>>;
 
+    /// Returns the base/ours/theirs (index stages 1/2/3) for an unmerged path.
+    /// Each side is `None` when that stage is absent (e.g. a modify/delete
+    /// conflict has no `theirs`) or when the blob is not valid UTF-8.
+    /// Returns a fully-`None` `UnmergedStages` for paths that are not unmerged.
+    fn load_unmerged_stages(&self, path: RepoPath) -> BoxFuture<'_, UnmergedStages>;
+
+    /// Re-runs git's 3-way merge for an unmerged path and returns the
+    /// resulting working-tree content with diff3-style markers (i.e.
+    /// `<<<<<<<`, `|||||||` base section, `=======`, `>>>>>>>`). Lets the
+    /// merge editor present a base section even when the user's config has
+    /// `merge.conflictStyle = merge` (the 2-way default) and the working
+    /// tree on disk was written without `|||||||` markers. Returns `Err`
+    /// when the path isn't unmerged or its stages aren't UTF-8.
+    fn merge_file_diff3(&self, path: RepoPath) -> BoxFuture<'_, Result<String>>;
+
     fn set_index_text(
         &self,
         path: RepoPath,
@@ -1177,6 +1207,25 @@ pub struct GitRepositoryCheckpoint {
     pub commit_sha: Oid,
 }
 
+/// libgit2 index stage numbers for an unmerged path.
+/// See: https://git-scm.com/docs/git-merge#_how_conflicts_are_presented
+pub const STAGE_NORMAL: i32 = 0;
+pub const STAGE_BASE: i32 = 1;
+pub const STAGE_OURS: i32 = 2;
+pub const STAGE_THEIRS: i32 = 3;
+
+/// The three sides of a 3-way merge for a single path, as recorded by git in
+/// the index when a path is unmerged. Each side is `None` when that stage is
+/// absent (e.g., file added on both branches has no base; a modify/delete
+/// conflict has no `ours` or no `theirs`) or when the content is not valid
+/// UTF-8 (binary blob).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UnmergedStages {
+    pub base: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
 #[derive(Debug)]
 pub struct GitCommitter {
     pub name: Option<String>,
@@ -1475,7 +1524,6 @@ impl GitRepository for RealGitRepository {
                     let mut index = repo.index()?;
                     index.read(false)?;
 
-                    const STAGE_NORMAL: i32 = 0;
                     // git2 unwraps internally on empty paths or `.`
                     if path.is_empty() {
                         bail!("empty path has no index text");
@@ -1495,6 +1543,102 @@ impl GitRepository for RealGitRepository {
                     .context("loading index text")
                     .log_err()
                     .flatten()
+            })
+            .boxed()
+    }
+
+    fn load_unmerged_stages(&self, path: RepoPath) -> BoxFuture<'_, UnmergedStages> {
+        // https://git-scm.com/book/en/v2/Git-Internals-Git-Objects
+        const GIT_MODE_SYMLINK: u32 = 0o120000;
+
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                fn read_stage(
+                    repo: &git2::Repository,
+                    index: &git2::Index,
+                    path: &RepoPath,
+                    stage: i32,
+                ) -> Result<Option<String>> {
+                    let Some(entry) = index.get_path(path.as_std_path(), stage) else {
+                        return Ok(None);
+                    };
+                    if entry.mode == GIT_MODE_SYMLINK {
+                        return Ok(None);
+                    }
+                    let content = repo.find_blob(entry.id)?.content().to_owned();
+                    Ok(String::from_utf8(content).ok())
+                }
+
+                fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<UnmergedStages> {
+                    if path.is_empty() {
+                        bail!("empty path has no unmerged stages");
+                    }
+                    let mut index = repo.index()?;
+                    // Force re-read so a concurrent terminal `git add` is observed.
+                    index.read(true)?;
+                    Ok(UnmergedStages {
+                        base: read_stage(repo, &index, path, STAGE_BASE)?,
+                        ours: read_stage(repo, &index, path, STAGE_OURS)?,
+                        theirs: read_stage(repo, &index, path, STAGE_THEIRS)?,
+                    })
+                }
+
+                logic(&repo.lock(), &path)
+                    .context("loading unmerged stages")
+                    .log_err()
+                    .unwrap_or_default()
+            })
+            .boxed()
+    }
+
+    fn merge_file_diff3(&self, path: RepoPath) -> BoxFuture<'_, Result<String>> {
+        let repo = self.repository.clone();
+        self.executor
+            .spawn(async move {
+                if path.is_empty() {
+                    bail!("empty path has no merge file");
+                }
+                let repo = repo.lock();
+                let mut index = repo.index()?;
+                index.read(true)?;
+                let ancestor = index
+                    .get_path(path.as_std_path(), STAGE_BASE)
+                    .context("path has no base stage (added on both sides?)")?;
+                let ours = index
+                    .get_path(path.as_std_path(), STAGE_OURS)
+                    .context("path has no ours stage")?;
+                let theirs = index
+                    .get_path(path.as_std_path(), STAGE_THEIRS)
+                    .context("path has no theirs stage")?;
+
+                // Use git's own marker labels — `HEAD` for ours, the
+                // incoming branch name for theirs (parsed from
+                // `.git/MERGE_MSG`'s `Merge branch 'foo'` line), and
+                // `merged common ancestors` for base — so the rewritten
+                // markers are indistinguishable from what git itself would
+                // produce with `merge.conflictStyle = diff3`. The inline
+                // conflict view (which exists outside the merge editor too)
+                // reads these labels back into its `Use HEAD` / `Use foo`
+                // buttons, so this preserves the pre-merge-editor UX for
+                // anyone looking at the buffer through a regular editor.
+                // The 3-way merge editor's own pane headers ("Ours · main",
+                // "Theirs · Incoming") supply the friendly framing on top.
+                let their_label = std::fs::read_to_string(repo.path().join("MERGE_MSG"))
+                    .ok()
+                    .as_deref()
+                    .and_then(parse_merge_msg_branch)
+                    .unwrap_or_else(|| "theirs".to_owned());
+
+                let mut opts = git2::MergeFileOptions::new();
+                opts.style_diff3(true)
+                    .ancestor_label("merged common ancestors")
+                    .our_label("HEAD")
+                    .their_label(&their_label);
+                let result =
+                    repo.merge_file_from_index(&ancestor, &ours, &theirs, Some(&mut opts))?;
+                let content = result.content().to_owned();
+                String::from_utf8(content).context("merge file content is not UTF-8")
             })
             .boxed()
     }
@@ -3419,6 +3563,14 @@ impl GitBinary {
         command.args(["-c", "core.fsmonitor=false"]);
         // Prepended signature lines would corrupt our --format parsers.
         command.args(["-c", "log.showSignature=false"]);
+        // Force diff3 conflict markers so the 3-way merge editor's "Use Base" path
+        // and any side panes that depend on a parsed base section always have it.
+        // Scoped to subcommands that can actually create merge conflicts so we don't
+        // silently override the user's `merge.conflictStyle` for unrelated operations
+        // (e.g., they configured `zdiff3` globally and we'd downgrade to `diff3`).
+        if first_subcommand(args).is_some_and(is_merge_creating_subcommand) {
+            command.args(["-c", "merge.conflictStyle=diff3"]);
+        }
         command.arg("--no-optional-locks");
         // Internal commands must be non-interactive so background tasks never block on user input.
         command.arg("--no-pager");
@@ -3445,6 +3597,25 @@ impl GitBinary {
         command.envs(&self.envs);
         command
     }
+}
+
+/// Returns the first positional (non-option) argument in `args`, which for a
+/// well-formed git invocation is the subcommand name.
+fn first_subcommand<S: AsRef<OsStr>>(args: &[S]) -> Option<&str> {
+    args.iter().find_map(|arg| {
+        let s = arg.as_ref().to_str()?;
+        (!s.starts_with('-')).then_some(s)
+    })
+}
+
+/// True for git subcommands that can produce conflict markers in the working
+/// tree. `stash` covers both `stash apply` and `stash pop` (the other
+/// `stash` variants don't merge, but the flag is a no-op for them).
+fn is_merge_creating_subcommand(subcommand: &str) -> bool {
+    matches!(
+        subcommand,
+        "merge" | "pull" | "rebase" | "cherry-pick" | "revert" | "am" | "stash"
+    )
 }
 
 #[derive(Error, Debug)]
@@ -3861,6 +4032,71 @@ mod tests {
             "false",
             "log.showSignature should be disabled for untrusted repos"
         );
+    }
+
+    #[gpui::test]
+    async fn test_build_command_scopes_diff3_to_merge_commands(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init(dir.path()).unwrap();
+
+        // Set a per-repo `merge.conflictStyle = merge` so we can observe whether
+        // the build_command flag overrode it for a given invocation.
+        repo.config()
+            .unwrap()
+            .set_str("merge.conflictStyle", "merge")
+            .unwrap();
+
+        let git = GitBinary::new(
+            PathBuf::from("git"),
+            dir.path().to_path_buf(),
+            dir.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+
+        // Non-merge subcommand: the per-invocation `-c merge.conflictStyle=diff3`
+        // must NOT be applied, so the user's local `merge` setting wins.
+        let output = git
+            .build_command(&["config", "--get", "merge.conflictStyle"])
+            .output()
+            .await
+            .expect("git config should run");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            "merge",
+            "merge.conflictStyle should be left alone for non-merge commands"
+        );
+    }
+
+    #[test]
+    fn test_first_subcommand_skips_leading_flags() {
+        // Callers of `build_command` pass the subcommand as the first positional
+        // arg; safety/config `-c` flags are added inside `build_command` itself.
+        // Still, be defensive in case a caller starts with a long flag.
+        assert_eq!(first_subcommand::<&str>(&[]), None);
+        assert_eq!(first_subcommand(&["status"]), Some("status"));
+        assert_eq!(first_subcommand(&["--no-pager", "log"]), Some("log"));
+        assert_eq!(first_subcommand(&["stash", "apply"]), Some("stash"));
+    }
+
+    #[test]
+    fn test_is_merge_creating_subcommand() {
+        for sub in [
+            "merge",
+            "pull",
+            "rebase",
+            "cherry-pick",
+            "revert",
+            "am",
+            "stash",
+        ] {
+            assert!(is_merge_creating_subcommand(sub), "{sub} should match");
+        }
+        for sub in ["status", "log", "diff", "show", "config", "commit", "push"] {
+            assert!(!is_merge_creating_subcommand(sub), "{sub} should not match");
+        }
     }
 
     #[gpui::test]

@@ -14,7 +14,7 @@ use git::{
         AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
         CreateWorktreeTarget, FetchOptions, GRAPH_CHUNK_SIZE, GitRepository,
         GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, RefEdit,
-        Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
+        Remote, RepoPath, ResetMode, SearchCommitArgs, UnmergedStages, Worktree,
     },
     stash::GitStash,
     status::{
@@ -59,6 +59,9 @@ pub struct FakeGitRepositoryState {
     pub commit_history: Vec<FakeCommitSnapshot>,
     pub event_emitter: async_channel::Sender<PathBuf>,
     pub unmerged_paths: HashMap<RepoPath, UnmergedStatus>,
+    /// Per-path stage 1/2/3 contents for unmerged paths. Mirrors what
+    /// `git2::Index` exposes for real repositories.
+    pub unmerged_stages: HashMap<RepoPath, git::repository::UnmergedStages>,
     pub head_contents: HashMap<RepoPath, String>,
     pub index_contents: HashMap<RepoPath, String>,
     // everything in commit contents is in oids
@@ -87,6 +90,7 @@ impl FakeGitRepositoryState {
             head_contents: Default::default(),
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
+            unmerged_stages: Default::default(),
             blames: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
@@ -172,6 +176,36 @@ impl GitRepository for FakeGitRepository {
                 .cloned()
         });
         self.executor.spawn(async move { fut.await.ok() }).boxed()
+    }
+
+    fn load_unmerged_stages(&self, path: RepoPath) -> BoxFuture<'_, UnmergedStages> {
+        let fut = self.with_state_async(false, move |state| {
+            Ok(state.unmerged_stages.get(&path).cloned().unwrap_or_default())
+        });
+        self.executor
+            .spawn(async move { fut.await.unwrap_or_default() })
+            .boxed()
+    }
+
+    fn merge_file_diff3(&self, path: RepoPath) -> BoxFuture<'_, Result<String>> {
+        // Fake repos don't run the merge algorithm; they synthesize a
+        // canonical diff3-style file from the stored stage contents so tests
+        // can exercise the auto-rewrite path without a real libgit2.
+        let fut = self.with_state_async(false, move |state| {
+            let stages = state
+                .unmerged_stages
+                .get(&path)
+                .cloned()
+                .context("path has no unmerged stages")?;
+            let base = stages.base.context("path has no base stage")?;
+            let ours = stages.ours.context("path has no ours stage")?;
+            let theirs = stages.theirs.context("path has no theirs stage")?;
+            Ok(format!(
+                "<<<<<<< ours\n{}||||||| base\n{}=======\n{}>>>>>>> theirs\n",
+                ours, base, theirs,
+            ))
+        });
+        self.executor.spawn(fut).boxed()
     }
 
     fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {

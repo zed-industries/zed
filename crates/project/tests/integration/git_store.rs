@@ -5,7 +5,7 @@ mod conflict_set_tests {
 
     use fs::FakeFs;
     use git::{
-        repository::{RepoPath, repo_path},
+        repository::{RepoPath, UnmergedStages, repo_path},
         status::{UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{BackgroundExecutor, TestAppContext};
@@ -622,6 +622,109 @@ mod conflict_set_tests {
             assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
+    }
+
+    #[gpui::test]
+    async fn test_load_unmerged_stages(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+        });
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.txt": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+                "deleted_by_them.txt": "kept by us\n",
+                "clean.txt": "no conflict here\n",
+            }),
+        )
+        .await;
+
+        fs.set_unmerged_paths_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    repo_path("conflict.txt"),
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    },
+                ),
+                (
+                    repo_path("deleted_by_them.txt"),
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Deleted,
+                    },
+                ),
+            ],
+        );
+
+        fs.set_unmerged_stages_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    repo_path("conflict.txt"),
+                    UnmergedStages {
+                        base: Some("base\n".into()),
+                        ours: Some("ours\n".into()),
+                        theirs: Some("theirs\n".into()),
+                    },
+                ),
+                (
+                    repo_path("deleted_by_them.txt"),
+                    UnmergedStages {
+                        base: Some("base\n".into()),
+                        ours: Some("kept by us\n".into()),
+                        theirs: None,
+                    },
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let stages = cx
+            .update(|cx| {
+                repository.update(cx, |repository, cx| {
+                    repository.load_unmerged_stages(repo_path("conflict.txt"), cx)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(stages.base.as_deref(), Some("base\n"));
+        assert_eq!(stages.ours.as_deref(), Some("ours\n"));
+        assert_eq!(stages.theirs.as_deref(), Some("theirs\n"));
+
+        let stages = cx
+            .update(|cx| {
+                repository.update(cx, |repository, cx| {
+                    repository.load_unmerged_stages(repo_path("deleted_by_them.txt"), cx)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(stages.base.as_deref(), Some("base\n"));
+        assert_eq!(stages.ours.as_deref(), Some("kept by us\n"));
+        assert!(stages.theirs.is_none());
+
+        let stages = cx
+            .update(|cx| {
+                repository.update(cx, |repository, cx| {
+                    repository.load_unmerged_stages(repo_path("clean.txt"), cx)
+                })
+            })
+            .await
+            .unwrap();
+        assert_eq!(stages, UnmergedStages::default());
     }
 }
 

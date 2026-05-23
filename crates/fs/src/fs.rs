@@ -57,7 +57,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::{FakeCommitDataEntry, FakeGitRepositoryState};
 #[cfg(feature = "test-support")]
 use git::{
-    repository::{CommitData, InitialGraphCommitData, RepoPath, Worktree, repo_path},
+    repository::{CommitData, InitialGraphCommitData, RepoPath, UnmergedStages, Worktree, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
@@ -2140,6 +2140,24 @@ impl FakeFs {
                 unmerged_state
                     .iter()
                     .map(|(path, content)| (path.clone(), *content)),
+            );
+        })
+        .unwrap();
+    }
+
+    /// Sets the base/ours/theirs (index stages 1/2/3) for unmerged paths in
+    /// the fake repository. Mirrors what `git2::Index` exposes for real repos.
+    pub fn set_unmerged_stages_for_repo(
+        &self,
+        dot_git: &Path,
+        stages: &[(RepoPath, UnmergedStages)],
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state.unmerged_stages.clear();
+            state.unmerged_stages.extend(
+                stages
+                    .iter()
+                    .map(|(path, stages)| (path.clone(), stages.clone())),
             );
         })
         .unwrap();
