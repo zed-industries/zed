@@ -129,6 +129,8 @@ pub enum Model {
     Glm5,
     #[serde(rename = "glm-5.1")]
     Glm5_1,
+    #[serde(rename = "grok-build-0.1")]
+    GrokBuild0_1,
     #[serde(rename = "kimi-k2.5")]
     KimiK2_5,
     #[serde(rename = "kimi-k2.6")]
@@ -252,6 +254,7 @@ impl Model {
             Self::MiniMaxM2_5 => "minimax-m2.5",
             Self::Glm5 => "glm-5",
             Self::Glm5_1 => "glm-5.1",
+            Self::GrokBuild0_1 => "grok-build-0.1",
             Self::KimiK2_5 => "kimi-k2.5",
             Self::KimiK2_6 => "kimi-k2.6",
             Self::MiniMaxM2_7 => "minimax-m2.7",
@@ -304,6 +307,7 @@ impl Model {
             Self::MiniMaxM2_5 => "MiniMax M2.5",
             Self::Glm5 => "GLM 5",
             Self::Glm5_1 => "GLM 5.1",
+            Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::KimiK2_5 => "Kimi K2.5",
             Self::KimiK2_6 => "Kimi K2.6",
             Self::MiniMaxM2_7 => "MiniMax M2.7",
@@ -363,6 +367,7 @@ impl Model {
 
             Self::Glm5
             | Self::Glm5_1
+            | Self::GrokBuild0_1
             | Self::KimiK2_5
             | Self::KimiK2_6
             | Self::MimoV2_5Pro
@@ -438,6 +443,7 @@ impl Model {
                 }
             }
             Self::KimiK2_6 | Self::KimiK2_5 => 262_144,
+            Self::GrokBuild0_1 => 256_000,
             Self::MimoV2_5Pro => 1_048_576,
             Self::MimoV2_5 => 1_000_000,
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => 262_144,
@@ -500,6 +506,7 @@ impl Model {
             }
             Self::BigPickle => Some(128_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
+            Self::GrokBuild0_1 => Some(256_000),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(384_000),
             Self::Nemotron3SuperFree => Some(128_000),
@@ -554,6 +561,7 @@ impl Model {
             // OpenAI-compatible models with image support
             Self::KimiK2_6
             | Self::KimiK2_5
+            | Self::GrokBuild0_1
             | Self::MimoV2_5
             | Self::Qwen3_5Plus
             | Self::Qwen3_6Plus => true,
