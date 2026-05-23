@@ -312,6 +312,8 @@ pub enum BufferEvent {
     DirtyChanged,
     /// The buffer was saved.
     Saved,
+    /// The buffer's undo tree changed without necessarily changing text.
+    UndoHistoryChanged,
     /// The buffer's file was changed on disk.
     FileHandleChanged,
     /// The buffer was reloaded.
@@ -1533,6 +1535,7 @@ impl Buffer {
         self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
+        self.text.mark_current_undo_node_saved();
         self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
@@ -2502,6 +2505,16 @@ impl Buffer {
         self.text.merge_transactions(transaction, destination);
     }
 
+    pub fn edited_ranges_for_transaction_id<D>(
+        &self,
+        transaction_id: TransactionId,
+    ) -> impl '_ + Iterator<Item = Range<D>>
+    where
+        D: TextDimension,
+    {
+        self.text.edited_ranges_for_transaction_id(transaction_id)
+    }
+
     /// Waits for the buffer to receive operations with the given timestamps.
     pub fn wait_for_edits<It: IntoIterator<Item = clock::Lamport>>(
         &mut self,
@@ -3174,6 +3187,124 @@ impl Buffer {
             self.did_edit(&old_version, was_dirty, true, cx)
         }
         undone
+    }
+
+    pub fn undo_tree_snapshot(&self) -> text::UndoTreeSnapshot {
+        self.text.undo_tree_snapshot()
+    }
+
+    pub fn current_undo_node(&self) -> text::UndoNodeId {
+        self.text.current_undo_node()
+    }
+
+    pub fn jump_to_undo_node(&mut self, target: text::UndoNodeId, cx: &mut Context<Self>) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+        let transaction_ids = self.undo_tree_transaction_ids_to(target);
+
+        let operations = self.text.jump_to_undo_node(target);
+        let jumped = !operations.is_empty();
+        for operation in operations {
+            self.send_operation(Operation::Buffer(operation), true, cx);
+        }
+        if jumped {
+            self.did_edit(&old_version, was_dirty, true, cx);
+            for transaction_id in transaction_ids {
+                self.restore_encoding_for_transaction(transaction_id, was_dirty);
+            }
+        }
+        jumped
+    }
+
+    pub fn switch_undo_branch(
+        &mut self,
+        parent: text::UndoNodeId,
+        child_index: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.text.switch_undo_branch(parent, child_index) {
+            cx.emit(BufferEvent::UndoHistoryChanged);
+            cx.notify();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn undo_tree_transaction_ids_to(&self, target: text::UndoNodeId) -> Vec<TransactionId> {
+        let snapshot = self.text.undo_tree_snapshot();
+        if target == snapshot.current {
+            return Vec::new();
+        }
+
+        let nodes_by_id = snapshot
+            .nodes
+            .iter()
+            .map(|node| (node.id, node))
+            .collect::<HashMap<_, _>>();
+
+        let Some(current_path) = Self::undo_tree_path_to_root(snapshot.current, &nodes_by_id)
+        else {
+            return Vec::new();
+        };
+        let Some(target_path) = Self::undo_tree_path_to_root(target, &nodes_by_id) else {
+            return Vec::new();
+        };
+        let Some(lowest_common_ancestor) = current_path
+            .iter()
+            .copied()
+            .find(|node_id| target_path.contains(node_id))
+        else {
+            return Vec::new();
+        };
+
+        let mut transaction_ids = Vec::new();
+        for node_id in current_path
+            .iter()
+            .copied()
+            .take_while(|node_id| *node_id != lowest_common_ancestor)
+        {
+            if let Some(transaction_id) = nodes_by_id
+                .get(&node_id)
+                .and_then(|node| node.transaction_id)
+            {
+                transaction_ids.push(transaction_id);
+            }
+        }
+
+        let redo_nodes = target_path
+            .iter()
+            .copied()
+            .take_while(|node_id| *node_id != lowest_common_ancestor)
+            .collect::<Vec<_>>();
+        for node_id in redo_nodes.iter().rev().copied() {
+            if let Some(transaction_id) = nodes_by_id
+                .get(&node_id)
+                .and_then(|node| node.transaction_id)
+            {
+                transaction_ids.push(transaction_id);
+            }
+        }
+
+        transaction_ids
+    }
+
+    fn undo_tree_path_to_root<'a>(
+        node_id: text::UndoNodeId,
+        nodes_by_id: &HashMap<text::UndoNodeId, &'a text::UndoTreeNodeSnapshot>,
+    ) -> Option<Vec<text::UndoNodeId>> {
+        let mut path = Vec::new();
+        let mut node_id = node_id;
+        loop {
+            let node = nodes_by_id.get(&node_id)?;
+            path.push(node_id);
+            if let Some(parent) = node.parent {
+                node_id = parent;
+            } else {
+                break;
+            }
+        }
+        Some(path)
     }
 
     pub fn undo_operations(&mut self, counts: HashMap<Lamport, u32>, cx: &mut Context<Buffer>) {

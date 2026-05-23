@@ -449,6 +449,16 @@ impl EditorElement {
         if editor.read(cx).supports_minimap(cx) {
             register_action(editor, window, Editor::toggle_minimap);
         }
+        register_action(editor, window, Editor::show_undo_tree);
+        register_action(editor, window, Editor::hide_undo_tree);
+        register_action(editor, window, Editor::toggle_undo_tree);
+        register_action(editor, window, Editor::undo_tree_select_previous);
+        register_action(editor, window, Editor::undo_tree_select_next);
+        register_action(editor, window, Editor::undo_tree_switch_branch_previous);
+        register_action(editor, window, Editor::undo_tree_switch_branch_next);
+        register_action(editor, window, Editor::undo_tree_jump_to_selected);
+        register_action(editor, window, Editor::undo_tree_jump_to_latest);
+        register_action(editor, window, Editor::undo_tree_jump_to_latest_saved);
         register_action(editor, window, hover_popover::hover);
         register_action(editor, window, Editor::reveal_in_finder);
         register_action(editor, window, Editor::copy_path);

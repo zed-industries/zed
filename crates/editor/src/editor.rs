@@ -243,7 +243,10 @@ use std::{
     time::{Duration, Instant},
 };
 use task::TaskVariables;
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
+use text::{
+    BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _, UndoNodeId,
+    UndoTreeSnapshot,
+};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
 };
@@ -904,6 +907,8 @@ pub struct Editor {
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
+    show_undo_tree: bool,
+    selected_undo_node: Option<UndoNodeId>,
     defer_selection_effects: bool,
     deferred_selection_effects_state: Option<DeferredSelectionEffectsState>,
     autoclose_regions: Vec<AutocloseRegion>,
@@ -2100,6 +2105,8 @@ impl Editor {
             select_next_state: None,
             select_prev_state: None,
             selection_history: SelectionHistory::default(),
+            show_undo_tree: false,
+            selected_undo_node: None,
             defer_selection_effects: false,
             deferred_selection_effects_state: None,
             autoclose_regions: Vec::new(),
@@ -7337,6 +7344,350 @@ impl Editor {
         }
     }
 
+    pub fn undo_tree_visible(&self) -> bool {
+        self.show_undo_tree
+    }
+
+    pub fn selected_undo_node(&self) -> Option<UndoNodeId> {
+        self.selected_undo_node
+    }
+
+    pub fn undo_tree_snapshot(&self, cx: &App) -> Option<UndoTreeSnapshot> {
+        let buffer = self.buffer.read(cx).as_singleton()?;
+        Some(buffer.read(cx).undo_tree_snapshot())
+    }
+
+    pub fn show_undo_tree(&mut self, _: &ShowUndoTree, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(snapshot) = self.undo_tree_snapshot(cx) else {
+            return;
+        };
+        self.show_undo_tree = true;
+        self.selected_undo_node = Some(snapshot.current);
+        cx.emit(EditorEvent::UndoHistoryChanged);
+        cx.notify();
+    }
+
+    pub fn hide_undo_tree(&mut self, _: &HideUndoTree, _: &mut Window, cx: &mut Context<Self>) {
+        if self.show_undo_tree {
+            self.show_undo_tree = false;
+            cx.emit(EditorEvent::UndoHistoryChanged);
+            cx.notify();
+        }
+    }
+
+    pub fn toggle_undo_tree(
+        &mut self,
+        _: &ToggleUndoTree,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.show_undo_tree {
+            self.hide_undo_tree(&HideUndoTree, window, cx);
+        } else {
+            self.show_undo_tree(&ShowUndoTree, window, cx);
+        }
+    }
+
+    pub fn undo_tree_select_previous(
+        &mut self,
+        _: &UndoTreeSelectPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_undo_tree_node_relative(-1, cx);
+    }
+
+    pub fn undo_tree_select_next(
+        &mut self,
+        _: &UndoTreeSelectNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_undo_tree_node_relative(1, cx);
+    }
+
+    pub fn undo_tree_switch_branch_previous(
+        &mut self,
+        _: &UndoTreeSwitchBranchPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.switch_selected_undo_branch(-1, cx);
+    }
+
+    pub fn undo_tree_switch_branch_next(
+        &mut self,
+        _: &UndoTreeSwitchBranchNext,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.switch_selected_undo_branch(1, cx);
+    }
+
+    pub fn undo_tree_jump_to_selected(
+        &mut self,
+        _: &UndoTreeJumpToSelected,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(target) = self.ensure_selected_undo_node(cx) {
+            self.jump_to_undo_node(target, window, cx);
+        }
+    }
+
+    pub fn undo_tree_jump_to_latest(
+        &mut self,
+        _: &UndoTreeJumpToLatest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(snapshot) = self.undo_tree_snapshot(cx) {
+            let target = Self::latest_undo_tree_node(&snapshot);
+            self.selected_undo_node = Some(target);
+            self.jump_to_undo_node(target, window, cx);
+        }
+    }
+
+    pub fn undo_tree_jump_to_latest_saved(
+        &mut self,
+        _: &UndoTreeJumpToLatestSaved,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(target) = self
+            .undo_tree_snapshot(cx)
+            .and_then(|snapshot| snapshot.latest_saved)
+        {
+            self.selected_undo_node = Some(target);
+            self.jump_to_undo_node(target, window, cx);
+        }
+    }
+
+    pub fn jump_to_undo_node(
+        &mut self,
+        target: UndoNodeId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.read_only(cx) {
+            return false;
+        }
+
+        let Some(snapshot) = self.undo_tree_snapshot(cx) else {
+            return false;
+        };
+        let target_transaction_id = snapshot
+            .nodes
+            .iter()
+            .find(|node| node.id == target)
+            .and_then(|node| node.transaction_id);
+
+        let jumped = self.buffer.update(cx, |multi_buffer, cx| {
+            let Some(buffer) = multi_buffer.as_singleton() else {
+                return false;
+            };
+            buffer.update(cx, |buffer, cx| buffer.jump_to_undo_node(target, cx))
+        });
+
+        if jumped {
+            self.selected_undo_node = Some(target);
+            self.restore_selection_for_undo_tree_target(target_transaction_id, window, cx);
+            self.request_autoscroll(Autoscroll::fit(), cx);
+            self.unmark_text(window, cx);
+            self.refresh_edit_prediction(true, false, window, cx);
+            if let Some(transaction_id) = target_transaction_id {
+                cx.emit(EditorEvent::Edited { transaction_id });
+            }
+            cx.emit(EditorEvent::UndoHistoryChanged);
+            cx.notify();
+        }
+
+        jumped
+    }
+
+    fn select_undo_tree_node_relative(&mut self, direction: isize, cx: &mut Context<Self>) {
+        let Some(snapshot) = self.undo_tree_snapshot(cx) else {
+            return;
+        };
+        let ordered_nodes = Self::undo_tree_node_order(&snapshot);
+        if ordered_nodes.is_empty() {
+            return;
+        }
+
+        let selected = self
+            .selected_undo_node
+            .filter(|node_id| ordered_nodes.contains(node_id))
+            .unwrap_or(snapshot.current);
+        let selected_index = ordered_nodes
+            .iter()
+            .position(|node_id| *node_id == selected)
+            .unwrap_or(0);
+        let new_index = if direction.is_negative() {
+            selected_index.saturating_sub(1)
+        } else {
+            (selected_index + 1).min(ordered_nodes.len().saturating_sub(1))
+        };
+
+        self.selected_undo_node = ordered_nodes.get(new_index).copied();
+        cx.emit(EditorEvent::UndoHistoryChanged);
+        cx.notify();
+    }
+
+    fn switch_selected_undo_branch(&mut self, direction: isize, cx: &mut Context<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
+
+        let Some(snapshot) = self.undo_tree_snapshot(cx) else {
+            return;
+        };
+        let selected = self.selected_undo_node.unwrap_or(snapshot.current);
+        let nodes_by_id = snapshot
+            .nodes
+            .iter()
+            .map(|node| (node.id, node))
+            .collect::<HashMap<_, _>>();
+
+        let Some(parent_id) = nodes_by_id.get(&selected).and_then(|selected_node| {
+            if selected_node.children.is_empty() {
+                selected_node.parent
+            } else {
+                Some(selected_node.id)
+            }
+        }) else {
+            return;
+        };
+        let Some(parent) = nodes_by_id.get(&parent_id) else {
+            return;
+        };
+        if parent.children.is_empty() {
+            return;
+        }
+
+        let active_child = parent
+            .active_child
+            .filter(|index| *index < parent.children.len())
+            .unwrap_or(0);
+        let new_child = if direction.is_negative() {
+            active_child
+                .checked_sub(1)
+                .unwrap_or_else(|| parent.children.len().saturating_sub(1))
+        } else {
+            (active_child + 1) % parent.children.len()
+        };
+        if new_child == active_child {
+            return;
+        }
+
+        let switched = self.buffer.update(cx, |multi_buffer, cx| {
+            let Some(buffer) = multi_buffer.as_singleton() else {
+                return false;
+            };
+            buffer.update(cx, |buffer, cx| {
+                buffer.switch_undo_branch(parent_id, new_child, cx)
+            })
+        });
+        if switched {
+            self.selected_undo_node = parent.children.get(new_child).copied();
+            cx.emit(EditorEvent::UndoHistoryChanged);
+            cx.notify();
+        }
+    }
+
+    fn ensure_selected_undo_node(&mut self, cx: &App) -> Option<UndoNodeId> {
+        let snapshot = self.undo_tree_snapshot(cx)?;
+        let selected = self
+            .selected_undo_node
+            .filter(|node_id| snapshot.nodes.iter().any(|node| node.id == *node_id))
+            .unwrap_or(snapshot.current);
+        self.selected_undo_node = Some(selected);
+        Some(selected)
+    }
+
+    fn latest_undo_tree_node(snapshot: &UndoTreeSnapshot) -> UndoNodeId {
+        snapshot
+            .nodes
+            .iter()
+            .rev()
+            .find(|node| node.transaction_id.is_some())
+            .map(|node| node.id)
+            .unwrap_or(snapshot.root)
+    }
+
+    fn undo_tree_node_order(snapshot: &UndoTreeSnapshot) -> Vec<UndoNodeId> {
+        let nodes_by_id = snapshot
+            .nodes
+            .iter()
+            .map(|node| (node.id, node))
+            .collect::<HashMap<_, _>>();
+        let mut ordered_nodes = Vec::new();
+        Self::push_undo_tree_node(snapshot.root, &nodes_by_id, &mut ordered_nodes);
+        ordered_nodes
+    }
+
+    fn push_undo_tree_node(
+        node_id: UndoNodeId,
+        nodes_by_id: &HashMap<UndoNodeId, &text::UndoTreeNodeSnapshot>,
+        ordered_nodes: &mut Vec<UndoNodeId>,
+    ) {
+        if ordered_nodes.contains(&node_id) {
+            return;
+        }
+        ordered_nodes.push(node_id);
+        if let Some(node) = nodes_by_id.get(&node_id) {
+            for child in &node.children {
+                Self::push_undo_tree_node(*child, nodes_by_id, ordered_nodes);
+            }
+        }
+    }
+
+    fn restore_selection_for_undo_tree_target(
+        &mut self,
+        target_transaction_id: Option<TransactionId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(transaction_id) = target_transaction_id {
+            if let Some((_, Some(selections))) =
+                self.selection_history.transaction(transaction_id).cloned()
+            {
+                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_anchors(selections.to_vec());
+                });
+                return;
+            }
+
+            if let Some(offset) = self.first_edited_offset_for_transaction(transaction_id, cx) {
+                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([offset..offset]);
+                });
+                return;
+            }
+        }
+
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)]);
+        });
+    }
+
+    fn first_edited_offset_for_transaction(
+        &self,
+        transaction_id: TransactionId,
+        cx: &App,
+    ) -> Option<MultiBufferOffset> {
+        let buffer = self.buffer.read(cx).as_singleton()?;
+        let text_anchor = buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            let range = buffer
+                .edited_ranges_for_transaction_id::<usize>(transaction_id)
+                .next()?;
+            Some(snapshot.anchor_at(range.start, Bias::Left))
+        })?;
+        let snapshot = self.buffer.read(cx).read(cx);
+        let anchor = snapshot.anchor_in_excerpt(text_anchor)?;
+        Some(anchor.to_offset(&snapshot))
+    }
+
     pub fn finalize_last_transaction(&mut self, cx: &mut Context<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
@@ -9374,6 +9725,7 @@ impl Editor {
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
+            multi_buffer::Event::UndoHistoryChanged => cx.emit(EditorEvent::UndoHistoryChanged),
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
@@ -11475,6 +11827,7 @@ pub enum EditorEvent {
     Blurred,
     DirtyChanged,
     Saved,
+    UndoHistoryChanged,
     TitleChanged,
     FileHandleChanged,
     SelectionsChanged {

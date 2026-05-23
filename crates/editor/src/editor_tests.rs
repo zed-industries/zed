@@ -324,6 +324,180 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_undo_tree_jump_restores_transaction_selection(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut now = Instant::now();
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.start_transaction_at(now, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
+            });
+            editor.insert("A", window, cx);
+            editor.end_transaction_at(now, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)])
+            });
+            editor.insert("B", window, cx);
+            let transaction_b = editor
+                .end_transaction_at(now, cx)
+                .expect("second edit should create a transaction");
+
+            editor.undo(&Undo, window, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(1)..MultiBufferOffset(1)])
+            });
+            editor.insert("C", window, cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "AC");
+
+            let snapshot = editor
+                .undo_tree_snapshot(cx)
+                .expect("singleton editor should have an undo tree");
+            let node_b = editor_undo_tree_node_for_transaction(&snapshot, transaction_b)
+                .expect("transaction B should be in the undo tree");
+            assert!(editor.jump_to_undo_node(node_b, window, cx));
+
+            assert_eq!(editor.text(cx), "AB");
+            assert_eq!(
+                editor.selections.ranges(&editor.display_snapshot(cx)),
+                vec![MultiBufferOffset(2)..MultiBufferOffset(2)]
+            );
+        })
+        .expect("editor should update");
+}
+
+#[gpui::test]
+fn test_undo_tree_jump_uses_edited_range_selection_fallback(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let now = Instant::now();
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("123", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.add_window(|window, cx| build_editor(multi_buffer.clone(), window, cx));
+
+    let transaction_id = buffer.update(cx, |buffer, cx| {
+        buffer.start_transaction_at(now);
+        buffer.edit([(1..2, "X")], None, cx);
+        buffer
+            .end_transaction_at(now, cx)
+            .expect("external edit should create a transaction")
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                selections.select_ranges([MultiBufferOffset(3)..MultiBufferOffset(3)])
+            });
+
+            let snapshot = editor
+                .undo_tree_snapshot(cx)
+                .expect("singleton editor should have an undo tree");
+            let node = editor_undo_tree_node_for_transaction(&snapshot, transaction_id)
+                .expect("external transaction should be in the undo tree");
+
+            assert!(editor.jump_to_undo_node(snapshot.root, window, cx));
+            assert_eq!(editor.text(cx), "123");
+            assert!(editor.jump_to_undo_node(node, window, cx));
+
+            assert_eq!(editor.text(cx), "1X3");
+            assert_eq!(
+                editor.selections.ranges(&editor.display_snapshot(cx)),
+                vec![MultiBufferOffset(1)..MultiBufferOffset(1)]
+            );
+        })
+        .expect("editor should update");
+}
+
+#[gpui::test]
+fn test_undo_tree_jump_and_branch_switch_respect_read_only(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut now = Instant::now();
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("A", window, cx);
+            editor.end_transaction_at(now, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("B", window, cx);
+            let transaction_b = editor
+                .end_transaction_at(now, cx)
+                .expect("second edit should create a transaction");
+
+            editor.undo(&Undo, window, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("C", window, cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "AC");
+
+            let snapshot = editor
+                .undo_tree_snapshot(cx)
+                .expect("singleton editor should have an undo tree");
+            let node_b = editor_undo_tree_node_for_transaction(&snapshot, transaction_b)
+                .expect("transaction B should be in the undo tree");
+
+            editor.set_read_only(true);
+            assert!(!editor.jump_to_undo_node(node_b, window, cx));
+            editor.undo_tree_switch_branch_previous(&UndoTreeSwitchBranchPrevious, window, cx);
+
+            assert_eq!(editor.text(cx), "AC");
+            let snapshot = editor
+                .undo_tree_snapshot(cx)
+                .expect("singleton editor should have an undo tree");
+            let node_a = snapshot
+                .nodes
+                .iter()
+                .find(|node| node.children.contains(&node_b))
+                .expect("branch parent should remain present");
+            assert_eq!(node_a.active_child, Some(1));
+        })
+        .expect("editor should update");
+}
+
+fn editor_undo_tree_node_for_transaction(
+    snapshot: &UndoTreeSnapshot,
+    transaction_id: TransactionId,
+) -> Option<UndoNodeId> {
+    snapshot
+        .nodes
+        .iter()
+        .find(|node| node.transaction_id == Some(transaction_id))
+        .map(|node| node.id)
+}
+
+#[gpui::test]
 fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

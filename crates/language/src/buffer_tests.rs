@@ -501,6 +501,165 @@ fn test_edit_events(cx: &mut gpui::App) {
 }
 
 #[gpui::test]
+fn test_undo_tree_jump_events_dirty_state_and_saved_metadata(cx: &mut TestAppContext) {
+    let buffer_events = Arc::new(Mutex::new(Vec::new()));
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+
+    let buffer_entity = buffer.clone();
+    let (node_a, node_b) = buffer.update(cx, |buffer, cx| {
+        cx.subscribe(&buffer_entity, {
+            let buffer_events = buffer_events.clone();
+            move |_, _, event, _| match event {
+                BufferEvent::Operation { .. } => {}
+                event => buffer_events.lock().push(event.clone()),
+            }
+        })
+        .detach();
+
+        buffer.edit([(0..0, "A")], None, cx);
+        let transaction_a = buffer
+            .peek_undo_stack()
+            .map(|entry| entry.transaction_id())
+            .expect("first edit should create a transaction");
+        buffer.did_save(buffer.snapshot().version().clone(), None, cx);
+
+        let snapshot = buffer.undo_tree_snapshot();
+        let node_a = undo_tree_node_for_transaction(&snapshot, transaction_a)
+            .expect("transaction A should be in the undo tree");
+        assert_eq!(snapshot.latest_saved, Some(node_a));
+        let saved_node = snapshot
+            .nodes
+            .iter()
+            .find(|node| node.id == node_a)
+            .expect("saved node should be present");
+        assert!(saved_node.saved);
+        assert!(saved_node.latest_saved);
+
+        buffer.edit([(1..1, "B")], None, cx);
+        let transaction_b = buffer
+            .peek_undo_stack()
+            .map(|entry| entry.transaction_id())
+            .expect("second edit should create a transaction");
+        assert!(buffer.is_dirty());
+
+        let snapshot = buffer.undo_tree_snapshot();
+        let node_b = undo_tree_node_for_transaction(&snapshot, transaction_b)
+            .expect("transaction B should be in the undo tree");
+        (node_a, node_b)
+    });
+
+    buffer_events.lock().clear();
+    buffer.update(cx, |buffer, cx| {
+        assert!(buffer.jump_to_undo_node(node_a, cx));
+        assert_eq!(buffer.text(), "A");
+        assert!(!buffer.is_dirty());
+    });
+    assert_eq!(
+        *buffer_events.lock(),
+        vec![
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::DirtyChanged,
+        ]
+    );
+
+    buffer_events.lock().clear();
+    buffer.update(cx, |buffer, cx| {
+        assert!(buffer.jump_to_undo_node(node_b, cx));
+        assert_eq!(buffer.text(), "AB");
+        assert!(buffer.is_dirty());
+    });
+    assert_eq!(
+        *buffer_events.lock(),
+        vec![
+            BufferEvent::Edited { is_local: true },
+            BufferEvent::DirtyChanged,
+        ]
+    );
+}
+
+#[gpui::test]
+fn test_undo_tree_switch_branch_emits_history_event(cx: &mut TestAppContext) {
+    let buffer_events = Arc::new(Mutex::new(Vec::new()));
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+
+    let buffer_entity = buffer.clone();
+    let (node_a, child_index, transaction_b) = buffer.update(cx, |buffer, cx| {
+        cx.subscribe(&buffer_entity, {
+            let buffer_events = buffer_events.clone();
+            move |_, _, event, _| match event {
+                BufferEvent::Operation { .. } => {}
+                event => buffer_events.lock().push(event.clone()),
+            }
+        })
+        .detach();
+
+        buffer.edit([(0..0, "A")], None, cx);
+        let transaction_a = buffer
+            .peek_undo_stack()
+            .map(|entry| entry.transaction_id())
+            .expect("first edit should create a transaction");
+        buffer.edit([(1..1, "B")], None, cx);
+        let transaction_b = buffer
+            .peek_undo_stack()
+            .map(|entry| entry.transaction_id())
+            .expect("second edit should create a transaction");
+        buffer.undo(cx);
+        buffer.edit([(1..1, "C")], None, cx);
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "A");
+
+        let snapshot = buffer.undo_tree_snapshot();
+        let node_a = undo_tree_snapshot_node(&snapshot, transaction_a)
+            .expect("transaction A should be in the undo tree");
+        let node_b = undo_tree_node_for_transaction(&snapshot, transaction_b)
+            .expect("transaction B should be in the undo tree");
+        let child_index = node_a
+            .children
+            .iter()
+            .position(|child| *child == node_b)
+            .expect("B should be a child branch of A");
+
+        (node_a.id, child_index, transaction_b)
+    });
+
+    buffer_events.lock().clear();
+    buffer.update(cx, |buffer, cx| {
+        assert!(buffer.switch_undo_branch(node_a, child_index, cx));
+        assert_eq!(buffer.text(), "A");
+        assert_eq!(
+            buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+            Some(transaction_b)
+        );
+    });
+    assert_eq!(*buffer_events.lock(), vec![BufferEvent::UndoHistoryChanged]);
+}
+
+fn undo_tree_node_for_transaction(
+    snapshot: &text::UndoTreeSnapshot,
+    transaction_id: TransactionId,
+) -> Option<text::UndoNodeId> {
+    undo_tree_snapshot_node(snapshot, transaction_id).map(|node| node.id)
+}
+
+fn undo_tree_snapshot_node(
+    snapshot: &text::UndoTreeSnapshot,
+    transaction_id: TransactionId,
+) -> Option<&text::UndoTreeNodeSnapshot> {
+    snapshot
+        .nodes
+        .iter()
+        .find(|node| node.transaction_id == Some(transaction_id))
+}
+
+#[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
     let (text, offsets) = marked_text_offsets(
         "one two three\nfour fiˇve six\nseven eightˇ nine\nten eleven twelve\n",

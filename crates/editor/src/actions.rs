@@ -812,6 +812,8 @@ actions!(
         ShowSignatureHelp,
         /// Shows word completions.
         ShowWordCompletions,
+        /// Shows the undo tree.
+        ShowUndoTree,
         /// Randomly shuffles selected lines.
         ShuffleLines,
         /// Navigates to the next signature in the signature help popup.
@@ -891,10 +893,28 @@ actions!(
         ToggleSoftWrap,
         /// Toggles the tab bar display.
         ToggleTabBar,
+        /// Toggles the undo tree.
+        ToggleUndoTree,
         /// Transposes characters around cursor.
         Transpose,
         /// Undoes the last edit.
         Undo,
+        /// Hides the undo tree.
+        HideUndoTree,
+        /// Jumps to the latest undo-tree node.
+        UndoTreeJumpToLatest,
+        /// Jumps to the latest saved undo-tree node.
+        UndoTreeJumpToLatestSaved,
+        /// Jumps to the selected undo-tree node.
+        UndoTreeJumpToSelected,
+        /// Selects the next undo-tree node.
+        UndoTreeSelectNext,
+        /// Selects the previous undo-tree node.
+        UndoTreeSelectPrevious,
+        /// Switches to the next undo-tree branch.
+        UndoTreeSwitchBranchNext,
+        /// Switches to the previous undo-tree branch.
+        UndoTreeSwitchBranchPrevious,
         /// Undoes the last selection change.
         UndoSelection,
         /// Unfolds all folded regions.
