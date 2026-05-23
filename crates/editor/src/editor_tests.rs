@@ -62,6 +62,7 @@ use std::{
 };
 use task::TaskVariables;
 use test::build_editor_with_project;
+use text::UndoTreeSnapshot;
 use unindent::Unindent;
 use util::{
     assert_set_eq, path,
@@ -482,6 +483,119 @@ fn test_undo_tree_jump_and_branch_switch_respect_read_only(cx: &mut TestAppConte
                 .find(|node| node.children.contains(&node_b))
                 .expect("branch parent should remain present");
             assert_eq!(node_a.active_child, Some(1));
+        })
+        .expect("editor should update");
+}
+
+#[gpui::test]
+fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut now = Instant::now();
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.add_window(|window, cx| build_editor(multi_buffer.clone(), window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("A", window, cx);
+            editor.end_transaction_at(now, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("B", window, cx);
+            editor.end_transaction_at(now, cx);
+
+            editor.undo(&Undo, window, cx);
+
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("C", window, cx);
+            editor.end_transaction_at(now, cx);
+
+            editor.show_undo_tree(&ShowUndoTree, window, cx);
+            let state = editor.undo_tree_visualizer_state(cx);
+
+            assert!(state.available);
+            assert_eq!(state.current, state.selected);
+            assert!(state.can_switch_branch);
+            assert_eq!(
+                state.nodes.iter().filter(|node| node.branch_head).count(),
+                2
+            );
+            assert_eq!(state.nodes.iter().filter(|node| node.current).count(), 1);
+            assert!(state.nodes.iter().any(|node| node.branch_point));
+            assert!(state.nodes.iter().any(|node| node.active_branch));
+            assert!(!state.nodes.iter().any(|node| node.latest_saved));
+        })
+        .expect("editor should update");
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.did_save(buffer.snapshot().version().clone(), None, cx);
+    });
+
+    editor
+        .update(cx, |editor, _, cx| {
+            let state = editor.undo_tree_visualizer_state(cx);
+            let current = state
+                .nodes
+                .iter()
+                .find(|node| node.current)
+                .expect("visualizer should include the current node");
+            assert!(current.saved);
+            assert!(current.latest_saved);
+        })
+        .expect("editor should update");
+}
+
+#[gpui::test]
+fn test_undo_tree_visualizer_is_disabled_for_multibuffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer_1 = cx.new(|cx| Buffer::local("aaa\nbbb", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("ccc\nddd", cx));
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_1.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_2.clone(),
+            [Point::new(0, 0)..Point::new(1, 3)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let editor = cx.add_window(|window, cx| build_editor(multi_buffer.clone(), window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.show_undo_tree(&ShowUndoTree, window, cx);
+
+            assert!(editor.undo_tree_visible());
+            assert_eq!(editor.selected_undo_node(), None);
+
+            let state = editor.undo_tree_visualizer_state(cx);
+            assert!(!state.available);
+            assert_eq!(state.current, None);
+            assert_eq!(state.selected, None);
+            assert!(state.nodes.is_empty());
+
+            editor.undo_tree_select_next(&UndoTreeSelectNext, window, cx);
+            editor.undo_tree_switch_branch_next(&UndoTreeSwitchBranchNext, window, cx);
+            editor.undo_tree_jump_to_selected(&UndoTreeJumpToSelected, window, cx);
+            assert_eq!(editor.selected_undo_node(), None);
         })
         .expect("editor should update");
 }

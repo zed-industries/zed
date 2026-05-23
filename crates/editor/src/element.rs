@@ -7748,6 +7748,41 @@ impl EditorElement {
         }
     }
 
+    fn layout_undo_tree_visualizer(&mut self, hitbox: &Hitbox, window: &mut Window, cx: &mut App) {
+        let Some(mut element) = self
+            .editor
+            .update(cx, |editor, cx| editor.render_undo_tree_visualizer(cx))
+        else {
+            return;
+        };
+
+        let margin = px(12.);
+        let available_width = (hitbox.bounds.size.width - margin - margin)
+            .max(px(180.))
+            .min(px(320.));
+        let size = element.layout_as_root(
+            size(
+                AvailableSpace::Definite(available_width),
+                AvailableSpace::MinContent,
+            ),
+            window,
+            cx,
+        );
+        let origin = point(
+            (hitbox.bounds.right() - margin - size.width).max(hitbox.bounds.left() + margin),
+            hitbox.bounds.top() + margin,
+        );
+
+        window.defer_draw(
+            element,
+            origin,
+            2,
+            Some(ContentMask {
+                bounds: hitbox.bounds,
+            }),
+        );
+    }
+
     fn paint_scroll_wheel_listener(
         &mut self,
         layout: &EditorLayout,
@@ -11109,6 +11144,8 @@ impl Element for EditorElement {
 
                         self.layout_blame_popover(&snapshot, &hitbox, line_height, window, cx);
                     }
+
+                    self.layout_undo_tree_visualizer(&hitbox, window, cx);
 
                     let mouse_context_menu = self.layout_mouse_context_menu(
                         &snapshot,

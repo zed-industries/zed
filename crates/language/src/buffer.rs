@@ -1535,7 +1535,7 @@ impl Buffer {
         self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
-        self.text.mark_current_undo_node_saved();
+        self.mark_current_undo_node_saved();
         self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
@@ -3195,6 +3195,10 @@ impl Buffer {
 
     pub fn current_undo_node(&self) -> text::UndoNodeId {
         self.text.current_undo_node()
+    }
+
+    pub fn mark_current_undo_node_saved(&mut self) {
+        self.text.mark_current_undo_node_saved();
     }
 
     pub fn jump_to_undo_node(&mut self, target: text::UndoNodeId, cx: &mut Context<Self>) -> bool {
