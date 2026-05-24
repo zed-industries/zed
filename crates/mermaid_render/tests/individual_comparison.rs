@@ -168,6 +168,8 @@ fn one_dark_theme() -> MermaidTheme {
         git_branch_label_colors: git_branch_colors.map(mermaid_render::text_color_for_background),
         er_attr_bg_odd: surface_background,
         er_attr_bg_even: element_background,
+        error_color: hex(0xdc2626),
+        warning_color: hex(0xd97706),
         accent_colors: Vec::new(),
     }
 }

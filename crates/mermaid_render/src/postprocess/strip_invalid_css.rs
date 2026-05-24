@@ -87,6 +87,7 @@ fn strip_unsupported_css(css: &str) -> String {
     }
 
     strip_css_angle_units(&mut result);
+    strip_css_important(&mut result);
     result
 }
 
@@ -109,6 +110,16 @@ fn skip_css_block(chars: &mut std::iter::Peekable<std::str::CharIndices>) {
 fn strip_css_angle_units(css: &mut String) {
     while let Some(pos) = css.find("deg)") {
         css.replace_range(pos..pos + 3, "");
+    }
+}
+
+/// Strip `!important` from mermaid's generated CSS so that our injected
+/// theme CSS (which uses `!important`) always takes priority. This works
+/// around a usvg cascade bug where competing `!important` rules are
+/// resolved by first-wins rather than the CSS spec's last-wins.
+fn strip_css_important(css: &mut String) {
+    while let Some(pos) = css.find("!important") {
+        css.replace_range(pos..pos + 10, "");
     }
 }
 

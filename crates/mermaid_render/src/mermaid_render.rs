@@ -37,6 +37,8 @@ pub struct MermaidTheme {
     pub git_branch_label_colors: [Hsla; 8],
     pub er_attr_bg_odd: Hsla,
     pub er_attr_bg_even: Hsla,
+    pub error_color: Hsla,
+    pub warning_color: Hsla,
     pub accent_colors: Vec<AccentColor>,
 }
 
@@ -87,6 +89,8 @@ impl Default for MermaidTheme {
             git_branch_label_colors,
             er_attr_bg_odd: rgb(0x94A3B8).into(),
             er_attr_bg_even: rgb(0x0F172A).into(),
+            error_color: rgb(0xDC2626).into(),
+            warning_color: rgb(0xD97706).into(),
             accent_colors: Vec::new(),
         }
     }

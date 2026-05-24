@@ -97,6 +97,8 @@ fn rgb_theme() -> MermaidTheme {
         ].map(mermaid_render::text_color_for_background),
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
+        error_color: rgb(220, 38, 38),
+        warning_color: rgb(217, 119, 6),
         accent_colors: vec![
             mermaid_render::AccentColor { foreground: rgb(116, 173, 232), background: rgb(116, 173, 232) },
             mermaid_render::AccentColor { foreground: rgb(190, 80, 70), background: rgb(190, 80, 70) },

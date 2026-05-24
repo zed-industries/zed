@@ -218,6 +218,20 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
     let edge_label_bg = crate::css_color(theme.edge_label_background);
     let actor_bg = crate::css_color(theme.actor_background);
     let actor_border = crate::css_color(theme.actor_border);
+    let error_bg = {
+        let mut c = theme.error_color;
+        if theme.dark_mode { c.l = (c.l * 0.7).max(0.0); } else { c.l = (c.l * 1.3).min(1.0); }
+        c
+    };
+    let error = crate::css_color(error_bg);
+    let error_text = crate::css_color(crate::postprocess::util::text_color_for_background(error_bg));
+    let warning_bg = {
+        let mut c = theme.warning_color;
+        if theme.dark_mode { c.l = (c.l * 0.7).max(0.0); } else { c.l = (c.l * 1.3).min(1.0); }
+        c
+    };
+    let warning = crate::css_color(warning_bg);
+    let warning_text = crate::css_color(crate::postprocess::util::text_color_for_background(warning_bg));
     let note_bg = crate::css_color(theme.note_background);
     let note_border = crate::css_color(theme.note_border);
     let er_odd = crate::css_color(theme.er_attr_bg_odd);
@@ -330,8 +344,12 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .activeText0, .activeText1, .activeText2, .activeText3 {{ fill: {text} !important; }}
         .done0, .done1, .done2, .done3 {{ stroke: {border} !important; fill: {secondary} !important; stroke-width: 2; }}
         .doneText0, .doneText1, .doneText2, .doneText3 {{ fill: {text} !important; }}
-        .doneCritText0, .doneCritText1, .doneCritText2, .doneCritText3 {{ fill: {text} !important; }}
-        .activeCritText0, .activeCritText1, .activeCritText2, .activeCritText3 {{ fill: {text} !important; }}
+        .crit0, .crit1, .crit2, .crit3 {{ fill: {error} !important; stroke: {error} !important; }}
+        .critText0, .critText1, .critText2, .critText3 {{ fill: {error_text} !important; }}
+        .activeCrit0, .activeCrit1, .activeCrit2, .activeCrit3 {{ fill: {warning} !important; stroke: {warning} !important; }}
+        .activeCritText0, .activeCritText1, .activeCritText2, .activeCritText3 {{ fill: {warning_text} !important; }}
+        .doneCrit0, .doneCrit1, .doneCrit2, .doneCrit3 {{ fill: {error} !important; stroke: {border} !important; stroke-width: 2; }}
+        .doneCritText0, .doneCritText1, .doneCritText2, .doneCritText3 {{ fill: {error_text} !important; }}
         .titleText {{ fill: {text} !important; font-family: {font} !important; }}
         .grid .tick text {{ fill: {text} !important; font-family: {font} !important; }}
         .grid .tick {{ stroke: {border} !important; }}

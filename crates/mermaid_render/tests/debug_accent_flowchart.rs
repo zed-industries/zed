@@ -36,6 +36,8 @@ fn base_theme(accent_colors: Vec<AccentColor>) -> MermaidTheme {
         git_branch_label_colors: std::array::from_fn(|_| mermaid_render::text_color_for_background(rgb(128, 128, 128))),
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
+        error_color: rgb(220, 38, 38),
+        warning_color: rgb(217, 119, 6),
         accent_colors,
     }
 }

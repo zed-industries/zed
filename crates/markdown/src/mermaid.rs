@@ -188,6 +188,8 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
         git_branch_label_colors,
         er_attr_bg_odd: colors.surface_background,
         er_attr_bg_even: colors.element_background,
+        error_color: cx.theme().status().error,
+        warning_color: cx.theme().status().warning,
         accent_colors: players
             .0
             .iter()
