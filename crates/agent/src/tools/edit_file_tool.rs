@@ -23,8 +23,14 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
-/// Before using this tool, use the `read_file` tool to understand the file's contents and context
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// `read_file` prefixes each line of its output with a line number right-aligned in a
+/// 6-character field followed by a single tab, then the line's actual content. When you
+/// derive `old_text` or `new_text` from that output, strip this prefix and keep only what
+/// comes after the tab, preserving the original indentation (tabs and spaces) exactly.
+/// Never include any part of the line number prefix in `old_text` or `new_text`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.

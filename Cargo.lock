@@ -407,6 +407,7 @@ dependencies = [
  "language_models",
  "languages",
  "log",
+ "lru",
  "lsp",
  "markdown",
  "menu",
@@ -3913,9 +3914,9 @@ dependencies = [
 
 [[package]]
 name = "cosmic-text"
-version = "0.17.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c5c9868e64aa6c5410629a83450e142c80e721c727a5bc0fb18107af6c2d66b"
+checksum = "be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73"
 dependencies = [
  "bitflags 2.10.0",
  "fontdb",
@@ -6166,7 +6167,6 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "cloud_api_types",
  "collections",
  "db",
@@ -7461,6 +7461,7 @@ dependencies = [
  "settings",
  "smallvec",
  "strum 0.27.2",
+ "sysinfo 0.37.2",
  "task",
  "telemetry",
  "theme",
@@ -19196,6 +19197,7 @@ dependencies = [
  "gpui_util",
  "icons",
  "itertools 0.14.0",
+ "log",
  "menu",
  "num-format",
  "schemars 1.0.4",
@@ -22017,6 +22019,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "dirs",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
