@@ -11152,7 +11152,7 @@ impl Editor {
 
     fn render_edit_prediction_line_popover(
         &self,
-        label: impl Into<SharedString>,
+        _label: impl Into<SharedString>,
         icon: Option<IconName>,
         window: &mut Window,
         cx: &mut App,
@@ -11165,7 +11165,7 @@ impl Editor {
 
         h_flex()
             .id("ep-line-popover")
-            .py_0p5()
+            .py(px(1.))
             .pl_1()
             .pr(padding_right)
             .gap_1()
@@ -11174,6 +11174,7 @@ impl Editor {
             .bg(Self::edit_prediction_line_popover_bg_color(cx))
             .border_color(Self::edit_prediction_callout_popover_border_color(cx))
             .shadow_xs()
+            .opacity(0.5)
             .when(!has_keybind, |el| {
                 let status_colors = cx.theme().status();
 
@@ -11187,22 +11188,6 @@ impl Editor {
                     })
             })
             .children(keybind)
-            .child(
-                Label::new(label)
-                    .size(LabelSize::Small)
-                    .when(!has_keybind, |el| {
-                        el.color(cx.theme().status().error.into()).strikethrough()
-                    }),
-            )
-            .when(!has_keybind, |el| {
-                el.child(
-                    h_flex().ml_1().child(
-                        Icon::new(IconName::Info)
-                            .size(IconSize::Small)
-                            .color(cx.theme().status().error.into()),
-                    ),
-                )
-            })
             .when_some(icon, |element, icon| {
                 element.child(
                     div()

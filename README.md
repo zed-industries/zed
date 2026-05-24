@@ -59,6 +59,7 @@ https://github.com/zed-industries/zed/compare/main...Dima-369:zed:dima
 - improved `outline::Toggle` to work in multi buffers, it shows the file headings only
 - improve `editor::SelectLargerSyntaxNode` for inline code blocks in Markdown files (`foo bar`), so that it first extends the selection to the word inside the quotes, then the text inside the quotes and only then to the inner text plus the outer quotes
 - improve `editor::AcceptNextWordEditPrediction` to not insert a sole space when a space is before a word in the suggestion. Now, it inserts both the space and the word
+- styled the edit prediction "Jump to Edit" line popover to 50% opacity, removed "Jump to Edit" text, lowered padding, and decreased font size
 - exclude unnamed/scratch buffers (tabs without a file) from project search results (`crates/project/src/project_search.rs`)
 - patch `settings_changed()` in `crates/editor/src/editor.rs` to properly reload the buffer font family, so I can switch trivially between a monospace and proportional font (I am not sure why only my fork needs it, and `Zed.app` doesn't)
 
