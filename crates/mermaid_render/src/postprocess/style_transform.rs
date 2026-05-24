@@ -249,6 +249,9 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}
         .label-group foreignObject {{ font-weight: bold; }}
+        .node rect, .node path {{ fill: {primary} !important; stroke: {border} !important; }}
+        .node polygon {{ fill: {primary} !important; stroke: {border} !important; }}
+        .label-container path {{ fill: {primary} !important; stroke: {border} !important; }}
         {mindmap_css}
         g.stateGroup rect {{ fill: {primary} !important; stroke: {border} !important; }}
         g.stateGroup text {{ fill: {text} !important; }}
@@ -263,9 +266,6 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .node .fork-join {{ fill: {line} !important; stroke: {line} !important; }}
         .node circle.state-end {{ fill: {border} !important; stroke: {background} !important; }}
         .end-state-inner {{ fill: {background} !important; }}
-        .node:not(.mindmap-node) rect, .node:not(.mindmap-node) path {{ fill: {primary} !important; stroke: {border} !important; }}
-        .node:not(.mindmap-node) polygon {{ fill: {primary} !important; stroke: {border} !important; }}
-        .label-container path {{ fill: {primary} !important; stroke: {border} !important; }}
         .statediagram-cluster rect {{ fill: {primary} !important; stroke: {border} !important; }}
         .statediagram-cluster.statediagram-cluster .inner {{ fill: {background} !important; }}
         .statediagram-cluster.statediagram-cluster-alt .inner {{ fill: {tertiary} !important; }}

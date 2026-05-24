@@ -12,14 +12,21 @@ struct ElementFixup<I> {
 }
 
 fn is_bad_rect(e: &BytesStart) -> Result<bool> {
-    if let Some(w) = e.try_get_attribute("width")? {
-        if w.unescape_value()?.is_empty() {
-            return Ok(true);
-        }
-    }
-    if let Some(h) = e.try_get_attribute("height")? {
-        if h.unescape_value()?.is_empty() {
-            return Ok(true);
+    for attr_name in ["width", "height"] {
+        match e.try_get_attribute(attr_name)? {
+            None => return Ok(true),
+            Some(attr) => {
+                let val = attr.unescape_value()?;
+                let trimmed = val.trim();
+                if trimmed.is_empty() {
+                    return Ok(true);
+                }
+                if let Ok(n) = trimmed.parse::<f64>() {
+                    if !n.is_finite() || n <= 0.0 {
+                        return Ok(true);
+                    }
+                }
+            }
         }
     }
     Ok(false)
