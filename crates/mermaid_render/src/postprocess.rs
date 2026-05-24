@@ -1,3 +1,20 @@
+//! Post-processing of [`merman`]-produced SVGs for rasterization with `usvg`/`resvg`.
+//! 
+//! Each submodule is a specific pass that tweaks the SVG event iterator in a particular way. 
+//! 
+//! We always produce and consume [`Event`]s with a short lifetime.
+//! [`Event<'a>`] is backed internally by a [`Cow<'a, [u8]>`](std::borrow::Cow),
+//! so we don't have lifetime issues when we need to mutate the text in an
+//! [`Event`], but also don't force allocating a new [`String`] each time.
+//! 
+//! Many modules contain internal structs that implement [`Iterator`] to make
+//! reasoning about lifetimes simpler, but these are private implementation
+//! details.
+//! 
+//! The [`accent_colors`] module is slightly different to the rest, since it
+//! behaves differently based on the type of diagram being rendered.
+
+
 mod accent_colors;
 mod diagram_recolor;
 mod element_fixup;
