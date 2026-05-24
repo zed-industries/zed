@@ -52,6 +52,18 @@ const DIAGRAMS: &[(&str, &str)] = &[
         "gitgraph",
         "gitGraph\n    commit id: \"init\"\n    branch dev\n    commit id: \"feat\"\n    checkout main\n    merge dev",
     ),
+    (
+        "quadrant",
+        "quadrantChart\n    title Test\n    x-axis Low --> High\n    y-axis Low --> High\n    A: [0.3, 0.8]\n    B: [0.7, 0.4]",
+    ),
+    (
+        "timeline",
+        "timeline\n    title Test\n    section 2020s\n        2020 : Event A\n        2022 : Event B",
+    ),
+    (
+        "xychart",
+        "xychart-beta\n    title Test\n    x-axis [\"A\", \"B\", \"C\"]\n    y-axis \"Val\" 0 --> 10\n    bar [3, 7, 5]",
+    ),
 ];
 
 fn rgb_theme() -> MermaidTheme {
@@ -225,28 +237,6 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
         match mermaid_render::render_to_svg(source, &theme) {
             Ok(svg) => all_issues.extend(check_svg_issues(name, &svg)),
             Err(e) => eprintln!("{name}: render failed (skipped): {e}"),
-        }
-    }
-
-    // Also test the full corpus files if available
-    let corpus_dir =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/corpus");
-    if corpus_dir.exists() {
-        let mut corpus_files: Vec<_> = std::fs::read_dir(&corpus_dir)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().is_some_and(|ext| ext == "mmd"))
-            .collect();
-        corpus_files.sort_by_key(|e| e.file_name());
-
-        for entry in &corpus_files {
-            let path = entry.path();
-            let name = path.file_stem().unwrap().to_string_lossy().to_string();
-            let source = std::fs::read_to_string(&path).unwrap();
-            match mermaid_render::render_to_svg(&source, &theme) {
-                Ok(svg) => all_issues.extend(check_svg_issues(&name, &svg)),
-                Err(e) => eprintln!("corpus/{name}.mmd: render failed: {e}"),
-            }
         }
     }
 
