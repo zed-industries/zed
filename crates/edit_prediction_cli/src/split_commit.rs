@@ -5,7 +5,7 @@
 //!
 //! TODO: Port Python code to generate chronologically-ordered commits
 use crate::FailedHandling;
-use crate::reorder_patch::{Patch, PatchLine, extract_edits, locate_edited_line};
+use crate::reorder_patch::{Patch, PatchLine, edit_locations, extract_edits, locate_edited_line};
 use crate::word_diff::tokenize;
 
 /// Find the largest valid UTF-8 char boundary at or before `index` in `s`.
@@ -218,6 +218,7 @@ pub fn run_split_commit(
 
     let split_point = args.split_point.as_deref().and_then(parse_split_point);
     let mut output_lines = Vec::new();
+    let mut processed_commits = 0usize;
 
     for input_path in inputs {
         let input: Box<dyn BufRead> = if input_path.as_os_str() == "-" {
@@ -326,7 +327,21 @@ pub fn run_split_commit(
 
                 output_lines.push(json);
             }
+
+            processed_commits += 1;
+            eprint!(
+                "\rsplit-commit: processed {} commits, generated {} examples",
+                processed_commits,
+                output_lines.len()
+            );
+            io::stderr()
+                .flush()
+                .context("failed to flush progress to stderr")?;
         }
+    }
+
+    if processed_commits > 0 {
+        eprintln!();
     }
 
     let output_content = output_lines.join("\n") + if output_lines.is_empty() { "" } else { "\n" };
@@ -550,23 +565,20 @@ fn render_reversed_header_lines(mut lines: Vec<&str>) -> String {
     lines.join("\n") + "\n"
 }
 
-/// Calculate the weight for a split position based on the character at that position.
+/// Calculate the weight for a split byte offset in `text`.
 ///
 /// Higher weights indicate more natural pause points (e.g., after punctuation,
 /// at identifier boundaries). Lower weights indicate less natural points
 /// (e.g., mid-identifier).
-fn position_weight(text: &str, pos: usize) -> u32 {
-    if pos == 0 || pos > text.len() {
+fn position_weight(text: &str, byte_offset: usize) -> u32 {
+    if byte_offset == 0 || byte_offset > text.len() || !text.is_char_boundary(byte_offset) {
         return 1;
     }
 
-    let chars: Vec<char> = text.chars().collect();
-    if pos > chars.len() {
+    let Some(prev_char) = text[..byte_offset].chars().next_back() else {
         return 1;
-    }
-
-    // Get the character just before this position (what we just "typed")
-    let prev_char = chars[pos - 1];
+    };
+    let next_char = text[byte_offset..].chars().next();
 
     // High weight: natural pause points (end of statement/argument, opening brackets)
     if matches!(prev_char, ',' | ';' | ':' | '(' | '[' | '{') {
@@ -588,8 +600,7 @@ fn position_weight(text: &str, pos: usize) -> u32 {
 
     // Check if we're at the end of an identifier (word char followed by non-word char)
     let is_prev_word_char = prev_char.is_alphanumeric() || prev_char == '_';
-    let is_next_word_char =
-        pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '_');
+    let is_next_word_char = next_char.is_some_and(|ch| ch.is_alphanumeric() || ch == '_');
 
     if is_prev_word_char && !is_next_word_char {
         // End of identifier - high weight
@@ -614,6 +625,7 @@ fn position_weight(text: &str, pos: usize) -> u32 {
 ///
 /// Returns an index based on the weights, using the provided seed for
 /// deterministic selection.
+#[cfg(test)]
 fn weighted_select(weights: &[u32], seed: u64) -> usize {
     if weights.is_empty() {
         return 0;
@@ -638,6 +650,74 @@ fn weighted_select(weights: &[u32], seed: u64) -> usize {
 
     // Fallback to last index
     weights.len() - 1
+}
+
+#[derive(Clone, Copy)]
+struct CandidateSplit {
+    edit_byte_offset: usize,
+    weight: u32,
+}
+
+fn push_typed_text_candidates(
+    candidates: &mut Vec<CandidateSplit>,
+    edit_start_byte_offset: usize,
+    final_line: &str,
+    final_line_start_byte_offset: usize,
+    typed_text: &str,
+) {
+    for (byte_offset, character) in typed_text.char_indices() {
+        let next_byte_offset = byte_offset + character.len_utf8();
+        let final_line_candidate_byte_offset = final_line_start_byte_offset + next_byte_offset;
+        if final_line[..final_line_candidate_byte_offset]
+            .trim()
+            .is_empty()
+        {
+            continue;
+        }
+        candidates.push(CandidateSplit {
+            edit_byte_offset: edit_start_byte_offset + next_byte_offset,
+            weight: position_weight(final_line, final_line_candidate_byte_offset),
+        });
+    }
+}
+
+fn push_deleted_text_candidates(
+    candidates: &mut Vec<CandidateSplit>,
+    edit_start_byte_offset: usize,
+    deleted_text: &str,
+) {
+    for (byte_offset, character) in deleted_text.char_indices() {
+        candidates.push(CandidateSplit {
+            edit_byte_offset: edit_start_byte_offset + byte_offset + character.len_utf8(),
+            weight: 2,
+        });
+    }
+}
+
+fn weighted_select_candidate(candidates: &[CandidateSplit], seed: u64) -> Option<CandidateSplit> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let total_weight: u64 = candidates
+        .iter()
+        .map(|candidate| candidate.weight as u64)
+        .sum();
+    if total_weight == 0 {
+        return Some(candidates[seed as usize % candidates.len()]);
+    }
+
+    let target = seed % total_weight;
+    let mut cumulative: u64 = 0;
+
+    for candidate in candidates {
+        cumulative += candidate.weight as u64;
+        if target < cumulative {
+            return Some(*candidate);
+        }
+    }
+
+    candidates.last().copied()
 }
 
 /// Calculate similarity ratio between two strings (0-100).
@@ -700,25 +780,13 @@ pub fn imitate_human_edits(
         _ => return no_change,
     };
 
-    // Try to locate the last edit in source
-    let src_edit_loc = locate_edited_line(&src_patch, -1);
+    let source_edit_locations = edit_locations(&src_patch);
+    let src_edit_loc = source_edit_locations.last().cloned();
 
-    // Check if source has ANY edit at the same line as target's first edit
-    // We need to iterate through all edits to check this
-    let src_has_edit_at_target_line = {
-        let mut found = false;
-        let mut idx = 0isize;
-        while let Some(loc) = locate_edited_line(&src_patch, idx) {
-            if loc.filename == tgt_edit_loc.filename
-                && loc.target_line_number == tgt_edit_loc.target_line_number
-            {
-                found = true;
-                break;
-            }
-            idx += 1;
-        }
-        found
-    };
+    let src_has_edit_at_target_line = source_edit_locations.iter().any(|loc| {
+        loc.filename == tgt_edit_loc.filename
+            && loc.target_line_number == tgt_edit_loc.target_line_number
+    });
 
     // Check if this is a replacement (deletion followed by insertion on the same line)
     // or a pure insertion (no corresponding deletion in source)
@@ -756,61 +824,62 @@ pub fn imitate_human_edits(
     // Use similar to get diff operations
     let diff = TextDiff::from_slices(&src_tokens, &tgt_tokens);
 
-    // Build weights for each possible split position
-    let mut position_weights: Vec<u32> = Vec::new();
+    let mut candidate_splits = Vec::new();
+    let mut edit_byte_offset = 0usize;
+    let mut final_line_byte_offset = 0usize;
 
-    // Simulate the edit process to collect weights for all possible split positions
-    {
-        let mut current_text = String::new();
-
-        for op in diff.ops() {
-            match op.tag() {
-                DiffTag::Equal => {
-                    for i in op.old_range() {
-                        current_text.push_str(src_tokens[i]);
-                    }
-                }
-                DiffTag::Replace => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
-
-                    // For insertion part
-                    for ch in ins.chars() {
-                        current_text.push(ch);
-                        let weight = position_weight(&current_text, current_text.len());
-                        position_weights.push(weight);
-                    }
-
-                    // For deletion part (we're "untyping" from source)
-                    for _ in del.chars() {
-                        // Weight deletions lower as they represent removing text
-                        position_weights.push(2);
-                    }
-                }
-                DiffTag::Insert => {
-                    let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                    for ch in ins.chars() {
-                        current_text.push(ch);
-                        let weight = position_weight(&current_text, current_text.len());
-                        position_weights.push(weight);
-                    }
-                }
-                DiffTag::Delete => {
-                    let del: String = op.old_range().map(|i| src_tokens[i]).collect();
-                    for _ in del.chars() {
-                        // Weight deletions lower
-                        position_weights.push(2);
-                    }
-                }
+    for op in diff.ops() {
+        match op.tag() {
+            DiffTag::Equal => {
+                let equal_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                final_line_byte_offset += equal_text.len();
+            }
+            DiffTag::Replace => {
+                let inserted_text: String = op.new_range().map(|i| tgt_tokens[i]).collect();
+                let deleted_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                push_typed_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &tgt_line,
+                    final_line_byte_offset,
+                    &inserted_text,
+                );
+                push_deleted_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset + inserted_text.len(),
+                    &deleted_text,
+                );
+                edit_byte_offset += inserted_text.len() + deleted_text.len();
+                final_line_byte_offset += inserted_text.len();
+            }
+            DiffTag::Insert => {
+                let inserted_text: String = op.new_range().map(|i| tgt_tokens[i]).collect();
+                push_typed_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &tgt_line,
+                    final_line_byte_offset,
+                    &inserted_text,
+                );
+                edit_byte_offset += inserted_text.len();
+                final_line_byte_offset += inserted_text.len();
+            }
+            DiffTag::Delete => {
+                let deleted_text: String = op.old_range().map(|i| src_tokens[i]).collect();
+                push_deleted_text_candidates(
+                    &mut candidate_splits,
+                    edit_byte_offset,
+                    &deleted_text,
+                );
+                edit_byte_offset += deleted_text.len();
             }
         }
     }
 
-    // Use weighted selection to choose split index
-    if position_weights.is_empty() {
+    let Some(selected_split) = weighted_select_candidate(&candidate_splits, seed) else {
         return no_change;
-    }
-    let split_index = weighted_select(&position_weights, seed);
+    };
+    let split_byte_offset = selected_split.edit_byte_offset;
 
     let mut edit_index = 0usize;
     let mut new_src = String::new();
@@ -830,9 +899,9 @@ pub fn imitate_human_edits(
                 let del: String = op.old_range().map(|i| src_tokens[i]).collect();
                 let ins: String = op.new_range().map(|i| tgt_tokens[i]).collect();
                 let repl_len = del.len() + ins.len();
-                if edit_index + repl_len >= split_index {
+                if edit_index + repl_len >= split_byte_offset {
                     // Split within this replace operation
-                    let offset = split_index - edit_index;
+                    let offset = split_byte_offset - edit_index;
                     if offset < ins.len() {
                         let safe_offset = floor_char_boundary(&ins, offset);
                         new_src.push_str(&ins[..safe_offset]);
@@ -853,8 +922,8 @@ pub fn imitate_human_edits(
             }
             DiffTag::Insert => {
                 let repl: String = op.new_range().map(|i| tgt_tokens[i]).collect();
-                if edit_index + repl.len() >= split_index {
-                    let offset = split_index - edit_index;
+                if edit_index + repl.len() >= split_byte_offset {
+                    let offset = split_byte_offset - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
                     new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
@@ -866,8 +935,8 @@ pub fn imitate_human_edits(
             }
             DiffTag::Delete => {
                 let repl: String = op.old_range().map(|i| src_tokens[i]).collect();
-                if edit_index + repl.len() >= split_index {
-                    let offset = split_index - edit_index;
+                if edit_index + repl.len() >= split_byte_offset {
+                    let offset = split_byte_offset - edit_index;
                     let safe_offset = floor_char_boundary(&repl, offset);
                     new_src.push_str(&repl[..safe_offset]);
                     split_found = true;
