@@ -62,13 +62,10 @@ impl<'a, I> SanitizeNan<I> {
             }
 
             Event::Start(ref e) | Event::Empty(ref e) => {
-                let is_start = matches!(event, Event::Start(_));
-                if has_nan_color_attr(e) {
-                    let sanitized = sanitize_element_attrs(e)?;
-                    Ok(if is_start {
-                        Event::Start(sanitized)
-                    } else {
-                        Event::Empty(sanitized)
+                if let Some(sanitized) = try_sanitize_element_attrs(e)? {
+                    Ok(match event {
+                        Event::Start(_) => Event::Start(sanitized),
+                        _ => Event::Empty(sanitized),
                     })
                 } else {
                     Ok(event)
@@ -89,14 +86,15 @@ impl<'a, I> SanitizeNan<I> {
     }
 }
 
-fn has_nan_color_attr(e: &BytesStart<'_>) -> bool {
-    e.attributes().flatten().any(|attr| {
+/// Returns `Some(sanitized)` if any color attribute contained NaN, `None` otherwise.
+fn try_sanitize_element_attrs<'a>(e: &BytesStart<'a>) -> Result<Option<BytesStart<'a>>> {
+    let has_nan = e.attributes().flatten().any(|attr| {
         COLOR_ATTRS.contains(&attr.key.local_name().as_ref())
             && attr.value.as_ref().windows(3).any(|w| w == b"NaN")
-    })
-}
-
-fn sanitize_element_attrs<'a>(e: &BytesStart<'a>) -> Result<BytesStart<'a>> {
+    });
+    if !has_nan {
+        return Ok(None);
+    }
     let name = e.name();
     let tag_name =
         std::str::from_utf8(name.as_ref()).context("non-UTF-8 tag name")?;
@@ -117,7 +115,7 @@ fn sanitize_element_attrs<'a>(e: &BytesStart<'a>) -> Result<BytesStart<'a>> {
             new_elem.push_attribute(attr);
         }
     }
-    Ok(new_elem)
+    Ok(Some(new_elem))
 }
 
 fn sanitize_hsl_nan(value: &str) -> Option<String> {

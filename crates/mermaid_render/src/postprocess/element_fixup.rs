@@ -52,6 +52,13 @@ fn rewrite_attr<'a>(
     Ok(new_elem)
 }
 
+fn rewrap<'a>(event: &Event<'_>, elem: BytesStart<'a>) -> Event<'a> {
+    match event {
+        Event::Start(_) => Event::Start(elem),
+        _ => Event::Empty(elem),
+    }
+}
+
 fn is_bad_rect(e: &BytesStart) -> Result<bool> {
     for attr_name in ["width", "height"] {
         match e.try_get_attribute(attr_name)? {
@@ -101,41 +108,32 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
 
     fn process_event(&mut self, event: Event<'a>) -> Result<Option<Event<'a>>> {
         match event {
-            Event::Start(ref e) if e.name().as_ref() == b"svg" && !self.svg_seen => {
+            Event::Start(ref e) | Event::Empty(ref e)
+                if e.name().as_ref() == b"svg" && !self.svg_seen =>
+            {
                 self.svg_seen = true;
-                Ok(Some(Event::Start(self.rewrite_svg_style(e)?)))
-            }
-            Event::Empty(ref e) if e.name().as_ref() == b"svg" && !self.svg_seen => {
-                self.svg_seen = true;
-                Ok(Some(Event::Empty(self.rewrite_svg_style(e)?)))
+                let new_elem = self.rewrite_svg_style(e)?;
+                Ok(Some(rewrap(&event, new_elem)))
             }
 
-            Event::Start(ref e) if e.name().as_ref() == b"rect" => {
+            Event::Start(ref e) | Event::Empty(ref e)
+                if e.name().as_ref() == b"rect" =>
+            {
                 if is_bad_rect(e)? {
-                    self.skip_rect_depth = 1;
-                    Ok(None)
-                } else {
-                    Ok(Some(event))
-                }
-            }
-            Event::Empty(ref e) if e.name().as_ref() == b"rect" => {
-                if is_bad_rect(e)? {
+                    if matches!(event, Event::Start(_)) {
+                        self.skip_rect_depth = 1;
+                    }
                     Ok(None)
                 } else {
                     Ok(Some(event))
                 }
             }
 
-            Event::Start(ref e) if e.name().as_ref() == b"text" => {
+            Event::Start(ref e) | Event::Empty(ref e)
+                if e.name().as_ref() == b"text" =>
+            {
                 if let Some(new_elem) = self.fix_text_fill(e)? {
-                    Ok(Some(Event::Start(new_elem)))
-                } else {
-                    Ok(Some(event))
-                }
-            }
-            Event::Empty(ref e) if e.name().as_ref() == b"text" => {
-                if let Some(new_elem) = self.fix_text_fill(e)? {
-                    Ok(Some(Event::Empty(new_elem)))
+                    Ok(Some(rewrap(&event, new_elem)))
                 } else {
                     Ok(Some(event))
                 }

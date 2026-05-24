@@ -46,22 +46,14 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
             }
         }
         let best = build(lo);
+        // Floating-point precision can leave the binary search result just
+        // below the 4.5:1 threshold. Fall back to pure black or white.
         if wcag_contrast_ratio(rgba, best) >= 4.5 {
             best
         } else if bg_luminance > 0.18 {
-            Rgba {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            }
+            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
         } else {
-            Rgba {
-                r: 1.0,
-                g: 1.0,
-                b: 1.0,
-                a: 1.0,
-            }
+            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
         }
     };
     Hsla::from(result)

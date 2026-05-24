@@ -111,7 +111,7 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
             .trim_start_matches(".section-");
         write!(
             css,
-            "{selector} rect, {selector} path, {selector} circle, {selector} polygon
+            "{selector} rect, {selector} path, {selector} circle, {selector} polygon \
              {{ fill: {color} !important; }}\n\
              {selector} text, {selector} span, \
              text{selector}, tspan{selector} \
@@ -149,9 +149,9 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
         let lbl = crate::css_color(theme.git_branch_label_colors[i]);
         write!(
             css,
-            ".commit{i} {{ stroke: {c}; fill: {c}; }} \
-             .arrow{i} {{ stroke: {c}; }} \
-             .label{i} {{ fill: {c}; }} \
+            ".commit{i} {{ stroke: {c}; fill: {c}; }}\n\
+             .arrow{i} {{ stroke: {c}; }}\n\
+             .label{i} {{ fill: {c}; }}\n\
              .branch-label{i} {{ fill: {lbl}; }}\n"
         )
         .expect("write to String cannot fail");
@@ -217,6 +217,8 @@ fn scope_css(raw_css: &str, svg_id: &str) -> String {
                 || trimmed.starts_with("foreignObject")
                 || trimmed.starts_with("g.")
                 || trimmed.starts_with("text.")
+                || trimmed.starts_with("rect.")
+                || trimmed.starts_with("path.")
                 || trimmed.starts_with("defs")
                 || trimmed.starts_with('#')
             {

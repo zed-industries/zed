@@ -104,17 +104,22 @@ fn strip_unsupported_css(css: &str) -> String {
 }
 
 fn skip_css_block(chars: &mut std::iter::Peekable<std::str::CharIndices>) {
-    let mut found_brace = false;
-    let mut depth = 0u32;
-    while let Some((_, c)) = chars.next() {
+    for (_, c) in chars.by_ref() {
         if c == '{' {
-            found_brace = true;
-            depth += 1;
-        } else if c == '}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 && found_brace {
-                return;
+            break;
+        }
+    }
+    let mut depth = 1u32;
+    for (_, c) in chars.by_ref() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return;
+                }
             }
+            _ => {}
         }
     }
 }

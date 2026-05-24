@@ -66,23 +66,21 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
 fn extract_svg_id(svg: &str) -> String {
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.name().as_ref() == b"svg" {
-                    return e
-                        .try_get_attribute("id")
-                        .ok()
-                        .flatten()
-                        .and_then(|a| a.unescape_value().ok())
-                        .map(|v| v.to_string())
-                        .unwrap_or_default();
-                }
-            }
-            Ok(Event::Eof) | Err(_) => return String::new(),
-            _ => {}
+    for event in ReaderIter::new(reader) {
+        let Ok(Event::Start(e) | Event::Empty(e)) = event else {
+            continue;
+        };
+        if e.name().as_ref() == b"svg" {
+            return e
+                .try_get_attribute("id")
+                .ok()
+                .flatten()
+                .and_then(|a| a.unescape_value().ok())
+                .map(|v| v.into_owned())
+                .unwrap_or_default();
         }
     }
+    String::new()
 }
 
 struct ReaderIter<'a> {
