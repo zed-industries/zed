@@ -271,6 +271,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .edgeLabel p {{ background-color: {primary} !important; }}
         .edgeLabel {{ background-color: {primary} !important; }}
         .actor {{ stroke: {actor_border}; fill: {actor_bg}; }}
+        text.actor {{ text-anchor: middle; }}
         text.actor>tspan {{ fill: {actor_text} !important; stroke: none; }}
         .labelText, .labelText>tspan {{ fill: {actor_text} !important; }}
         .actor-line {{ stroke: {actor_border} !important; }}

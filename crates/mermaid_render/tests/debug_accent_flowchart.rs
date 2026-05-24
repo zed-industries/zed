@@ -140,9 +140,7 @@ fn backslash_n_converted_to_line_break() {
     );
 }
 
-// TODO: Re-enable when per-diagram-type accent color strategies are implemented.
 #[test]
-#[ignore]
 fn class_diagram_fallback_text_uses_accent_colors() {
     let theme = base_theme(vec![
         accent(190, 80, 70),   // red
@@ -213,9 +211,7 @@ fn class_diagram_fallback_text_uses_accent_colors() {
 }
 
 
-// TODO: Re-enable when per-diagram-type accent color strategies are implemented.
 #[test]
-#[ignore]
 fn sequence_diagram_tspan_uses_accent_text_color() {
     let theme = base_theme(vec![accent(190, 80, 70)]);
     let source = "sequenceDiagram\n    participant Database";
