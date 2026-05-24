@@ -46,11 +46,12 @@ fn neutralize_envelope_tags(input: &str) -> String {
 /// frontmatter), not O(total file size).
 pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
     let source = match &skill.source {
+        agent_skills::SkillSource::BuiltIn => "built-in",
         agent_skills::SkillSource::Global => "global",
         agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
     };
     let worktree = match &skill.source {
-        agent_skills::SkillSource::Global => None,
+        agent_skills::SkillSource::BuiltIn | agent_skills::SkillSource::Global => None,
         agent_skills::SkillSource::ProjectLocal {
             worktree_root_name, ..
         } => Some(worktree_root_name.clone()),
@@ -200,31 +201,33 @@ impl AgentTool for SkillTool {
                 (skill.clone(), path_string)
             };
 
-            // Read the body on demand. Bodies are not kept in memory
-            // between materializations — see `agent_skills::read_skill_body`.
-            let body = agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
-                .await
-                .map_err(|e| SkillToolOutput::Error {
-                    error: e.to_string(),
-                })?;
+            // For built-in skills the body is already in memory (compiled
+            // into the binary). For user skills, read on demand from disk.
+            let body = if let Some(embedded) = skill.embedded_body {
+                embedded.to_string()
+            } else {
+                agent_skills::read_skill_body(self.fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(|e| SkillToolOutput::Error {
+                        error: e.to_string(),
+                    })?
+            };
             let rendered = render_skill_envelope(&skill, &body);
 
-            // Activations go through the standard tool-permission flow so
-            // they participate in the same Allow-Once / Always-Allow UX as
-            // every other built-in tool. The auth context value is the
-            // skill's absolute SKILL.md path so that "always allow this
-            // specific skill" is keyed to a specific file: editing the
-            // SKILL.md will change the path's content but not the path,
-            // so for content-change re-trust we'd want a hash too — but
-            // at minimum, two skills with the same name from different
-            // locations get independent trust grants.
-            let authorize = cx.update(|cx| {
-                let context = crate::ToolPermissionContext::new(Self::NAME, vec![skill_file_path]);
-                event_stream.authorize(self.initial_title(Ok(input), cx), context, cx)
-            });
-            authorize.await.map_err(|e| SkillToolOutput::Error {
-                error: e.to_string(),
-            })?;
+            // Built-in skills ship with Zed and are trusted by default,
+            // so they skip the authorization prompt. User-installed skills
+            // go through the standard Allow-Once / Always-Allow UX.
+            let is_builtin = skill.source == agent_skills::SkillSource::BuiltIn;
+            if !is_builtin {
+                let authorize = cx.update(|cx| {
+                    let context =
+                        crate::ToolPermissionContext::new(Self::NAME, vec![skill_file_path]);
+                    event_stream.authorize(self.initial_title(Ok(input), cx), context, cx)
+                });
+                authorize.await.map_err(|e| SkillToolOutput::Error {
+                    error: e.to_string(),
+                })?;
+            }
 
             Ok(SkillToolOutput::Found { rendered })
         })
