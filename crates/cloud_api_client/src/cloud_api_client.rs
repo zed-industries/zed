@@ -239,6 +239,56 @@ impl CloudApiClient {
         serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
     }
 
+    pub async fn update_system_settings(
+        &self,
+        system_id: String,
+        body: UpdateSystemSettingsBody,
+    ) -> Result<SystemSettings, ClientApiError> {
+        let host = self.cloud_host();
+        let request_builder = Request::builder()
+            .method(Method::PATCH)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/system_settings")
+                    .map_err(ClientApiError::RequestBuildFailed)?
+                    .as_ref(),
+            )
+            .header(ZED_SYSTEM_ID_HEADER_NAME, system_id);
+
+        let request = self.build_request(request_builder, Json(body))?;
+
+        let mut response = self.http_client.send(request).await.map_err(|source| {
+            ClientApiError::ConnectionFailed {
+                host: host.clone(),
+                source,
+            }
+        })?;
+
+        if !response.status().is_success() {
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return Err(ClientApiError::Unauthorized);
+            }
+
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await.ok();
+
+            return Err(ClientApiError::ServerError {
+                host,
+                status: response.status(),
+                body,
+            });
+        }
+
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
+
+        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
+    }
+
     pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
         let request = build_request(
             Request::builder().method(Method::GET).uri(

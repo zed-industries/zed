@@ -943,7 +943,7 @@
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
       "space w l": "workspace::ActivatePaneRight",
-	  "space w q": "pane::CloseActiveItem",
+      "space w q": "pane::CloseActiveItem",
     },
   },
   {
@@ -1056,8 +1056,8 @@
       "ctrl-d": "git_graph::ScrollDown",
       "ctrl-u": "git_graph::ScrollUp",
       "shift-g": "menu::SelectLast",
-      "g g": "menu::SelectFirst"
-    }
+      "g g": "menu::SelectFirst",
+    },
   },
   {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
@@ -1203,6 +1203,20 @@
       "/": "vim::SwitchToInsertMode",
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]
