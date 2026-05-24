@@ -292,14 +292,15 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .legend text {{ fill: {text} !important; }}
         .pieOuterCircle {{ stroke: {border} !important; }}
         .pieCircle {{ stroke: {border} !important; }}
-        .task-type-0, .section-type-0 {{ fill: {primary} !important; }}
-        .task-type-1, .section-type-1 {{ fill: {secondary} !important; }}
-        .task-type-2, .section-type-2 {{ fill: {tertiary} !important; }}
-        .task-type-3, .section-type-3 {{ fill: {primary} !important; }}
-        .task-type-4, .section-type-4 {{ fill: {secondary} !important; }}
-        .task-type-5, .section-type-5 {{ fill: {tertiary} !important; }}
-        .task-type-6, .section-type-6 {{ fill: {primary} !important; }}
-        .task-type-7, .section-type-7 {{ fill: {secondary} !important; }}
+        rect.task-type-0, rect.section-type-0 {{ fill: {primary} !important; }}
+        rect.task-type-1, rect.section-type-1 {{ fill: {secondary} !important; }}
+        rect.task-type-2, rect.section-type-2 {{ fill: {tertiary} !important; }}
+        rect.task-type-3, rect.section-type-3 {{ fill: {primary} !important; }}
+        rect.task-type-4, rect.section-type-4 {{ fill: {secondary} !important; }}
+        rect.task-type-5, rect.section-type-5 {{ fill: {tertiary} !important; }}
+        rect.task-type-6, rect.section-type-6 {{ fill: {primary} !important; }}
+        rect.task-type-7, rect.section-type-7 {{ fill: {secondary} !important; }}
+        text.journey-section, text.task {{ fill: {text} !important; }}
         .relationshipLabelBox {{ fill: {tertiary} !important; opacity: 0.7; background-color: {tertiary} !important; }}
         .labelBkg {{ background-color: {tertiary} !important; }}
         .edgeLabel .label {{ fill: {border} !important; }}
