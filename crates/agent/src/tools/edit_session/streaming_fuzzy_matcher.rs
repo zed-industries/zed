@@ -190,7 +190,12 @@ impl StreamingFuzzyMatcher {
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
             let matched_ratio = matched_lines as f32
                 / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-            if matched_ratio >= 0.8 {
+            let threshold = if buffer_line_count > 500 {
+                0.6
+            } else {
+                0.8
+            };
+            if matched_ratio >= threshold {
                 let buffer_start_ix = self
                     .snapshot
                     .point_to_offset(Point::new(buffer_row_start, 0));
@@ -200,6 +205,10 @@ impl StreamingFuzzyMatcher {
                 ));
                 valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
             }
+        }
+
+        if valid_matches.is_empty() {
+            valid_matches = self.try_exact_substring_match();
         }
 
         valid_matches.into_iter().map(|(_, range)| range).collect()
@@ -240,6 +249,59 @@ impl StreamingFuzzyMatcher {
         }
 
         best_match
+    }
+
+    fn try_exact_substring_match(&self) -> Vec<(u32, Range<usize>)> {
+        let joined_query = self.query_lines.join("\n");
+        if joined_query.is_empty() {
+            return Vec::new();
+        }
+
+        let buffer_len = self.snapshot.len();
+        const MAX_EXACT_MATCH_BUFFER_SIZE: usize = 500_000;
+        if buffer_len > MAX_EXACT_MATCH_BUFFER_SIZE {
+            return Vec::new();
+        }
+
+        let buffer_text = self.snapshot.text();
+        let mut matches: Vec<(u32, Range<usize>)> = Vec::new();
+        let mut search_start = 0;
+
+        while let Some(pos) = buffer_text[search_start..].find(&joined_query) {
+            let absolute_pos = search_start + pos;
+            let start_point = self.snapshot.offset_to_point(absolute_pos);
+            let end_pos = absolute_pos + joined_query.len();
+            matches.push((start_point.row, absolute_pos..end_pos));
+            search_start = absolute_pos + 1;
+            if matches.len() >= 10 {
+                break;
+            }
+        }
+
+        if matches.len() == 1 {
+            return matches;
+        }
+
+        if matches.len() > 1 && self.line_hint.is_some() {
+            let line_hint = self.line_hint.unwrap();
+            const EXACT_LINE_HINT_TOLERANCE: u32 = 50;
+            let mut best_match = None;
+            let mut best_distance = u32::MAX;
+
+            for (row, range) in &matches {
+                let distance = row.abs_diff(line_hint);
+                if distance <= EXACT_LINE_HINT_TOLERANCE && distance < best_distance {
+                    best_distance = distance;
+                    best_match = Some((*row, range.clone()));
+                }
+            }
+
+            if let Some(m) = best_match {
+                return vec![m];
+            }
+        }
+
+        Vec::new()
     }
 }
 

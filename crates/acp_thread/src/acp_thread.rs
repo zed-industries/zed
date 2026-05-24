@@ -1127,6 +1127,7 @@ pub struct AcpThread {
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
     had_error: bool,
+    turn_snapshots: Vec<TurnSnapshot>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
     /// The initial scroll position for the thread view, set during session registration.
@@ -1336,6 +1337,7 @@ impl AcpThread {
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
             had_error: false,
+            turn_snapshots: Vec::new(),
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
@@ -2375,11 +2377,106 @@ impl AcpThread {
         })
     }
 
+
+
+    fn compact_previous_turn_diffs(&mut self, cx: &mut Context<Self>) {
+        for entry in &mut self.entries {
+            let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                continue;
+            };
+            for content in &mut tool_call.content {
+                if let ToolCallContent::Diff(diff) = content {
+                    diff.update(cx, |diff, _cx| diff.compact());
+                }
+            }
+        }
+    }
+
+    fn capture_turn_snapshot(&mut self, cx: &mut Context<Self>) {
+        let mut seen_paths: HashMap<String, Arc<str>> = HashMap::new();
+
+        for entry in self.entries.iter().rev() {
+            let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                continue;
+            };
+            for content in &tool_call.content {
+                if let ToolCallContent::Diff(diff) = content {
+                    let diff_data = diff.read(cx);
+                    if let Some(path) = diff_data.file_path(cx) {
+                        if !seen_paths.contains_key(&path) {
+                            if let Some(buffer) = diff_data.buffer() {
+                                let text: Arc<str> = Arc::from(buffer.read(cx).text());
+                                seen_paths.insert(path, text);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if seen_paths.is_empty() {
+            return;
+        }
+
+        let edited_files: Vec<TurnFileSnapshot> = seen_paths
+            .into_iter()
+            .map(|(path, text)| TurnFileSnapshot { path, text })
+            .collect();
+
+        self.turn_snapshots.push(TurnSnapshot {
+            turn_id: self.turn_id,
+            edited_files,
+        });
+    }
+
+    pub fn undo_last_turn(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(snapshot) = self.turn_snapshots.pop() else {
+            return false;
+        };
+
+        let mut restores: Vec<(Entity<Buffer>, Arc<str>)> = Vec::new();
+
+        for file in &snapshot.edited_files {
+            for entry in &self.entries {
+                let AgentThreadEntry::ToolCall(tool_call) = entry else {
+                    continue;
+                };
+                let mut diffs_for_file: Vec<Entity<Diff>> = Vec::new();
+                {
+                    for content in &tool_call.content {
+                        if let ToolCallContent::Diff(diff) = content {
+                            let path_match =
+                                diff.read(cx).file_path(cx).as_deref() == Some(&file.path);
+                            if path_match {
+                                diffs_for_file.push(diff.clone());
+                            }
+                        }
+                    }
+                }
+                for diff in &diffs_for_file {
+                    if let Some(buffer) = diff.read(cx).buffer().cloned() {
+                        restores.push((buffer, file.text.clone()));
+                    }
+                }
+            }
+        }
+
+        for (buffer, text) in restores {
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(text.as_ref(), cx);
+            });
+        }
+
+        cx.notify();
+        true
+    }
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.capture_turn_snapshot(cx);
+        self.compact_previous_turn_diffs(cx);
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
 

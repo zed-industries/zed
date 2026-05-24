@@ -1979,6 +1979,7 @@ impl Thread {
                     .clone()
                     .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
                 this.refresh_turn_tools(cx);
+                this.compact_stale_tool_results();
                 let request = this.build_completion_request(intent, cx)?;
                 anyhow::Ok((model, request))
             })??;
@@ -3051,6 +3052,175 @@ impl Thread {
 
     pub fn is_turn_complete(&self) -> bool {
         self.running_turn.is_none()
+    }
+
+    fn estimate_total_chars(&self) -> usize {
+        self.messages
+            .iter()
+            .map(|m| match m {
+                Message::User(msg) => msg.content.len(),
+                Message::Agent(msg) => {
+                    let content_len: usize = msg
+                        .content
+                        .iter()
+                        .map(|c| match c {
+                            AgentMessageContent::Text(t) => t.len(),
+                            AgentMessageContent::Thinking { text, .. } => text.len(),
+                            AgentMessageContent::RedactedThinking(t) => t.len(),
+                            AgentMessageContent::ToolUse(t) => {
+                                serde_json::to_string(t).map(|s| s.len()).unwrap_or(0)
+                            }
+                        })
+                        .sum();
+                    let tool_results_len: usize = msg
+                        .tool_results
+                        .values()
+                        .flat_map(|r| &r.content)
+                        .map(|c| match c {
+                            LanguageModelToolResultContent::Text(t) => t.len(),
+                            LanguageModelToolResultContent::Image(_) => 0,
+                        })
+                        .sum();
+                    content_len + tool_results_len
+                }
+                Message::Resume => 0,
+            })
+            .sum()
+    }
+
+    fn compact_stale_tool_results(&mut self) {
+        self.deduplicate_repeated_file_reads();
+
+        let total_chars = self.estimate_total_chars();
+        let mut context_limit_reached = false;
+
+        if let Some(model) = self.model.as_ref() {
+            let context_window_chars = model.max_token_count().saturating_mul(4) as usize;
+            if context_window_chars > 0 && total_chars > context_window_chars * 8 / 10 {
+                context_limit_reached = true;
+            }
+        }
+
+        if context_limit_reached || total_chars > 4_000_000 {
+            self.truncate_large_tool_results();
+        }
+    }
+
+    fn deduplicate_repeated_file_reads(&mut self) {
+        let mut seen_files: HashMap<String, (usize, LanguageModelToolUseId)> =
+            HashMap::default();
+        let mut stale_reads: Vec<(usize, LanguageModelToolUseId)> = Vec::new();
+
+        for (idx, message) in self.messages.iter().enumerate() {
+            if let Message::Agent(msg) = message {
+                for content in &msg.content {
+                    if let AgentMessageContent::ToolUse(tool_use) = content
+                        && tool_use.name.as_ref() == "read_file"
+                    {
+                        if let Some(path) =
+                            tool_use.input.get("path").and_then(|v| v.as_str())
+                        {
+                            if let Some((previous_idx, previous_id)) =
+                                seen_files.remove(path)
+                            {
+                                stale_reads.push((previous_idx, previous_id));
+                            }
+                            seen_files.insert(
+                                path.to_string(),
+                                (idx, tool_use.id.clone()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        if stale_reads.len() < 3 {
+            return;
+        }
+
+        for (stale_idx, _stale_tool_use_id) in stale_reads {
+            if let Some(Message::Agent(msg)) =
+                self.messages.get_mut(stale_idx)
+            {
+                let tool_use_ids: Vec<LanguageModelToolUseId> = msg
+                    .content
+                    .iter()
+                    .filter_map(|c| {
+                        if let AgentMessageContent::ToolUse(t) = c
+                            && t.name.as_ref() == "read_file"
+                        {
+                            Some(t.id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                for tool_use_id in &tool_use_ids {
+                    if let Some(result) = msg.tool_results.get_mut(tool_use_id) {
+                        for content_block in &mut result.content {
+                            match content_block {
+                                LanguageModelToolResultContent::Text(text)
+                                    if text.len() > 5_000 =>
+                                {
+                                    let preview: String =
+                                        text.chars().take(500).collect();
+                                    *content_block =
+                                        LanguageModelToolResultContent::Text(
+                                            format!(
+                                                "{}\n\n[Earlier read of this file truncated: a more recent read exists later in the conversation]",
+                                                preview
+                                            )
+                                            .into(),
+                                        );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn truncate_large_tool_results(&mut self) {
+        let mut truncated_count = 0;
+        const MAX_RESULT_CHARS: usize = 20_000;
+
+        for message in &mut self.messages {
+            if let Message::Agent(msg) = message {
+                for (_, result) in &mut msg.tool_results {
+                    for content_block in &mut result.content {
+                        match content_block {
+                            LanguageModelToolResultContent::Text(text)
+                                if text.len() > MAX_RESULT_CHARS =>
+                            {
+                                let preview: String =
+                                    text.chars().take(2000).collect();
+                                *content_block = LanguageModelToolResultContent::Text(
+                                    format!(
+                                        "{}\n\n[Content truncated: {} chars were removed to reduce memory usage. The original content remains available by re-reading the file.]",
+                                        preview,
+                                        text.len()
+                                    )
+                                    .into(),
+                                );
+                                truncated_count += 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if truncated_count > 0 {
+            log::info!(
+                "Truncated {} large tool results to reduce memory usage",
+                truncated_count
+            );
+        }
     }
 
     fn build_request_messages(

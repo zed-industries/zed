@@ -155,6 +155,7 @@ menu.workspace = true
 migrator.workspace = true
 miniprofiler_ui.workspace = true
 mimalloc = { version = "0.1", optional = true }
+
 nc.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
@@ -226,6 +227,7 @@ zlog.workspace = true
 zlog_settings.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
+mimalloc = { version = "0.1" }
 etw_tracing.workspace = true
 windows.workspace = true
 gpui = { workspace = true, features = [

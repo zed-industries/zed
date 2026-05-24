@@ -885,26 +885,41 @@ fn extract_match(
         ""
     };
 
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let buffer_line_count = snapshot.max_point().row as usize + 1;
+    let buffer_size_hint = if buffer_line_count > 500 {
+        format!(
+            " The file has {} lines. For large files, use grep to find a unique line near the edit location, then include that line in old_text. If the edit is widespread, consider splitting into multiple smaller edit_file calls targeting narrower sections.",
+            buffer_line_count
+        )
+    } else {
+        String::new()
+    };
+
     match matches.len() {
         0 => Err(format!(
             "Could not find matching text for edit at index {}. \
                 The old_text did not match any content in the file.{} \
-                Please read the file again to get the current content.",
-            edit_index, file_changed_since_last_read_message,
+                Please read the file again to get the current content.{}",
+            edit_index, file_changed_since_last_read_message, buffer_size_hint,
         )),
         1 => Ok(matches.into_iter().next().unwrap()),
         _ => {
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
             let lines = matches
                 .iter()
                 .map(|range| (snapshot.offset_to_point(range.start).row + 1).to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
+            let large_file_hint = if buffer_line_count > 500 {
+                " For large files, try to include more unique surrounding context in old_text."
+            } else {
+                ""
+            };
             Err(format!(
                 "Edit {} matched multiple locations in the file at lines: {}. \
                     Please provide more context in old_text to uniquely \
-                    identify the location.",
-                edit_index, lines
+                    identify the location.{}",
+                edit_index, lines, large_file_hint
             ))
         }
     }

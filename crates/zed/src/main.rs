@@ -81,7 +81,7 @@ use zed::{
 
 use crate::zed::{CrashHandler, OpenRequestKind, eager_load_active_theme_and_icon_theme};
 
-#[cfg(feature = "mimalloc")]
+#[cfg(any(feature = "mimalloc", target_os = "windows"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

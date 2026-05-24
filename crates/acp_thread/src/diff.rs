@@ -12,6 +12,7 @@ use util::ResultExt;
 pub enum Diff {
     Pending(PendingDiff),
     Finalized(FinalizedDiff),
+    Compacted(CompactedDiff),
 }
 
 impl Diff {
@@ -134,18 +135,20 @@ impl Diff {
     }
 
     /// Returns the original text before any edits were applied.
-    pub fn base_text(&self) -> &Arc<str> {
+    pub fn base_text(&self) -> Option<&Arc<str>> {
         match self {
-            Self::Pending(PendingDiff { base_text, .. }) => base_text,
-            Self::Finalized(FinalizedDiff { base_text, .. }) => base_text,
+            Self::Pending(PendingDiff { base_text, .. }) => Some(base_text),
+            Self::Finalized(FinalizedDiff { base_text, .. }) => Some(base_text),
+            Self::Compacted(_) => None,
         }
     }
 
     /// Returns the buffer being edited (for pending diffs) or the snapshot buffer (for finalized diffs).
-    pub fn buffer(&self) -> &Entity<Buffer> {
+    pub fn buffer(&self) -> Option<&Entity<Buffer>> {
         match self {
-            Self::Pending(PendingDiff { new_buffer, .. }) => new_buffer,
-            Self::Finalized(FinalizedDiff { new_buffer, .. }) => new_buffer,
+            Self::Pending(PendingDiff { new_buffer, .. }) => Some(new_buffer),
+            Self::Finalized(FinalizedDiff { new_buffer, .. }) => Some(new_buffer),
+            Self::Compacted(_) => None,
         }
     }
 
@@ -156,6 +159,7 @@ impl Diff {
                 .file()
                 .map(|file| file.full_path(cx).to_string_lossy().into_owned()),
             Self::Finalized(FinalizedDiff { path, .. }) => Some(path.clone()),
+            Self::Compacted(CompactedDiff { path, .. }) => Some(path.clone()),
         }
     }
 
@@ -163,6 +167,7 @@ impl Diff {
         match self {
             Self::Pending(PendingDiff { multibuffer, .. }) => multibuffer,
             Self::Finalized(FinalizedDiff { multibuffer, .. }) => multibuffer,
+            Self::Compacted(CompactedDiff { multibuffer, .. }) => multibuffer,
         }
     }
 
@@ -182,6 +187,7 @@ impl Diff {
                 .file()
                 .map(|file| file.path().display(file.path_style(cx))),
             Diff::Finalized(FinalizedDiff { path, .. }) => Some(path.as_str().into()),
+            Diff::Compacted(CompactedDiff { path, .. }) => Some(path.as_str().into()),
         };
         format!(
             "Diff: {}\n```\n{}\n```\n",
@@ -212,6 +218,7 @@ impl Diff {
                 base_text.as_ref() != old_text
                     || !new_buffer.read(cx).as_rope().chunks().equals_str(new_text)
             }
+            Diff::Compacted(_) => true,
         }
     }
 }
@@ -393,6 +400,36 @@ pub struct FinalizedDiff {
     new_buffer: Entity<Buffer>,
     multibuffer: Entity<MultiBuffer>,
     _update_diff: Task<Result<()>>,
+}
+
+pub struct CompactedDiff {
+    pub path: String,
+    pub multibuffer: Entity<MultiBuffer>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnFileSnapshot {
+    pub path: String,
+    pub text: Arc<str>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TurnSnapshot {
+    pub turn_id: u32,
+    pub edited_files: Vec<TurnFileSnapshot>,
+}
+
+impl Diff {
+    pub fn compact(&mut self) {
+        match self {
+            Diff::Finalized(finalized) => {
+                let path = finalized.path.clone();
+                let multibuffer = finalized.multibuffer.clone();
+                *self = Diff::Compacted(CompactedDiff { path, multibuffer });
+            }
+            _ => {}
+        }
+    }
 }
 
 async fn build_buffer_diff(

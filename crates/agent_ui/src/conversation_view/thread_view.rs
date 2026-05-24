@@ -6658,7 +6658,13 @@ impl ThreadView {
                                         let diff_for_discard = if has_revealed_diff
                                             && is_cancelled_edit
                                         {
-                                            tool_call.diffs().next().cloned()
+                                            tool_call
+                                                .diffs()
+                                                .next()
+                                                .cloned()
+                                                .filter(|diff| {
+                                                    diff.read(cx).base_text().is_some()
+                                                })
                                         } else {
                                             None
                                         };
@@ -6744,11 +6750,16 @@ impl ThreadView {
                                                                     tool_call_id.clone();
                                                                 move |this, _, _window, cx| {
                                                                     let diff_data = diff.read(cx);
-                                                                    let base_text = diff_data
-                                                                        .base_text()
-                                                                        .clone();
-                                                                    let buffer =
-                                                                        diff_data.buffer().clone();
+                                                                    let Some(base_text) = diff_data.base_text() else {
+                                                                        log::error!("Cannot discard: diff is compacted");
+                                                                        return;
+                                                                    };
+                                                                    let base_text = base_text.clone();
+                                                                    let Some(buffer) = diff_data.buffer() else {
+                                                                        log::error!("Cannot discard: diff is compacted");
+                                                                        return;
+                                                                    };
+                                                                    let buffer = buffer.clone();
                                                                     buffer.update(
                                                                         cx,
                                                                         |buffer, cx| {
