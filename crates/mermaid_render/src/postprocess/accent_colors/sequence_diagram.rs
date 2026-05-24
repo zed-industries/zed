@@ -1,7 +1,7 @@
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
-use super::{accent_class_name, add_class};
+use super::{accent_class_name, add_to_event};
 
 pub(super) struct SequenceDiagramAccents {
     accent_count: usize,
@@ -29,43 +29,25 @@ impl SequenceDiagramAccents {
 
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"rect" => {
-                let is_start = matches!(event, Event::Start(_));
                 if let Some(idx) = self.check_actor_rect(e)? {
-                    let new_elem = add_class(e, &accent_class_name(idx))?;
-                    Ok(if is_start {
-                        Event::Start(new_elem)
-                    } else {
-                        Event::Empty(new_elem)
-                    })
+                    add_to_event(&event, e, &accent_class_name(idx))
                 } else {
                     Ok(event)
                 }
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
-                let is_start = matches!(event, Event::Start(_));
                 if let Some(idx) = self.check_actor_text(e)? {
                     self.current_text_accent = Some(idx);
-                    let new_elem = add_class(e, &accent_class_name(idx))?;
-                    Ok(if is_start {
-                        Event::Start(new_elem)
-                    } else {
-                        Event::Empty(new_elem)
-                    })
+                    add_to_event(&event, e, &accent_class_name(idx))
                 } else {
                     Ok(event)
                 }
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"tspan" => {
-                let is_start = matches!(event, Event::Start(_));
                 if let Some(idx) = self.current_text_accent {
-                    let new_elem = add_class(e, &accent_class_name(idx))?;
-                    Ok(if is_start {
-                        Event::Start(new_elem)
-                    } else {
-                        Event::Empty(new_elem)
-                    })
+                    add_to_event(&event, e, &accent_class_name(idx))
                 } else {
                     Ok(event)
                 }

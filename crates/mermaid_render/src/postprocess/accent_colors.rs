@@ -14,13 +14,6 @@ pub(crate) struct NodeRect {
     pub accent_idx: usize,
 }
 
-pub(crate) struct NodeRectBuilder {
-    pub cx: f64,
-    pub cy: f64,
-    pub half_height: f64,
-    pub accent_idx: usize,
-}
-
 pub(crate) fn parse_translate(e: &BytesStart<'_>) -> Option<(f64, f64)> {
     let attr = e.try_get_attribute("transform").ok()??;
     let val = attr.unescape_value().ok()?;
@@ -54,6 +47,15 @@ fn chart_color_class_name(index: usize) -> String {
     format!("zed-chart-{index}")
 }
 
+/// Wraps `add_class` and preserves the `Start`/`Empty` variant of the original event.
+pub(crate) fn add_to_event<'a>(ev: &Event<'_>, e: &BytesStart<'_>, cl: &str) -> Result<Event<'a>> {
+    let new_elem = add_class(e, cl)?;
+    Ok(match ev {
+        Event::Start(_) => Event::Start(new_elem),
+        _ => Event::Empty(new_elem),
+    })
+}
+
 /// Adds a CSS class to an element, preserving any existing classes.
 pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<BytesStart<'a>> {
     let name = e.name();
@@ -75,6 +77,28 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
         new_elem.push_attribute(("class", class_to_add));
     }
     Ok(new_elem)
+}
+
+pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>) -> Option<usize> {
+    let x: f64 = e
+        .try_get_attribute("x")
+        .ok()??
+        .unescape_value()
+        .ok()?
+        .parse()
+        .ok()?;
+    let y: f64 = e
+        .try_get_attribute("y")
+        .ok()??
+        .unescape_value()
+        .ok()?
+        .parse()
+        .ok()?;
+    node_rects.iter().find_map(|rect| {
+        let in_y = (y - rect.cy).abs() <= rect.half_height + 5.0;
+        let in_x = (x - rect.cx).abs() <= rect.half_height * 2.0;
+        (in_x && in_y).then_some(rect.accent_idx)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +156,7 @@ struct AccentColors<I> {
     plot_depth: usize,
     plot_path_done: bool,
     pie_color_idx: usize,
+    quadrant_point_idx: usize,
 }
 
 impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
@@ -149,6 +174,13 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                         self.plot_path_done = false;
                     } else if class.as_ref() == "legend" {
                         self.in_legend = true;
+                    } else if class.as_ref() == "data-point" {
+                        let accent_count = self.theme.accent_colors.len();
+                        if accent_count > 0 {
+                            let idx = self.quadrant_point_idx % accent_count;
+                            self.quadrant_point_idx += 1;
+                            return add_to_event(&event, e, &accent_class_name(idx));
+                        }
                     }
                 }
                 Ok(event)
@@ -165,26 +197,19 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"rect" => {
-                let is_start = matches!(event, Event::Start(_));
-
                 if self.in_legend && self.legend_color_idx < 8 {
                     let class = chart_color_class_name(self.legend_color_idx);
                     self.legend_color_idx += 1;
                     self.in_legend = false;
-                    let new_elem = add_class(e, &class)?;
-                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                    add_to_event(&event, e, &class)
                 } else if self.in_plot {
-                    let class = chart_color_class_name(0);
-                    let new_elem = add_class(e, &class)?;
-                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                    add_to_event(&event, e, &chart_color_class_name(0))
                 } else {
                     Ok(event)
                 }
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"path" => {
-                let is_start = matches!(event, Event::Start(_));
-
                 let class_val = e
                     .try_get_attribute("class")?
                     .map(|a| a.unescape_value())
@@ -193,16 +218,13 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                 if class_val.as_deref() == Some("pieCircle") {
                     let class = chart_color_class_name(self.pie_color_idx % 8);
                     self.pie_color_idx += 1;
-                    let new_elem = add_class(e, &class)?;
-                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                    add_to_event(&event, e, &class)
                 } else if self.in_plot
                     && !self.plot_path_done
                     && e.try_get_attribute("stroke")?.is_some()
                 {
                     self.plot_path_done = true;
-                    let class = chart_color_class_name(1);
-                    let new_elem = add_class(e, &class)?;
-                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                    add_to_event(&event, e, &chart_color_class_name(1))
                 } else {
                     Ok(event)
                 }
@@ -250,9 +272,9 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
         }
 
         let event = match &mut self.handler {
-            Handler::Flowchart(h)
-            | Handler::ClassDiagram(h)
-            | Handler::StateDiagram(h) => h.process_event(event),
+            Handler::Flowchart(h) | Handler::ClassDiagram(h) | Handler::StateDiagram(h) => {
+                h.process_event(event)
+            }
             Handler::Mindmap(h) => h.process_event(event),
             Handler::Sequence(h) => h.process_event(event),
             Handler::Passthrough | Handler::Pending => Ok(event),
@@ -279,5 +301,6 @@ pub(super) fn process<'a>(
         plot_depth: 0,
         plot_path_done: false,
         pie_color_idx: 0,
+        quadrant_point_idx: 0,
     }
 }

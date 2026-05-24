@@ -31,6 +31,27 @@ struct ElementFixup<I> {
     skip_rect_depth: usize,
 }
 
+fn rewrite_attr<'a>(
+    e: &BytesStart<'_>,
+    attr_name: &[u8],
+    new_value: &str,
+) -> Result<BytesStart<'a>> {
+    let name = e.name();
+    let tag = std::str::from_utf8(name.as_ref())?;
+    let mut new_elem = BytesStart::new(tag.to_owned());
+    for attr in e.attributes() {
+        let attr = attr?;
+        if attr.key.local_name().as_ref() == attr_name {
+            let local_name = attr.key.local_name();
+            let key = std::str::from_utf8(local_name.as_ref())?;
+            new_elem.push_attribute((key, new_value));
+        } else {
+            new_elem.push_attribute(attr);
+        }
+    }
+    Ok(new_elem)
+}
+
 fn is_bad_rect(e: &BytesStart) -> Result<bool> {
     for attr_name in ["width", "height"] {
         match e.try_get_attribute(attr_name)? {
@@ -54,21 +75,15 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
 
 impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
     fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<BytesStart<'a>> {
-        let mut new_elem = BytesStart::new("svg");
-        for attr in e.attributes() {
-            let attr = attr?;
-            if attr.key.local_name().as_ref() == b"style" {
-                let val = attr.unescape_value()?;
-                let fixed = val.replace(
-                    "background-color: white",
-                    &format!("background-color: {}", self.background_css),
-                );
-                new_elem.push_attribute(("style", fixed.as_str()));
-            } else {
-                new_elem.push_attribute(attr);
-            }
-        }
-        Ok(new_elem)
+        let style = e
+            .try_get_attribute("style")?
+            .map(|a| a.unescape_value())
+            .transpose()?;
+        let new_style = style.as_deref().unwrap_or_default().replace(
+            "background-color: white",
+            &format!("background-color: {}", self.background_css),
+        );
+        rewrite_attr(e, b"style", &new_style)
     }
 
     fn fix_text_fill(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
@@ -81,16 +96,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
         if !needs_fix {
             return Ok(None);
         }
-        let mut new_elem = BytesStart::new("text");
-        for attr in e.attributes() {
-            let attr = attr?;
-            if attr.key.local_name().as_ref() == b"fill" {
-                new_elem.push_attribute(("fill", self.text_color_css.as_str()));
-            } else {
-                new_elem.push_attribute(attr);
-            }
-        }
-        Ok(Some(new_elem))
+        Ok(Some(rewrite_attr(e, b"fill", &self.text_color_css)?))
     }
 
     fn process_event(&mut self, event: Event<'a>) -> Result<Option<Event<'a>>> {

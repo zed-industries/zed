@@ -51,9 +51,9 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for InjectCss<'a, I> {
                 if !self.injected {
                     self.injected = true;
                     self.pending
-                        .push_back(Event::Text(BytesText::from_escaped(
-                            std::mem::take(&mut self.injected_css),
-                        )));
+                        .push_back(Event::Text(BytesText::from_escaped(std::mem::take(
+                            &mut self.injected_css,
+                        ))));
                     self.pending.push_back(event);
                     return self.pending.pop_front().map(Ok);
                 }
@@ -159,16 +159,20 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
     css
 }
 
+fn adjust_lightness(color: &mut gpui::Hsla, dark_mode: bool) {
+    if dark_mode {
+        color.l = (color.l * 0.7).max(0.0);
+    } else {
+        color.l = (color.l * 1.3).min(1.0);
+    }
+}
+
 fn accent_css(theme: &MermaidTheme) -> String {
     let mut css = String::new();
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
         let mut bg = accent.background;
-        if theme.dark_mode {
-            bg.l = (bg.l * 0.7).max(0.0);
-        } else {
-            bg.l = (bg.l * 1.3).min(1.0);
-        }
+        adjust_lightness(&mut bg, theme.dark_mode);
         let fill = crate::css_color(bg);
         let text = crate::css_color(crate::postprocess::util::text_color_for_background(bg));
         let class = format!(".zed-accent-{i}");
@@ -247,18 +251,22 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
     let actor_border = crate::css_color(theme.actor_border);
     let error_bg = {
         let mut c = theme.error_color;
-        if theme.dark_mode { c.l = (c.l * 0.7).max(0.0); } else { c.l = (c.l * 1.3).min(1.0); }
+        adjust_lightness(&mut c, theme.dark_mode);
         c
     };
     let error = crate::css_color(error_bg);
-    let error_text = crate::css_color(crate::postprocess::util::text_color_for_background(error_bg));
+    let error_text = crate::css_color(crate::postprocess::util::text_color_for_background(
+        error_bg,
+    ));
     let warning_bg = {
         let mut c = theme.warning_color;
-        if theme.dark_mode { c.l = (c.l * 0.7).max(0.0); } else { c.l = (c.l * 1.3).min(1.0); }
+        adjust_lightness(&mut c, theme.dark_mode);
         c
     };
     let warning = crate::css_color(warning_bg);
-    let warning_text = crate::css_color(crate::postprocess::util::text_color_for_background(warning_bg));
+    let warning_text = crate::css_color(crate::postprocess::util::text_color_for_background(
+        warning_bg,
+    ));
     let note_bg = crate::css_color(theme.note_background);
     let note_border = crate::css_color(theme.note_border);
     let er_odd = crate::css_color(theme.er_attr_bg_odd);

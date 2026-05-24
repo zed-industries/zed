@@ -2,8 +2,7 @@ use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
 use super::{
-    accent_class_name, add_class, parse_path_half_height, parse_translate, NodeRect,
-    NodeRectBuilder,
+    NodeRect, accent_class_name, add_class, add_to_event, parse_path_half_height, parse_translate,
 };
 
 const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
@@ -13,7 +12,7 @@ pub(crate) struct ClassDiagramAccents {
     accent_g_stack: Vec<Option<usize>>,
     node_counter: usize,
     node_rects: Vec<NodeRect>,
-    building_node: Option<NodeRectBuilder>,
+    building_node: Option<NodeRect>,
     current_text_accent: Option<usize>,
 }
 
@@ -50,7 +49,7 @@ impl ClassDiagramAccents {
                     self.node_counter += 1;
 
                     if let Some((cx, cy)) = parse_translate(e) {
-                        self.building_node = Some(NodeRectBuilder {
+                        self.building_node = Some(NodeRect {
                             cx,
                             cy,
                             half_height: 30.0,
@@ -70,13 +69,8 @@ impl ClassDiagramAccents {
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(entry) = self.accent_g_stack.pop() {
                     if entry.is_some() {
-                        if let Some(builder) = self.building_node.take() {
-                            self.node_rects.push(NodeRect {
-                                cx: builder.cx,
-                                cy: builder.cy,
-                                half_height: builder.half_height,
-                                accent_idx: builder.accent_idx,
-                            });
+                        if let Some(rect) = self.building_node.take() {
+                            self.node_rects.push(rect);
                         }
                     }
                 }
@@ -106,7 +100,7 @@ impl ClassDiagramAccents {
                 let is_text = e.name().as_ref() == b"text";
 
                 let accent_idx = if is_text {
-                    self.lookup_position_accent(e)
+                    super::lookup_position_accent(&self.node_rects, e)
                         .or_else(|| self.current_accent())
                 } else {
                     self.current_text_accent
@@ -116,12 +110,7 @@ impl ClassDiagramAccents {
                     if is_text && is_start {
                         self.current_text_accent = Some(idx);
                     }
-                    let new_elem = add_class(e, &accent_class_name(idx))?;
-                    return Ok(if is_start {
-                        Event::Start(new_elem)
-                    } else {
-                        Event::Empty(new_elem)
-                    });
+                    return add_to_event(&event, e, &accent_class_name(idx));
                 }
 
                 Ok(event)
@@ -138,27 +127,5 @@ impl ClassDiagramAccents {
 
     fn current_accent(&self) -> Option<usize> {
         self.accent_g_stack.iter().rev().find_map(|entry| *entry)
-    }
-
-    fn lookup_position_accent(&self, e: &BytesStart<'_>) -> Option<usize> {
-        let x: f64 = e
-            .try_get_attribute("x")
-            .ok()??
-            .unescape_value()
-            .ok()?
-            .parse()
-            .ok()?;
-        let y: f64 = e
-            .try_get_attribute("y")
-            .ok()??
-            .unescape_value()
-            .ok()?
-            .parse()
-            .ok()?;
-        self.node_rects.iter().find_map(|rect| {
-            let in_y = (y - rect.cy).abs() <= rect.half_height + 5.0;
-            let in_x = (x - rect.cx).abs() <= rect.half_height * 2.0;
-            (in_x && in_y).then_some(rect.accent_idx)
-        })
     }
 }

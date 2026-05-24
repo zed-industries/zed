@@ -16,7 +16,7 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
     let chroma = (ok_a * ok_a + ok_b * ok_b).sqrt();
     let hue = ok_b.atan2(ok_a);
 
-    let bg_luminance = 0.2126 * r_lin + 0.7152 * g_lin + 0.0722 * b_lin;
+    let bg_luminance = relative_luminance(rgba);
     let text_l = if bg_luminance > 0.18 { 0.18 } else { 0.96 };
     let text_c = chroma * 0.15;
 
@@ -49,9 +49,19 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
         if wcag_contrast_ratio(rgba, best) >= 4.5 {
             best
         } else if bg_luminance > 0.18 {
-            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+            Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }
         } else {
-            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+            Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            }
         }
     };
     Hsla::from(result)
@@ -95,12 +105,13 @@ fn oklab_to_linear_rgb(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
     )
 }
 
+fn relative_luminance(c: Rgba) -> f32 {
+    0.2126 * srgb_to_linear(c.r) + 0.7152 * srgb_to_linear(c.g) + 0.0722 * srgb_to_linear(c.b)
+}
+
 fn wcag_contrast_ratio(a: Rgba, b: Rgba) -> f32 {
-    let luminance = |c: Rgba| -> f32 {
-        0.2126 * srgb_to_linear(c.r) + 0.7152 * srgb_to_linear(c.g) + 0.0722 * srgb_to_linear(c.b)
-    };
-    let la = luminance(a);
-    let lb = luminance(b);
+    let la = relative_luminance(a);
+    let lb = relative_luminance(b);
     let (lighter, darker) = if la > lb { (la, lb) } else { (lb, la) };
     (lighter + 0.05) / (darker + 0.05)
 }
