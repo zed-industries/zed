@@ -2377,8 +2377,6 @@ impl AcpThread {
         })
     }
 
-
-
     fn compact_previous_turn_diffs(&mut self, cx: &mut Context<Self>) {
         for entry in &mut self.entries {
             let AgentThreadEntry::ToolCall(tool_call) = entry else {
@@ -2403,10 +2401,11 @@ impl AcpThread {
                 if let ToolCallContent::Diff(diff) = content {
                     let diff_data = diff.read(cx);
                     if let Some(path) = diff_data.file_path(cx) {
-                        if !seen_paths.contains_key(&path) {
+                        if let std::collections::hash_map::Entry::Vacant(e) = seen_paths.entry(path)
+                        {
                             if let Some(buffer) = diff_data.buffer() {
                                 let text: Arc<str> = Arc::from(buffer.read(cx).text());
-                                seen_paths.insert(path, text);
+                                e.insert(text);
                             }
                         }
                     }
@@ -2470,15 +2469,16 @@ impl AcpThread {
         cx.notify();
         true
     }
+
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
-        self.capture_turn_snapshot(cx);
-        self.compact_previous_turn_diffs(cx);
         self.clear_completed_plan_entries(cx);
         self.had_error = false;
+        self.capture_turn_snapshot(cx);
+        self.compact_previous_turn_diffs(cx);
 
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);

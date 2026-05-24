@@ -190,11 +190,7 @@ impl StreamingFuzzyMatcher {
             let matched_buffer_row_count = buffer_row_end - buffer_row_start;
             let matched_ratio = matched_lines as f32
                 / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-            let threshold = if buffer_line_count > 500 {
-                0.6
-            } else {
-                0.8
-            };
+            let threshold = if buffer_line_count > 500 { 0.6 } else { 0.8 };
             if matched_ratio >= threshold {
                 let buffer_start_ix = self
                     .snapshot
@@ -282,22 +278,23 @@ impl StreamingFuzzyMatcher {
             return matches;
         }
 
-        if matches.len() > 1 && self.line_hint.is_some() {
-            let line_hint = self.line_hint.unwrap();
-            const EXACT_LINE_HINT_TOLERANCE: u32 = 50;
-            let mut best_match = None;
-            let mut best_distance = u32::MAX;
+        if matches.len() > 1 {
+            if let Some(line_hint) = self.line_hint {
+                const EXACT_LINE_HINT_TOLERANCE: u32 = 50;
+                let mut best_match = None;
+                let mut best_distance = u32::MAX;
 
-            for (row, range) in &matches {
-                let distance = row.abs_diff(line_hint);
-                if distance <= EXACT_LINE_HINT_TOLERANCE && distance < best_distance {
-                    best_distance = distance;
-                    best_match = Some((*row, range.clone()));
+                for (row, range) in &matches {
+                    let distance = row.abs_diff(line_hint);
+                    if distance <= EXACT_LINE_HINT_TOLERANCE && distance < best_distance {
+                        best_distance = distance;
+                        best_match = Some((*row, range.clone()));
+                    }
                 }
-            }
 
-            if let Some(m) = best_match {
-                return vec![m];
+                if let Some(m) = best_match {
+                    return vec![m];
+                }
             }
         }
 
