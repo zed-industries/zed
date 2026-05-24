@@ -229,7 +229,7 @@ pub async fn create_terminal_entity(
         .update(cx, |project, cx| {
             project
                 .remote_client()
-                .and_then(|r| r.read(cx).default_system_shell())
+                .and_then(|r| r.read(cx).shell())
                 .map(Shell::Program)
         })
         .unwrap_or_else(|| Shell::Program(get_default_system_shell_preferring_bash()));
