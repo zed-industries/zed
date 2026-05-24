@@ -247,9 +247,7 @@ path = "examples/grid_layout.rs"
 name = "list_example"
 path = "examples/list_example.rs"
 
-[[example]]
-name = "minimal"
-path = "examples/minimal.rs"
+
 
 [[example]]
 name = "mouse_pressure"
