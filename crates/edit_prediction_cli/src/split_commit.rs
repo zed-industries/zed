@@ -35,6 +35,8 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 
+const MAX_SPLIT_POINT_SAMPLING_ATTEMPTS: usize = 10;
+
 /// `ep split-commit` CLI args.
 #[derive(Debug, Args, Clone)]
 pub struct SplitCommitArgs {
@@ -110,6 +112,89 @@ fn parse_split_point(value: &str) -> Option<SplitPoint> {
     } else {
         value.parse::<usize>().ok().map(SplitPoint::Index)
     }
+}
+
+fn is_service_file(path: &str) -> bool {
+    let path = path.trim();
+    let path = path
+        .strip_prefix("a/")
+        .or_else(|| path.strip_prefix("b/"))
+        .unwrap_or(path)
+        .trim_start_matches("./");
+
+    if path.is_empty() || path == "/dev/null" {
+        return true;
+    }
+
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    if matches!(
+        file_name,
+        "package.json"
+            | "package-lock.json"
+            | "pnpm-lock.yaml"
+            | "Cargo.lock"
+            | "yarn.lock"
+            | "bun.lock"
+            | "bun.lockb"
+            | "go.sum"
+            | "composer.lock"
+            | "Gemfile.lock"
+            | "Pipfile.lock"
+            | "poetry.lock"
+            | "uv.lock"
+            | ".gitlab-ci.yml"
+            | ".travis.yml"
+            | "azure-pipelines.yml"
+            | "Jenkinsfile"
+    ) {
+        return true;
+    }
+
+    if file_name.ends_with(".min.js")
+        || file_name.ends_with(".bundle.js")
+        || file_name.contains(".generated.")
+        || file_name.ends_with(".pb.go")
+    {
+        return true;
+    }
+
+    if path == ".github/workflows"
+        || path.starts_with(".github/workflows/")
+        || path == ".circleci"
+        || path.starts_with(".circleci/")
+    {
+        return true;
+    }
+
+    path.split('/').any(|component| {
+        matches!(
+            component,
+            "dist" | "build" | "coverage" | "node_modules" | "vendor"
+        )
+    })
+}
+
+fn edit_starts_on_service_file(patch: &Patch, split_pos: usize) -> bool {
+    locate_edited_line(patch, split_pos as isize)
+        .is_some_and(|edit_location| is_service_file(&edit_location.filename))
+}
+
+fn sample_split_point(patch: &Patch, rng: &mut dyn rand::RngCore) -> usize {
+    let stats = patch.stats();
+    let num_edits = stats.added + stats.removed;
+    if num_edits == 0 {
+        return 0;
+    }
+
+    let mut split = rng.random_range(1..=num_edits);
+    for _ in 1..MAX_SPLIT_POINT_SAMPLING_ATTEMPTS {
+        if !edit_starts_on_service_file(patch, split) {
+            break;
+        }
+        split = rng.random_range(1..=num_edits);
+    }
+
+    split
 }
 
 /// Entry point for the `ep split-commit` subcommand.
@@ -303,7 +388,7 @@ pub fn generate_evaluation_example_from_ordered_commit(
     anyhow::ensure!(num_edits != 0, "no edits found in commit");
 
     let split = match split_point {
-        None => rng.random_range(1..=num_edits),
+        None => sample_split_point(&patch, rng.as_mut()),
         Some(SplitPoint::Fraction(f)) => {
             let v = (f * num_edits as f64).floor() as usize;
             v.min(num_edits)
@@ -1571,6 +1656,44 @@ index 123..456 789
         // but not the commit metadata
         assert!(!case.edit_history.contains("Author:"));
         assert!(!case.edit_history.contains("Date:"));
+    }
+
+    #[test]
+    fn test_service_file_detection() {
+        assert!(is_service_file("package.json"));
+        assert!(is_service_file("frontend/yarn.lock"));
+        assert!(is_service_file("a/src/generated/types.pb.go"));
+        assert!(is_service_file("b/.github/workflows/ci.yml"));
+        assert!(is_service_file("web/node_modules/pkg/index.js"));
+        assert!(is_service_file("dist/app.bundle.js"));
+
+        assert!(!is_service_file("src/main.rs"));
+        assert!(!is_service_file("src/build.rs"));
+        assert!(!is_service_file("Cargo.toml"));
+    }
+
+    #[test]
+    fn test_edit_starts_on_service_file() {
+        let commit = r#"--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,1 +1,2 @@
+ fn lib() {}
++pub fn added() {}
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"lockfileVersion": 3}
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -1,1 +1,2 @@
+ fn main() {}
++println!("hello");
+"#;
+        let patch = Patch::parse_unified_diff(commit);
+
+        assert!(edit_starts_on_service_file(&patch, 1));
+        assert!(!edit_starts_on_service_file(&patch, 2));
     }
 
     #[test]
