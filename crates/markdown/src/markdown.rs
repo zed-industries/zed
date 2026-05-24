@@ -1466,18 +1466,28 @@ impl MarkdownElement {
                                     return;
                                 }
                             }
-                            let (range, mode) = match event.click_count {
+                            let (range, mode, reversed) = match event.click_count {
+                                1 if event.modifiers.shift => {
+                                    let tail = markdown.selection.tail();
+                                    let reversed = source_index < tail;
+                                    let range = if reversed {
+                                        source_index..tail
+                                    } else {
+                                        tail..source_index
+                                    };
+                                    (range, SelectMode::Character, reversed)
+                                }
                                 1 => {
                                     let range = source_index..source_index;
-                                    (range, SelectMode::Character)
+                                    (range, SelectMode::Character, false)
                                 }
                                 2 => {
                                     let range = rendered_text.surrounding_word_range(source_index);
-                                    (range.clone(), SelectMode::Word(range))
+                                    (range.clone(), SelectMode::Word(range), false)
                                 }
                                 3 => {
                                     let range = rendered_text.surrounding_line_range(source_index);
-                                    (range.clone(), SelectMode::Line(range))
+                                    (range.clone(), SelectMode::Line(range), false)
                                 }
                                 _ => {
                                     let range = 0..rendered_text
@@ -1485,13 +1495,13 @@ impl MarkdownElement {
                                         .last()
                                         .map(|line| line.source_end)
                                         .unwrap_or(0);
-                                    (range, SelectMode::All)
+                                    (range, SelectMode::All, false)
                                 }
                             };
                             markdown.selection = Selection {
                                 start: range.start,
                                 end: range.end,
-                                reversed: false,
+                                reversed,
                                 pending: true,
                                 mode,
                             };
