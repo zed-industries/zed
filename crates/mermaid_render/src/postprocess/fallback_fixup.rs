@@ -1,3 +1,18 @@
+//! Fixes double-escaped HTML entities inside fallback `<text>` groups that
+//! were generated as replacements for `<foreignObject>` content.
+//!
+//! ```xml
+//! <!-- before -->
+//! <g data-merman-foreignobject="fallback">
+//!   <text>List&amp;lt;T&amp;gt;</text>
+//! </g>
+//!
+//! <!-- after -->
+//! <g data-merman-foreignobject="fallback">
+//!   <text>List&lt;T&gt;</text>
+//! </g>
+//! ```
+
 use std::collections::VecDeque;
 
 use anyhow::Result;

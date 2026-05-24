@@ -1,3 +1,15 @@
+//! Strips `<foreignObject>` elements and their contents from the SVG, since
+//! `usvg`/`resvg` does not support them.
+//!
+//! ```xml
+//! <!-- before -->
+//! <foreignObject><div>Hello</div></foreignObject>
+//! <text class="nodeLabel">Hello</text>
+//!
+//! <!-- after -->
+//! <text class="nodeLabel">Hello</text>
+//! ```
+
 use anyhow::Result;
 use quick_xml::events::Event;
 

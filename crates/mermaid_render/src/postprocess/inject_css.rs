@@ -1,3 +1,17 @@
+//! Builds a theme-aware CSS stylesheet and appends it into the SVG's `<style>`
+//! element. All selectors are scoped to the SVG's `id` to prevent leaking.
+//!
+//! ```xml
+//! <!-- before -->
+//! <style>.node rect { fill: white; }</style>
+//!
+//! <!-- after -->
+//! <style>.node rect { fill: white; }
+//! #mermaid-1 .node rect { fill: #89b4fa !important; }
+//! /* ... theme rules ... */
+//! </style>
+//! ```
+
 use std::collections::VecDeque;
 
 use anyhow::Result;

@@ -1,3 +1,14 @@
+//! Converts literal `\n` escape sequences inside `<foreignObject>` elements
+//! into `<br/>` tags so that line breaks render correctly.
+//!
+//! ```xml
+//! <!-- before -->
+//! <foreignObject>Hello\nWorld</foreignObject>
+//!
+//! <!-- after -->
+//! <foreignObject>Hello<br/>World</foreignObject>
+//! ```
+
 use anyhow::{Context as _, Result};
 use quick_xml::escape;
 use quick_xml::events::{BytesStart, BytesText, Event};

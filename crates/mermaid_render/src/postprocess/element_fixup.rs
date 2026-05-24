@@ -1,3 +1,23 @@
+//! Fixes various issues in merman's SVG output.
+//!
+//! Replaces hardcoded white backgrounds with the theme background:
+//! ```xml
+//! <!-- before --> <svg style="background-color: white">
+//! <!-- after  --> <svg style="background-color: #1e1e2e">
+//! ```
+//!
+//! Removes `<rect>` elements with missing or invalid dimensions:
+//! ```xml
+//! <!-- before --> <rect width="NaN" height="10"/>
+//! <!-- after  --> (removed)
+//! ```
+//!
+//! Replaces hardcoded text colors with the theme text color:
+//! ```xml
+//! <!-- before --> <text fill="#333">Hello</text>
+//! <!-- after  --> <text fill="#cdd6f4">Hello</text>
+//! ```
+
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 

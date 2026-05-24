@@ -1,3 +1,15 @@
+//! Replaces `hsl(...)` color values containing `NaN` with `transparent`.
+//!
+//! Merman sometimes emits invalid HSL values that `usvg`/`resvg` cannot handle.
+//!
+//! ```xml
+//! <!-- before -->
+//! <rect fill="hsl(240, 100%, NaN%)"/>
+//!
+//! <!-- after -->
+//! <rect fill="transparent"/>
+//! ```
+
 use anyhow::{Context as _, Result};
 use quick_xml::events::{BytesStart, BytesText, Event};
 

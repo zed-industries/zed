@@ -1,3 +1,13 @@
+//! Removes CSS constructs that `usvg`/`resvg` cannot handle.
+//!
+//! - `@keyframes` and `@-webkit-keyframes` blocks
+//! - `:root { ... }` blocks (CSS custom properties)
+//! - `:not(...)` pseudo-selectors
+//! - `deg` angle units (e.g. `rotate(45deg)` → `rotate(45)`)
+//!
+//! Also removes `!important` declarations (so that our injected theme CSS
+//! always wins).
+
 use anyhow::Result;
 use quick_xml::events::{BytesText, Event};
 
