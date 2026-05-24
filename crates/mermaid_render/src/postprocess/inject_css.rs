@@ -206,37 +206,38 @@ fn chart_color_css(theme: &MermaidTheme) -> String {
 }
 
 fn scope_css(raw_css: &str, svg_id: &str) -> String {
-    raw_css
-        .lines()
-        .map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return format!("{line}\n");
-            }
-            if trimmed.starts_with('.')
+    let mut result = String::with_capacity(raw_css.len());
+    for line in raw_css.lines() {
+        let trimmed = line.trim();
+        let should_scope = !trimmed.is_empty()
+            && (trimmed.starts_with('.')
                 || trimmed.starts_with("foreignObject")
                 || trimmed.starts_with("g.")
                 || trimmed.starts_with("text.")
                 || trimmed.starts_with("rect.")
                 || trimmed.starts_with("path.")
                 || trimmed.starts_with("defs")
-                || trimmed.starts_with('#')
-            {
-                if let Some(brace) = trimmed.find('{') {
-                    let (selectors, rest) = trimmed.split_at(brace);
-                    let scoped: Vec<String> = selectors
-                        .split(',')
-                        .map(|s| format!("#{svg_id} {}", s.trim()))
-                        .collect();
-                    format!("        {}{}\n", scoped.join(", "), rest)
-                } else {
-                    format!("{line}\n")
+                || trimmed.starts_with('#'));
+
+        if should_scope {
+            if let Some(brace) = trimmed.find('{') {
+                let (selectors, rest) = trimmed.split_at(brace);
+                let mut first = true;
+                for selector in selectors.split(',') {
+                    if !first {
+                        result.push_str(", ");
+                    }
+                    first = false;
+                    write!(result, "#{svg_id} {}", selector.trim())
+                        .expect("write to String cannot fail");
                 }
-            } else {
-                format!("{line}\n")
+                writeln!(result, "{rest}").expect("write to String cannot fail");
+                continue;
             }
-        })
-        .collect()
+        }
+        writeln!(result, "{line}").expect("write to String cannot fail");
+    }
+    result
 }
 
 fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {

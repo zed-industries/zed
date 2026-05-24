@@ -30,8 +30,11 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
         }
     };
 
+    let meets_contrast =
+        |fg: Rgba| contrast_ratio_between(bg_luminance, relative_luminance(fg)) >= 4.5;
+
     let candidate = build(text_c);
-    let result = if wcag_contrast_ratio(rgba, candidate) >= 4.5 {
+    let result = if meets_contrast(candidate) {
         candidate
     } else {
         // Binary search for the maximum chroma that still meets 4.5:1.
@@ -39,7 +42,7 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
         let mut hi = text_c;
         for _ in 0..16 {
             let mid = (lo + hi) * 0.5;
-            if wcag_contrast_ratio(rgba, build(mid)) >= 4.5 {
+            if meets_contrast(build(mid)) {
                 lo = mid;
             } else {
                 hi = mid;
@@ -48,7 +51,7 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
         let best = build(lo);
         // Floating-point precision can leave the binary search result just
         // below the 4.5:1 threshold. Fall back to pure black or white.
-        if wcag_contrast_ratio(rgba, best) >= 4.5 {
+        if meets_contrast(best) {
             best
         } else if bg_luminance > 0.18 {
             Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
@@ -101,11 +104,19 @@ fn relative_luminance(c: Rgba) -> f32 {
     0.2126 * srgb_to_linear(c.r) + 0.7152 * srgb_to_linear(c.g) + 0.0722 * srgb_to_linear(c.b)
 }
 
-fn wcag_contrast_ratio(a: Rgba, b: Rgba) -> f32 {
-    let la = relative_luminance(a);
-    let lb = relative_luminance(b);
-    let (lighter, darker) = if la > lb { (la, lb) } else { (lb, la) };
+fn contrast_ratio_between(luminance_a: f32, luminance_b: f32) -> f32 {
+    let (lighter, darker) = if luminance_a > luminance_b {
+        (luminance_a, luminance_b)
+    } else {
+        (luminance_b, luminance_a)
+    };
     (lighter + 0.05) / (darker + 0.05)
+}
+
+
+#[cfg(test)]
+fn wcag_contrast_ratio(a: Rgba, b: Rgba) -> f32 {
+    contrast_ratio_between(relative_luminance(a), relative_luminance(b))
 }
 
 #[cfg(test)]

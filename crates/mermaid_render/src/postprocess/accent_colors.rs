@@ -77,12 +77,22 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
 }
 
 /// Returns the CSS class name for a given accent index (e.g., `"zed-accent-0"`).
-pub(crate) fn accent_class_name(index: usize) -> String {
-    format!("zed-accent-{index}")
+const ACCENT_CLASSES: [&str; 8] = [
+    "zed-accent-0", "zed-accent-1", "zed-accent-2", "zed-accent-3",
+    "zed-accent-4", "zed-accent-5", "zed-accent-6", "zed-accent-7",
+];
+
+const CHART_COLOR_CLASSES: [&str; 8] = [
+    "zed-chart-0", "zed-chart-1", "zed-chart-2", "zed-chart-3",
+    "zed-chart-4", "zed-chart-5", "zed-chart-6", "zed-chart-7",
+];
+
+pub(crate) fn accent_class_name(index: usize) -> &'static str {
+    ACCENT_CLASSES[index % ACCENT_CLASSES.len()]
 }
 
-fn chart_color_class_name(index: usize) -> String {
-    format!("zed-chart-{index}")
+fn chart_color_class_name(index: usize) -> &'static str {
+    CHART_COLOR_CLASSES[index % CHART_COLOR_CLASSES.len()]
 }
 
 /// Wraps `add_class` and preserves the `Start`/`Empty` variant of the original event.

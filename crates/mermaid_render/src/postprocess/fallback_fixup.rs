@@ -108,13 +108,18 @@ impl<'a, I> FallbackFixup<'a, I> {
         if self.text_buffer.is_empty() {
             return;
         }
-        let fixed = self
-            .text_buffer
-            .replace("&amp;lt;", "&lt;")
-            .replace("&amp;gt;", "&gt;");
-        self.text_buffer.clear();
+        let text = if self.text_buffer.contains("&amp;lt;") || self.text_buffer.contains("&amp;gt;") {
+            let fixed = self
+                .text_buffer
+                .replace("&amp;lt;", "&lt;")
+                .replace("&amp;gt;", "&gt;");
+            self.text_buffer.clear();
+            fixed
+        } else {
+            std::mem::take(&mut self.text_buffer)
+        };
         self.output_queue
-            .push_back(Event::Text(BytesText::from_escaped(fixed)));
+            .push_back(Event::Text(BytesText::from_escaped(text)));
     }
 
     fn process_non_text_event(&self, event: Event<'a>) -> Result<Event<'a>> {
