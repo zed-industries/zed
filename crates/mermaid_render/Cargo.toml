@@ -23,10 +23,5 @@ quick-xml.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-criterion.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 mermaid_render = { path = ".", features = ["test-support"] }
-
-[[bench]]
-name = "mermaid_benchmark"
-harness = false
