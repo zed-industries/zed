@@ -37,6 +37,9 @@ struct AccentColors<I> {
     accent_styles: Vec<AccentStyle>,
     accent_g_stack: Vec<Option<usize>>,
     node_counter: usize,
+    actor_bottom_counter: usize,
+    actor_top_counter: usize,
+    last_actor_accent: Option<usize>,
 }
 
 const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
@@ -44,6 +47,46 @@ const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellips
 impl<I> AccentColors<I> {
     fn current_accent(&self) -> Option<usize> {
         self.accent_g_stack.iter().rev().find_map(|entry| *entry)
+    }
+
+    fn check_actor_rect(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
+        if self.accent_styles.is_empty() || e.name().as_ref() != b"rect" {
+            return Ok(None);
+        }
+        let class_attr = match e.try_get_attribute("class")? {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+        let class_val = class_attr.unescape_value()?;
+        if class_val.contains("actor-bottom") {
+            let idx = self.actor_bottom_counter % self.accent_styles.len();
+            self.actor_bottom_counter += 1;
+            self.last_actor_accent = Some(idx);
+            Ok(Some(idx))
+        } else if class_val.contains("actor-top") {
+            let idx = self.actor_top_counter % self.accent_styles.len();
+            self.actor_top_counter += 1;
+            self.last_actor_accent = Some(idx);
+            Ok(Some(idx))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn check_actor_text(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
+        if self.accent_styles.is_empty() {
+            return Ok(None);
+        }
+        let class_attr = match e.try_get_attribute("class")? {
+            Some(a) => a,
+            None => return Ok(None),
+        };
+        let class_val = class_attr.unescape_value()?;
+        if class_val.contains("actor") && class_val.contains("actor-box") {
+            Ok(self.last_actor_accent.take())
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -79,23 +122,38 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
             Event::Start(e) | Event::Empty(e)
                 if SHAPE_TAGS.contains(&e.name().as_ref()) =>
             {
-                if let Some(accent_idx) = self.current_accent() {
-                    let style = &self.accent_styles[accent_idx];
+                let actor_accent = self.check_actor_rect(e)?;
+                let accent_idx = actor_accent.or_else(|| self.current_accent());
+
+                if let Some(accent_idx) = accent_idx {
+                    let accent = &self.accent_styles[accent_idx];
                     let is_start = matches!(&event, Event::Start(_));
                     let name = e.name();
-                    let tag_name =
-                        std::str::from_utf8(name.as_ref()).unwrap_or("rect");
+                    let tag_name = std::str::from_utf8(name.as_ref()).unwrap_or("rect");
                     let mut ne = BytesStart::new(tag_name.to_string());
+                    let existing_style = e
+                        .try_get_attribute("style")?
+                        .map(|a| a.unescape_value().map(|v| v.to_string()))
+                        .transpose()?
+                        .unwrap_or_default();
+                    let mut merged = existing_style;
+                    if !merged.is_empty() && !merged.ends_with(';') {
+                        merged.push(';');
+                    }
+                    merged.push_str(&format!(
+                        "fill: {} !important; stroke: {} !important;",
+                        accent.fill, accent.stroke,
+                    ));
                     for attr in e.attributes() {
                         let attr = attr?;
                         match attr.key.local_name().as_ref() {
-                            b"fill" => ne.push_attribute(("fill", style.fill.as_str())),
-                            b"stroke" => {
-                                ne.push_attribute(("stroke", style.stroke.as_str()))
-                            }
+                            b"fill" | b"stroke" | b"style" => {}
                             _ => ne.push_attribute(attr),
                         }
                     }
+                    ne.push_attribute(("fill", accent.fill.as_str()));
+                    ne.push_attribute(("stroke", accent.stroke.as_str()));
+                    ne.push_attribute(("style", merged.as_str()));
                     Ok(if is_start {
                         Event::Start(ne)
                     } else {
@@ -106,21 +164,33 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                 }
             }
 
-            Event::Start(e) | Event::Empty(e)
-                if e.name().as_ref() == b"text" =>
-            {
-                if let Some(accent_idx) = self.current_accent() {
-                    let style = &self.accent_styles[accent_idx];
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
+                let actor_accent = self.check_actor_text(e)?;
+                let accent_idx = actor_accent.or_else(|| self.current_accent());
+
+                if let Some(accent_idx) = accent_idx {
+                    let accent = &self.accent_styles[accent_idx];
                     let is_start = matches!(&event, Event::Start(_));
                     let mut ne = BytesStart::new("text");
+                    let existing_style = e
+                        .try_get_attribute("style")?
+                        .map(|a| a.unescape_value().map(|v| v.to_string()))
+                        .transpose()?
+                        .unwrap_or_default();
+                    let mut merged = existing_style;
+                    if !merged.is_empty() && !merged.ends_with(';') {
+                        merged.push(';');
+                    }
+                    merged.push_str(&format!("fill: {} !important;", accent.text));
                     for attr in e.attributes() {
                         let attr = attr?;
-                        if attr.key.local_name().as_ref() == b"fill" {
-                            ne.push_attribute(("fill", style.text.as_str()));
-                        } else {
-                            ne.push_attribute(attr);
+                        match attr.key.local_name().as_ref() {
+                            b"fill" | b"style" => {}
+                            _ => ne.push_attribute(attr),
                         }
                     }
+                    ne.push_attribute(("fill", accent.text.as_str()));
+                    ne.push_attribute(("style", merged.as_str()));
                     Ok(if is_start {
                         Event::Start(ne)
                     } else {
@@ -157,5 +227,8 @@ pub(super) fn process<'a>(
         accent_styles: compute_accent_styles(theme),
         accent_g_stack: Vec::new(),
         node_counter: 0,
+        actor_bottom_counter: 0,
+        actor_top_counter: 0,
+        last_actor_accent: None,
     }
 }
