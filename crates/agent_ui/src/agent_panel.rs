@@ -33,7 +33,7 @@ use zed_actions::{
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
-use crate::completion_provider::AgentContextSource;
+use crate::completion_provider::{AgentContextSource, available_context_selections};
 use crate::terminal_thread_metadata_store::{TerminalThreadMetadata, TerminalThreadMetadataStore};
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
@@ -561,20 +561,27 @@ pub fn init(cx: &mut App) {
                             return;
                         };
 
-                        let source = AgentContextSource::from_focused(workspace, window, cx);
-                        let source = source.or_else(|| {
-                            let cached = agent_panel.read(cx).last_context_source.clone()?;
-                            cached.exists(workspace, cx).then_some(cached)
-                        });
-                        let source =
-                            source.or_else(|| AgentContextSource::from_active(workspace, cx));
+                        let selections = available_context_selections(workspace, false, cx);
+                        let (selections, last_context_source) = if selections.is_empty() {
+                            let source = AgentContextSource::from_focused(workspace, window, cx);
+                            let source = source.or_else(|| {
+                                let cached = agent_panel.read(cx).last_context_source.clone()?;
+                                cached.exists(workspace, cx).then_some(cached)
+                            });
+                            let source =
+                                source.or_else(|| AgentContextSource::from_active(workspace, cx));
 
-                        let Some(source) = source else {
-                            return;
-                        };
+                            let Some(source) = source else {
+                                return;
+                            };
 
-                        let Some(selection) = source.read_selection(workspace, true, cx) else {
-                            return;
+                            let Some(selection) = source.read_selection(workspace, true, cx) else {
+                                return;
+                            };
+
+                            (selection.into(), Some(source))
+                        } else {
+                            (selections, None)
                         };
 
                         if !agent_panel.focus_handle(cx).contains_focused(window, cx) {
@@ -582,11 +589,13 @@ pub fn init(cx: &mut App) {
                         }
 
                         agent_panel.update(cx, |panel, cx| {
-                            panel.last_context_source = Some(source);
+                            if let Some(source) = last_context_source {
+                                panel.last_context_source = Some(source);
+                            }
                             cx.defer_in(window, move |panel, window, cx| {
                                 if let Some(conversation_view) = panel.active_conversation_view() {
                                     conversation_view.update(cx, |conversation_view, cx| {
-                                        conversation_view.insert_selection(selection, window, cx);
+                                        conversation_view.insert_selections(selections, window, cx);
                                     });
                                 }
                             });
