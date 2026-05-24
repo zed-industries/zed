@@ -9,9 +9,10 @@ use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
 #[derive(Serialize, Debug)]
 pub struct Request {
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<ResponseInputItem>,
-    pub store: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub include: Vec<ResponseIncludable>,
     #[serde(default)]
@@ -32,6 +33,8 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<ReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -395,13 +398,17 @@ pub async fn stream_response(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: Vec<(String, String)>,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
+    for (name, value) in &extra_headers {
+        request_builder = request_builder.header(name.as_str(), value.as_str());
+    }
 
     let is_streaming = request.stream;
     let request = request_builder

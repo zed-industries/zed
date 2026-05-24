@@ -2541,6 +2541,11 @@ fn init_test_with_fake_client_and_legacy_data_collection(
         let http_client = FakeHttpClient::create({
             move |req| {
                 let uri = req.uri().path().to_string();
+                let content_encoding = req
+                    .headers()
+                    .get("Content-Encoding")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
                 let mut body = req.into_body();
                 let predict_req_tx = predict_req_tx.clone();
                 let reject_req_tx = reject_req_tx.clone();
@@ -2573,7 +2578,12 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                         "/predict_edits/settled" => {
                             let mut buf = Vec::new();
                             body.read_to_end(&mut buf).await.ok();
-                            let req = serde_json::from_slice(&buf).unwrap();
+                            let body = if content_encoding.as_deref() == Some("zstd") {
+                                zstd::decode_all(&buf[..]).unwrap()
+                            } else {
+                                buf
+                            };
+                            let req = serde_json::from_slice(&body).unwrap();
                             settled_req_tx.unbounded_send(req).unwrap();
                             serde_json::to_string(&SubmitEditPredictionSettledResponse {}).unwrap()
                         }
@@ -3593,6 +3603,9 @@ async fn test_edit_prediction_settled_omits_body_when_data_collection_is_disable
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
+                uncommitted_diff_contains_edit_history: false,
                 cursor_path: Path::new("foo.md").into(),
                 cursor_position: "0".to_string(),
                 edit_history: "sensitive edit history".to_string(),

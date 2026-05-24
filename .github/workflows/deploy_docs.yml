@@ -16,6 +16,9 @@ on:
       DOCS_AMPLITUDE_API_KEY:
         description: DOCS_AMPLITUDE_API_KEY
         required: true
+      DOCS_CONSENT_IO_INSTANCE:
+        description: DOCS_CONSENT_IO_INSTANCE
+        required: true
       CLOUDFLARE_API_TOKEN:
         description: CLOUDFLARE_API_TOKEN
         required: true
@@ -39,6 +42,7 @@ jobs:
     runs-on: namespace-profile-16x32-ubuntu-2204
     env:
       DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
       CC: clang
       CXX: clang++
     steps:
@@ -143,7 +147,7 @@ jobs:
         command: deploy .cloudflare/docs-proxy/src/worker.js
     - name: deploy_docs::docs_deploy_steps::upload_wrangler_logs
       if: always()
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: wrangler_logs
         path: /home/runner/.config/.wrangler/logs/

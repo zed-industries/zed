@@ -63,6 +63,7 @@ enum FetchDepth {
 #[derive(Default)]
 pub(crate) struct CheckoutStep {
     fetch_depth: FetchDepth,
+    fetch_tags: bool,
     name: Option<String>,
     token: Option<String>,
     path: Option<String>,
@@ -110,6 +111,11 @@ impl CheckoutStep {
         self.ref_ = Some(ref_.to_string());
         self
     }
+
+    pub fn with_fetch_tags(mut self) -> Self {
+        self.fetch_tags = true;
+        self
+    }
 }
 
 impl From<CheckoutStep> for Step<Use> {
@@ -132,6 +138,7 @@ impl From<CheckoutStep> for Step<Use> {
             .when_some(value.repository, |step, repository| {
                 step.add_with(("repository", repository))
             })
+            .when(value.fetch_tags, |step| step.add_with(("fetch-tags", true)))
             .when_some(value.ref_, |step, ref_| step.add_with(("ref", ref_)))
             .when_some(value.token, |step, token| step.add_with(("token", token)))
     }
@@ -524,6 +531,229 @@ pub mod named {
     }
 }
 
+const ZED_ZIPPY_GIT_USER_NAME: &str = "zed-zippy[bot]";
+const ZED_ZIPPY_GIT_USER_EMAIL: &str = "234243425+zed-zippy[bot]@users.noreply.github.com";
+
+pub(crate) trait ZippyGitIdentity {
+    fn with_zippy_git_identity(self) -> Self;
+}
+
+impl ZippyGitIdentity for Step<Run> {
+    fn with_zippy_git_identity(self) -> Self {
+        self.add_env(("GIT_AUTHOR_NAME", ZED_ZIPPY_GIT_USER_NAME))
+            .add_env(("GIT_AUTHOR_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
+            .add_env(("GIT_COMMITTER_NAME", ZED_ZIPPY_GIT_USER_NAME))
+            .add_env(("GIT_COMMITTER_EMAIL", ZED_ZIPPY_GIT_USER_EMAIL))
+    }
+}
+
+const GITHUB_SCRIPT_SHA: &str = "f28e40c7f34bde8b3046d885e986cb6290c5673b"; // v7
+const UPLOAD_ARTIFACT_SHA: &str = "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"; // v7.0.1
+const DOWNLOAD_ARTIFACT_SHA: &str = "3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"; // v8.0.1
+
+#[allow(unused)]
+pub(crate) enum ResultEncoding {
+    String,
+    Json,
+}
+
+impl ResultEncoding {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ResultEncoding::String => "string",
+            ResultEncoding::Json => "json",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct GitHubScriptStep {
+    name: String,
+    id: Option<String>,
+    script: String,
+    result_encoding: Option<ResultEncoding>,
+    token: Option<String>,
+    env: Vec<(String, String)>,
+}
+
+impl GitHubScriptStep {
+    pub fn custom_name(mut self, name: &str) -> Self {
+        self.name = name.to_string();
+        self
+    }
+
+    pub fn id(mut self, id: &str) -> Self {
+        self.id = Some(id.to_string());
+        self
+    }
+
+    pub fn result_encoding(mut self, encoding: ResultEncoding) -> Self {
+        self.result_encoding = Some(encoding);
+        self
+    }
+
+    pub fn token(mut self, token: impl ToString) -> Self {
+        self.token = Some(token.to_string());
+        self
+    }
+
+    pub fn env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+}
+
+impl From<GitHubScriptStep> for Step<Use> {
+    fn from(value: GitHubScriptStep) -> Self {
+        let mut step = Step::new(value.name)
+            .uses("actions", "github-script", GITHUB_SCRIPT_SHA)
+            .add_with(("script", value.script))
+            .when_some(value.result_encoding, |step, encoding| {
+                step.add_with(("result-encoding", encoding.as_str()))
+            })
+            .when_some(value.token, |step, token| {
+                step.add_with(("github-token", token))
+            })
+            .when_some(value.id, |step, id| step.id(id));
+        for (key, val) in value.env {
+            step = step.add_env((key, val));
+        }
+        step
+    }
+}
+
+impl FluentBuilder for GitHubScriptStep {}
+
+pub fn github_script(script: impl Into<String>) -> GitHubScriptStep {
+    GitHubScriptStep {
+        name: function_name(1),
+        script: script.into(),
+        ..Default::default()
+    }
+}
+
+pub(crate) enum IfNoFilesFound {
+    #[allow(unused)]
+    Warn,
+    Error,
+    Ignore,
+}
+
+impl IfNoFilesFound {
+    fn as_str(&self) -> &'static str {
+        match self {
+            IfNoFilesFound::Warn => "warn",
+            IfNoFilesFound::Error => "error",
+            IfNoFilesFound::Ignore => "ignore",
+        }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct UploadArtifactStep {
+    name: String,
+    artifact_name: String,
+    path: String,
+    if_no_files_found: Option<IfNoFilesFound>,
+    retention_days: Option<u32>,
+    if_condition: Option<Expression>,
+    overwrite: bool,
+}
+
+impl UploadArtifactStep {
+    pub fn if_no_files_found(mut self, behavior: IfNoFilesFound) -> Self {
+        self.if_no_files_found = Some(behavior);
+        self
+    }
+
+    pub fn retention_days(mut self, days: u32) -> Self {
+        self.retention_days = Some(days);
+        self
+    }
+
+    pub fn if_condition(mut self, condition: Expression) -> Self {
+        self.if_condition = Some(condition);
+        self
+    }
+
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+}
+
+impl From<UploadArtifactStep> for Step<Use> {
+    fn from(value: UploadArtifactStep) -> Self {
+        Step::new(value.name)
+            .uses("actions", "upload-artifact", UPLOAD_ARTIFACT_SHA)
+            .add_with(("name", value.artifact_name))
+            .add_with(("path", value.path))
+            .when_some(value.if_no_files_found, |step, behavior| {
+                step.add_with(("if-no-files-found", behavior.as_str()))
+            })
+            .when_some(value.retention_days, |step, days| {
+                step.add_with(("retention-days", days.to_string()))
+            })
+            .when_some(value.if_condition, |step, condition| {
+                step.if_condition(condition)
+            })
+            .when(value.overwrite, |step| step.add_with(("overwrite", true)))
+    }
+}
+
+impl FluentBuilder for UploadArtifactStep {}
+
+pub fn upload_artifact(
+    artifact_name: impl Into<String>,
+    path: impl Into<String>,
+) -> UploadArtifactStep {
+    UploadArtifactStep {
+        name: function_name(1),
+        artifact_name: artifact_name.into(),
+        path: path.into(),
+        ..Default::default()
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct DownloadArtifactStep {
+    name: String,
+    artifact_name: Option<String>,
+    path: Option<String>,
+}
+
+impl DownloadArtifactStep {
+    pub fn artifact_name(mut self, artifact_name: impl Into<String>) -> Self {
+        self.artifact_name = Some(artifact_name.into());
+        self
+    }
+
+    pub fn path(mut self, path: &str) -> Self {
+        self.path = Some(path.to_string());
+        self
+    }
+}
+
+impl From<DownloadArtifactStep> for Step<Use> {
+    fn from(value: DownloadArtifactStep) -> Self {
+        Step::new(value.name)
+            .uses("actions", "download-artifact", DOWNLOAD_ARTIFACT_SHA)
+            .when_some(value.artifact_name, |step, artifact_name| {
+                step.add_with(("name", artifact_name))
+            })
+            .when_some(value.path, |step, path| step.add_with(("path", path)))
+    }
+}
+
+impl FluentBuilder for DownloadArtifactStep {}
+
+pub fn download_artifact() -> DownloadArtifactStep {
+    DownloadArtifactStep {
+        name: function_name(1),
+        ..Default::default()
+    }
+}
+
 pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
     named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
         .add_env(("REF_NAME", ref_name.to_string()))
@@ -742,17 +972,27 @@ impl GitRef {
     }
 }
 
-#[allow(unused)]
 enum RefOperation {
     Create,
     Update { force: bool },
 }
 
+pub(crate) enum RefSha {
+    Context,
+    Custom(String),
+}
+
 struct RefOp {
     git_ref: GitRef,
     operation: RefOperation,
-    sha: String,
+    sha: RefSha,
     token: String,
+}
+
+impl<T: ToString> From<T> for RefSha {
+    fn from(sha: T) -> Self {
+        RefSha::Custom(sha.to_string())
+    }
 }
 
 impl From<RefOp> for Step<Use> {
@@ -769,53 +1009,49 @@ impl From<RefOp> for Step<Use> {
             RefOperation::Create => format!("steps::create_{}", op.git_ref.kind()),
             RefOperation::Update { .. } => format!("steps::update_{}", op.git_ref.kind()),
         };
-        let sha = &op.sha;
         let script = indoc::formatdoc! {r#"
             github.rest.git.{api_method}({{
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 ref: '{ref_path}',
-                sha: '{sha}'{force_line}
+                sha: {sha}{force_line}
             }})
-        "#};
-        Step::new(step_name)
-            .uses(
-                "actions",
-                "github-script",
-                "f28e40c7f34bde8b3046d885e986cb6290c5673b", // v7
-            )
-            .with(
-                Input::default()
-                    .add("script", script)
-                    .add("github-token", op.token),
-            )
+            "#,
+            sha = match &op.sha {
+                RefSha::Context => "context.sha".to_string(),
+                RefSha::Custom(sha) => format!("'{sha}'"),
+            }
+        };
+        github_script(script)
+            .custom_name(&step_name)
+            .token(op.token)
+            .into()
     }
 }
 
 pub(crate) fn create_ref(
     git_ref: GitRef,
-    sha: impl ToString,
+    sha: impl Into<RefSha>,
     token: &StepOutput,
 ) -> impl Into<Step<Use>> {
     RefOp {
         git_ref,
         operation: RefOperation::Create,
-        sha: sha.to_string(),
+        sha: sha.into(),
         token: token.to_string(),
     }
 }
 
-#[allow(unused)]
 pub(crate) fn update_ref(
     git_ref: GitRef,
-    sha: impl ToString,
+    sha: impl Into<RefSha>,
     token: &StepOutput,
     force: bool,
 ) -> impl Into<Step<Use>> {
     RefOp {
         git_ref,
         operation: RefOperation::Update { force },
-        sha: sha.to_string(),
+        sha: sha.into(),
         token: token.to_string(),
     }
 }
