@@ -1,5 +1,5 @@
 use anyhow::Result;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::events::Event;
 
 use super::{NodeTracker, accent_class_name, add_class, add_to_event, parse_translate};
 

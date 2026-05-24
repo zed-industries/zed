@@ -2,21 +2,16 @@ use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
 use super::NodeTracker;
-use crate::MermaidTheme;
-
-struct SectionClass {
-    class_name: String,
-}
 
 pub(super) struct MindmapAccents {
-    section_classes: Vec<SectionClass>,
+    section_classes: Vec<String>,
     section_g_stack: Vec<Option<usize>>,
     nodes: NodeTracker,
     current_text_section: Option<usize>,
 }
 
 impl MindmapAccents {
-    pub(super) fn new(_theme: &MermaidTheme) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             section_classes: Vec::new(),
             section_g_stack: Vec::new(),
@@ -116,7 +111,7 @@ impl MindmapAccents {
                         format!("section-{rest}")
                     };
                     let idx = self.section_classes.len();
-                    self.section_classes.push(SectionClass { class_name });
+                    self.section_classes.push(class_name);
                     return Ok(Some(idx));
                 }
             }
@@ -129,6 +124,6 @@ impl MindmapAccents {
     }
 
     fn section_class_name(&self, idx: usize) -> Option<&str> {
-        self.section_classes.get(idx).map(|s| s.class_name.as_str())
+        self.section_classes.get(idx).map(|s| s.as_str())
     }
 }

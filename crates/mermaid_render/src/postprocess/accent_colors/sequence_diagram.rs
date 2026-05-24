@@ -63,9 +63,6 @@ impl SequenceDiagramAccents {
     }
 
     fn check_actor_rect(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
-        if e.name().as_ref() != b"rect" {
-            return Ok(None);
-        }
         let class_attr = match e.try_get_attribute("class")? {
             Some(a) => a,
             None => return Ok(None),

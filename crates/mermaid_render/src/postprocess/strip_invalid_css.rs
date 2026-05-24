@@ -74,8 +74,10 @@ fn strip_unsupported_css(css: &str) -> String {
         }
 
         if remaining.starts_with(":not(") {
-            for _ in 0..5 {
-                chars.next();
+            for (_, c) in chars.by_ref() {
+                if c == '(' {
+                    break;
+                }
             }
             let mut depth = 1u32;
             while let Some((_, c)) = chars.next() {

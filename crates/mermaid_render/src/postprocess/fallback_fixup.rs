@@ -16,6 +16,7 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
+
 use quick_xml::events::{BytesStart, BytesText, Event};
 
 use crate::MermaidTheme;
@@ -70,15 +71,17 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for FallbackFixup<'a, I
             // Inside fallback group: accumulate text-like events, process others
             match &event {
                 Event::Text(t) => {
-                    if let Ok(raw) = std::str::from_utf8(t.as_ref()) {
-                        self.text_buffer.push_str(raw);
+                    match std::str::from_utf8(t.as_ref()) {
+                        Ok(raw) => self.text_buffer.push_str(raw),
+                        Err(e) => eprintln!("Invalid UTF-8 in fallback text: {e}"),
                     }
                     continue;
                 }
                 Event::GeneralRef(r) => {
                     self.text_buffer.push('&');
-                    if let Ok(name) = std::str::from_utf8(r.as_ref()) {
-                        self.text_buffer.push_str(name);
+                    match std::str::from_utf8(r.as_ref()) {
+                        Ok(name) => self.text_buffer.push_str(name),
+                        Err(e) => eprintln!("Invalid UTF-8 in fallback entity ref: {e}"),
                     }
                     self.text_buffer.push(';');
                     continue;

@@ -293,7 +293,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
                             Handler::Flowchart(class_diagram::ClassDiagramAccents::new(count))
                         }
                         DiagramType::Mindmap => {
-                            Handler::Mindmap(mindmap::MindmapAccents::new(&self.theme))
+                            Handler::Mindmap(mindmap::MindmapAccents::new())
                         }
                         DiagramType::ClassDiagram => {
                             Handler::ClassDiagram(class_diagram::ClassDiagramAccents::new(count))

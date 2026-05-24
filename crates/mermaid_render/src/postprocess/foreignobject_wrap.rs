@@ -20,9 +20,7 @@ pub(super) fn process(svg: &str) -> Result<String> {
     let mut writer = Writer::new(Vec::new());
 
     let mut foreign_object_depth: usize = 0;
-    let mut container_width: f64 = 0.0;
-    let mut buffer: Vec<Event<'_>> = Vec::new();
-    let mut plain_text: String = String::new();
+    let mut buffer = Vec::new();
 
     loop {
         let event = match reader.read_event() {
@@ -38,12 +36,6 @@ pub(super) fn process(svg: &str) -> Result<String> {
 
         if is_fo_start {
             if foreign_object_depth == 0 {
-                container_width = if let Event::Start(ref e) = event {
-                    parse_width_attr(e)?
-                } else {
-                    0.0
-                };
-                plain_text.clear();
                 buffer.clear();
             }
             buffer.push(event);
@@ -52,22 +44,9 @@ pub(super) fn process(svg: &str) -> Result<String> {
             foreign_object_depth = foreign_object_depth.saturating_sub(1);
             buffer.push(event);
             if foreign_object_depth == 0 {
-                emit_buffered(
-                    std::mem::take(&mut buffer),
-                    &plain_text,
-                    container_width,
-                    &mut writer,
-                )?;
-                plain_text.clear();
+                emit_buffered(std::mem::take(&mut buffer), &mut writer)?;
             }
         } else if foreign_object_depth > 0 {
-            if let Event::Text(ref t) = event {
-                if let Ok(decoded) = t.decode() {
-                    if let Ok(unescaped) = escape::unescape(&decoded) {
-                        plain_text.push_str(&unescaped);
-                    }
-                }
-            }
             buffer.push(event);
         } else {
             writer.write_event(event)?;
@@ -77,21 +56,7 @@ pub(super) fn process(svg: &str) -> Result<String> {
     String::from_utf8(writer.into_inner()).context("SVG output is not valid UTF-8")
 }
 
-fn parse_width_attr(e: &BytesStart<'_>) -> Result<f64> {
-    if let Some(attr) = e.try_get_attribute("width")? {
-        let val = attr.unescape_value()?;
-        Ok(val.parse().unwrap_or(0.0))
-    } else {
-        Ok(0.0)
-    }
-}
-
-fn emit_buffered(
-    buffer: Vec<Event<'_>>,
-    _plain_text: &str,
-    _container_width: f64,
-    writer: &mut Writer<Vec<u8>>,
-) -> Result<()> {
+fn emit_buffered(buffer: Vec<Event<'_>>, writer: &mut Writer<Vec<u8>>) -> Result<()> {
     for event in buffer {
         match event {
             Event::Text(t) => {
