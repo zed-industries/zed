@@ -3,8 +3,6 @@ use quick_xml::escape;
 use quick_xml::events::{BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
-const PIXELS_PER_CHAR: f64 = 8.0;
-
 pub(super) fn process(svg: &str) -> Result<String> {
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
@@ -79,18 +77,10 @@ fn parse_width_attr(e: &BytesStart<'_>) -> Result<f64> {
 
 fn emit_buffered(
     buffer: Vec<Event<'_>>,
-    plain_text: &str,
-    container_width: f64,
+    _plain_text: &str,
+    _container_width: f64,
     writer: &mut Writer<Vec<u8>>,
 ) -> Result<()> {
-    let max_chars = if container_width > 0.0 {
-        (container_width / PIXELS_PER_CHAR).floor() as usize
-    } else {
-        usize::MAX
-    };
-
-    let needs_wrap = max_chars < usize::MAX && plain_text.chars().count() > max_chars;
-
     for event in buffer {
         match event {
             Event::Text(t) => {
@@ -98,7 +88,7 @@ fn emit_buffered(
                     let decoded = t.decode().unwrap_or_default();
                     let text =
                         escape::unescape(&decoded).unwrap_or_else(|_| decoded.clone());
-                    emit_text_content(&text, needs_wrap, max_chars, writer)?
+                    emit_text_content(&text, writer)?
                 };
                 if !processed {
                     writer.write_event(Event::Text(t))?;
@@ -114,98 +104,23 @@ fn emit_buffered(
 
 fn emit_text_content(
     text: &str,
-    needs_wrap: bool,
-    max_chars: usize,
     writer: &mut Writer<Vec<u8>>,
 ) -> Result<bool> {
-    let has_literal_newlines = text.contains("\\n");
-
-    if !has_literal_newlines && !needs_wrap {
+    if !text.contains("\\n") {
         return Ok(false);
     }
 
-    let segments: Vec<&str> = if has_literal_newlines {
-        text.split("\\n").collect()
-    } else {
-        vec![text]
-    };
-
     let mut first_segment = true;
-    for segment in &segments {
+    for segment in text.split("\\n") {
         if !first_segment {
             writer.write_event(Event::Empty(BytesStart::new("br")))?;
         }
         first_segment = false;
-
-        if needs_wrap {
-            wrap_segment(segment, max_chars, writer)?;
-        } else {
-            writer.write_event(Event::Text(BytesText::from_escaped(
-                escape::escape(*segment),
-            )))?;
-        }
+        writer.write_event(Event::Text(BytesText::from_escaped(
+            escape::escape(segment),
+        )))?;
     }
 
     Ok(true)
 }
 
-fn wrap_segment(
-    segment: &str,
-    max_chars: usize,
-    writer: &mut Writer<Vec<u8>>,
-) -> Result<()> {
-    if max_chars == 0 {
-        writer.write_event(Event::Text(BytesText::from_escaped(
-            escape::escape(segment),
-        )))?;
-        return Ok(());
-    }
-
-    let words: Vec<&str> = segment.split_whitespace().collect();
-    if words.is_empty() {
-        writer.write_event(Event::Text(BytesText::from_escaped(
-            escape::escape(segment),
-        )))?;
-        return Ok(());
-    }
-
-    let mut current_line = String::new();
-    let mut first_line = true;
-
-    for word in &words {
-        let new_len = if current_line.is_empty() {
-            word.chars().count()
-        } else {
-            current_line.chars().count() + 1 + word.chars().count()
-        };
-
-        if !current_line.is_empty() && new_len > max_chars {
-            if !first_line {
-                writer.write_event(Event::Empty(BytesStart::new("br")))?;
-            }
-            first_line = false;
-            writer.write_event(Event::Text(BytesText::from_escaped(
-                escape::escape(&current_line),
-            )))?;
-            current_line.clear();
-        }
-
-        if current_line.is_empty() {
-            current_line.push_str(word);
-        } else {
-            current_line.push(' ');
-            current_line.push_str(word);
-        }
-    }
-
-    if !current_line.is_empty() {
-        if !first_line {
-            writer.write_event(Event::Empty(BytesStart::new("br")))?;
-        }
-        writer.write_event(Event::Text(BytesText::from_escaped(
-            escape::escape(&current_line),
-        )))?;
-    }
-
-    Ok(())
-}

@@ -117,16 +117,6 @@ mod tests {
     }
 
     #[test]
-    fn wrap_foreignobject_reads_actual_width_attr() {
-        let svg = r#"<svg id="test" xmlns="http://www.w3.org/2000/svg"><style></style><foreignObject data-original-width="9999" width="100" height="50"><div xmlns="http://www.w3.org/1999/xhtml">This label is definitely too long to fit in one hundred pixels wide without wrapping</div></foreignObject></svg>"#;
-        let wrapped = foreignobject_wrap::process(svg).unwrap();
-        assert!(
-            wrapped.contains("<br/>") || wrapped.contains("<br />"),
-            "Long label should wrap at width=100, got: {wrapped}"
-        );
-    }
-
-    #[test]
     fn strip_css_handles_style_element_with_attributes() {
         let svg = r#"<svg id="test" xmlns="http://www.w3.org/2000/svg"><style type="text/css">@keyframes bounce { 0% { transform: scale(1); } 100% { transform: scale(1.1); } } .node rect { fill: red; }</style><rect width="10" height="10"/></svg>"#;
         let result = postprocess(svg, &default_theme()).unwrap();
