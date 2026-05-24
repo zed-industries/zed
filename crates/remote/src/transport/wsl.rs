@@ -279,6 +279,13 @@ impl WslRemoteConnection {
             size / 1024
         );
 
+        self.copy_via_wslpath_and_cp(src_path, dst_path).await?;
+
+        log::info!("uploaded remote server in {:?}", t0.elapsed());
+        Ok(())
+    }
+
+    async fn copy_via_wslpath_and_cp(&self, src_path: &Path, dst_path: &RelPath) -> Result<()> {
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
         let cp = self.shell_kind.prepend_command_prefix("cp");
         self.run_wsl_command(
@@ -294,10 +301,7 @@ impl WslRemoteConnection {
                 dst_path,
                 e
             )
-        })?;
-
-        log::info!("uploaded remote server in {:?}", t0.elapsed());
-        Ok(())
+        })
     }
 
     async fn extract_and_install(
