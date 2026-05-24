@@ -2334,7 +2334,7 @@ impl Session {
         self.state.request_dap(EvaluateCommand {
             expression,
             frame_id: stack_frame_id,
-            context: None,
+            context: Some(EvaluateArgumentsContext::Repl),
             source: None,
         })
     }

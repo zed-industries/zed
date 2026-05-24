@@ -35,6 +35,7 @@ pub enum DebugControlAction {
     },
 }
 
+/// Control execution of an active debug session.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ControlDebugSessionInput {
     /// The ID of the debug session to control (obtained from list_debug_sessions).
