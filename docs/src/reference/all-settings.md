@@ -3290,7 +3290,7 @@ Examples:
 
 ### Auto preview
 
-- Description: Whether to automatically open a preview when opening previewable files (Markdown, SVG, and CSV).
+- Description: Whether to automatically open a preview when opening files with preview capabilities (e.g. Markdown, SVG, CSV).
 - Setting: `auto_preview`
 - Default: `off`
 
