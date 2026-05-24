@@ -49,77 +49,6 @@ fn accent(r: u8, g: u8, b: u8) -> AccentColor {
 }
 
 #[test]
-fn trace_text_colors_class_vs_sequence() {
-    use quick_xml::events::Event;
-
-    let theme = base_theme(vec![accent(116, 173, 232)]);
-
-    // Render both diagrams with the same single accent color
-    let class_svg = mermaid_render::render_to_svg(
-        "classDiagram\n    class Animal {\n        +String name\n    }",
-        &theme,
-    ).unwrap();
-    let seq_svg = mermaid_render::render_to_svg(
-        "sequenceDiagram\n    participant Animal",
-        &theme,
-    ).unwrap();
-
-    let extract_fills = |svg: &str| -> Vec<(String, String)> {
-        let mut reader = quick_xml::Reader::from_str(svg);
-        let mut results = Vec::new();
-        loop {
-            match reader.read_event() {
-                Ok(Event::Eof) => break,
-                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
-                    if tag == "text" || tag == "tspan" {
-                        let fill = e.try_get_attribute("fill").ok().flatten()
-                            .map(|a| a.unescape_value().unwrap_or_default().to_string())
-                            .unwrap_or_default();
-                        let style = e.try_get_attribute("style").ok().flatten()
-                            .map(|a| a.unescape_value().unwrap_or_default().to_string())
-                            .unwrap_or_default();
-                        if !fill.is_empty() {
-                            results.push((format!("{tag} fill={fill}"), style));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        results
-    };
-
-    eprintln!("\n=== CLASS DIAGRAM text fills ===");
-    for (fill, style) in extract_fills(&class_svg) {
-        eprintln!("  {fill}  style={}", if style.len() > 80 { &style[..80] } else { &style });
-    }
-    eprintln!("\n=== SEQUENCE DIAGRAM text fills ===");
-    for (fill, style) in extract_fills(&seq_svg) {
-        eprintln!("  {fill}  style={}", if style.len() > 80 { &style[..80] } else { &style });
-    }
-
-    // Also show what compute_accent_styles produced
-    let accent_bg = {
-        let mut bg = gpui::Rgba { r: 116.0/255.0, g: 173.0/255.0, b: 232.0/255.0, a: 1.0 };
-        let mut hsla = gpui::Hsla::from(bg);
-        hsla.l *= 0.7; // dark mode
-        bg = gpui::Rgba::from(hsla);
-        let text = mermaid_render::text_color_for_background(hsla);
-        let text_rgba = gpui::Rgba::from(text);
-        eprintln!("\n=== COMPUTED ===");
-        eprintln!("  bg fill: #{:02x}{:02x}{:02x}",
-            (bg.r * 255.0).round() as u8,
-            (bg.g * 255.0).round() as u8,
-            (bg.b * 255.0).round() as u8);
-        eprintln!("  text color: #{:02x}{:02x}{:02x}",
-            (text_rgba.r * 255.0).round() as u8,
-            (text_rgba.g * 255.0).round() as u8,
-            (text_rgba.b * 255.0).round() as u8);
-    };
-}
-
-#[test]
 fn debug_accent_flowchart_svg() {
     let theme = base_theme(vec![
         accent(116, 173, 232),
@@ -212,7 +141,7 @@ fn backslash_n_converted_to_line_break() {
 }
 
 #[test]
-fn class_diagram_fallback_text_uses_accent_colors() {
+fn class_diagram_fallback_text_uses_accent_classes() {
     let theme = base_theme(vec![
         accent(190, 80, 70),   // red
         accent(116, 173, 232), // blue
@@ -230,11 +159,10 @@ fn class_diagram_fallback_text_uses_accent_colors() {
 
     let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
 
-    // Collect fill values from text elements inside fallback groups.
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
     let mut in_fallback = false;
-    let mut text_fills: Vec<String> = Vec::new();
+    let mut accent_classes: Vec<String> = Vec::new();
     loop {
         match reader.read_event() {
             Ok(Event::Eof) => break,
@@ -247,8 +175,13 @@ fn class_diagram_fallback_text_uses_accent_colors() {
                     }
                 }
                 if in_fallback && e.name().as_ref() == b"text" {
-                    if let Ok(Some(fill)) = e.try_get_attribute("fill") {
-                        text_fills.push(fill.unescape_value().unwrap_or_default().to_string());
+                    if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
+                        let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                        for token in class.split_whitespace() {
+                            if token.starts_with("zed-accent-") {
+                                accent_classes.push(token.to_string());
+                            }
+                        }
                     }
                 }
             }
@@ -260,43 +193,32 @@ fn class_diagram_fallback_text_uses_accent_colors() {
     }
 
     assert!(
-        !text_fills.is_empty(),
-        "expected text fills in fallback groups",
+        !accent_classes.is_empty(),
+        "expected zed-accent-N classes on text elements in fallback groups",
     );
-
-    // All fills should differ from the theme's text color (#dce0e5),
-    // confirming that accent-aware text colors are applied.
-    let theme_text_rgba = gpui::Rgba::from(theme.text_color);
-    let theme_text = format!(
-        "#{:02x}{:02x}{:02x}",
-        (theme_text_rgba.r * 255.0).round() as u8,
-        (theme_text_rgba.g * 255.0).round() as u8,
-        (theme_text_rgba.b * 255.0).round() as u8,
-    );
-    for fill in &text_fills {
-        assert_ne!(
-            fill, &theme_text,
-            "fallback text should use accent text color, not theme text color",
-        );
-    }
 }
 
 
 #[test]
-fn sequence_diagram_tspan_uses_accent_text_color() {
+fn sequence_diagram_tspan_uses_accent_classes() {
     let theme = base_theme(vec![accent(190, 80, 70)]);
     let source = "sequenceDiagram\n    participant Database";
     let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
 
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_str(&svg);
-    let mut tspan_fills: Vec<String> = Vec::new();
+    let mut accent_classes: Vec<String> = Vec::new();
     loop {
         match reader.read_event() {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) if e.name().as_ref() == b"tspan" => {
-                if let Ok(Some(fill)) = e.try_get_attribute("fill") {
-                    tspan_fills.push(fill.unescape_value().unwrap_or_default().to_string());
+                if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
+                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    for token in class.split_whitespace() {
+                        if token.starts_with("zed-accent-") {
+                            accent_classes.push(token.to_string());
+                        }
+                    }
                 }
             }
             _ => {}
@@ -304,25 +226,9 @@ fn sequence_diagram_tspan_uses_accent_text_color() {
     }
 
     assert!(
-        !tspan_fills.is_empty(),
-        "expected tspan fills in sequence diagram",
+        !accent_classes.is_empty(),
+        "expected zed-accent-N classes on tspan elements in sequence diagram",
     );
-
-    // All tspan fills should match the text element fills (accent text color),
-    // not the theme's generic text color that the CSS would otherwise set.
-    let theme_text_rgba = gpui::Rgba::from(theme.text_color);
-    let theme_text = format!(
-        "#{:02x}{:02x}{:02x}",
-        (theme_text_rgba.r * 255.0).round() as u8,
-        (theme_text_rgba.g * 255.0).round() as u8,
-        (theme_text_rgba.b * 255.0).round() as u8,
-    );
-    for fill in &tspan_fills {
-        assert_ne!(
-            fill, &theme_text,
-            "tspan should use accent text color, not theme text color",
-        );
-    }
 }
 
 

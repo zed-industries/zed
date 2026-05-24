@@ -7,31 +7,6 @@ use quick_xml::events::{BytesStart, Event};
 
 use crate::MermaidTheme;
 
-pub(crate) struct AccentStyle {
-    pub fill: String,
-    pub stroke: String,
-    pub text: String,
-}
-
-pub(crate) fn compute_accent_styles(theme: &MermaidTheme) -> Vec<AccentStyle> {
-    theme
-        .accent_colors
-        .iter()
-        .map(|accent| {
-            let stroke = crate::css_color(accent.foreground);
-            let mut bg = accent.background;
-            if theme.dark_mode {
-                bg.l = (bg.l * 0.7).max(0.0);
-            } else {
-                bg.l = (bg.l * 1.3).min(1.0);
-            }
-            let fill = crate::css_color(bg);
-            let text = crate::css_color(crate::postprocess::util::text_color_for_background(bg));
-            AccentStyle { fill, stroke, text }
-        })
-        .collect()
-}
-
 pub(crate) struct NodeRect {
     pub cx: f64,
     pub cy: f64,
@@ -59,7 +34,6 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     let d = attr.unescape_value().ok()?;
     let rest = d.strip_prefix('M')?.trim_start();
     let mut chars = rest.chars().peekable();
-    // Skip x value
     while chars.peek().is_some_and(|c| *c != ' ' && *c != ',') {
         chars.next();
     }
@@ -69,6 +43,34 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     let y_str: String = chars.take_while(|c| *c != ' ' && *c != ',').collect();
     let y: f64 = y_str.parse().ok()?;
     Some(y.abs())
+}
+
+/// Returns the CSS class name for a given accent index (e.g., `"zed-accent-0"`).
+pub(crate) fn accent_class_name(index: usize) -> String {
+    format!("zed-accent-{index}")
+}
+
+/// Adds a CSS class to an element, preserving any existing classes.
+pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<BytesStart<'a>> {
+    let name = e.name();
+    let tag = std::str::from_utf8(name.as_ref()).unwrap_or("g");
+    let mut new_elem = BytesStart::new(tag.to_owned());
+    let mut class_found = false;
+    for attr in e.attributes() {
+        let attr = attr?;
+        if attr.key.local_name().as_ref() == b"class" {
+            let existing = attr.unescape_value()?;
+            let new_class = format!("{existing} {class_to_add}");
+            new_elem.push_attribute(("class", new_class.as_str()));
+            class_found = true;
+        } else {
+            new_elem.push_attribute(attr);
+        }
+    }
+    if !class_found {
+        new_elem.push_attribute(("class", class_to_add));
+    }
+    Ok(new_elem)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,9 +89,6 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
         .and_then(|a| a.unescape_value().ok())
     {
         Some(c) => c,
-        // No class attribute — could be a sequence or ER diagram.
-        // Default to sequence handler which only activates when actor
-        // elements are found, so it's safe for ER diagrams too.
         None => return DiagramType::SequenceDiagram,
     };
 
@@ -97,18 +96,11 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
         match token {
             "mindmap" => return DiagramType::Mindmap,
             "classDiagram" => return DiagramType::ClassDiagram,
-            // Sequence diagrams don't have a distinguishing class; detection
-            // is handled by looking for actor elements in the sequence handler.
-            // Flowcharts, state diagrams, journeys, etc. don't need accent
-            // processing (handled by CSS or by other passes).
             "flowchart" | "statediagram" | "journey" => return DiagramType::Unhandled,
             _ => {}
         }
     }
 
-    // Empty or unrecognized class — could be a sequence or ER diagram.
-    // Default to sequence handler which activates only when actor elements
-    // are found.
     DiagramType::SequenceDiagram
 }
 
@@ -135,7 +127,6 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
             Err(e) => return Some(Err(e)),
         };
 
-        // Detect diagram type from the root <svg> element.
         if matches!(self.handler, Handler::Pending) {
             if let Event::Start(e) | Event::Empty(e) = &event {
                 if e.name().as_ref() == b"svg" {
@@ -145,14 +136,12 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
                             Handler::Mindmap(mindmap::MindmapAccents::new(&self.theme))
                         }
                         DiagramType::ClassDiagram => {
-                            Handler::ClassDiagram(class_diagram::ClassDiagramAccents::new(
-                                &self.theme,
-                            ))
+                            let count = self.theme.accent_colors.len();
+                            Handler::ClassDiagram(class_diagram::ClassDiagramAccents::new(count))
                         }
                         DiagramType::SequenceDiagram => {
-                            Handler::Sequence(sequence_diagram::SequenceDiagramAccents::new(
-                                &self.theme,
-                            ))
+                            let count = self.theme.accent_colors.len();
+                            Handler::Sequence(sequence_diagram::SequenceDiagramAccents::new(count))
                         }
                         DiagramType::Unhandled => Handler::Passthrough,
                     };

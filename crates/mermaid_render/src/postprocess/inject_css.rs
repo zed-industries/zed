@@ -99,7 +99,8 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
             css,
             "{selector} rect, {selector} path, {selector} circle, {selector} polygon \
              {{ fill: {color} !important; }}\n\
-             {selector} text, {selector} span \
+             {selector} text, {selector} span, \
+             text{selector}, tspan{selector} \
              {{ fill: {txt} !important; color: {txt} !important; }}\n\
              {selector} foreignObject div, {selector} foreignObject span, {selector} foreignObject p \
              {{ color: {txt} !important; }}\n\
@@ -139,6 +140,34 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
              .arrow{i} {{ stroke: {c}; }} \
              .label{i} {{ fill: {c}; }} \
              .branch-label{i} {{ fill: {lbl}; }}\n"
+        )
+        .expect("write to String cannot fail");
+    }
+    css
+}
+
+fn accent_css(theme: &MermaidTheme) -> String {
+    use std::fmt::Write;
+
+    let mut css = String::new();
+    for (i, accent) in theme.accent_colors.iter().enumerate() {
+        let stroke = crate::css_color(accent.foreground);
+        let mut bg = accent.background;
+        if theme.dark_mode {
+            bg.l = (bg.l * 0.7).max(0.0);
+        } else {
+            bg.l = (bg.l * 1.3).min(1.0);
+        }
+        let fill = crate::css_color(bg);
+        let text = crate::css_color(crate::postprocess::util::text_color_for_background(bg));
+        let class = format!(".zed-accent-{i}");
+        write!(
+            css,
+            "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
+             rect{class}, path{class}, circle{class}, polygon{class}, ellipse{class} \
+             {{ fill: {fill} !important; stroke: {stroke} !important; }}\n\
+             {class} text, {class} tspan, text{class}, tspan{class} \
+             {{ fill: {text} !important; }}\n",
         )
         .expect("write to String cannot fail");
     }
@@ -316,9 +345,11 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .commit-label {{ fill: {text}; }}
         .commit-label-bkg {{ fill: {edge_label_bg}; }}
         .commit-id, .commit-msg, .branch-label {{ fill: {text}; color: {text}; font-family: {font}; }}
+        {accent_css}
         "#,
         mindmap_css = mindmap_section_css(theme),
         git_branch_css = git_branch_css(theme),
+        accent_css = accent_css(theme),
     );
 
     scope_css(&raw_css, svg_id)

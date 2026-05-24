@@ -2,15 +2,14 @@ use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
 use super::{
-    compute_accent_styles, parse_path_half_height, parse_translate, AccentStyle, NodeRect,
+    accent_class_name, add_class, parse_path_half_height, parse_translate, NodeRect,
     NodeRectBuilder,
 };
-use crate::MermaidTheme;
 
 const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
 
 pub(crate) struct ClassDiagramAccents {
-    accent_styles: Vec<AccentStyle>,
+    accent_count: usize,
     accent_g_stack: Vec<Option<usize>>,
     node_counter: usize,
     node_rects: Vec<NodeRect>,
@@ -19,9 +18,9 @@ pub(crate) struct ClassDiagramAccents {
 }
 
 impl ClassDiagramAccents {
-    pub(super) fn new(theme: &MermaidTheme) -> Self {
+    pub(super) fn new(accent_count: usize) -> Self {
         Self {
-            accent_styles: compute_accent_styles(theme),
+            accent_count,
             accent_g_stack: Vec::new(),
             node_counter: 0,
             node_rects: Vec::new(),
@@ -31,7 +30,7 @@ impl ClassDiagramAccents {
     }
 
     pub(super) fn process_event<'a>(&mut self, event: Event<'a>) -> Result<Event<'a>> {
-        if self.accent_styles.is_empty() {
+        if self.accent_count == 0 {
             return Ok(event);
         }
 
@@ -47,7 +46,7 @@ impl ClassDiagramAccents {
                 };
 
                 if is_node {
-                    let accent_idx = self.node_counter % self.accent_styles.len();
+                    let accent_idx = self.node_counter % self.accent_count;
                     self.node_counter += 1;
 
                     if let Some((cx, cy)) = parse_translate(e) {
@@ -60,10 +59,11 @@ impl ClassDiagramAccents {
                     }
 
                     self.accent_g_stack.push(Some(accent_idx));
-                } else {
-                    self.accent_g_stack.push(None);
+                    let new_elem = add_class(e, &accent_class_name(accent_idx))?;
+                    return Ok(Event::Start(new_elem));
                 }
 
+                self.accent_g_stack.push(None);
                 Ok(event)
             }
 
@@ -86,8 +86,6 @@ impl ClassDiagramAccents {
             Event::Start(e) | Event::Empty(e)
                 if SHAPE_TAGS.iter().any(|tag| e.name().as_ref() == *tag) =>
             {
-                let is_start = matches!(event, Event::Start(_));
-
                 if e.name().as_ref() == b"path" {
                     if let Some(ref mut builder) = self.building_node {
                         if let Some(hh) = parse_path_half_height(e) {
@@ -98,17 +96,7 @@ impl ClassDiagramAccents {
                     }
                 }
 
-                if let Some(accent_idx) = self.current_accent() {
-                    let style = &self.accent_styles[accent_idx];
-                    let rewritten = rewrite_shape(e, &style.fill, &style.stroke)?;
-                    Ok(if is_start {
-                        Event::Start(rewritten)
-                    } else {
-                        Event::Empty(rewritten)
-                    })
-                } else {
-                    Ok(event)
-                }
+                Ok(event)
             }
 
             Event::Start(e) | Event::Empty(e)
@@ -128,18 +116,15 @@ impl ClassDiagramAccents {
                     if is_text && is_start {
                         self.current_text_accent = Some(idx);
                     }
-                    let style = &self.accent_styles[idx];
-                    let name = e.name();
-                    let tag_name = std::str::from_utf8(name.as_ref()).unwrap_or("text");
-                    let rewritten = rewrite_text(e, tag_name, &style.text)?;
-                    Ok(if is_start {
-                        Event::Start(rewritten)
+                    let new_elem = add_class(e, &accent_class_name(idx))?;
+                    return Ok(if is_start {
+                        Event::Start(new_elem)
                     } else {
-                        Event::Empty(rewritten)
-                    })
-                } else {
-                    Ok(event)
+                        Event::Empty(new_elem)
+                    });
                 }
+
+                Ok(event)
             }
 
             Event::End(e) if e.name().as_ref() == b"text" => {
@@ -176,69 +161,4 @@ impl ClassDiagramAccents {
             (in_x && in_y).then_some(rect.accent_idx)
         })
     }
-}
-
-fn rewrite_shape<'a>(
-    e: &BytesStart<'_>,
-    fill: &str,
-    stroke: &str,
-) -> Result<BytesStart<'a>> {
-    let name = e.name();
-    let tag_name = std::str::from_utf8(name.as_ref()).unwrap_or("rect");
-    let mut new_elem = BytesStart::new(tag_name.to_owned());
-    let mut existing_style = String::new();
-
-    for attr in e.attributes() {
-        let attr = attr?;
-        match attr.key.local_name().as_ref() {
-            b"fill" | b"stroke" => {}
-            b"style" => {
-                existing_style = attr.unescape_value()?.into_owned();
-            }
-            _ => new_elem.push_attribute(attr),
-        }
-    }
-
-    new_elem.push_attribute(("fill", fill));
-    new_elem.push_attribute(("stroke", stroke));
-
-    let mut merged_style = format!("fill: {fill} !important; stroke: {stroke} !important;");
-    if !existing_style.is_empty() {
-        merged_style.push(' ');
-        merged_style.push_str(&existing_style);
-    }
-    new_elem.push_attribute(("style", merged_style.as_str()));
-
-    Ok(new_elem)
-}
-
-fn rewrite_text<'a>(
-    e: &BytesStart<'_>,
-    tag_name: &str,
-    text_color: &str,
-) -> Result<BytesStart<'a>> {
-    let mut new_elem = BytesStart::new(tag_name.to_owned());
-    let mut existing_style = String::new();
-
-    for attr in e.attributes() {
-        let attr = attr?;
-        match attr.key.local_name().as_ref() {
-            b"fill" => {}
-            b"style" => {
-                existing_style = attr.unescape_value()?.into_owned();
-            }
-            _ => new_elem.push_attribute(attr),
-        }
-    }
-
-    new_elem.push_attribute(("fill", text_color));
-
-    let mut merged_style = format!("fill: {text_color} !important;");
-    if !existing_style.is_empty() {
-        merged_style.push(' ');
-        merged_style.push_str(&existing_style);
-    }
-    new_elem.push_attribute(("style", merged_style.as_str()));
-
-    Ok(new_elem)
 }
