@@ -291,7 +291,7 @@ impl StyledText {
 
     /// Set the text runs for this piece of text.
     pub fn with_runs(mut self, runs: Vec<TextRun>) -> Self {
-        let mut text = &**self.text;
+        let mut text = &*self.text;
         for run in &runs {
             text = text.get(run.len..).unwrap_or_else(|| {
                 #[cfg(debug_assertions)]
@@ -399,9 +399,11 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
-        let line_height = text_style
-            .line_height
-            .to_pixels(font_size.into(), window.rem_size());
+        let line_height = window.pixel_snap(
+            text_style
+                .line_height
+                .to_pixels(font_size.into(), window.rem_size()),
+        );
 
         let runs = if let Some(runs) = runs {
             runs
@@ -453,14 +455,27 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_affix,
-                        &runs,
-                        truncate_from,
-                    )
+                let (text, runs) = if truncate_width.is_some() {
+                    if let Some(max_lines) = text_style.line_clamp
+                        && let Some(wrap_width) = wrap_width
+                    {
+                        line_wrapper.truncate_wrapped_line(
+                            text.clone(),
+                            wrap_width,
+                            max_lines,
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width.unwrap_or(Pixels::MAX),
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    }
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };

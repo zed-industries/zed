@@ -15,7 +15,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use util::command::Stdio;
+use util::{command::Stdio, rel_path::PathExt};
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
 use wasmparser::Parser;
 
@@ -28,23 +28,15 @@ const RUST_TARGET: &str = "wasm32-wasip2";
 /// Once Clang 17 and its wasm target are available via system package managers, we won't need
 /// to download this.
 const WASI_SDK_URL: &str = "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/";
-const WASI_SDK_ASSET_NAME: Option<&str> = if cfg!(all(target_os = "macos", target_arch = "x86_64"))
-{
-    Some("wasi-sdk-25.0-x86_64-macos.tar.gz")
-} else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-macos.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-linux.tar.gz")
-} else if cfg!(all(target_os = "freebsd", target_arch = "aarch64")) {
-    Some("wasi-sdk-25.0-arm64-linux.tar.gz")
-} else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-    Some("wasi-sdk-25.0-x86_64-windows.tar.gz")
-} else {
-    None
+const WASI_SDK_ASSET_NAME: Option<&str> = cfg_select! {
+    all(target_os = "macos", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-macos.tar.gz"),
+    all(target_os = "macos", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-macos.tar.gz"),
+    all(target_os = "linux", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "linux", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-linux.tar.gz"),
+    all(target_os = "freebsd", target_arch = "aarch64") => Some("wasi-sdk-25.0-arm64-linux.tar.gz"),
+    all(target_os = "windows", target_arch = "x86_64") => Some("wasi-sdk-25.0-x86_64-windows.tar.gz"),
+    _ => None
 };
 
 pub struct ExtensionBuilder {
@@ -108,7 +100,7 @@ impl ExtensionBuilder {
 
         for (debug_adapter_name, meta) in &mut extension_manifest.debug_adapters {
             let debug_adapter_schema_path =
-                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta));
+                extension_dir.join(build_debug_adapter_schema_path(debug_adapter_name, meta)?);
 
             let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
                 .with_context(|| {
@@ -582,8 +574,9 @@ async fn populate_defaults(
             let language_dir = language_dir?;
             let config_path = language_dir.join(LanguageConfig::FILE_NAME);
             if fs.is_file(config_path.as_path()).await {
-                let relative_language_dir =
-                    language_dir.strip_prefix(extension_path)?.to_path_buf();
+                let relative_language_dir = language_dir
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.languages.contains(&relative_language_dir) {
                     manifest.languages.push(relative_language_dir);
                 }
@@ -601,7 +594,8 @@ async fn populate_defaults(
         while let Some(theme_path) = theme_dir_entries.next().await {
             let theme_path = theme_path?;
             if theme_path.extension() == Some("json".as_ref()) {
-                let relative_theme_path = theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_theme_path =
+                    theme_path.strip_prefix(extension_path)?.to_rel_path_buf()?;
                 if !manifest.themes.contains(&relative_theme_path) {
                     manifest.themes.push(relative_theme_path);
                 }
@@ -619,8 +613,9 @@ async fn populate_defaults(
         while let Some(icon_theme_path) = icon_theme_dir_entries.next().await {
             let icon_theme_path = icon_theme_path?;
             if icon_theme_path.extension() == Some("json".as_ref()) {
-                let relative_icon_theme_path =
-                    icon_theme_path.strip_prefix(extension_path)?.to_path_buf();
+                let relative_icon_theme_path = icon_theme_path
+                    .strip_prefix(extension_path)?
+                    .to_rel_path_buf()?;
                 if !manifest.icon_themes.contains(&relative_icon_theme_path) {
                     manifest.icon_themes.push(relative_icon_theme_path);
                 }

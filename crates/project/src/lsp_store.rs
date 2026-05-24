@@ -10,7 +10,7 @@
 //!
 //! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
-mod code_lens;
+pub mod code_lens;
 mod document_colors;
 mod document_symbols;
 mod folding_ranges;
@@ -58,6 +58,7 @@ use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
+    channel::oneshot,
     future::{Either, Shared, join_all, pending, select},
     select, select_biased,
     stream::FuturesUnordered,
@@ -65,7 +66,7 @@ use futures::{
 use globset::{Glob, GlobBuilder, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, PromptLevel, SharedString,
-    Subscription, Task, WeakEntity,
+    Subscription, Task, TaskExt, WeakEntity,
 };
 use http_client::HttpClient;
 use itertools::Itertools as _;
@@ -77,7 +78,8 @@ use language::{
     OffsetUtf16, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
     Toolchain, Transaction, Unclipped,
     language_settings::{
-        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, all_language_settings,
+        AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
+        all_language_settings,
     },
     modeline, point_to_lsp,
     proto::{
@@ -1086,6 +1088,7 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
+                            this.invalidate_code_lens();
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
@@ -1178,7 +1181,7 @@ impl LocalLspStore {
                     async move {
                         let actions = params.actions.unwrap_or_default();
                         let message = params.message.clone();
-                        let (tx, rx) = smol::channel::bounded::<MessageActionItem>(1);
+                        let (tx, rx) = async_channel::bounded::<MessageActionItem>(1);
                         let level = match params.typ {
                             lsp::MessageType::ERROR => PromptLevel::Critical,
                             lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -1224,7 +1227,7 @@ impl LocalLspStore {
                     let name = name.to_string();
                     let mut cx = cx.clone();
 
-                    let (tx, _) = smol::channel::bounded(1);
+                    let (tx, _) = async_channel::bounded(1);
                     let level = match params.typ {
                         lsp::MessageType::ERROR => PromptLevel::Critical,
                         lsp::MessageType::WARNING => PromptLevel::Warning,
@@ -1602,6 +1605,9 @@ impl LocalLspStore {
                     (adapters_and_servers, settings, request_timeout)
                 })
             })?;
+        let had_existing_line_endings = buffer
+            .handle
+            .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
@@ -1620,6 +1626,30 @@ impl LocalLspStore {
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.ensure_final_newline(cx);
             })?;
+        }
+
+        let line_ending_policy = match settings.line_ending {
+            LineEndingSetting::Detect => None,
+            LineEndingSetting::PreferLf => Some((LineEnding::Unix, true)),
+            LineEndingSetting::PreferCrlf => Some((LineEnding::Windows, true)),
+            LineEndingSetting::EnforceLf => Some((LineEnding::Unix, false)),
+            LineEndingSetting::EnforceCrlf => Some((LineEnding::Windows, false)),
+        };
+        if let Some((desired_line_ending, preserve_existing)) = line_ending_policy {
+            buffer.handle.update(cx, |buffer, cx| {
+                if buffer.line_ending() == desired_line_ending {
+                    return;
+                }
+                if preserve_existing && had_existing_line_endings {
+                    zlog::trace!(
+                        logger => "preserving existing line endings ({}) on save",
+                        buffer.line_ending().label()
+                    );
+                    return;
+                }
+                zlog::trace!(logger => "normalizing line endings to {}", desired_line_ending.label());
+                buffer.set_line_ending(desired_line_ending, cx);
+            });
         }
 
         // Formatter for `code_actions_on_format` that runs before
@@ -2940,8 +2970,8 @@ impl LocalLspStore {
             .flat_map(|(worktree_id, servers)| {
                 servers
                     .roots
-                    .iter()
-                    .flat_map(|(_, language_servers)| language_servers)
+                    .values()
+                    .flatten()
                     .map(move |(_, (server_node, server_languages))| {
                         (worktree_id, server_node, server_languages)
                     })
@@ -2986,7 +3016,6 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -3565,8 +3594,10 @@ impl LocalLspStore {
             }
         }
         servers_to_remove.retain(|server_id| !servers_to_preserve.contains(server_id));
-        self.language_server_ids
-            .retain(|_, state| !servers_to_remove.contains(&state.id));
+        self.language_server_ids.retain(|seed, state| {
+            seed.worktree_id != id_to_remove && !servers_to_remove.contains(&state.id)
+        });
+        self.lsp_tree.instances.remove(&id_to_remove);
         for server_id_to_remove in &servers_to_remove {
             self.language_server_watched_paths
                 .remove(server_id_to_remove);
@@ -4118,6 +4149,12 @@ impl SymbolLocation {
             Self::OutsideProject { abs_path, .. } => abs_path.file_name()?.to_str(),
         }
     }
+}
+
+fn should_log_lsp_request_failure(message: &str) -> bool {
+    // content modified is a weird failure mode of rust-analyzer
+    // where requests are denied before its loaded a project
+    message.ends_with("content modified") || message.ends_with("server cancelled the request")
 }
 
 impl LspStore {
@@ -5221,8 +5258,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 return Task::ready(Err(anyhow!(message)));
@@ -5283,8 +5319,7 @@ impl LspStore {
                     language_server.name(),
                     err
                 );
-                // rust-analyzer likes to error with this when its still loading up
-                if !message.ends_with("content modified") {
+                if should_log_lsp_request_failure(&message) {
                     log::warn!("{message}");
                 }
                 anyhow::anyhow!(message)
@@ -5544,20 +5579,20 @@ impl LspStore {
                     .await
                     .context("resolving a code action")?;
                 if let Some(edit) = action.lsp_action.edit()
-                    && (edit.changes.is_some() || edit.document_changes.is_some()) {
-                        return LocalLspStore::deserialize_workspace_edit(
-                            this.upgrade().context("no app present")?,
-                            edit.clone(),
-                            push_to_history,
-
-                            lang_server.clone(),
-                            cx,
-                        )
-                        .await;
-                    }
+                    && (edit.changes.is_some() || edit.document_changes.is_some())
+                {
+                    return LocalLspStore::deserialize_workspace_edit(
+                        this.upgrade().context("no app present")?,
+                        edit.clone(),
+                        push_to_history,
+                        lang_server.clone(),
+                        cx,
+                    )
+                    .await;
+                }
 
                 let Some(command) = action.lsp_action.command() else {
-                    return Ok(ProjectTransaction::default())
+                    return Ok(ProjectTransaction::default());
                 };
 
                 let server_capabilities = lang_server.capabilities();
@@ -5568,15 +5603,18 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!("Cannot execute a command {} not listed in the language server capabilities", command.command);
-                    return Ok(ProjectTransaction::default())
+                    log::warn!(
+                        "Skipping executeCommand for {}, not listed in language server capabilities",
+                        command.command
+                    );
+                    return Ok(ProjectTransaction::default());
                 }
 
-                let request_timeout = cx.update(|app|
+                let request_timeout = cx.update(|app| {
                     ProjectSettings::get_global(app)
-                    .global_lsp_settings
-                    .get_request_timeout()
-                );
+                        .global_lsp_settings
+                        .get_request_timeout()
+                });
 
                 this.update(cx, |this, _| {
                     this.as_local_mut()
@@ -5586,12 +5624,16 @@ impl LspStore {
                 })?;
 
                 let _result = lang_server
-                    .request::<lsp::request::ExecuteCommand>(lsp::ExecuteCommandParams {
-                        command: command.command.clone(),
-                        arguments: command.arguments.clone().unwrap_or_default(),
-                        ..lsp::ExecuteCommandParams::default()
-                    }, request_timeout)
-                    .await.into_response()
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command: command.command.clone(),
+                            arguments: command.arguments.clone().unwrap_or_default(),
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
                     .context("execute command")?;
 
                 return this.update(cx, |this, _| {
@@ -5899,8 +5941,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.definitions_with_filter(buffer, position, false, cx)
+    }
+
+    pub fn workspace_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetDefinitions { position };
+            let request = GetDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -5925,7 +5989,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetDefinitions { position }.response_from_proto(
+                    GetDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -5948,7 +6016,10 @@ impl LspStore {
             let definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetDefinitions { position },
+                GetDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6039,8 +6110,30 @@ impl LspStore {
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.type_definitions_with_filter(buffer, position, false, cx)
+    }
+
+    pub fn workspace_type_definitions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        self.type_definitions_with_filter(buffer, position, true, cx)
+    }
+
+    fn type_definitions_with_filter(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: PointUtf16,
+        workspace_only: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            let request = GetTypeDefinitions { position };
+            let request = GetTypeDefinitions {
+                position,
+                workspace_only,
+            };
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
@@ -6063,7 +6156,11 @@ impl LspStore {
                     return Ok(None);
                 };
                 let actions = join_all(responses.payload.into_iter().map(|response| {
-                    GetTypeDefinitions { position }.response_from_proto(
+                    GetTypeDefinitions {
+                        position,
+                        workspace_only,
+                    }
+                    .response_from_proto(
                         response.response,
                         lsp_store.clone(),
                         buffer.clone(),
@@ -6086,7 +6183,10 @@ impl LspStore {
             let type_definitions_task = self.request_multiple_lsp_locally(
                 buffer,
                 Some(position),
-                GetTypeDefinitions { position },
+                GetTypeDefinitions {
+                    position,
+                    workspace_only,
+                },
                 cx,
             );
             cx.background_spawn(async move {
@@ -6653,9 +6753,6 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
-        // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not suppose change during resolve.
-        // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
-
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
         if let CompletionSource::Lsp {
@@ -6674,6 +6771,40 @@ impl LspStore {
             );
             **lsp_completion = resolved_completion;
             *resolved = true;
+
+            // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not supposed to change during resolve.
+            // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
+            //
+            // We still re-derive new_text here as a workaround for the specific
+            // VS Code TypeScript completion resolve flow that vtsls wraps:
+            // https://github.com/microsoft/vscode/blob/838b48504cd9a2338e2ca9e854da9cec990c4d57/extensions/typescript-language-features/src/languageFeatures/completions.ts#L218
+            //
+            // Some servers (e.g. vtsls with completeFunctionCalls) update
+            // insertText/textEdit during resolve to add snippet content like
+            // function call parentheses.
+            //
+            // vtsls resolve flow:
+            //   https://github.com/yioneko/vtsls/blob/fecf52324a30e72dfab1537047556076720c1a5f/packages/service/src/service/completion.ts#L228-L244
+            // vtsls converter (isSnippet / insertTextFormat):
+            //   https://github.com/yioneko/vtsls/blob/28e075105d7711d635ebf8aefc971bb8e1d2fe65/packages/service/src/utils/converter.ts#L149-L200
+            //
+            // NB: We only update the text content here, NOT the replace/insert
+            // ranges on `Completion`. Those ranges were converted to anchors from
+            // the original response and stay valid across buffer edits. The LSP
+            // ranges in the resolved text_edit are stale when completions are
+            // cached across keystrokes (see #34094).
+            let resolved_new_text = lsp_completion
+                .text_edit
+                .as_ref()
+                .map(|edit| match edit {
+                    lsp::CompletionTextEdit::Edit(e) => e.new_text.clone(),
+                    lsp::CompletionTextEdit::InsertAndReplace(e) => e.new_text.clone(),
+                })
+                .or_else(|| lsp_completion.insert_text.clone());
+            if let Some(mut resolved_new_text) = resolved_new_text {
+                LineEnding::normalize(&mut resolved_new_text);
+                completion.new_text = resolved_new_text;
+            }
         }
         Ok(())
     }
@@ -7495,8 +7626,15 @@ impl LspStore {
     ) -> Task<anyhow::Result<()>> {
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
-            let Some(diagnostics) = diagnostics.await.context("pulling diagnostics")? else {
-                return Ok(());
+            let diagnostics = match diagnostics.await {
+                Ok(Some(diagnostics)) => diagnostics,
+                Ok(None) => return Ok(()),
+                Err(error) if should_log_lsp_request_failure(&format!("{error:#}")) => {
+                    return Err(error).context("pulling diagnostics");
+                }
+                // This is a weird way to suppress diagnostic failures on server side cancellation,
+                // we should actually retry the request here?
+                Err(_) => return Ok(()),
             };
             lsp_store.update(cx, |lsp_store, cx| {
                 if lsp_store.as_local().is_none() {
@@ -9965,6 +10103,16 @@ impl LspStore {
             .map(|(key, value)| (*key, value))
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn has_language_server_seed_for_worktree(&self, worktree_id: WorktreeId) -> bool {
+        self.as_local().is_some_and(|local| {
+            local
+                .language_server_ids
+                .keys()
+                .any(|seed| seed.worktree_id == worktree_id)
+        })
+    }
+
     pub(super) fn did_rename_entry(
         &self,
         worktree_id: WorktreeId,
@@ -10727,6 +10875,7 @@ impl LspStore {
                     insert_text_mode: None,
                     icon_path: None,
                     confirm: None,
+                    group: None,
                 }]))),
                 0,
                 false,
@@ -11918,12 +12067,17 @@ impl LspStore {
         &self,
         id: LanguageServerId,
     ) -> Option<Arc<CachedLspAdapter>> {
-        self.as_local()
-            .and_then(|local| local.language_servers.get(&id))
-            .and_then(|language_server_state| match language_server_state {
-                LanguageServerState::Running { adapter, .. } => Some(adapter.clone()),
-                _ => None,
-            })
+        if let Some(local) = self.as_local()
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&id)
+        {
+            return Some(adapter.clone());
+        }
+        // In remote (SSH/collab) mode there are no local `language_servers`, but
+        // `language_server_statuses` is kept in sync with the upstream and carries each
+        // server's registered name, which is enough to look the adapter up in the registry.
+        let name = &self.language_server_statuses.get(&id)?.name;
+        self.languages.adapter_for_name(name)
     }
 
     pub(super) fn update_local_worktree_language_servers(
@@ -12340,9 +12494,43 @@ impl LspStore {
             .and_then(|local| local.language_servers.get_mut(&server_id))
         {
             for diagnostics in workspace_diagnostics_refresh_tasks.values_mut() {
-                diagnostics.refresh_tx.try_send(()).ok();
+                diagnostics.refresh_tx.try_send(None).ok();
             }
         }
+    }
+
+    /// Triggers a workspace diagnostics pull on all running language servers
+    /// and returns a [`Task`] that resolves once the requests have completed.
+    ///
+    /// This reuses the same background refresh loops as
+    /// [`Self::pull_workspace_diagnostics`], but provides a completion signal
+    /// so callers can wait for fresh diagnostics before reading them.
+    pub fn pull_workspace_diagnostics_once(&mut self, cx: &mut Context<Self>) -> Task<bool> {
+        let Some(local) = self.as_local_mut() else {
+            return Task::ready(true);
+        };
+
+        let mut receivers = Vec::new();
+        for state in local.language_servers.values_mut() {
+            let LanguageServerState::Running {
+                workspace_diagnostics_refresh_tasks,
+                ..
+            } = state
+            else {
+                continue;
+            };
+            for task in workspace_diagnostics_refresh_tasks.values_mut() {
+                let (tx, rx) = oneshot::channel();
+                task.refresh_tx.try_send(Some(tx)).ok();
+                receivers.push(rx);
+            }
+        }
+
+        cx.background_spawn(async {
+            FuturesUnordered::from_iter(receivers)
+                .all(async |result| result.unwrap_or(false))
+                .await
+        })
     }
 
     /// Refreshes `textDocument/diagnostic` for all open buffers associated with the given server.
@@ -13434,8 +13622,8 @@ fn lsp_workspace_diagnostics_refresh(
     let registration_id_shared = registration_id.as_ref().map(SharedString::from);
 
     let (progress_tx, mut progress_rx) = mpsc::channel(1);
-    let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
-    refresh_tx.try_send(()).ok();
+    let (mut refresh_tx, mut refresh_rx) = mpsc::channel::<Option<oneshot::Sender<bool>>>(1);
+    refresh_tx.try_send(None).ok();
 
     let request_timeout = ProjectSettings::get_global(cx)
         .global_lsp_settings
@@ -13455,7 +13643,7 @@ fn lsp_workspace_diagnostics_refresh(
         let mut requests = 0;
 
         loop {
-            let Some(()) = refresh_rx.recv().await else {
+            let Some(mut completion_tx) = refresh_rx.recv().await else {
                 return;
             };
 
@@ -13531,6 +13719,9 @@ fn lsp_workspace_diagnostics_refresh(
                     }
                     ConnectionResult::Result(Err(e)) => {
                         log::error!("Error during workspace diagnostics pull: {e:#}");
+                        if let Some(tx) = completion_tx.take() {
+                            tx.send(false).ok();
+                        }
                         break 'request;
                     }
                     ConnectionResult::Result(Ok(pulled_diagnostics)) => {
@@ -13547,6 +13738,9 @@ fn lsp_workspace_diagnostics_refresh(
                             .is_err()
                         {
                             return;
+                        }
+                        if let Some(tx) = completion_tx.take() {
+                            tx.send(true).ok();
                         }
                         break 'request;
                     }
@@ -13699,6 +13893,7 @@ async fn populate_labels_for_completions(
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,
+                    group: None,
                 });
             }
             None => {
@@ -13715,6 +13910,7 @@ async fn populate_labels_for_completions(
                     confirm: None,
                     match_start: None,
                     snippet_deduplication_key: None,
+                    group: None,
                 });
             }
         }
@@ -13907,7 +14103,7 @@ pub struct LanguageServerPromptRequest {
     pub message: String,
     pub actions: Vec<MessageActionItem>,
     pub lsp_name: String,
-    pub(crate) response_channel: smol::channel::Sender<MessageActionItem>,
+    pub(crate) response_channel: async_channel::Sender<MessageActionItem>,
 }
 
 impl LanguageServerPromptRequest {
@@ -13916,7 +14112,7 @@ impl LanguageServerPromptRequest {
         message: String,
         actions: Vec<MessageActionItem>,
         lsp_name: String,
-        response_channel: smol::channel::Sender<MessageActionItem>,
+        response_channel: async_channel::Sender<MessageActionItem>,
     ) -> Self {
         let id = NEXT_PROMPT_REQUEST_ID.fetch_add(1, atomic::Ordering::AcqRel);
         LanguageServerPromptRequest {
@@ -13943,7 +14139,7 @@ impl LanguageServerPromptRequest {
         actions: Vec<MessageActionItem>,
         lsp_name: String,
     ) -> Self {
-        let (tx, _rx) = smol::channel::unbounded();
+        let (tx, _rx) = async_channel::unbounded();
         LanguageServerPromptRequest::new(level, message, actions, lsp_name, tx)
     }
 }
@@ -14024,7 +14220,7 @@ impl LanguageServerLogType {
 }
 
 pub struct WorkspaceRefreshTask {
-    refresh_tx: mpsc::Sender<()>,
+    refresh_tx: mpsc::Sender<Option<oneshot::Sender<bool>>>,
     progress_tx: mpsc::Sender<()>,
     #[allow(dead_code)]
     task: Task<()>,
@@ -14267,13 +14463,13 @@ impl LspInstaller for SshLspAdapter {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
-    async fn fetch_server_binary(
+    fn fetch_server_binary(
         &self,
         _: (),
         _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> impl Send + Future<Output = Result<LanguageServerBinary>> + use<> {
+        async { anyhow::bail!("SshLspAdapter does not support fetch_server_binary") }
     }
 }
 
@@ -14431,7 +14627,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .output()
             .await?;
         let global_node_modules =
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
 
         if let Some(version) =
             read_package_installed_version(global_node_modules.clone(), package_name).await?

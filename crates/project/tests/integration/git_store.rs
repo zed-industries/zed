@@ -1176,13 +1176,14 @@ mod git_traversal {
 }
 
 mod git_worktrees {
-    use fs::FakeFs;
+    use fs::{FakeFs, Fs};
     use gpui::TestAppContext;
     use project::worktrees_directory_for_repo;
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use util::path;
+    use util::{path, paths::PathStyle};
+
     fn init_test(cx: &mut gpui::TestAppContext) {
         zlog::init_test();
 
@@ -1197,41 +1198,59 @@ mod git_worktrees {
         let work_dir = Path::new("/code/my-project");
 
         // Valid: sibling
-        assert!(worktrees_directory_for_repo(work_dir, "../worktrees").is_ok());
+        assert!(worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).is_ok());
 
         // Valid: subdirectory
-        assert!(worktrees_directory_for_repo(work_dir, ".git/zed-worktrees").is_ok());
-        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees").is_ok());
+        assert!(
+            worktrees_directory_for_repo(work_dir, ".git/zed-worktrees", PathStyle::Posix).is_ok()
+        );
+        assert!(worktrees_directory_for_repo(work_dir, "my-worktrees", PathStyle::Posix).is_ok());
 
         // Invalid: just ".." would resolve back to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "..").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "..", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("must not be \"..\""));
 
         // Invalid: ".." with trailing separators
-        let err = worktrees_directory_for_repo(work_dir, "..\\").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "..\\", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("must not be \"..\""));
-        let err = worktrees_directory_for_repo(work_dir, "../").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "../", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("must not be \"..\""));
 
         // Invalid: empty string would resolve to the working directory itself
-        let err = worktrees_directory_for_repo(work_dir, "").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("must not be empty"));
 
         // Invalid: absolute path
-        let err = worktrees_directory_for_repo(work_dir, "/tmp/worktrees").unwrap_err();
+        let err =
+            worktrees_directory_for_repo(work_dir, "/tmp/worktrees", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("relative path"));
 
         // Invalid: "/" is absolute on Unix
-        let err = worktrees_directory_for_repo(work_dir, "/").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "/", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("relative path"));
 
         // Invalid: "///" is absolute
-        let err = worktrees_directory_for_repo(work_dir, "///").unwrap_err();
+        let err = worktrees_directory_for_repo(work_dir, "///", PathStyle::Posix).unwrap_err();
         assert!(err.to_string().contains("relative path"));
 
         // Invalid: escapes too far up
-        let err = worktrees_directory_for_repo(work_dir, "../../other-project/wt").unwrap_err();
+        let err =
+            worktrees_directory_for_repo(work_dir, "../../other-project/wt", PathStyle::Posix)
+                .unwrap_err();
         assert!(err.to_string().contains("outside"));
+    }
+
+    #[test]
+    fn test_worktree_directory_uses_remote_path_style() {
+        let work_dir = Path::new("/home/user/dev/lsp-tests");
+
+        let directory =
+            worktrees_directory_for_repo(work_dir, "../worktrees", PathStyle::Posix).unwrap();
+
+        assert_eq!(
+            directory,
+            PathBuf::from("/home/user/dev/worktrees/lsp-tests")
+        );
     }
 
     #[gpui::test]
@@ -1333,6 +1352,68 @@ mod git_worktrees {
             .expect("should find bugfix-branch worktree");
         assert_eq!(worktree_2.path, worktree_2_directory);
         assert_eq!(worktree_2.sha.as_ref(), "fake-sha");
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_removes_managed_parent_directories(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+
+        let worktree_path = PathBuf::from(path!("/worktrees/root/feature/nested/root"));
+        let worktree_parent = PathBuf::from(path!("/worktrees/root/feature/nested"));
+        let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/root/feature"));
+        let worktree_base = PathBuf::from(path!("/worktrees/root"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature/nested".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
     }
 
     use crate::Project;
@@ -1546,7 +1627,10 @@ mod trust_tests {
 mod resolve_worktree_tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use project::{git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name};
+    use project::{
+        git_store::resolve_git_worktree_to_main_repo, linked_worktree_short_name,
+        repo_identity_path,
+    };
     use serde_json::json;
     use std::path::{Path, PathBuf};
 
@@ -1601,6 +1685,35 @@ mod resolve_worktree_tests {
     }
 
     #[gpui::test]
+    async fn test_resolve_git_worktree_bare_repo_identity_path(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/monty/.bare",
+            json!({
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a"
+                    }
+                }
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/monty/feature-a",
+            json!({
+                ".git": "gitdir: /monty/.bare/worktrees/feature-a",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        let result =
+            resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/monty/feature-a")).await;
+        assert_eq!(result, Some(PathBuf::from("/monty")));
+    }
+
+    #[gpui::test]
     async fn test_resolve_git_worktree_no_git_returns_none(cx: &mut TestAppContext) {
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -1622,6 +1735,27 @@ mod resolve_worktree_tests {
         let result =
             resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/does-not-exist")).await;
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_repo_identity_path() {
+        let examples = [
+            // Normal checkout: `.git` starts with `.`, so parent is the worktree
+            ("/home/bob/zed/.git", "/home/bob/zed"),
+            // Bare clone named `.bare`: starts with `.`, so parent is the project dir
+            ("/repos/project/.bare", "/repos/project"),
+            // Bare clone with `.git` extension: does not start with `.`, kept as-is
+            ("/repos/zed.git", "/repos/zed.git"),
+            // Bare clone with arbitrary plain name: kept as-is
+            ("/repos/project", "/repos/project"),
+        ];
+        for (common_dir, expected) in examples {
+            assert_eq!(
+                repo_identity_path(Path::new(common_dir)),
+                Path::new(expected),
+                "identity path for common_dir {common_dir:?} should be {expected:?}"
+            );
+        }
     }
 
     #[test]

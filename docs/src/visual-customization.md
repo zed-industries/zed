@@ -118,7 +118,7 @@ To disable this behavior use:
 ```json [settings]
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
+    "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
@@ -183,8 +183,8 @@ TBD: Centered layout related settings
   // Highlight the current line in the editor: none, gutter, line, all
   "current_line_highlight": "all",
 
-  // When does the mouse cursor hide: never, on_typing, on_typing_and_movement
-  "hide_mouse": "on_typing_and_movement",
+  // When does the mouse cursor hide: never, on_typing, on_typing_and_action
+  "hide_mouse": "on_typing_and_action",
 
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
@@ -281,7 +281,7 @@ TBD: Centered layout related settings
   // Minimap related settings
   "minimap": {
     "show": "never",                // When to show (auto, always, never)
-    "display_in": "active_editor",  // Where to show (active_editor, all_editor)
+    "display_in": "active_editor",  // Where to show (active_editor, all_editors)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
@@ -384,6 +384,11 @@ TBD: Centered layout related settings
   "lsp_document_colors": "inlay",        // none, inlay, border, background
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
+
+  // How to display the LSP item kind (function, method, variable, etc.)
+  // of each entry in the completions menu. "symbol" shows a syntax-colored
+  // single-letter badge.
+  "completion_menu_item_kind": "off", // off, symbol
   // Turn on colorization of brackets in editors (configurable per language)
   "colorize_brackets": true,
 ```

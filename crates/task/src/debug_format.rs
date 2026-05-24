@@ -4,7 +4,7 @@ use gpui::SharedString;
 use log as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::net::Ipv4Addr;
+use std::net::IpAddr;
 use std::path::PathBuf;
 use util::{debug_panic, schemars::add_new_subschema};
 
@@ -20,7 +20,7 @@ pub struct TcpArgumentsTemplate {
     /// The host that the debug adapter is listening too
     ///
     /// Default: 127.0.0.1
-    pub host: Option<Ipv4Addr>,
+    pub host: Option<IpAddr>,
     /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error
     ///
     /// Default: 2000ms
@@ -29,8 +29,9 @@ pub struct TcpArgumentsTemplate {
 
 impl TcpArgumentsTemplate {
     /// Get the host or fallback to the default host
-    pub fn host(&self) -> Ipv4Addr {
-        self.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1))
+    pub fn host(&self) -> IpAddr {
+        self.host
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST))
     }
 
     pub fn from_proto(proto: proto::TcpHost) -> Result<Self> {
@@ -389,8 +390,7 @@ impl DebugTaskFile {
                             },
                             "host": {
                                 "type": "string",
-                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
+                                "description": "The host that the debug adapter is listening to, as an IPv4 or IPv6 address (default: 127.0.0.1)"
                             },
                             "timeout": {
                                 "type": "integer",

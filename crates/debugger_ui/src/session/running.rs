@@ -33,7 +33,7 @@ use dap::{
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
     Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
+    NoAction, Pixels, Point, Subscription, Task, TaskExt, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -323,20 +323,15 @@ impl Item for SubView {
         let Some(this_pane) = self.host_pane.upgrade() else {
             return true;
         };
-        let item = if tab.pane == this_pane {
-            active_pane.item_for_index(tab.ix)
-        } else {
-            tab.pane.read(cx).item_for_index(tab.ix)
-        };
-        let Some(item) = item.filter(|item| item.downcast::<SubView>().is_some()) else {
+        if tab.item.downcast::<SubView>().is_none() {
             return true;
-        };
+        }
         let Some(split_direction) = active_pane.drag_split_direction() else {
             return false;
         };
 
         let source = tab.pane.clone();
-        let item_id_to_move = item.item_id();
+        let item_id_to_move = tab.item.item_id();
         let weak_running = self.running_state.clone();
 
         // Source pane may be the one currently updated, so defer the move.
@@ -1145,6 +1140,9 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
+                Workspace::save_for_task(&weak_workspace, task_with_shell.save, cx).await;
+
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
@@ -1975,5 +1973,100 @@ impl RunningState {
 impl Focusable for RunningState {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        debugger_panel::DebugPanel,
+        tests::{init_test, init_test_workspace, start_debug_session},
+    };
+    use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use util::path;
+
+    #[gpui::test]
+    async fn stale_subview_host_during_tab_drop_does_not_read_updating_source_pane(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "main.rs": "fn main() {}",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let workspace = init_test_workspace(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        start_debug_session(&workspace, cx, |_| {}).expect("debug session starts");
+        cx.run_until_parked();
+
+        let running_state = workspace
+            .update(cx, |multi_workspace, _window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let debug_panel = workspace.panel::<DebugPanel>(cx).expect("debug panel");
+                    let active_session = debug_panel
+                        .read(cx)
+                        .active_session()
+                        .expect("active debug session");
+                    active_session.read(cx).running_state().clone()
+                })
+            })
+            .expect("workspace update succeeds");
+
+        let (source_pane, stale_host_pane) = running_state.read_with(cx, |running_state, _| {
+            let panes = running_state.panes.panes();
+            let mut panes = panes.into_iter();
+            let source_pane = panes.next().expect("source pane").clone();
+            let stale_host_pane = panes.next().expect("stale host pane").clone();
+            (source_pane, stale_host_pane)
+        });
+
+        let dragged_tab = {
+            let source_pane_entity = source_pane.clone();
+            source_pane.read_with(cx, |source_pane, _| {
+                let item = source_pane
+                    .item_for_index(0)
+                    .expect("source pane contains debugger subview")
+                    .boxed_clone();
+                DraggedTab {
+                    pane: source_pane_entity,
+                    item,
+                    ix: 0,
+                    detail: 0,
+                    is_active: true,
+                }
+            })
+        };
+
+        let active_subview = source_pane.read_with(cx, |source_pane, _| {
+            source_pane
+                .active_item()
+                .and_then(|item| item.downcast::<SubView>())
+                .expect("active item is a debugger subview")
+        });
+        active_subview.update(cx, |subview, _| {
+            subview.set_host_pane(stale_host_pane.downgrade());
+        });
+
+        source_pane.update_in(cx, |source_pane, window, cx| {
+            source_pane.handle_tab_drop(
+                &dragged_tab,
+                source_pane.active_item_index(),
+                true,
+                window,
+                cx,
+            );
+        });
     }
 }

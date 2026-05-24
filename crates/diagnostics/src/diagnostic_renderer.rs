@@ -206,7 +206,7 @@ impl DiagnosticBlock {
                 (status_colors.warning_background, status_colors.warning)
             }
             DiagnosticSeverity::INFORMATION => (status_colors.info_background, status_colors.info),
-            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.info),
+            DiagnosticSeverity::HINT => (status_colors.hint_background, status_colors.hint),
             _ => (status_colors.ignored_background, status_colors.ignored),
         };
         let settings = ThemeSettings::get_global(cx);
@@ -240,6 +240,7 @@ impl DiagnosticBlock {
                     )
                     .code_block_renderer(markdown::CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                         border: false,
                     })
                     .on_url_click({

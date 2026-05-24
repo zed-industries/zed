@@ -1,5 +1,3 @@
-pub mod completion;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use strum::EnumIter;
@@ -9,42 +7,13 @@ pub const XAI_API_URL: &str = "https://api.x.ai/v1";
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
-    #[serde(rename = "grok-2-vision-latest")]
-    Grok2Vision,
     #[default]
-    #[serde(rename = "grok-3-latest")]
-    Grok3,
-    #[serde(rename = "grok-3-mini-latest")]
-    Grok3Mini,
-    #[serde(rename = "grok-3-fast-latest")]
-    Grok3Fast,
-    #[serde(rename = "grok-3-mini-fast-latest")]
-    Grok3MiniFast,
-    #[serde(rename = "grok-4", alias = "grok-4-latest")]
-    Grok4,
-    #[serde(
-        rename = "grok-4-fast-reasoning",
-        alias = "grok-4-fast-reasoning-latest"
-    )]
-    Grok4FastReasoning,
-    #[serde(
-        rename = "grok-4-fast-non-reasoning",
-        alias = "grok-4-fast-non-reasoning-latest"
-    )]
-    Grok4FastNonReasoning,
-    #[serde(
-        rename = "grok-4-1-fast-non-reasoning",
-        alias = "grok-4-1-fast-non-reasoning-latest"
-    )]
-    Grok41FastNonReasoning,
-    #[serde(
-        rename = "grok-4-1-fast-reasoning",
-        alias = "grok-4-1-fast-reasoning-latest",
-        alias = "grok-4-1-fast"
-    )]
-    Grok41FastReasoning,
-    #[serde(rename = "grok-code-fast-1", alias = "grok-code-fast-1-0825")]
-    GrokCodeFast1,
+    #[serde(rename = "grok-4.3", alias = "grok-4.3-latest")]
+    Grok43,
+    #[serde(rename = "grok-4.20-0309-reasoning")]
+    Grok420Reasoning,
+    #[serde(rename = "grok-4.20-0309-non-reasoning")]
+    Grok420NonReasoning,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -61,57 +30,32 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::Grok3Fast
+        Self::Grok43
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "grok-4" => Ok(Self::Grok4),
-            "grok-4-fast-reasoning" => Ok(Self::Grok4FastReasoning),
-            "grok-4-fast-non-reasoning" => Ok(Self::Grok4FastNonReasoning),
-            "grok-4-1-fast-non-reasoning" => Ok(Self::Grok41FastNonReasoning),
-            "grok-4-1-fast-reasoning" => Ok(Self::Grok41FastReasoning),
-            "grok-4-1-fast" => Ok(Self::Grok41FastReasoning),
-            "grok-2-vision" => Ok(Self::Grok2Vision),
-            "grok-3" => Ok(Self::Grok3),
-            "grok-3-mini" => Ok(Self::Grok3Mini),
-            "grok-3-fast" => Ok(Self::Grok3Fast),
-            "grok-3-mini-fast" => Ok(Self::Grok3MiniFast),
-            "grok-code-fast-1" => Ok(Self::GrokCodeFast1),
+            "grok-4.3" => Ok(Self::Grok43),
+            "grok-4.20-0309-reasoning" => Ok(Self::Grok420Reasoning),
+            "grok-4.20-0309-non-reasoning" => Ok(Self::Grok420NonReasoning),
             _ => anyhow::bail!("invalid model id '{id}'"),
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Grok2Vision => "grok-2-vision",
-            Self::Grok3 => "grok-3",
-            Self::Grok3Mini => "grok-3-mini",
-            Self::Grok3Fast => "grok-3-fast",
-            Self::Grok3MiniFast => "grok-3-mini-fast",
-            Self::Grok4 => "grok-4",
-            Self::Grok4FastReasoning => "grok-4-fast-reasoning",
-            Self::Grok4FastNonReasoning => "grok-4-fast-non-reasoning",
-            Self::Grok41FastNonReasoning => "grok-4-1-fast-non-reasoning",
-            Self::Grok41FastReasoning => "grok-4-1-fast-reasoning",
-            Self::GrokCodeFast1 => "grok-code-fast-1",
+            Self::Grok43 => "grok-4.3",
+            Self::Grok420Reasoning => "grok-4.20-0309-reasoning",
+            Self::Grok420NonReasoning => "grok-4.20-0309-non-reasoning",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Grok2Vision => "Grok 2 Vision",
-            Self::Grok3 => "Grok 3",
-            Self::Grok3Mini => "Grok 3 Mini",
-            Self::Grok3Fast => "Grok 3 Fast",
-            Self::Grok3MiniFast => "Grok 3 Mini Fast",
-            Self::Grok4 => "Grok 4",
-            Self::Grok4FastReasoning => "Grok 4 Fast",
-            Self::Grok4FastNonReasoning => "Grok 4 Fast (Non-Reasoning)",
-            Self::Grok41FastNonReasoning => "Grok 4.1 Fast (Non-Reasoning)",
-            Self::Grok41FastReasoning => "Grok 4.1 Fast",
-            Self::GrokCodeFast1 => "Grok Code Fast 1",
+            Self::Grok43 => "Grok 4.3",
+            Self::Grok420Reasoning => "Grok 4.20 Reasoning",
+            Self::Grok420NonReasoning => "Grok 4.20 (Non-Reasoning)",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -120,27 +64,15 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => 131_072,
-            Self::Grok4 | Self::GrokCodeFast1 => 256_000,
-            Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning => 2_000_000,
-            Self::Grok2Vision => 8_192,
+            Self::Grok43 => 1_000_000,
+            Self::Grok420Reasoning | Self::Grok420NonReasoning => 2_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
-            Self::Grok4
-            | Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning
-            | Self::GrokCodeFast1 => Some(64_000),
-            Self::Grok2Vision => Some(4_096),
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => Some(64_000),
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -149,33 +81,19 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::Grok2Vision
-            | Self::Grok3
-            | Self::Grok3Mini
-            | Self::Grok3Fast
-            | Self::Grok3MiniFast
-            | Self::Grok4
-            | Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 parallel_tool_calls: Some(support),
                 ..
             } => *support,
-            Self::GrokCodeFast1 | Model::Custom { .. } => false,
+            Model::Custom { .. } => false,
         }
     }
 
     pub fn requires_json_schema_subset(&self) -> bool {
         match self {
-            Self::Grok4
-            | Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning
-            | Self::GrokCodeFast1 => true,
-            _ => false,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
+            Self::Custom { .. } => false,
         }
     }
 
@@ -185,17 +103,7 @@ impl Model {
 
     pub fn supports_tool(&self) -> bool {
         match self {
-            Self::Grok2Vision
-            | Self::Grok3
-            | Self::Grok3Mini
-            | Self::Grok3Fast
-            | Self::Grok3MiniFast
-            | Self::Grok4
-            | Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning
-            | Self::GrokCodeFast1 => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_tools: Some(support),
                 ..
@@ -206,17 +114,12 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Grok2Vision
-            | Self::Grok4
-            | Self::Grok4FastReasoning
-            | Self::Grok4FastNonReasoning
-            | Self::Grok41FastNonReasoning
-            | Self::Grok41FastReasoning => true,
+            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_images: Some(support),
                 ..
             } => *support,
-            _ => false,
+            Self::Custom { .. } => false,
         }
     }
 }
