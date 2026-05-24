@@ -1,18 +1,26 @@
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use quick_xml::events::{BytesText, Event};
 
 use crate::MermaidTheme;
 
-struct StyleTransform<I> {
+struct InjectCss<'a, I> {
     inner: I,
     injected_css: String,
     in_style: bool,
+    injected: bool,
+    pending: VecDeque<Event<'a>>,
 }
 
-impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for StyleTransform<I> {
+impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for InjectCss<'a, I> {
     type Item = Result<Event<'a>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(event) = self.pending.pop_front() {
+            return Some(Ok(event));
+        }
+
         let event = match self.inner.next()? {
             Ok(ev) => ev,
             Err(e) => return Some(Err(e)),
@@ -25,16 +33,27 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for StyleTransform<I> {
             }
             Event::End(e) if e.name().as_ref() == b"style" => {
                 self.in_style = false;
+                if !self.injected {
+                    self.injected = true;
+                    self.pending
+                        .push_back(Event::Text(BytesText::from_escaped(
+                            self.injected_css.clone(),
+                        )));
+                    self.pending.push_back(event);
+                    return self.pending.pop_front().map(Ok);
+                }
                 return Some(Ok(event));
             }
             Event::Text(text) if self.in_style => {
-                let css_text = match std::str::from_utf8(text.as_ref()) {
+                self.injected = true;
+                let existing = match std::str::from_utf8(text.as_ref()) {
                     Ok(s) => s,
                     Err(e) => return Some(Err(e.into())),
                 };
-                let mut processed = strip_unsupported_css(css_text);
-                processed.push_str(&self.injected_css);
-                return Some(Ok(Event::Text(BytesText::from_escaped(processed))));
+                let mut combined = String::with_capacity(existing.len() + self.injected_css.len());
+                combined.push_str(existing);
+                combined.push_str(&self.injected_css);
+                return Some(Ok(Event::Text(BytesText::from_escaped(combined))));
             }
             _ => {}
         }
@@ -49,76 +68,12 @@ pub(super) fn process<'a>(
     svg_id: &str,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
     let injected_css = build_injected_css(theme, svg_id);
-    StyleTransform {
+    InjectCss {
         inner: events,
         injected_css,
         in_style: false,
-    }
-}
-
-fn strip_unsupported_css(css: &str) -> String {
-    let mut result = String::with_capacity(css.len());
-    let mut chars = css.char_indices().peekable();
-
-    while let Some(&(i, _)) = chars.peek() {
-        let remaining = &css[i..];
-
-        if remaining.starts_with("@keyframes") || remaining.starts_with("@-webkit-keyframes") {
-            skip_css_block(&mut chars);
-            continue;
-        }
-
-        if remaining.starts_with(":root") {
-            skip_css_block(&mut chars);
-            continue;
-        }
-
-        if remaining.starts_with(":not(") {
-            for _ in 0..5 {
-                chars.next();
-            }
-            let mut depth = 1u32;
-            while let Some((_, c)) = chars.next() {
-                if c == '(' {
-                    depth += 1;
-                }
-                if c == ')' {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-
-        let (_, ch) = chars.next().expect("peeked successfully above");
-        result.push(ch);
-    }
-
-    strip_css_angle_units(&mut result);
-    result
-}
-
-fn skip_css_block(chars: &mut std::iter::Peekable<std::str::CharIndices>) {
-    let mut found_brace = false;
-    let mut depth = 0u32;
-    while let Some((_, c)) = chars.next() {
-        if c == '{' {
-            found_brace = true;
-            depth += 1;
-        } else if c == '}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 && found_brace {
-                return;
-            }
-        }
-    }
-}
-
-fn strip_css_angle_units(css: &mut String) {
-    while let Some(pos) = css.find("deg)") {
-        css.replace_range(pos..pos + 3, "");
+        injected: false,
+        pending: VecDeque::new(),
     }
 }
 
@@ -136,7 +91,9 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
     let mut css = String::new();
 
     let emit = |css: &mut String, selector: &str, color: &str, txt: &str| {
-        let section_index = selector.trim_start_matches(".section-root.section-").trim_start_matches(".section-");
+        let section_index = selector
+            .trim_start_matches(".section-root.section-")
+            .trim_start_matches(".section-");
         use std::fmt::Write;
         write!(
             css,
@@ -151,11 +108,21 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         .expect("write to String cannot fail");
     };
 
-    emit(&mut css, ".section-root.section--1", &colors[0], &text_colors[0]);
+    emit(
+        &mut css,
+        ".section-root.section--1",
+        &colors[0],
+        &text_colors[0],
+    );
     emit(&mut css, ".section--1", &colors[1], &text_colors[1]);
     for i in 0..=10 {
         let ci = 2 + (i % 6);
-        emit(&mut css, &format!(".section-{i}"), &colors[ci], &text_colors[ci]);
+        emit(
+            &mut css,
+            &format!(".section-{i}"),
+            &colors[ci],
+            &text_colors[ci],
+        );
     }
     css
 }
@@ -237,9 +204,9 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}
         .label-group foreignObject {{ font-weight: bold; }}
-        .node rect, .node path {{ fill: {primary} !important; stroke: {border} !important; }}
-        .node polygon {{ fill: {primary} !important; stroke: {border} !important; }}
-        .label-container path {{ fill: {primary} !important; stroke: {border} !important; }}
+        .node rect, .node path {{ fill: {primary}; stroke: {border}; }}
+        .node polygon {{ fill: {primary}; stroke: {border}; }}
+        .label-container path {{ fill: {primary}; stroke: {border}; }}
         {mindmap_css}
         g.stateGroup rect {{ fill: {primary} !important; stroke: {border} !important; }}
         g.stateGroup text {{ fill: {text} !important; }}
@@ -360,38 +327,6 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn strips_keyframes() {
-        let input = "@keyframes bounce { 0% { transform: scale(1); } 100% { transform: scale(1.1); } } .node rect { fill: red; }";
-        let result = strip_unsupported_css(input);
-        assert!(!result.contains("@keyframes"), "got: {result}");
-        assert!(result.contains(".node rect"), "got: {result}");
-    }
-
-    #[test]
-    fn strips_root_blocks() {
-        let input = ":root { --bg: white; } .foo { color: red; }";
-        let result = strip_unsupported_css(input);
-        assert!(!result.contains(":root"), "got: {result}");
-        assert!(result.contains(".foo"), "got: {result}");
-    }
-
-    #[test]
-    fn strips_not_pseudo_selectors() {
-        let input = ".node:not(.mindmap-node) rect { fill: red; }";
-        let result = strip_unsupported_css(input);
-        assert!(!result.contains(":not"), "got: {result}");
-        assert!(result.contains(".node rect"), "got: {result}");
-    }
-
-    #[test]
-    fn strips_deg_units() {
-        let input = ".foo { transform: rotate(45deg); }";
-        let result = strip_unsupported_css(input);
-        assert!(result.contains("rotate(45)"), "got: {result}");
-        assert!(!result.contains("deg"), "got: {result}");
-    }
 
     #[test]
     fn scope_css_prefixes_selectors() {

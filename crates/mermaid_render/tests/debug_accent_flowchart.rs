@@ -49,6 +49,77 @@ fn accent(r: u8, g: u8, b: u8) -> AccentColor {
 }
 
 #[test]
+fn trace_text_colors_class_vs_sequence() {
+    use quick_xml::events::Event;
+
+    let theme = base_theme(vec![accent(116, 173, 232)]);
+
+    // Render both diagrams with the same single accent color
+    let class_svg = mermaid_render::render_to_svg(
+        "classDiagram\n    class Animal {\n        +String name\n    }",
+        &theme,
+    ).unwrap();
+    let seq_svg = mermaid_render::render_to_svg(
+        "sequenceDiagram\n    participant Animal",
+        &theme,
+    ).unwrap();
+
+    let extract_fills = |svg: &str| -> Vec<(String, String)> {
+        let mut reader = quick_xml::Reader::from_str(svg);
+        let mut results = Vec::new();
+        loop {
+            match reader.read_event() {
+                Ok(Event::Eof) => break,
+                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    if tag == "text" || tag == "tspan" {
+                        let fill = e.try_get_attribute("fill").ok().flatten()
+                            .map(|a| a.unescape_value().unwrap_or_default().to_string())
+                            .unwrap_or_default();
+                        let style = e.try_get_attribute("style").ok().flatten()
+                            .map(|a| a.unescape_value().unwrap_or_default().to_string())
+                            .unwrap_or_default();
+                        if !fill.is_empty() {
+                            results.push((format!("{tag} fill={fill}"), style));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        results
+    };
+
+    eprintln!("\n=== CLASS DIAGRAM text fills ===");
+    for (fill, style) in extract_fills(&class_svg) {
+        eprintln!("  {fill}  style={}", if style.len() > 80 { &style[..80] } else { &style });
+    }
+    eprintln!("\n=== SEQUENCE DIAGRAM text fills ===");
+    for (fill, style) in extract_fills(&seq_svg) {
+        eprintln!("  {fill}  style={}", if style.len() > 80 { &style[..80] } else { &style });
+    }
+
+    // Also show what compute_accent_styles produced
+    let accent_bg = {
+        let mut bg = gpui::Rgba { r: 116.0/255.0, g: 173.0/255.0, b: 232.0/255.0, a: 1.0 };
+        let mut hsla = gpui::Hsla::from(bg);
+        hsla.l *= 0.7; // dark mode
+        bg = gpui::Rgba::from(hsla);
+        let text = mermaid_render::text_color_for_background(hsla);
+        let text_rgba = gpui::Rgba::from(text);
+        eprintln!("\n=== COMPUTED ===");
+        eprintln!("  bg fill: #{:02x}{:02x}{:02x}",
+            (bg.r * 255.0).round() as u8,
+            (bg.g * 255.0).round() as u8,
+            (bg.b * 255.0).round() as u8);
+        eprintln!("  text color: #{:02x}{:02x}{:02x}",
+            (text_rgba.r * 255.0).round() as u8,
+            (text_rgba.g * 255.0).round() as u8,
+            (text_rgba.b * 255.0).round() as u8);
+    };
+}
+
+#[test]
 fn debug_accent_flowchart_svg() {
     let theme = base_theme(vec![
         accent(116, 173, 232),

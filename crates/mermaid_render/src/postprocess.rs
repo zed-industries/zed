@@ -3,9 +3,10 @@ mod diagram_recolor;
 mod element_fixup;
 mod fallback_fixup;
 mod foreignobject_wrap;
+mod inject_css;
 mod sanitize_nan;
 mod strip_foreignobject;
-mod style_transform;
+mod strip_invalid_css;
 pub(crate) mod util;
 
 use anyhow::{Context as _, Result};
@@ -35,7 +36,8 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = element_fixup::process(events, theme);
     let events = diagram_recolor::process(events, theme);
     let events = accent_colors::process(events, theme);
-    let events = style_transform::process(events, theme, &svg_id);
+    let events = strip_invalid_css::process(events);
+    let events = inject_css::process(events, theme, &svg_id);
     let events = sanitize_nan::process(events);
 
     let mut writer = quick_xml::Writer::new(Vec::new());
