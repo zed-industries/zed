@@ -65,6 +65,7 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
 
 fn extract_svg_id(svg: &str) -> String {
     let mut reader = Reader::from_str(svg);
+    reader.config_mut().check_end_names = false;
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {

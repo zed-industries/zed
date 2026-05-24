@@ -13,6 +13,7 @@
 //! ```
 
 use std::collections::VecDeque;
+use std::fmt::Write;
 
 use anyhow::Result;
 use quick_xml::events::{BytesText, Event};
@@ -51,7 +52,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for InjectCss<'a, I> {
                     self.injected = true;
                     self.pending
                         .push_back(Event::Text(BytesText::from_escaped(
-                            self.injected_css.clone(),
+                            std::mem::take(&mut self.injected_css),
                         )));
                     self.pending.push_back(event);
                     return self.pending.pop_front().map(Ok);
@@ -108,10 +109,9 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         let section_index = selector
             .trim_start_matches(".section-root.section-")
             .trim_start_matches(".section-");
-        use std::fmt::Write;
         write!(
             css,
-            "{selector} rect, {selector} path, {selector} circle, {selector} polygon \
+            "{selector} rect, {selector} path, {selector} circle, {selector} polygon
              {{ fill: {color} !important; }}\n\
              {selector} text, {selector} span, \
              text{selector}, tspan{selector} \
@@ -147,7 +147,6 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
     for i in 0..8 {
         let c = crate::css_color(theme.git_branch_colors[i]);
         let lbl = crate::css_color(theme.git_branch_label_colors[i]);
-        use std::fmt::Write;
         write!(
             css,
             ".commit{i} {{ stroke: {c}; fill: {c}; }} \
@@ -161,8 +160,6 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
 }
 
 fn accent_css(theme: &MermaidTheme) -> String {
-    use std::fmt::Write;
-
     let mut css = String::new();
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
@@ -189,7 +186,6 @@ fn accent_css(theme: &MermaidTheme) -> String {
 }
 
 fn chart_color_css(theme: &MermaidTheme) -> String {
-    use std::fmt::Write;
     let mut css = String::new();
     for i in 0..8 {
         let color = crate::css_color(theme.git_branch_colors[i]);

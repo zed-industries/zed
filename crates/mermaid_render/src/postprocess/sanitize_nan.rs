@@ -90,14 +90,10 @@ impl<'a, I> SanitizeNan<I> {
 }
 
 fn has_nan_color_attr(e: &BytesStart<'_>) -> bool {
-    for attr in e.attributes().flatten() {
-        if COLOR_ATTRS.contains(&attr.key.local_name().as_ref()) {
-            if attr.value.as_ref().windows(3).any(|w| w == b"NaN") {
-                return true;
-            }
-        }
-    }
-    false
+    e.attributes().flatten().any(|attr| {
+        COLOR_ATTRS.contains(&attr.key.local_name().as_ref())
+            && attr.value.as_ref().windows(3).any(|w| w == b"NaN")
+    })
 }
 
 fn sanitize_element_attrs<'a>(e: &BytesStart<'a>) -> Result<BytesStart<'a>> {

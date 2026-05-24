@@ -1,10 +1,12 @@
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use anyhow::{Context as _, Result, anyhow};
 
 use crate::{MermaidTheme, css_color};
 
 pub(super) fn render_mermaid(source: &str, theme: &MermaidTheme) -> Result<String> {
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
     let diagram_id = format!("merman-{id}");
 
     let config = to_merman_config(theme);

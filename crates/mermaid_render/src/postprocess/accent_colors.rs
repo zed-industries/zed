@@ -57,7 +57,7 @@ fn chart_color_class_name(index: usize) -> String {
 /// Adds a CSS class to an element, preserving any existing classes.
 pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<BytesStart<'a>> {
     let name = e.name();
-    let tag = std::str::from_utf8(name.as_ref()).unwrap_or("g");
+    let tag = std::str::from_utf8(name.as_ref())?;
     let mut new_elem = BytesStart::new(tag.to_owned());
     let mut class_found = false;
     for attr in e.attributes() {
@@ -250,10 +250,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
         }
 
         let event = match &mut self.handler {
-            Handler::Flowchart(h) => h.process_event(event),
+            Handler::Flowchart(h)
+            | Handler::ClassDiagram(h)
+            | Handler::StateDiagram(h) => h.process_event(event),
             Handler::Mindmap(h) => h.process_event(event),
-            Handler::ClassDiagram(h) => h.process_event(event),
-            Handler::StateDiagram(h) => h.process_event(event),
             Handler::Sequence(h) => h.process_event(event),
             Handler::Passthrough | Handler::Pending => Ok(event),
         };
