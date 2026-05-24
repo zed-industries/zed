@@ -1,4 +1,5 @@
-mod accent_colors;
+// TODO: Re-enable with per-diagram-type accent color strategies.
+// mod accent_colors;
 mod diagram_recolor;
 mod element_fixup;
 mod fallback_fixup;
@@ -34,7 +35,8 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = fallback_fixup::process(events, theme);
     let events = element_fixup::process(events, theme);
     let events = diagram_recolor::process(events, theme);
-    let events = accent_colors::process(events, theme);
+    // TODO: Re-enable with per-diagram-type accent color strategies.
+    // let events = accent_colors::process(events, theme);
     let events = style_transform::process(events, theme, &svg_id);
     let events = sanitize_nan::process(events);
 

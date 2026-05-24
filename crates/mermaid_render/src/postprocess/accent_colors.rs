@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
@@ -34,16 +32,18 @@ struct AccentColors<I> {
     inner: I,
     accent_styles: Vec<AccentStyle>,
     accent_g_stack: Vec<Option<usize>>,
+    /// Set to `false` for diagram types (e.g. flowcharts) where per-node
+    /// accent coloring doesn't make sense.
+    accent_nodes: bool,
     node_counter: usize,
     actor_bottom_counter: usize,
     actor_top_counter: usize,
     last_actor_accent: Option<usize>,
-    /// Queue of accent indices for fallback text groups.
-    /// Populated as we encounter `<g class="label">` inside node groups;
-    /// consumed as we encounter `<g data-merman-foreignobject="fallback">` groups.
-    fallback_accent_queue: VecDeque<usize>,
-    current_fallback_accent: Option<usize>,
-    fallback_depth: usize,
+    /// Records each node's center and vertical extent so that fallback
+    /// `<text>` elements can be matched to their parent node by position.
+    node_rects: Vec<NodeRect>,
+    /// While inside a node group, the accent index being built.
+    building_node: Option<NodeRectBuilder>,
     /// Accent index of the `<text>` element we're currently inside, so that
     /// child `<tspan>` elements can receive the same fill override.
     current_text_accent: Option<usize>,
@@ -51,9 +51,60 @@ struct AccentColors<I> {
 
 const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
 
+struct NodeRect {
+    cx: f64,
+    cy: f64,
+    half_height: f64,
+    accent_idx: usize,
+}
+
+struct NodeRectBuilder {
+    cx: f64,
+    cy: f64,
+    half_height: f64,
+    accent_idx: usize,
+}
+
+fn parse_translate(e: &BytesStart<'_>) -> Option<(f64, f64)> {
+    let attr = e.try_get_attribute("transform").ok()??;
+    let val = attr.unescape_value().ok()?;
+    let inner = val.strip_prefix("translate(")?.strip_suffix(')')?;
+    let (x_str, y_str) = inner.split_once(',')?;
+    Some((x_str.trim().parse().ok()?, y_str.trim().parse().ok()?))
+}
+
+fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
+    let attr = e.try_get_attribute("d").ok()??;
+    let d = attr.unescape_value().ok()?;
+    let rest = d.strip_prefix('M')?.trim_start();
+    // Parse "x y" or "-x -y" after the M command.
+    // The first coordinate pair gives the top-left corner relative to the node center.
+    let mut chars = rest.chars().peekable();
+    // skip x value
+    while chars.peek().is_some_and(|c| *c != ' ' && *c != ',') {
+        chars.next();
+    }
+    while chars.peek().is_some_and(|c| *c == ' ' || *c == ',') {
+        chars.next();
+    }
+    let y_str: String = chars.take_while(|c| *c != ' ' && *c != ',').collect();
+    let y: f64 = y_str.parse().ok()?;
+    Some(y.abs())
+}
+
 impl<I> AccentColors<I> {
     fn current_accent(&self) -> Option<usize> {
         self.accent_g_stack.iter().rev().find_map(|entry| *entry)
+    }
+
+    fn lookup_position_accent(&self, e: &BytesStart<'_>) -> Option<usize> {
+        let x: f64 = e.try_get_attribute("x").ok()??.unescape_value().ok()?.parse().ok()?;
+        let y: f64 = e.try_get_attribute("y").ok()??.unescape_value().ok()?.parse().ok()?;
+        self.node_rects.iter().find_map(|rect| {
+            let in_y = (y - rect.cy).abs() <= rect.half_height + 5.0;
+            let in_x = (x - rect.cx).abs() <= rect.half_height * 2.0;
+            (in_x && in_y).then_some(rect.accent_idx)
+        })
     }
 
     fn check_actor_rect(&mut self, e: &BytesStart<'_>) -> Result<Option<usize>> {
@@ -104,27 +155,31 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
         }
 
         match &event {
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
-                if let Some(fo_attr) = e.try_get_attribute("data-merman-foreignobject")? {
-                    if fo_attr.value.as_ref() == b"fallback" {
-                        self.fallback_depth = 1;
-                        self.current_fallback_accent = self.fallback_accent_queue.pop_front();
-                        self.accent_g_stack.push(None);
-                        return Ok(event);
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"svg" => {
+                if let Some(class_attr) = e.try_get_attribute("class")? {
+                    let class = class_attr.unescape_value()?;
+                    if class.split_whitespace().any(|c| c == "flowchart") {
+                        self.accent_nodes = false;
                     }
                 }
+                Ok(event)
+            }
+
+            Event::Start(e) if e.name().as_ref() == b"g" => {
                 if let Some(class_attr) = e.try_get_attribute("class")? {
                     let class = class_attr.unescape_value()?;
                     let classes: Vec<&str> = class.split_whitespace().collect();
-                    if classes.contains(&"node") || classes.contains(&"stateGroup") {
+                    if self.accent_nodes
+                        && (classes.contains(&"node") || classes.contains(&"stateGroup"))
+                    {
                         let idx = self.node_counter % self.accent_styles.len();
                         self.node_counter += 1;
-                        self.accent_g_stack.push(Some(idx));
-                    } else if classes.contains(&"label") {
-                        if let Some(accent_idx) = self.current_accent() {
-                            self.fallback_accent_queue.push_back(accent_idx);
+                        if let Some((cx, cy)) = parse_translate(e) {
+                            self.building_node = Some(NodeRectBuilder {
+                                cx, cy, half_height: 30.0, accent_idx: idx,
+                            });
                         }
-                        self.accent_g_stack.push(None);
+                        self.accent_g_stack.push(Some(idx));
                     } else {
                         self.accent_g_stack.push(None);
                     }
@@ -135,19 +190,34 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
             }
 
             Event::End(e) if e.name().as_ref() == b"g" => {
-                if self.fallback_depth > 0 {
-                    self.fallback_depth -= 1;
-                    if self.fallback_depth == 0 {
-                        self.current_fallback_accent = None;
+                if let Some(popped) = self.accent_g_stack.pop() {
+                    if popped.is_some() {
+                        if let Some(builder) = self.building_node.take() {
+                            self.node_rects.push(NodeRect {
+                                cx: builder.cx,
+                                cy: builder.cy,
+                                half_height: builder.half_height,
+                                accent_idx: builder.accent_idx,
+                            });
+                        }
                     }
                 }
-                self.accent_g_stack.pop();
                 Ok(event)
             }
 
             Event::Start(e) | Event::Empty(e)
                 if SHAPE_TAGS.contains(&e.name().as_ref()) =>
             {
+                if e.name().as_ref() == b"path" {
+                    if let Some(ref mut builder) = self.building_node {
+                        if let Some(hh) = parse_path_half_height(e) {
+                            if hh > builder.half_height {
+                                builder.half_height = hh;
+                            }
+                        }
+                    }
+                }
+
                 let actor_accent = self.check_actor_rect(e)?;
                 let accent_idx = actor_accent.or_else(|| self.current_accent());
 
@@ -198,9 +268,9 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                     self.current_text_accent
                 } else {
                     let actor_accent = self.check_actor_text(e)?;
-                    let fallback_accent = self.current_fallback_accent;
+                    let position_accent = self.lookup_position_accent(e);
                     actor_accent
-                        .or(fallback_accent)
+                        .or(position_accent)
                         .or_else(|| self.current_accent())
                 };
 
@@ -271,13 +341,13 @@ pub(super) fn process<'a>(
         inner: events,
         accent_styles: compute_accent_styles(theme),
         accent_g_stack: Vec::new(),
+        accent_nodes: true,
         node_counter: 0,
         actor_bottom_counter: 0,
         actor_top_counter: 0,
         last_actor_accent: None,
-        fallback_accent_queue: VecDeque::new(),
-        current_fallback_accent: None,
-        fallback_depth: 0,
+        node_rects: Vec::new(),
+        building_node: None,
         current_text_accent: None,
     }
 }
