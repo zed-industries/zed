@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
@@ -22,11 +24,7 @@ fn compute_accent_styles(theme: &MermaidTheme) -> Vec<AccentStyle> {
                 bg.l = (bg.l * 1.3).min(1.0);
             }
             let fill = crate::css_color(bg);
-            let text = if theme.dark_mode {
-                "#ffffff".to_string()
-            } else {
-                "#000000".to_string()
-            };
+            let text = crate::css_color(crate::postprocess::util::text_color_for_background(bg));
             AccentStyle { fill, stroke, text }
         })
         .collect()
@@ -40,6 +38,15 @@ struct AccentColors<I> {
     actor_bottom_counter: usize,
     actor_top_counter: usize,
     last_actor_accent: Option<usize>,
+    /// Queue of accent indices for fallback text groups.
+    /// Populated as we encounter `<g class="label">` inside node groups;
+    /// consumed as we encounter `<g data-merman-foreignobject="fallback">` groups.
+    fallback_accent_queue: VecDeque<usize>,
+    current_fallback_accent: Option<usize>,
+    fallback_depth: usize,
+    /// Accent index of the `<text>` element we're currently inside, so that
+    /// child `<tspan>` elements can receive the same fill override.
+    current_text_accent: Option<usize>,
 }
 
 const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
@@ -98,6 +105,14 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
 
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
+                if let Some(fo_attr) = e.try_get_attribute("data-merman-foreignobject")? {
+                    if fo_attr.value.as_ref() == b"fallback" {
+                        self.fallback_depth = 1;
+                        self.current_fallback_accent = self.fallback_accent_queue.pop_front();
+                        self.accent_g_stack.push(None);
+                        return Ok(event);
+                    }
+                }
                 if let Some(class_attr) = e.try_get_attribute("class")? {
                     let class = class_attr.unescape_value()?;
                     let classes: Vec<&str> = class.split_whitespace().collect();
@@ -105,6 +120,11 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                         let idx = self.node_counter % self.accent_styles.len();
                         self.node_counter += 1;
                         self.accent_g_stack.push(Some(idx));
+                    } else if classes.contains(&"label") {
+                        if let Some(accent_idx) = self.current_accent() {
+                            self.fallback_accent_queue.push_back(accent_idx);
+                        }
+                        self.accent_g_stack.push(None);
                     } else {
                         self.accent_g_stack.push(None);
                     }
@@ -115,6 +135,12 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
             }
 
             Event::End(e) if e.name().as_ref() == b"g" => {
+                if self.fallback_depth > 0 {
+                    self.fallback_depth -= 1;
+                    if self.fallback_depth == 0 {
+                        self.current_fallback_accent = None;
+                    }
+                }
                 self.accent_g_stack.pop();
                 Ok(event)
             }
@@ -164,14 +190,28 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                 }
             }
 
-            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
-                let actor_accent = self.check_actor_text(e)?;
-                let accent_idx = actor_accent.or_else(|| self.current_accent());
+            Event::Start(e) | Event::Empty(e)
+                if e.name().as_ref() == b"text" || e.name().as_ref() == b"tspan" =>
+            {
+                let is_tspan = e.name().as_ref() == b"tspan";
+                let accent_idx = if is_tspan {
+                    self.current_text_accent
+                } else {
+                    let actor_accent = self.check_actor_text(e)?;
+                    let fallback_accent = self.current_fallback_accent;
+                    actor_accent
+                        .or(fallback_accent)
+                        .or_else(|| self.current_accent())
+                };
 
                 if let Some(accent_idx) = accent_idx {
+                    if !is_tspan && matches!(&event, Event::Start(_)) {
+                        self.current_text_accent = Some(accent_idx);
+                    }
                     let accent = &self.accent_styles[accent_idx];
                     let is_start = matches!(&event, Event::Start(_));
-                    let mut ne = BytesStart::new("text");
+                    let tag_name = if is_tspan { "tspan" } else { "text" };
+                    let mut ne = BytesStart::new(tag_name);
                     let existing_style = e
                         .try_get_attribute("style")?
                         .map(|a| a.unescape_value().map(|v| v.to_string()))
@@ -199,6 +239,11 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
                 } else {
                     Ok(event)
                 }
+            }
+
+            Event::End(e) if e.name().as_ref() == b"text" => {
+                self.current_text_accent = None;
+                Ok(event)
             }
 
             _ => Ok(event),
@@ -230,5 +275,9 @@ pub(super) fn process<'a>(
         actor_bottom_counter: 0,
         actor_top_counter: 0,
         last_actor_accent: None,
+        fallback_accent_queue: VecDeque::new(),
+        current_fallback_accent: None,
+        fallback_depth: 0,
+        current_text_accent: None,
     }
 }

@@ -33,7 +33,7 @@ fn base_theme(accent_colors: Vec<AccentColor>) -> MermaidTheme {
         activation_background: rgb(54, 60, 70),
         activation_border: rgb(70, 75, 87),
         git_branch_colors: std::array::from_fn(|_| rgb(128, 128, 128)),
-        git_branch_label_colors: std::array::from_fn(|_| rgb(255, 255, 255)),
+        git_branch_label_colors: std::array::from_fn(|_| mermaid_render::text_color_for_background(rgb(128, 128, 128))),
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
         accent_colors,
@@ -138,4 +138,118 @@ fn backslash_n_converted_to_line_break() {
         svg.contains(">Layer 7<") && svg.contains(">HTTP, FTP<"),
         "Label lines should be split into separate <text> elements"
     );
+}
+
+#[test]
+fn class_diagram_fallback_text_uses_accent_colors() {
+    let theme = base_theme(vec![
+        accent(190, 80, 70),   // red
+        accent(116, 173, 232), // blue
+    ]);
+    let source = r#"classDiagram
+    class Animal {
+        +String name
+        +makeSound() void
+    }
+    class Dog {
+        +String breed
+        +bark() void
+    }
+    Dog --|> Animal"#;
+
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+
+    // Collect fill values from text elements inside fallback groups.
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(&svg);
+    let mut in_fallback = false;
+    let mut text_fills: Vec<String> = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"g" {
+                    if let Ok(Some(attr)) = e.try_get_attribute("data-merman-foreignobject") {
+                        if attr.value.as_ref() == b"fallback" {
+                            in_fallback = true;
+                        }
+                    }
+                }
+                if in_fallback && e.name().as_ref() == b"text" {
+                    if let Ok(Some(fill)) = e.try_get_attribute("fill") {
+                        text_fills.push(fill.unescape_value().unwrap_or_default().to_string());
+                    }
+                }
+            }
+            Ok(Event::End(e)) if e.name().as_ref() == b"g" => {
+                in_fallback = false;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        !text_fills.is_empty(),
+        "expected text fills in fallback groups",
+    );
+
+    // All fills should differ from the theme's text color (#dce0e5),
+    // confirming that accent-aware text colors are applied.
+    let theme_text_rgba = gpui::Rgba::from(theme.text_color);
+    let theme_text = format!(
+        "#{:02x}{:02x}{:02x}",
+        (theme_text_rgba.r * 255.0).round() as u8,
+        (theme_text_rgba.g * 255.0).round() as u8,
+        (theme_text_rgba.b * 255.0).round() as u8,
+    );
+    for fill in &text_fills {
+        assert_ne!(
+            fill, &theme_text,
+            "fallback text should use accent text color, not theme text color",
+        );
+    }
+}
+
+
+#[test]
+fn sequence_diagram_tspan_uses_accent_text_color() {
+    let theme = base_theme(vec![accent(190, 80, 70)]);
+    let source = "sequenceDiagram\n    participant Database";
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(&svg);
+    let mut tspan_fills: Vec<String> = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) if e.name().as_ref() == b"tspan" => {
+                if let Ok(Some(fill)) = e.try_get_attribute("fill") {
+                    tspan_fills.push(fill.unescape_value().unwrap_or_default().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        !tspan_fills.is_empty(),
+        "expected tspan fills in sequence diagram",
+    );
+
+    // All tspan fills should match the text element fills (accent text color),
+    // not the theme's generic text color that the CSS would otherwise set.
+    let theme_text_rgba = gpui::Rgba::from(theme.text_color);
+    let theme_text = format!(
+        "#{:02x}{:02x}{:02x}",
+        (theme_text_rgba.r * 255.0).round() as u8,
+        (theme_text_rgba.g * 255.0).round() as u8,
+        (theme_text_rgba.b * 255.0).round() as u8,
+    );
+    for fill in &tspan_fills {
+        assert_ne!(
+            fill, &theme_text,
+            "tspan should use accent text color, not theme text color",
+        );
+    }
 }

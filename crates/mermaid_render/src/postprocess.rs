@@ -6,6 +6,7 @@ mod foreignobject_wrap;
 mod sanitize_nan;
 mod strip_foreignobject;
 mod style_transform;
+pub(crate) mod util;
 
 use anyhow::{Context as _, Result};
 use quick_xml::events::Event;

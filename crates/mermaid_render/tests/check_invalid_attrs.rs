@@ -85,7 +85,16 @@ fn rgb_theme() -> MermaidTheme {
             rgb(222, 193, 132),
             rgb(161, 193, 129),
         ],
-        git_branch_label_colors: std::array::from_fn(|_| rgb(255, 255, 255)),
+        git_branch_label_colors: [
+            rgb(116, 173, 232),
+            rgb(190, 80, 70),
+            rgb(191, 149, 106),
+            rgb(180, 119, 207),
+            rgb(110, 180, 191),
+            rgb(208, 114, 119),
+            rgb(222, 193, 132),
+            rgb(161, 193, 129),
+        ].map(mermaid_render::text_color_for_background),
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
         accent_colors: vec![

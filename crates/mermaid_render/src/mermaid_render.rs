@@ -60,11 +60,8 @@ impl Default for MermaidTheme {
             hsla(300.0 / 360.0, 1.0, 0.462_745_1, 1.0),
             hsla(0.0, 1.0, 0.462_745_1, 1.0),
         ];
-        let git_branch_label_colors: [Hsla; 8] = {
-            let w = Hsla::white();
-            let k = Hsla::black();
-            [w, k, k, w, k, k, k, k]
-        };
+        let git_branch_label_colors: [Hsla; 8] =
+            git_branch_colors.map(crate::text_color_for_background);
 
         Self {
             dark_mode: false,
@@ -112,6 +109,8 @@ pub(crate) fn css_color(color: Hsla) -> String {
         format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
     }
 }
+
+pub use postprocess::util::text_color_for_background;
 
 pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
     let svg = render::render_mermaid(source, theme)?;

@@ -21,6 +21,8 @@ fn one_dark_theme() -> MermaidTheme {
         hex(0x6eb4bf), hex(0xd07277), hex(0xdec184), hex(0xa1c181),
     ];
 
+    let git_branch_colors = std::array::from_fn(|i| player_cursors[i % player_cursors.len()]);
+
     MermaidTheme {
         dark_mode: true,
         font_family: "Zed Plex Sans, system-ui".to_string(),
@@ -41,8 +43,8 @@ fn one_dark_theme() -> MermaidTheme {
         actor_border: border,
         activation_background: ghost_element_hover,
         activation_border: border,
-        git_branch_colors: std::array::from_fn(|i| player_cursors[i % player_cursors.len()]),
-        git_branch_label_colors: std::array::from_fn(|_| gpui::white()),
+        git_branch_colors,
+        git_branch_label_colors: git_branch_colors.map(mermaid_render::text_color_for_background),
         er_attr_bg_odd: surface_background,
         er_attr_bg_even: element_background,
         accent_colors: Vec::new(),

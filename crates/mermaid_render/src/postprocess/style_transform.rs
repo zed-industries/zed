@@ -122,32 +122,20 @@ fn strip_css_angle_units(css: &mut String) {
     }
 }
 
-fn text_color_for_bg(hex_color: &str) -> &'static str {
-    let hex = hex_color.trim_start_matches('#');
-    if hex.len() < 6 {
-        return "#000";
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(0) as f64;
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(0) as f64;
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(0) as f64;
-    let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    if luma > 150.0 {
-        "#000"
-    } else {
-        "#fff"
-    }
-}
-
 fn mindmap_section_css(theme: &MermaidTheme) -> String {
     let colors: Vec<String> = theme
         .git_branch_colors
         .iter()
         .map(|c| crate::css_color(*c))
         .collect();
+    let text_colors: Vec<String> = theme
+        .git_branch_colors
+        .iter()
+        .map(|c| crate::css_color(crate::postprocess::util::text_color_for_background(*c)))
+        .collect();
     let mut css = String::new();
 
-    let emit = |css: &mut String, selector: &str, color: &str| {
-        let txt = text_color_for_bg(color);
+    let emit = |css: &mut String, selector: &str, color: &str, txt: &str| {
         let section_index = selector.trim_start_matches(".section-root.section-").trim_start_matches(".section-");
         use std::fmt::Write;
         write!(
@@ -163,11 +151,11 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         .expect("write to String cannot fail");
     };
 
-    emit(&mut css, ".section-root.section--1", &colors[0]);
-    emit(&mut css, ".section--1", &colors[1]);
+    emit(&mut css, ".section-root.section--1", &colors[0], &text_colors[0]);
+    emit(&mut css, ".section--1", &colors[1], &text_colors[1]);
     for i in 0..=10 {
         let ci = 2 + (i % 6);
-        emit(&mut css, &format!(".section-{i}"), &colors[ci]);
+        emit(&mut css, &format!(".section-{i}"), &colors[ci], &text_colors[ci]);
     }
     css
 }
@@ -239,8 +227,8 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
     let er_odd = crate::css_color(theme.er_attr_bg_odd);
     let er_even = crate::css_color(theme.er_attr_bg_even);
 
-    let actor_text = text_color_for_bg(&actor_bg);
-    let note_text = text_color_for_bg(&note_bg);
+    let actor_text = &text;
+    let note_text = &text;
 
     let raw_css = format!(
         r#"
