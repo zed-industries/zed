@@ -630,6 +630,28 @@ impl Markdown {
         &self.source
     }
 
+    pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
+        self.parsed_markdown.events.iter().find_map(|(_, event)| {
+            let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
+                return None;
+            };
+
+            match kind {
+                CodeBlockKind::FencedLang(language) => self
+                    .parsed_markdown
+                    .languages_by_name
+                    .get(language)
+                    .cloned(),
+                CodeBlockKind::FencedSrc(path_range) => self
+                    .parsed_markdown
+                    .languages_by_path
+                    .get(&path_range.path)
+                    .cloned(),
+                CodeBlockKind::Fenced | CodeBlockKind::Indented => None,
+            }
+        })
+    }
+
     pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
         self.source = SharedString::new(self.source.to_string() + text);
         self.parse(cx);
@@ -1191,7 +1213,10 @@ impl MarkdownElement {
         range: Range<usize>,
         cx: &App,
     ) {
-        let link_url = if builder.code_block_stack.is_empty() && builder.link_depth == 0 {
+        let link_url = if builder.code_block_stack.is_empty()
+            && builder.link_depth == 0
+            && !self.style.prevent_mouse_interaction
+        {
             self.code_span_link
                 .as_ref()
                 .and_then(|callback| callback(text, cx))
@@ -3468,7 +3493,10 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3541,6 +3569,15 @@ mod tests {
         callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
+        render_markdown_with_code_span_link_style(markdown, MarkdownStyle::default(), callback, cx)
+    }
+
+    fn render_markdown_with_code_span_link_style(
+        markdown: &str,
+        style: MarkdownStyle,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
         struct TestWindow;
 
         impl Render for TestWindow {
@@ -3558,7 +3595,7 @@ mod tests {
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
-                MarkdownElement::new(markdown, MarkdownStyle::default())
+                MarkdownElement::new(markdown, style)
                     .on_code_span_link(callback)
                     .code_block_renderer(CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
@@ -4227,6 +4264,31 @@ mod tests {
                 .link_for_source_index(source.find("see").unwrap())
                 .is_none()
         );
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_when_mouse_interaction_is_prevented(
+        cx: &mut TestAppContext,
+    ) {
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let rendered = render_markdown_with_code_span_link_style(
+            "see `foo.rs` for details",
+            MarkdownStyle {
+                prevent_mouse_interaction: true,
+                ..MarkdownStyle::default()
+            },
+            {
+                let callback_count = callback_count.clone();
+                move |text, _cx| {
+                    callback_count.fetch_add(1, Ordering::Relaxed);
+                    (text == "foo.rs").then(|| "file:///tmp/foo.rs".into())
+                }
+            },
+            cx,
+        );
+
+        assert!(rendered.links.is_empty());
+        assert_eq!(callback_count.load(Ordering::Relaxed), 0);
     }
 
     #[gpui::test]

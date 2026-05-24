@@ -31,11 +31,11 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, Subscription, Task, TaskExt, TextStyle,
-    WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop, linear_gradient,
-    list, point, pulsating_between,
+    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
+    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
+    linear_color_stop, linear_gradient, list, point, pulsating_between,
 };
-use language::Buffer;
+use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
@@ -530,9 +530,9 @@ impl ConversationView {
         })
     }
 
-    pub fn supports_logout(&self, cx: &App) -> bool {
+    pub fn supports_logout(&self) -> bool {
         self.as_connected().is_some_and(|connected| {
-            connected.auth_state.is_ok() && connected.connection.supports_logout(cx)
+            connected.auth_state.is_ok() && connected.connection.supports_logout()
         })
     }
 
@@ -2953,7 +2953,7 @@ impl ConversationView {
     }
 
     pub(crate) fn logout(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.supports_logout(cx) {
+        if !self.supports_logout() {
             return;
         }
 
@@ -4120,7 +4120,7 @@ pub(crate) mod tests {
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
-        conversation_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, _cx| {
             let connected = view
                 .as_connected()
                 .expect("Should be in Connected state even though auth is required");
@@ -4129,7 +4129,7 @@ pub(crate) mod tests {
                 "Auth state should be Unauthenticated"
             );
             assert!(
-                !view.supports_logout(cx),
+                !view.supports_logout(),
                 "Logout should be hidden while unauthenticated"
             );
             assert!(
@@ -4168,7 +4168,7 @@ pub(crate) mod tests {
                 .expect("Should still be in Connected state after auth");
             assert!(connected.auth_state.is_ok(), "Auth state should be Ok");
             assert!(
-                view.supports_logout(cx),
+                view.supports_logout(),
                 "Logout should be available after authentication"
             );
             assert!(
@@ -4193,7 +4193,7 @@ pub(crate) mod tests {
         conversation_view.update_in(cx, |view, window, cx| view.logout(window, cx));
         cx.run_until_parked();
 
-        conversation_view.read_with(cx, |view, cx| {
+        conversation_view.read_with(cx, |view, _cx| {
             let connected = view
                 .as_connected()
                 .expect("Should still be in Connected state after logout");
@@ -4202,7 +4202,7 @@ pub(crate) mod tests {
                 "Auth state should be Unauthenticated after logout"
             );
             assert!(
-                !view.supports_logout(cx),
+                !view.supports_logout(),
                 "Logout should be hidden after logout"
             );
         });
@@ -5343,7 +5343,7 @@ pub(crate) mod tests {
             }
         }
 
-        fn supports_logout(&self, _cx: &App) -> bool {
+        fn supports_logout(&self) -> bool {
             true
         }
 

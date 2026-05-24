@@ -41,6 +41,7 @@ pub struct SkillScopeId(pub usize);
 /// entries would fan out an equally large number of concurrent OS-level I/O
 /// operations, potentially exhausting file descriptors or stalling the app.
 const SKILL_IO_CONCURRENCY: usize = 16;
+const SKILL_READ_CHUNK_SIZE: usize = 4096;
 
 /// Maximum size for a single SKILL.md file (100KB)
 pub const MAX_SKILL_FILE_SIZE: usize = 100 * 1024;
@@ -631,14 +632,17 @@ pub async fn load_skill_frontmatter(
     // panic with "Parking forbidden" under `TestAppContext`.
     let read_result: Result<Vec<u8>, io::Error> = (|| {
         let mut accumulated: Vec<u8> = Vec::new();
-        let mut chunk = [0u8; 4096];
+        let mut chunk = [0u8; SKILL_READ_CHUNK_SIZE];
         loop {
             let n = reader.read(&mut chunk)?;
             if n == 0 {
                 break;
             }
             accumulated.extend_from_slice(&chunk[..n]);
-            if closing_delimiter_end(&accumulated).is_some() {
+            if let Some(end) = closing_delimiter_end(&accumulated) {
+                // Discard body bytes swept up in the last chunk so that e.g. multi-byte
+                // graphemes split at the boundary won't cause `str::from_utf8` to fail.
+                accumulated.truncate(end);
                 break;
             }
             if accumulated.len() > MAX_SKILL_FILE_SIZE {
@@ -1797,6 +1801,46 @@ description: A skill with no body content
             PathBuf::from("/skills/my-skill/SKILL.md")
         );
         assert_eq!(skill.directory_path, PathBuf::from("/skills/my-skill"));
+    }
+
+    #[gpui::test]
+    async fn test_load_skill_frontmatter_with_emoji_at_chunk_boundary(cx: &mut TestAppContext) {
+        // We must be able to load skill frontmatter even when a
+        // multipoint grapheme crosses the chunk read boundary.
+        let fs = FakeFs::new(cx.executor());
+        let frontmatter = "---\nname: my-skill\ndescription: Example skill testing multipoint graphemes at chunk boundary\n---\n";
+
+        // Pad contents so that the emoji's first byte lands
+        // at the last byte of the first read chunk.
+        let padding = "a".repeat(SKILL_READ_CHUNK_SIZE - frontmatter.len() - 1);
+        let content = format!("{frontmatter}{padding}✅");
+
+        assert!(
+            (frontmatter.len() + padding.len()) < SKILL_READ_CHUNK_SIZE,
+            "emoji must start before the second chunk"
+        );
+        assert!(
+            content.len() > SKILL_READ_CHUNK_SIZE,
+            "skill is longer than a chunk, so we know that the emoji crosses chunk boundaries"
+        );
+
+        fs.insert_tree(
+            "/skills",
+            serde_json::json!({
+                "my-skill": {
+                    "SKILL.md": content,
+                }
+            }),
+        )
+        .await;
+
+        load_skill_frontmatter(
+            fs as Arc<dyn Fs>,
+            PathBuf::from("/skills/my-skill/SKILL.md"),
+            SkillSource::Global,
+        )
+        .await
+        .expect("frontmatter should parse even when a multipoint grapheme such as an emoji crosses the byte chunk boundary");
     }
 
     #[gpui::test]
