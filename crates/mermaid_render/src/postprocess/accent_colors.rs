@@ -75,8 +75,10 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiagramType {
+    Flowchart,
     Mindmap,
     ClassDiagram,
+    StateDiagram,
     SequenceDiagram,
     Unhandled,
 }
@@ -94,9 +96,11 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
 
     for token in class.split_whitespace() {
         match token {
+            "flowchart" => return DiagramType::Flowchart,
             "mindmap" => return DiagramType::Mindmap,
             "classDiagram" => return DiagramType::ClassDiagram,
-            "flowchart" | "statediagram" | "journey" => return DiagramType::Unhandled,
+            "statediagram" => return DiagramType::StateDiagram,
+            "journey" => return DiagramType::Unhandled,
             _ => {}
         }
     }
@@ -106,8 +110,10 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
 
 enum Handler {
     Pending,
+    Flowchart(class_diagram::ClassDiagramAccents),
     Mindmap(mindmap::MindmapAccents),
     ClassDiagram(class_diagram::ClassDiagramAccents),
+    StateDiagram(class_diagram::ClassDiagramAccents),
     Sequence(sequence_diagram::SequenceDiagramAccents),
     Passthrough,
 }
@@ -131,16 +137,21 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
             if let Event::Start(e) | Event::Empty(e) = &event {
                 if e.name().as_ref() == b"svg" {
                     let diagram_type = detect_diagram_type(e);
+                    let count = self.theme.accent_colors.len();
                     self.handler = match diagram_type {
+                        DiagramType::Flowchart => {
+                            Handler::Flowchart(class_diagram::ClassDiagramAccents::new(count))
+                        }
                         DiagramType::Mindmap => {
                             Handler::Mindmap(mindmap::MindmapAccents::new(&self.theme))
                         }
                         DiagramType::ClassDiagram => {
-                            let count = self.theme.accent_colors.len();
                             Handler::ClassDiagram(class_diagram::ClassDiagramAccents::new(count))
                         }
+                        DiagramType::StateDiagram => {
+                            Handler::StateDiagram(class_diagram::ClassDiagramAccents::new(count))
+                        }
                         DiagramType::SequenceDiagram => {
-                            let count = self.theme.accent_colors.len();
                             Handler::Sequence(sequence_diagram::SequenceDiagramAccents::new(count))
                         }
                         DiagramType::Unhandled => Handler::Passthrough,
@@ -150,8 +161,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
         }
 
         match &mut self.handler {
+            Handler::Flowchart(h) => Some(h.process_event(event)),
             Handler::Mindmap(h) => Some(h.process_event(event)),
             Handler::ClassDiagram(h) => Some(h.process_event(event)),
+            Handler::StateDiagram(h) => Some(h.process_event(event)),
             Handler::Sequence(h) => Some(h.process_event(event)),
             Handler::Passthrough | Handler::Pending => Some(Ok(event)),
         }
