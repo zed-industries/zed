@@ -226,6 +226,7 @@ fn is_supported_diagram_type(source: &str) -> bool {
         "sequenceDiagram",
         "classDiagram",
         "stateDiagram",
+        "stateDiagram-v2",
         "erDiagram",
         "gantt",
         "pie",
