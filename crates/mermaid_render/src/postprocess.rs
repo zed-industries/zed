@@ -20,7 +20,6 @@ mod element_fixup;
 mod fallback_fixup;
 mod foreignobject_wrap;
 mod inject_css;
-mod sanitize_nan;
 mod strip_foreignobject;
 mod strip_invalid_css;
 pub(crate) mod util;
@@ -54,7 +53,6 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = accent_colors::process(events, theme);
     let events = strip_invalid_css::process(events);
     let events = inject_css::process(events, theme, &svg_id);
-    let events = sanitize_nan::process(events);
 
     let mut writer = quick_xml::Writer::new(Vec::new());
     for event in events {
@@ -121,16 +119,6 @@ mod tests {
 
     fn default_theme() -> MermaidTheme {
         MermaidTheme::default()
-    }
-
-    #[test]
-    fn hsl_nan_in_text_content_is_preserved() {
-        let svg = r##"<svg id="test" xmlns="http://www.w3.org/2000/svg"><style>.node rect { fill: red; }</style><text fill="#333">hsl(NaN, 0%, 50%)</text></svg>"##;
-        let result = postprocess(svg, &default_theme()).unwrap();
-        assert!(
-            result.contains("hsl(NaN, 0%, 50%)"),
-            "NaN in <text> content should be preserved, got: {result}"
-        );
     }
 
     #[test]
