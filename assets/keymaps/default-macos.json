@@ -51,6 +51,8 @@
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
       "ctrl-cmd-c": "editor::DisplayCursorNames",
       "ctrl-cmd-s": "workspace::ToggleWorktreeSecurity",
+      "ctrl-h k": "zed::DescribeKey",
+      "ctrl-h b": "zed::ToggleWhichKey",
     },
   },
   {
