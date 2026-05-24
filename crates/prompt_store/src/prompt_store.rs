@@ -68,12 +68,14 @@ impl PromptMetadata {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
 pub enum BuiltInPrompt {
     CommitMessage,
+    SummarizeThreadDetailed,
 }
 
 impl BuiltInPrompt {
     pub fn title(&self) -> &'static str {
         match self {
             Self::CommitMessage => "Commit message",
+            Self::SummarizeThreadDetailed => "Summarize thread (detailed)",
         }
     }
 
@@ -81,6 +83,9 @@ impl BuiltInPrompt {
     pub fn default_content(&self) -> &'static str {
         match self {
             Self::CommitMessage => include_str!("../../git_ui/src/commit_message_prompt.txt"),
+            Self::SummarizeThreadDetailed => {
+                include_str!("../../agent_settings/src/prompts/summarize_thread_detailed_prompt.txt")
+            }
         }
     }
 }
@@ -89,6 +94,7 @@ impl std::fmt::Display for BuiltInPrompt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::CommitMessage => write!(f, "Commit message"),
+            Self::SummarizeThreadDetailed => write!(f, "Summarize thread (detailed)"),
         }
     }
 }
@@ -126,9 +132,7 @@ impl PromptId {
     pub fn can_edit(&self) -> bool {
         match self {
             Self::User { .. } => true,
-            Self::BuiltIn(builtin) => match builtin {
-                BuiltInPrompt::CommitMessage => true,
-            },
+            Self::BuiltIn(_) => true,
         }
     }
 }

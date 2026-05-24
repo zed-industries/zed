@@ -16,7 +16,7 @@ use feature_flags::{
 
 use agent_client_protocol::schema as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentSettings, SUMMARIZE_THREAD_PROMPT,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -44,7 +44,7 @@ use language_model::{
     TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
 use project::Project;
-use prompt_store::ProjectContext;
+use prompt_store::{self, BuiltInPrompt, ProjectContext};
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -2756,27 +2756,37 @@ impl Thread {
             log::error!("No summarization model available");
             return Task::ready(None).shared();
         };
-        let mut request = LanguageModelRequest {
-            intent: Some(CompletionIntent::ThreadContextSummarization),
-            temperature: AgentSettings::temperature_for_model(&model, cx),
-            ..Default::default()
-        };
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
+        let mut messages = Vec::new();
         for message in &self.messages {
-            request.messages.extend(message.to_request());
+            messages.extend(message.to_request());
         }
 
-        request.messages.push(LanguageModelRequestMessage {
-            role: Role::User,
-            content: vec![SUMMARIZE_THREAD_DETAILED_PROMPT.into()],
-            cache: false,
-            reasoning_details: None,
-        });
-
         let task = cx
-            .spawn(async move |this, cx| {
+            .spawn(async move |this, mut cx| {
+                let prompt = Self::load_builtin_prompt(
+                    BuiltInPrompt::SummarizeThreadDetailed,
+                    &mut cx,
+                )
+                .await;
+
+                messages.push(LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![prompt.into()],
+                    cache: false,
+                    reasoning_details: None,
+                });
+
+                let request = LanguageModelRequest {
+                    intent: Some(CompletionIntent::ThreadContextSummarization),
+                    temperature,
+                    messages,
+                    ..Default::default()
+                };
+
                 let mut summary = String::new();
-                let mut messages = model.stream_completion(request, cx).await.log_err()?;
+                let mut messages = model.stream_completion(request, &mut cx).await.log_err()?;
                 while let Some(event) = messages.next().await {
                     let event = event.log_err()?;
                     let text = match event {
@@ -2874,6 +2884,25 @@ impl Thread {
                 }
             });
         }));
+    }
+
+    async fn load_builtin_prompt(
+        builtin: BuiltInPrompt,
+        cx: &mut AsyncApp,
+    ) -> String {
+        let load = async {
+            let store = cx
+                .update(|cx| prompt_store::PromptStore::global(cx))
+                .await
+                .ok()?;
+            store
+                .update(cx, |s, cx| {
+                    s.load(prompt_store::PromptId::BuiltIn(builtin), cx)
+                })
+                .await
+                .ok()
+        };
+        load.await.unwrap_or_else(|| builtin.default_content().to_string())
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {

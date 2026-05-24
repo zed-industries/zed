@@ -72,6 +72,7 @@ use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::PromptStore;
+use rules_library;
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 use skill_creator::open_skill_creator;
@@ -3053,15 +3054,21 @@ impl AgentPanel {
 
     fn deploy_rules_library(
         &mut self,
-        _action: &OpenRulesLibrary,
-        window: &mut Window,
+        action: &OpenRulesLibrary,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The legacy Rules action is rerouted to the skill creator so the
-        // existing keyboard shortcut (still bound to `OpenRulesLibrary` in
-        // the default keymaps) and any persisted user keymap entries keep
-        // working.
-        self.deploy_skill_creator(&OpenSkillCreator, window, cx);
+        let delegate = AgentPanelRulesDelegate;
+
+        rules_library::open_rules_library(
+            self.language_registry.clone(),
+            Box::new(delegate),
+            action.prompt_to_select.map(|uuid| prompt_store::PromptId::User {
+                uuid: prompt_store::UserPromptId::from(uuid),
+            }),
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn deploy_skill_creator(
@@ -4889,7 +4896,7 @@ impl AgentPanel {
                                 .header("Skills")
                                 .entry(
                                     "Create Skill…",
-                                    Some(Box::new(OpenRulesLibrary::default())),
+                                    Some(Box::new(OpenSkillCreator)),
                                     |window, cx| {
                                         window.dispatch_action(Box::new(OpenSkillCreator), cx);
                                     },
@@ -4902,6 +4909,17 @@ impl AgentPanel {
                                         cx,
                                     );
                                 })
+                                .separator()
+                                .entry(
+                                    "Rules Library…",
+                                    Some(Box::new(OpenRulesLibrary::default())),
+                                    |window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(OpenRulesLibrary::default()),
+                                            cx,
+                                        );
+                                    },
+                                )
                                 .separator();
 
                             if project_agents_md_path.is_some() || global_agents_md_loaded {
@@ -8302,6 +8320,60 @@ mod tests {
         assert!(
             cx.debug_bounds("KEY_BINDING-l").is_some(),
             "Create Skill… menu item should show the OpenRulesLibrary shortcut"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_rules_library_menu_entry_shows_shortcut(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, None, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_options_menu(&ToggleOptionsMenu, window, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("MENU_ITEM-Rules Library…").is_some(),
+            "Rules Library… menu item should be visible"
+        );
+        assert!(
+            cx.debug_bounds("KEY_BINDING-l").is_some(),
+            "Rules Library… menu item should show the OpenRulesLibrary shortcut"
         );
     }
 
@@ -11975,5 +12047,50 @@ mod tests {
                 "panel should have an active, connected agent thread"
             );
         });
+    }
+}
+
+/// Bridges the Rules Library window to the Agent Panel.
+struct AgentPanelRulesDelegate;
+
+impl rules_library::InlineAssistDelegate for AgentPanelRulesDelegate {
+    fn assist(
+        &self,
+        prompt_editor: &Entity<Editor>,
+        initial_prompt: Option<String>,
+        _window: &mut Window,
+        cx: &mut Context<rules_library::RulesLibrary>,
+    ) {
+        let mut text = prompt_editor.read(cx).text(cx);
+        if let Some(prompt) = initial_prompt {
+            text = prompt;
+        }
+
+        // Copy to clipboard and focus the agent panel so the user can
+        // paste the rule text into a new thread without cross-window plumbing.
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+
+        for handle in cx.windows() {
+            if let Some(multi_workspace) = handle.downcast::<MultiWorkspace>() {
+                multi_workspace
+                    .update(cx, |multi_workspace, window, cx| {
+                        multi_workspace.workspace().update(cx, |workspace, cx| {
+                            workspace.focus_panel::<AgentPanel>(window, cx);
+                        })
+                    })
+                    .log_err();
+                break;
+            }
+        }
+    }
+
+    fn focus_agent_panel(
+        &self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> bool {
+        workspace.focus_panel::<AgentPanel>(window, cx);
+        true
     }
 }

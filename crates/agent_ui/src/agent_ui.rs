@@ -743,13 +743,9 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `assistant: open rules library` — Rules are surfaced
-        // through the Skills UI now. Applied after the disable-ai /
-        // agent-enabled branches so it overrides the
-        // `show_namespace("assistant")` call above without affecting the
-        // rest of that namespace's actions.
+        // Both the Rules Library and Skill Creator are surfaced.
         if !disable_ai {
-            filter.hide_action_types(&open_rules_library_action);
+            filter.show_action_types(open_rules_library_action.iter());
             filter.show_action_types(open_skill_creator_action.iter());
         } else {
             filter.show_action_types(open_rules_library_action.iter());
