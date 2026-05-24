@@ -773,6 +773,9 @@ fn process_branches(
     let mut result: Vec<Branch> = branches
         .iter()
         .filter(|branch| {
+            if branch.is_remote() && branch.name().ends_with("/HEAD") {
+                return false;
+            }
             !remote_upstreams.contains(&branch.ref_name)
                 || preserved_branch
                     .as_ref()
