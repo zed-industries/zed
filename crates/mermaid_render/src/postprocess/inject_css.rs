@@ -174,6 +174,23 @@ fn accent_css(theme: &MermaidTheme) -> String {
     css
 }
 
+fn chart_color_css(theme: &MermaidTheme) -> String {
+    use std::fmt::Write;
+    let mut css = String::new();
+    for i in 0..8 {
+        let color = crate::css_color(theme.git_branch_colors[i]);
+        let class = format!(".zed-chart-{i}");
+        write!(
+            css,
+            "path.pieCircle{class} {{ fill: {color} !important; }}\n\
+             .plot rect{class}, .legend rect{class} {{ fill: {color} !important; stroke: {color} !important; }}\n\
+             .plot path{class} {{ stroke: {color} !important; }}\n"
+        )
+        .expect("write to String cannot fail");
+    }
+    css
+}
+
 fn scope_css(raw_css: &str, svg_id: &str) -> String {
     raw_css
         .lines()
@@ -364,10 +381,12 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .commit-label-bkg {{ fill: {edge_label_bg}; }}
         .commit-id, .commit-msg, .branch-label {{ fill: {text}; color: {text}; font-family: {font}; }}
         {accent_css}
+        {chart_color_css}
         "#,
         mindmap_css = mindmap_section_css(theme),
         git_branch_css = git_branch_css(theme),
         accent_css = accent_css(theme),
+        chart_color_css = chart_color_css(theme),
     );
 
     scope_css(&raw_css, svg_id)

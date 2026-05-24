@@ -50,6 +50,10 @@ pub(crate) fn accent_class_name(index: usize) -> String {
     format!("zed-accent-{index}")
 }
 
+fn chart_color_class_name(index: usize) -> String {
+    format!("zed-chart-{index}")
+}
+
 /// Adds a CSS class to an element, preserving any existing classes.
 pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<BytesStart<'a>> {
     let name = e.name();
@@ -122,6 +126,91 @@ struct AccentColors<I> {
     inner: I,
     theme: MermaidTheme,
     handler: Handler,
+    in_legend: bool,
+    legend_color_idx: usize,
+    in_plot: bool,
+    plot_depth: usize,
+    plot_path_done: bool,
+    pie_color_idx: usize,
+}
+
+impl<'a, I: Iterator<Item = Result<Event<'a>>>> AccentColors<I> {
+    fn process_chart_colors(&mut self, event: Event<'a>) -> Result<Event<'a>> {
+        match &event {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"g" => {
+                if self.in_plot {
+                    self.plot_depth += 1;
+                }
+                if let Some(class_attr) = e.try_get_attribute("class")? {
+                    let class = class_attr.unescape_value()?;
+                    if class.as_ref() == "plot" {
+                        self.in_plot = true;
+                        self.plot_depth = 1;
+                        self.plot_path_done = false;
+                    } else if class.as_ref() == "legend" {
+                        self.in_legend = true;
+                    }
+                }
+                Ok(event)
+            }
+
+            Event::End(e) if e.name().as_ref() == b"g" => {
+                if self.in_plot {
+                    self.plot_depth -= 1;
+                    if self.plot_depth == 0 {
+                        self.in_plot = false;
+                    }
+                }
+                Ok(event)
+            }
+
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"rect" => {
+                let is_start = matches!(event, Event::Start(_));
+
+                if self.in_legend && self.legend_color_idx < 8 {
+                    let class = chart_color_class_name(self.legend_color_idx);
+                    self.legend_color_idx += 1;
+                    self.in_legend = false;
+                    let new_elem = add_class(e, &class)?;
+                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                } else if self.in_plot {
+                    let class = chart_color_class_name(0);
+                    let new_elem = add_class(e, &class)?;
+                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                } else {
+                    Ok(event)
+                }
+            }
+
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"path" => {
+                let is_start = matches!(event, Event::Start(_));
+
+                let class_val = e
+                    .try_get_attribute("class")?
+                    .map(|a| a.unescape_value())
+                    .transpose()?;
+
+                if class_val.as_deref() == Some("pieCircle") {
+                    let class = chart_color_class_name(self.pie_color_idx % 8);
+                    self.pie_color_idx += 1;
+                    let new_elem = add_class(e, &class)?;
+                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                } else if self.in_plot
+                    && !self.plot_path_done
+                    && e.try_get_attribute("stroke")?.is_some()
+                {
+                    self.plot_path_done = true;
+                    let class = chart_color_class_name(1);
+                    let new_elem = add_class(e, &class)?;
+                    Ok(if is_start { Event::Start(new_elem) } else { Event::Empty(new_elem) })
+                } else {
+                    Ok(event)
+                }
+            }
+
+            _ => Ok(event),
+        }
+    }
 }
 
 impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
@@ -160,14 +249,19 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
             }
         }
 
-        match &mut self.handler {
-            Handler::Flowchart(h) => Some(h.process_event(event)),
-            Handler::Mindmap(h) => Some(h.process_event(event)),
-            Handler::ClassDiagram(h) => Some(h.process_event(event)),
-            Handler::StateDiagram(h) => Some(h.process_event(event)),
-            Handler::Sequence(h) => Some(h.process_event(event)),
-            Handler::Passthrough | Handler::Pending => Some(Ok(event)),
-        }
+        let event = match &mut self.handler {
+            Handler::Flowchart(h) => h.process_event(event),
+            Handler::Mindmap(h) => h.process_event(event),
+            Handler::ClassDiagram(h) => h.process_event(event),
+            Handler::StateDiagram(h) => h.process_event(event),
+            Handler::Sequence(h) => h.process_event(event),
+            Handler::Passthrough | Handler::Pending => Ok(event),
+        };
+
+        Some(match event {
+            Ok(event) => self.process_chart_colors(event),
+            err => err,
+        })
     }
 }
 
@@ -179,5 +273,11 @@ pub(super) fn process<'a>(
         inner: events,
         theme: theme.clone(),
         handler: Handler::Pending,
+        in_legend: false,
+        legend_color_idx: 0,
+        in_plot: false,
+        plot_depth: 0,
+        plot_path_done: false,
+        pie_color_idx: 0,
     }
 }

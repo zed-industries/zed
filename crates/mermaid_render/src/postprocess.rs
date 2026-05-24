@@ -16,7 +16,7 @@
 
 
 mod accent_colors;
-mod diagram_recolor;
+
 mod element_fixup;
 mod fallback_fixup;
 mod foreignobject_wrap;
@@ -51,7 +51,7 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = strip_foreignobject::process(events);
     let events = fallback_fixup::process(events, theme);
     let events = element_fixup::process(events, theme);
-    let events = diagram_recolor::process(events, theme);
+
     let events = accent_colors::process(events, theme);
     let events = strip_invalid_css::process(events);
     let events = inject_css::process(events, theme, &svg_id);
