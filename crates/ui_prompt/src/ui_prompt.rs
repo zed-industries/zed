@@ -1,7 +1,7 @@
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window, div,
-    prelude::*,
+    App, Decorations, Entity, EventEmitter, FocusHandle, Focusable, PromptButton, PromptHandle,
+    PromptLevel, PromptResponse, RenderablePromptHandle, SharedString, TextStyleRefinement, Window,
+    div, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
@@ -154,20 +154,41 @@ impl Render for ZedPromptRenderer {
                     })),
             );
 
-        div()
-            .size_full()
-            .occlude()
-            .bg(gpui::black().opacity(0.2))
-            .child(
-                v_flex()
-                    .size_full()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .items_center()
-                    .justify_center()
-                    .child(dialog),
-            )
+        let tiling = match window.window_decorations() {
+            Decorations::Server => gpui::Tiling::tiled(),
+            Decorations::Client { tiling } => tiling,
+        };
+        let inset = window.client_inset().unwrap_or(Pixels::ZERO);
+        let inset_for_edge = |is_tiled| if is_tiled { Pixels::ZERO } else { inset };
+        let rounding = px(10.0);
+
+        div().size_full().occlude().child(
+            v_flex()
+                .absolute()
+                .bg(gpui::black().opacity(0.2))
+                .top(inset_for_edge(tiling.top))
+                .right(inset_for_edge(tiling.right))
+                .bottom(inset_for_edge(tiling.bottom))
+                .left(inset_for_edge(tiling.left))
+                .map(|mut div| {
+                    if !tiling.top && !tiling.left {
+                        div = div.rounded_tl(rounding);
+                    }
+                    if !tiling.top && !tiling.right {
+                        div = div.rounded_tr(rounding);
+                    }
+                    if !tiling.bottom && !tiling.left {
+                        div = div.rounded_bl(rounding);
+                    }
+                    if !tiling.bottom && !tiling.right {
+                        div = div.rounded_br(rounding);
+                    }
+                    div
+                })
+                .items_center()
+                .justify_center()
+                .child(dialog),
+        )
     }
 }
 
