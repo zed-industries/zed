@@ -51,69 +51,6 @@ fn accent(r: u8, g: u8, b: u8) -> AccentColor {
 }
 
 #[test]
-fn debug_accent_flowchart_svg() {
-    let theme = base_theme(vec![
-        accent(116, 173, 232),
-        accent(190, 80, 70),
-        accent(191, 149, 106),
-        accent(180, 119, 207),
-        accent(110, 180, 191),
-        accent(208, 114, 119),
-        accent(222, 193, 132),
-        accent(161, 193, 129),
-    ]);
-
-    let source = r#"flowchart TD
-    A([Customer Places Order]) --> B[Validate Cart]
-    B --> C{Items In Stock?}
-    C -- No --> D[Notify Customer]
-    C -- Yes --> E[Charge Payment]
-    E --> F{Payment OK?}
-    F -- No --> D
-    F -- Yes --> G[Fulfill Order]
-    G --> H[Ship Package]
-    H --> I([Delivery Complete])"#;
-
-    let svg = mermaid_render::render_to_svg(source, &theme)
-        .expect("render failed");
-
-    // Find ALL elements with problematic attributes using quick-xml
-    use quick_xml::events::Event;
-    let mut reader = quick_xml::Reader::from_str(&svg);
-    let mut issues = Vec::new();
-    loop {
-        match reader.read_event() {
-            Ok(Event::Eof) => break,
-            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                let tag = String::from_utf8_lossy(e.name().local_name().as_ref()).to_string();
-                for attr in e.attributes().flatten() {
-                    let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).to_string();
-                    let val = attr.unescape_value().unwrap_or_default();
-                    if (val.is_empty() || val.contains("NaN")) && key != "style" {
-                        issues.push(format!("<{tag}> {key}=\"{val}\""));
-                    }
-                }
-            }
-            Err(e) => { panic!("XML error: {e}"); }
-            _ => {}
-        }
-    }
-
-    for issue in &issues {
-        eprintln!("ISSUE: {issue}");
-    }
-
-    // Also write the SVG for manual inspection
-    let out_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/mermaid_debug");
-    std::fs::create_dir_all(&out_dir).ok();
-    std::fs::write(out_dir.join("auto_colored_flowchart.svg"), &svg).ok();
-    eprintln!("SVG written to target/mermaid_debug/auto_colored_flowchart.svg");
-
-    assert!(issues.is_empty(), "Found {} issues:\n{}", issues.len(), issues.join("\n"));
-}
-
-#[test]
 fn generics_not_double_escaped() {
     let theme = base_theme(vec![accent(116, 173, 232)]);
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";

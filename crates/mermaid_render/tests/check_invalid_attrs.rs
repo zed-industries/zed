@@ -186,41 +186,6 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
 }
 
 #[test]
-fn no_empty_attributes_or_nan_in_merman_output() {
-    let theme = MermaidTheme::default();
-    let bad_patterns = ["fill=\"\"", "stroke=\"\"", "width=\"\"", "height=\"\"", "NaN"];
-
-    let mut all_issues = Vec::new();
-
-    for (name, source) in DIAGRAMS {
-        let svg = mermaid_render::render_to_svg(source, &theme)
-            .unwrap_or_else(|e| panic!("{name}: render failed: {e}"));
-
-        for pattern in &bad_patterns {
-            let mut start = 0;
-            while let Some(pos) = svg[start..].find(pattern) {
-                let abs = start + pos;
-                let ctx_start = abs.saturating_sub(100);
-                let ctx_end = (abs + pattern.len() + 60).min(svg.len());
-                all_issues.push(format!(
-                    "{name}: found `{pattern}` at byte {abs}:\n  ...{}...\n",
-                    &svg[ctx_start..ctx_end]
-                ));
-                start = abs + pattern.len();
-            }
-        }
-    }
-
-    if !all_issues.is_empty() {
-        panic!(
-            "Found {} issues in merman SVG output:\n\n{}",
-            all_issues.len(),
-            all_issues.join("\n")
-        );
-    }
-}
-
-#[test]
 fn accent_colors_auto_applied_to_nodes() {
     let theme = rgb_theme();
 

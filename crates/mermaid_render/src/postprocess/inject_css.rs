@@ -402,6 +402,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .commit-label-bkg {{ fill: {edge_label_bg}; }}
         .commit-id, .commit-msg, .branch-label {{ fill: {text}; color: {text}; font-family: {font}; }}
         {accent_css}
+        .data-point text {{ fill: {text} !important; }}
         {chart_color_css}
         "#,
         mindmap_css = mindmap_section_css(theme),
