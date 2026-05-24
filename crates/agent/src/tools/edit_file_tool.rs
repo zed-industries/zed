@@ -23,11 +23,14 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
-/// Before using this tool:
-///
-/// 1. Use the `read_file` tool to understand the file's contents and context
-///
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// `read_file` prefixes each line of its output with a line number right-aligned in a
+/// 6-character field followed by a single tab, then the line's actual content. When you
+/// derive `old_text` or `new_text` from that output, strip this prefix and keep only what
+/// comes after the tab, preserving the original indentation (tabs and spaces) exactly.
+/// Never include any part of the line number prefix in `old_text` or `new_text`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
@@ -1172,6 +1175,208 @@ mod tests {
             event.tool_call.fields.title,
             Some("Edit `/etc/hosts`".into())
         );
+
+        // 5.5: .agents/skills is a sensitive path — still prompts. The
+        // sensitive-path classifier runs regardless of the default mode, so
+        // it doesn't matter that we're now in Confirm mode — we're checking
+        // that the path is recognized and gets the "(agent skills)" tag.
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from("root/.agents/skills/my-skill/SKILL.md"),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert_eq!(
+            event.tool_call.fields.title,
+            Some("Edit `root/.agents/skills/my-skill/SKILL.md` (agent skills)".into())
+        );
+
+        // 5.6: The global .agents/skills directory is sensitive — still prompts
+        let global_skill_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| edit_tool.authorize(&global_skill_path, &stream_tx, cx));
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)"))
+        );
+    }
+
+    /// `.agents/foo/../skills/SKILL.md` would slip past the raw
+    /// `is_agents_skills_path` check (the components `.agents` and
+    /// `skills` aren't consecutive once `..` sits between them), but it
+    /// canonicalizes to a path inside `.agents/skills/`, so it has to
+    /// still prompt with the agent-skills tag.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_dotdot_skills_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".agents": {
+                    "foo": {},
+                    "skills": { "my-skill": { "SKILL.md": "target" } },
+                },
+            }),
+        )
+        .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/.agents/foo/../skills/my-skill/SKILL.md")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "`..` traversal into .agents/skills must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// `.zed/foo/../../safe.json` similarly sidesteps the consecutive-
+    /// component scan for `.zed/`, so the canonical-path recheck has to
+    /// catch it. (We escape *out* of `.zed/` here and back in via `..`,
+    /// just to confirm the recheck doesn't naively trust the raw scan.)
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_dotdot_settings_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".zed": { "foo": {}, "settings.json": "{}" },
+            }),
+        )
+        .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/.zed/foo/../settings.json")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(local settings)")),
+            "`..` traversal into .zed must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// An intra-project symlink like `safe -> .zed` keeps a path's
+    /// raw components clean of `.zed`, and `resolve_project_path`
+    /// (correctly) doesn't flag the symlink as an escape because the
+    /// target stays inside the worktree. The canonical-path recheck is
+    /// the only thing standing between the agent and a silent settings
+    /// rewrite, so verify it fires.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_intra_project_symlink_bypass(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".zed": { "settings.json": "{}" },
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/safe"), PathBuf::from(".zed"))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/safe/settings.json")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(local settings)")),
+            "Intra-project symlink to .zed must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
+    }
+
+    /// Same as the previous test but for the agent-skills sensitive
+    /// path, via an intra-project symlink `safe -> .agents/skills`.
+    #[gpui::test]
+    async fn test_streaming_authorize_blocks_intra_project_symlink_skills_bypass(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".agents": {
+                    "skills": { "my-skill": { "SKILL.md": "target" } },
+                },
+            }),
+        )
+        .await;
+        fs.insert_symlink(path!("/root/safe"), PathBuf::from(".agents/skills"))
+            .await;
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let _auth = cx.update(|cx| {
+            edit_tool.authorize(
+                &PathBuf::from(path!("/root/safe/my-skill/SKILL.md")),
+                &stream_tx,
+                cx,
+            )
+        });
+        let event = stream_rx.expect_authorization().await;
+        assert!(
+            event
+                .tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "Intra-project symlink to .agents/skills must still prompt: {:?}",
+            event.tool_call.fields.title,
+        );
     }
 
     #[gpui::test]
@@ -1871,9 +2076,12 @@ mod tests {
         assert_eq!(input_path, Some(PathBuf::from("root/test.txt")));
     }
 
+    /// When the buffer has unsaved changes and the user picks "Save", the
+    /// pending edits are flushed to disk and the agent's edit then proceeds
+    /// against the just-saved content.
     #[gpui::test]
-    async fn test_streaming_dirty_buffer_detected(cx: &mut TestAppContext) {
-        let (edit_tool, project, action_log, _fs, _thread) =
+    async fn test_streaming_dirty_buffer_save(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
             setup_test(cx, json!({"test.txt": "original content"})).await;
         let read_tool = Arc::new(crate::ReadFileTool::new(
             project.clone(),
@@ -1881,7 +2089,6 @@ mod tests {
             true,
         ));
 
-        // Read the file first
         cx.update(|cx| {
             read_tool.clone().run(
                 ToolInput::resolved(crate::ReadFileToolInput {
@@ -1896,7 +2103,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Open the buffer and make it dirty
         let project_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path("root/test.txt", cx)
@@ -1909,54 +2115,219 @@ mod tests {
 
         buffer.update(cx, |buffer, cx| {
             let end_point = buffer.max_point();
-            buffer.edit([(end_point..end_point, " added text")], None, cx);
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "original content plus user edit".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
         });
 
-        let is_dirty = buffer.read_with(cx, |buffer, _| buffer.is_dirty());
-        assert!(is_dirty, "Buffer should be dirty after in-memory edit");
-
-        // Try to edit - should fail because buffer has unsaved changes
-        let result = cx
-            .update(|cx| {
-                edit_tool.clone().run(
-                    ToolInput::resolved(EditFileToolInput {
-                        path: "root/test.txt".into(),
-                        edits: vec![Edit {
-                            old_text: "original content".into(),
-                            new_text: "new content".into(),
-                        }],
-                    }),
-                    ToolCallEventStream::test().0,
-                    cx,
-                )
-            })
-            .await;
-
-        let EditFileToolOutput::Error {
-            error,
-            diff,
-            input_path,
-        } = result.unwrap_err()
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        let content = auth.tool_call.fields.content.as_deref().unwrap_or(&[]);
+        let acp::ToolCallContent::Content(text) = content.first().expect("expected message body")
         else {
-            panic!("expected error");
+            panic!("expected text body, got: {:?}", content.first());
+        };
+        let acp::ContentBlock::Text(text) = &text.content else {
+            panic!("expected text body, got: {:?}", text.content);
         };
         assert!(
-            error.contains("This file has unsaved changes."),
-            "Error should mention unsaved changes, got: {}",
-            error
+            text.text.contains("unsaved changes")
+                && text.text.contains("save")
+                && text.text.contains("discard"),
+            "unexpected message body: {:?}",
+            text.text,
         );
-        assert!(
-            error.contains("keep or discard"),
-            "Error should ask whether to keep or discard changes, got: {}",
-            error
-        );
-        assert!(
-            error.contains("save or revert the file manually"),
-            "Error should ask user to manually save or revert when tools aren't available, got: {}",
-            error
-        );
-        assert!(diff.is_empty());
-        assert!(input_path.is_none());
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("save"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
+    }
+
+    /// When the buffer has unsaved changes and the user picks "Discard", the
+    /// pending edits are reverted to match disk and the agent's edit then
+    /// proceeds against the on-disk content.
+    #[gpui::test]
+    async fn test_streaming_dirty_buffer_discard(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
+            setup_test(cx, json!({"test.txt": "original content"})).await;
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
+
+        cx.update(|cx| {
+            read_tool.clone().run(
+                ToolInput::resolved(crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    // Match the on-disk content, not the dirty in-memory content.
+                    edits: vec![Edit {
+                        old_text: "original content".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("discard"),
+                acp::PermissionOptionKind::RejectOnce,
+            ))
+            .unwrap();
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
+    }
+
+    /// When the buffer is dirty and the user resolves it manually — e.g.
+    /// pressing `cmd-s` while the prompt is visible — the prompt is
+    /// dismissed automatically and the edit proceeds against the saved
+    /// content. The user shouldn't have to also click a button.
+    #[gpui::test]
+    async fn test_streaming_dirty_buffer_resolved_externally(cx: &mut TestAppContext) {
+        let (edit_tool, project, action_log, fs, _thread) =
+            setup_test(cx, json!({"test.txt": "original content"})).await;
+        let read_tool = Arc::new(crate::ReadFileTool::new(
+            project.clone(),
+            action_log.clone(),
+            true,
+        ));
+
+        cx.update(|cx| {
+            read_tool.clone().run(
+                ToolInput::resolved(crate::ReadFileToolInput {
+                    path: "root/test.txt".to_string(),
+                    start_line: None,
+                    end_line: None,
+                }),
+                ToolCallEventStream::test().0,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        let project_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("root/test.txt", cx)
+            })
+            .expect("Should find project path");
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            let end_point = buffer.max_point();
+            buffer.edit([(end_point..end_point, " plus user edit")], None, cx);
+        });
+        assert!(buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+
+        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/test.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "original content plus user edit".into(),
+                        new_text: "replaced content".into(),
+                    }],
+                }),
+                stream_tx,
+                cx,
+            )
+        });
+
+        let _update = stream_rx.expect_update_fields().await;
+        let auth = stream_rx.expect_authorization().await;
+
+        // Simulate the user saving the buffer manually (e.g. cmd-s) while
+        // the prompt is visible. The tool should detect the buffer became
+        // clean and proceed without the user clicking anything.
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+
+        // The prompt's response channel should drop without a click; the
+        // tool dismisses the prompt by transitioning the tool call status
+        // to `InProgress`.
+        let dismiss = stream_rx.expect_update_fields().await;
+        assert_eq!(dismiss.status, Some(acp::ToolCallStatus::InProgress));
+        drop(auth);
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "replaced content");
+        assert!(!buffer.read_with(cx, |buffer, _| buffer.is_dirty()));
+        let on_disk = fs.load(path!("/root/test.txt").as_ref()).await.unwrap();
+        assert_eq!(on_disk, "replaced content");
     }
 
     #[gpui::test]

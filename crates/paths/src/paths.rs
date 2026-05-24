@@ -316,6 +316,32 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
     DEBUG_SCENARIOS_FILE.get_or_init(|| config_dir().join("debug.json"))
 }
 
+/// Returns the path to the user-global `AGENTS.md` file.
+///
+/// This file holds personal agent instructions that apply to every project the
+/// user opens, and is loaded into the native Zed agent's system prompt.
+pub fn agents_file() -> &'static PathBuf {
+    static AGENTS_FILE: OnceLock<PathBuf> = OnceLock::new();
+    AGENTS_FILE.get_or_init(|| config_dir().join("AGENTS.md"))
+}
+
+/// User-facing display form of the user-global `AGENTS.md` file path —
+/// i.e. what a human should see in messages and prompts, with the
+/// platform's native path separator and home/config directory shorthand.
+///
+/// Windows doesn't recognize `~` as the home directory, so the env-var
+/// form (`%APPDATA%`) is used there instead. Note that this is the
+/// *typical* location: a user with `XDG_CONFIG_HOME` set or running in a
+/// Flatpak sandbox would see a different `agents_file()` at runtime than
+/// this displays. The display string trades that precision for
+/// readability in announcement copy.
+#[cfg(target_os = "windows")]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("%APPDATA%\\", APP_NAME, "\\AGENTS.md");
+#[cfg(not(target_os = "windows"))]
+pub const GLOBAL_AGENTS_FILE_DISPLAY: &str =
+    const_format::concatcp!("~/.config/", APP_NAME_LOWERCASE, "/AGENTS.md");
+
 /// Returns the path to the extensions directory.
 ///
 /// This is where installed extensions are stored.

@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use edit_prediction_metrics::{
     ActualPredictionCursor, PredictionReversalContext, PredictionScoringInput,
 };
-use gpui::AsyncApp;
+use gpui::{AppContext as _, AsyncApp};
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
@@ -24,79 +24,92 @@ pub async fn run_scoring(
     example_progress: &ExampleProgress,
     cx: AsyncApp,
 ) -> anyhow::Result<()> {
-    run_prediction(example, args, app_state, example_progress, cx).await?;
+    run_prediction(example, args, app_state, example_progress, cx.clone()).await?;
 
     let progress = example_progress.start(Step::Score);
 
-    progress.set_substatus("applying patches");
-    let prompt_inputs = example
-        .prompt_inputs
-        .as_ref()
-        .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?;
-    let original_text: &str = prompt_inputs.cursor_excerpt.as_ref();
-    let expected_patches_with_cursors = example.spec.expected_patches_with_cursor_positions();
-
-    let old_editable_region = if let Some(p) = example.prompt.as_ref() {
-        if matches!(
-            p.provider,
-            PredictionProvider::Teacher(_, _) | PredictionProvider::TeacherNonBatching(_, _)
-        ) {
-            Some(
-                TeacherPrompt::extract_editable_region(&p.input)?
-                    .replace(TeacherPrompt::USER_CURSOR_MARKER, ""),
-            )
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let prepared_expected_patches = edit_prediction_metrics::prepare_expected_patches(
-        &expected_patches_with_cursors,
-        original_text,
-        old_editable_region.as_deref(),
-    )
-    .with_context(|| format!("Expected patch did not apply for {}", example.spec.name))?;
-
-    let cursor_path = example.spec.cursor_path.as_ref();
-
     progress.set_substatus("computing metrics");
-    let mut scores = vec![];
-    for prediction in &example.predictions {
-        let actual_patch = prediction.actual_patch.clone().or_else(|| {
-            parse_prediction_output(example, &prediction.actual_output, prediction.provider)
-                .ok()
-                .map(|(patch, _)| patch)
-        });
-
-        let actual_cursor =
-            prediction
-                .actual_cursor
+    let example_for_scoring = example.clone();
+    example.score = cx
+        .background_spawn(async move {
+            let prompt_inputs = example_for_scoring
+                .prompt_inputs
                 .as_ref()
-                .map(|cursor| ActualPredictionCursor {
-                    row: cursor.row,
-                    editable_region_offset: cursor.editable_region_offset,
+                .context("prompt_inputs is required for scoring - run prediction first or ensure JSON includes prompt_inputs")?;
+            let original_text: &str = prompt_inputs.cursor_excerpt.as_ref();
+            let expected_patches_with_cursors = example_for_scoring
+                .spec
+                .expected_patches_with_cursor_positions();
+
+            let old_editable_region = if let Some(p) = example_for_scoring.prompt.as_ref() {
+                if matches!(
+                    p.provider,
+                    PredictionProvider::Teacher(_, _) | PredictionProvider::TeacherNonBatching(_, _)
+                ) {
+                    Some(
+                        TeacherPrompt::extract_editable_region(&p.input)?
+                            .replace(TeacherPrompt::USER_CURSOR_MARKER, ""),
+                    )
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let prepared_expected_patches = edit_prediction_metrics::prepare_expected_patches(
+                &expected_patches_with_cursors,
+                original_text,
+                old_editable_region.as_deref(),
+            )
+            .with_context(|| {
+                format!(
+                    "Expected patch did not apply for {}",
+                    example_for_scoring.spec.name
+                )
+            })?;
+
+            let cursor_path = example_for_scoring.spec.cursor_path.as_ref();
+
+            let mut scores = vec![];
+            for prediction in &example_for_scoring.predictions {
+                let actual_patch = prediction.actual_patch.clone().or_else(|| {
+                    parse_prediction_output(
+                        &example_for_scoring,
+                        &prediction.actual_output,
+                        prediction.provider,
+                    )
+                    .ok()
+                    .map(|(patch, _)| patch)
                 });
 
-        scores.push(edit_prediction_metrics::score_prediction(
-            PredictionScoringInput {
-                original_text,
-                expected_patches: &prepared_expected_patches,
-                actual_patch: actual_patch.as_deref(),
-                actual_cursor,
-                reversal_context: Some(PredictionReversalContext {
-                    edit_history: &prompt_inputs.events,
-                    excerpt_start_row: prompt_inputs.excerpt_start_row,
-                    cursor_path,
-                }),
-                cumulative_logprob: prediction.cumulative_logprob,
-                avg_logprob: prediction.avg_logprob,
-            },
-        ));
-    }
+                let actual_cursor = prediction.actual_cursor.as_ref().map(|cursor| {
+                    ActualPredictionCursor {
+                        row: cursor.row,
+                        editable_region_offset: cursor.editable_region_offset,
+                    }
+                });
 
-    example.score = scores;
+                scores.push(edit_prediction_metrics::score_prediction(
+                    PredictionScoringInput {
+                        original_text,
+                        expected_patches: &prepared_expected_patches,
+                        actual_patch: actual_patch.as_deref(),
+                        actual_cursor,
+                        reversal_context: Some(PredictionReversalContext {
+                            edit_history: &prompt_inputs.events,
+                            excerpt_start_row: prompt_inputs.excerpt_start_row,
+                            cursor_path,
+                        }),
+                        cumulative_logprob: prediction.cumulative_logprob,
+                        avg_logprob: prediction.avg_logprob,
+                    },
+                ));
+            }
+
+            anyhow::Ok(scores)
+        })
+        .await?;
     Ok(())
 }
 

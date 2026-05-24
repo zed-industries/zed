@@ -110,7 +110,6 @@ As an example, [the Dagger team suggests](https://container-use.com/agent-integr
         "list_directory": false,
         "diagnostics": false,
         "read_file": false,
-        "open": false,
         "move_path": false,
         "grep": false,
         "edit_file": false,

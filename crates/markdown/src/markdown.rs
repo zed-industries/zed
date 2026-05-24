@@ -17,8 +17,6 @@ use mermaid::{
 pub use path_range::{LineCol, PathWithRange};
 use settings::Settings as _;
 use theme_settings::ThemeSettings;
-use ui::Checkbox;
-use ui::CopyButton;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -36,7 +34,7 @@ use gpui::{
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
+    StyleRefinement, StyledImage, StyledText, Task, TextAlign, TextLayout, TextRun, TextStyle,
     TextStyleRefinement, actions, img, point, quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
@@ -47,7 +45,7 @@ use parser::{
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
-use ui::{ScrollAxes, Scrollbars, WithScrollbar, prelude::*};
+use ui::{Checkbox, CopyButton, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
@@ -55,6 +53,7 @@ use crate::parser::CodeBlockKind;
 /// A callback function that can be used to customize the style of links based on the destination URL.
 /// If the callback returns `None`, the default link style will be used.
 type LinkStyleCallback = Rc<dyn Fn(&str, &App) -> Option<TextStyleRefinement>>;
+pub type CodeSpanLinkCallback = Arc<dyn Fn(&str, &App) -> Option<SharedString> + 'static>;
 type SourceClickCallback = Box<dyn Fn(usize, usize, &mut Window, &mut App) -> bool>;
 type CheckboxToggleCallback = Rc<dyn Fn(Range<usize>, bool, &mut Window, &mut App)>;
 
@@ -181,6 +180,11 @@ impl MarkdownStyle {
         } else {
             theme_settings.ui_font.family.clone()
         };
+        let code_font_family = if is_preview {
+            theme_settings.markdown_preview_code_font_family().clone()
+        } else {
+            theme_settings.buffer_font.family.clone()
+        };
 
         let text_color = colors.text;
 
@@ -237,7 +241,7 @@ impl MarkdownStyle {
                 border_color: Some(colors.border_variant),
                 background: Some(colors.editor_background.into()),
                 text: TextStyleRefinement {
-                    font_family: Some(theme_settings.buffer_font.family.clone()),
+                    font_family: Some(code_font_family.clone()),
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
                     font_size: Some(buffer_font_size.into()),
@@ -247,7 +251,7 @@ impl MarkdownStyle {
                 ..Default::default()
             },
             inline_code: TextStyleRefinement {
-                font_family: Some(theme_settings.buffer_font.family.clone()),
+                font_family: Some(code_font_family),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
@@ -329,7 +333,9 @@ pub struct Markdown {
     fallback_code_block_language: Option<LanguageName>,
     options: MarkdownOptions,
     mermaid_state: MermaidState,
+    mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
+    wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
     context_menu_selected_text: Option<String>,
@@ -352,9 +358,17 @@ pub enum CopyButtonVisibility {
     VisibleOnHover,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WrapButtonVisibility {
+    Hidden,
+    AlwaysVisible,
+    VisibleOnHover,
+}
+
 pub enum CodeBlockRenderer {
     Default {
         copy_button_visibility: CopyButtonVisibility,
+        wrap_button_visibility: WrapButtonVisibility,
         border: bool,
     },
     Custom {
@@ -397,12 +411,12 @@ enum EscapeAction {
 }
 
 impl EscapeAction {
-    fn output_len(&self) -> usize {
+    fn output_len(&self, c: char) -> usize {
         match self {
-            Self::PassThrough => 1,
+            Self::PassThrough => c.len_utf8(),
             Self::Nbsp(count) => count * '\u{00A0}'.len_utf8(),
             Self::DoubleNewline => 2,
-            Self::PrefixBackslash => 2,
+            Self::PrefixBackslash => '\\'.len_utf8() + c.len_utf8(),
         }
     }
 
@@ -427,8 +441,6 @@ impl EscapeAction {
     }
 }
 
-// Valid to operate on raw bytes since multi-byte UTF-8
-// sequences never contain ASCII-range bytes.
 struct MarkdownEscaper {
     in_leading_whitespace: bool,
 }
@@ -442,21 +454,21 @@ impl MarkdownEscaper {
         }
     }
 
-    fn next(&mut self, byte: u8) -> EscapeAction {
-        let action = if self.in_leading_whitespace && byte == b'\t' {
+    fn next(&mut self, c: char) -> EscapeAction {
+        let action = if self.in_leading_whitespace && c == '\t' {
             EscapeAction::Nbsp(Self::TAB_SIZE)
-        } else if self.in_leading_whitespace && byte == b' ' {
+        } else if self.in_leading_whitespace && c == ' ' {
             EscapeAction::Nbsp(1)
-        } else if byte == b'\n' {
+        } else if c == '\n' {
             EscapeAction::DoubleNewline
-        } else if byte.is_ascii_punctuation() {
+        } else if c.is_ascii_punctuation() {
             EscapeAction::PrefixBackslash
         } else {
             EscapeAction::PassThrough
         };
 
         self.in_leading_whitespace =
-            byte == b'\n' || (self.in_leading_whitespace && (byte == b' ' || byte == b'\t'));
+            c == '\n' || (self.in_leading_whitespace && (c == ' ' || c == '\t'));
         action
     }
 }
@@ -501,7 +513,9 @@ impl Markdown {
             fallback_code_block_language,
             options,
             mermaid_state: MermaidState::default(),
+            mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
+            wrapped_code_blocks: HashSet::default(),
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
@@ -525,6 +539,16 @@ impl Markdown {
         )
     }
 
+    fn is_code_block_wrapped(&self, id: usize) -> bool {
+        self.wrapped_code_blocks.contains(&id)
+    }
+
+    fn toggle_code_block_wrap(&mut self, id: usize) {
+        if !self.wrapped_code_blocks.remove(&id) {
+            self.wrapped_code_blocks.insert(id);
+        }
+    }
+
     fn code_block_scroll_handle(&mut self, id: usize) -> ScrollHandle {
         self.code_block_scroll_handles
             .entry(id)
@@ -535,6 +559,27 @@ impl Markdown {
     fn retain_code_block_scroll_handles(&mut self, ids: &HashSet<usize>) {
         self.code_block_scroll_handles
             .retain(|id, _| ids.contains(id));
+    }
+
+    /// Used in the agent panel to force a re-render when the theme changes
+    pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
+        if self.options.render_mermaid_diagrams && !self.parsed_markdown.mermaid_diagrams.is_empty()
+        {
+            self.mermaid_state.clear();
+            let parsed_markdown = self.parsed_markdown.clone();
+            self.mermaid_state.update(&parsed_markdown, cx);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn is_mermaid_showing_code(&self, source_offset: usize) -> bool {
+        self.mermaid_showing_code.contains(&source_offset)
+    }
+
+    pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
+        if !self.mermaid_showing_code.remove(&source_offset) {
+            self.mermaid_showing_code.insert(source_offset);
+        }
     }
 
     fn clear_code_block_scroll_handles(&mut self) {
@@ -583,6 +628,28 @@ impl Markdown {
 
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
+        self.parsed_markdown.events.iter().find_map(|(_, event)| {
+            let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
+                return None;
+            };
+
+            match kind {
+                CodeBlockKind::FencedLang(language) => self
+                    .parsed_markdown
+                    .languages_by_name
+                    .get(language)
+                    .cloned(),
+                CodeBlockKind::FencedSrc(path_range) => self
+                    .parsed_markdown
+                    .languages_by_path
+                    .get(&path_range.path)
+                    .cloned(),
+                CodeBlockKind::Fenced | CodeBlockKind::Indented => None,
+            }
+        })
     }
 
     pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
@@ -649,7 +716,7 @@ impl Markdown {
     pub fn escape(s: &str) -> Cow<'_, str> {
         let output_len: usize = {
             let mut escaper = MarkdownEscaper::new();
-            s.bytes().map(|byte| escaper.next(byte).output_len()).sum()
+            s.chars().map(|c| escaper.next(c).output_len(c)).sum()
         };
 
         if output_len == s.len() {
@@ -659,7 +726,7 @@ impl Markdown {
         let mut escaper = MarkdownEscaper::new();
         let mut output = String::with_capacity(output_len);
         for c in s.chars() {
-            escaper.next(c as u8).write_to(c, &mut output);
+            escaper.next(c).write_to(c, &mut output);
         }
         output.into()
     }
@@ -885,8 +952,11 @@ impl Markdown {
                 if this.options.render_mermaid_diagrams {
                     let parsed_markdown = this.parsed_markdown.clone();
                     this.mermaid_state.update(&parsed_markdown, cx);
+                    this.mermaid_showing_code
+                        .retain(|offset| parsed_markdown.mermaid_diagrams.contains_key(offset));
                 } else {
                     this.mermaid_state.clear();
+                    this.mermaid_showing_code.clear();
                 }
                 this.pending_parse.take();
                 if this.should_reparse {
@@ -1032,6 +1102,7 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
     image_resolver: Option<Box<dyn Fn(&str) -> Option<ImageSource>>>,
@@ -1046,9 +1117,11 @@ impl MarkdownElement {
             style,
             code_block_renderer: CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: WrapButtonVisibility::Hidden,
                 border: false,
             },
             on_url_click: None,
+            code_span_link: None,
             on_source_click: None,
             on_checkbox_toggle: None,
             image_resolver: None,
@@ -1091,6 +1164,14 @@ impl MarkdownElement {
         self
     }
 
+    pub fn on_code_span_link(
+        mut self,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+    ) -> Self {
+        self.code_span_link = Some(Arc::new(callback));
+        self
+    }
+
     pub fn on_source_click(
         mut self,
         handler: impl Fn(usize, usize, &mut Window, &mut App) -> bool + 'static,
@@ -1125,32 +1206,68 @@ impl MarkdownElement {
         self
     }
 
+    fn push_markdown_code_span(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        text: &str,
+        range: Range<usize>,
+        cx: &App,
+    ) {
+        let link_url = if builder.code_block_stack.is_empty()
+            && builder.link_depth == 0
+            && !self.style.prevent_mouse_interaction
+        {
+            self.code_span_link
+                .as_ref()
+                .and_then(|callback| callback(text, cx))
+        } else {
+            None
+        };
+
+        if let Some(url) = link_url {
+            builder.push_link(url.clone(), range.clone());
+            let link_style = self
+                .style
+                .link_callback
+                .as_ref()
+                .and_then(|callback| callback(url.as_ref(), cx))
+                .unwrap_or_else(|| self.style.link.clone());
+            builder.push_text_style(self.style.inline_code.clone());
+            builder.push_text_style(link_style);
+            builder.push_text(text, range);
+            builder.pop_text_style();
+            builder.pop_text_style();
+        } else {
+            builder.push_text_style(self.style.inline_code.clone());
+            builder.push_text(text, range);
+            builder.pop_text_style();
+        }
+    }
+
     fn push_markdown_image(
         &self,
         builder: &mut MarkdownElementBuilder,
         range: &Range<usize>,
         source: ImageSource,
+        dest_url: SharedString,
+        alt_text: Option<SharedString>,
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let align = builder.text_style().text_align;
-        builder.modify_current_div(|el| {
-            let mut image_container = el.flex().flex_row().items_center();
+        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
 
-            image_container = match align {
-                TextAlign::Left => image_container.justify_start(),
-                TextAlign::Center => image_container.justify_center(),
-                TextAlign::Right => image_container.justify_end(),
-            };
+        let image_element = div().min_w_0().child(
+            img(source)
+                .id(("markdown-image", range.start))
+                .min_w_0()
+                .max_w_full()
+                .rounded_md()
+                .when_some(height, |this, height| this.h(height))
+                .when_some(width, |this, width| this.w(width))
+                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
+        );
 
-            image_container.child(
-                img(source)
-                    .id(("markdown-image", range.start))
-                    .max_w_full()
-                    .when_some(height, |this, height| this.h(height))
-                    .when_some(width, |this, width| this.w(width)),
-            )
-        });
+        builder.push_image_child(image_element);
     }
 
     fn push_markdown_paragraph(
@@ -1711,12 +1828,18 @@ impl Element for MarkdownElement {
                 MarkdownEvent::Start(tag) => {
                     match tag {
                         MarkdownTag::Image { dest_url, .. } => {
+                            let alt_text = collect_image_alt_text(
+                                &parsed_markdown.events[index..],
+                                &parsed_markdown.source,
+                            );
                             if let Some(image) = images.get(&range.start) {
                                 current_img_block_range = Some(range.clone());
                                 self.push_markdown_image(
                                     &mut builder,
                                     range,
                                     image.clone().into(),
+                                    dest_url.clone(),
+                                    alt_text,
                                     None,
                                     None,
                                 );
@@ -1726,19 +1849,40 @@ impl Element for MarkdownElement {
                                 .and_then(|resolve| resolve(dest_url.as_ref()))
                             {
                                 current_img_block_range = Some(range.clone());
-                                self.push_markdown_image(&mut builder, range, source, None, None);
+                                self.push_markdown_image(
+                                    &mut builder,
+                                    range,
+                                    source,
+                                    dest_url.clone(),
+                                    alt_text,
+                                    None,
+                                    None,
+                                );
                             }
                         }
                         MarkdownTag::Paragraph => {
-                            self.push_markdown_paragraph(&mut builder, range, markdown_end, None);
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
+                            self.push_markdown_paragraph(
+                                &mut builder,
+                                range,
+                                markdown_end,
+                                text_align_override,
+                            );
                         }
                         MarkdownTag::Heading { level, .. } => {
+                            let text_align_override = builder
+                                .table
+                                .current_cell_alignment()
+                                .and_then(alignment_to_text_align);
                             self.push_markdown_heading(
                                 &mut builder,
                                 *level,
                                 range,
                                 markdown_end,
-                                None,
+                                text_align_override,
                             );
                         }
                         MarkdownTag::BlockQuote(kind) => {
@@ -1754,12 +1898,25 @@ impl Element for MarkdownElement {
                                 && let Some(mermaid_diagram) =
                                     parsed_markdown.mermaid_diagrams.get(&range.start)
                             {
+                                let showing_code =
+                                    self.markdown.read(cx).is_mermaid_showing_code(range.start);
+                                let copy_button_visibility = match &self.code_block_renderer {
+                                    CodeBlockRenderer::Default {
+                                        copy_button_visibility,
+                                        ..
+                                    } => *copy_button_visibility,
+                                    _ => CopyButtonVisibility::VisibleOnHover,
+                                };
                                 builder.push_sourced_element(
                                     mermaid_diagram.content_range.clone(),
                                     render_mermaid_diagram(
                                         mermaid_diagram,
                                         &mermaid_state,
                                         &self.style,
+                                        self.markdown.clone(),
+                                        range.start,
+                                        showing_code,
+                                        copy_button_visibility,
                                     ),
                                 );
                                 rendered_mermaid_block = true;
@@ -1826,11 +1983,18 @@ impl Element for MarkdownElement {
                                     parent_container.style().refine(&self.style.code_block);
                                     builder.push_div(parent_container, range, markdown_end);
 
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+
                                     let code_block = div()
                                         .id(("code-block", range.start))
                                         .rounded_lg()
                                         .map(|mut code_block| {
-                                            if let Some(scroll_handle) = scroll_handle.as_ref() {
+                                            if is_wrapped {
+                                                code_block.w_full()
+                                            } else if let Some(scroll_handle) =
+                                                scroll_handle.as_ref()
+                                            {
                                                 code_block.style().restrict_scroll_to_axis =
                                                     Some(true);
                                                 code_block
@@ -1920,6 +2084,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::Link { dest_url, .. } => {
                             if builder.code_block_stack.is_empty() {
+                                builder.link_depth += 1;
                                 builder.push_link(dest_url.clone(), range.clone());
                                 let style = self
                                     .style
@@ -2000,13 +2165,10 @@ impl Element for MarkdownElement {
                             let is_header = builder.table.in_head;
                             let row_index = builder.table.row_index;
                             let col_index = builder.table.col_index;
-                            let alignment = builder.table.alignments.get(col_index).copied();
-                            let text_align = match alignment {
-                                Some(Alignment::Left) => TextAlign::Left,
-                                Some(Alignment::Center) => TextAlign::Center,
-                                Some(Alignment::Right) => TextAlign::Right,
-                                _ => self.style.base_text_style.text_align,
-                            };
+                            let alignment = builder.table.current_cell_alignment();
+                            let text_align = alignment
+                                .and_then(alignment_to_text_align)
+                                .unwrap_or(self.style.base_text_style.text_align);
 
                             let mut cell_div = div()
                                 .flex()
@@ -2072,10 +2234,14 @@ impl Element for MarkdownElement {
 
                         if let CodeBlockRenderer::Default {
                             copy_button_visibility,
+                            wrap_button_visibility,
                             ..
                         } = &self.code_block_renderer
-                            && *copy_button_visibility != CopyButtonVisibility::Hidden
+                            && (*copy_button_visibility != CopyButtonVisibility::Hidden
+                                || *wrap_button_visibility != WrapButtonVisibility::Hidden)
                         {
+                            let copy_button_visibility = *copy_button_visibility;
+                            let wrap_button_visibility = *wrap_button_visibility;
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
                                     &parsed_markdown.source()[range.clone()],
@@ -2084,28 +2250,48 @@ impl Element for MarkdownElement {
                                     ..content_range.end + range.start;
 
                                 let code = parsed_markdown.source()[content_range].to_string();
-                                let codeblock = render_copy_code_block_button(
-                                    range.end,
-                                    code,
-                                    self.markdown.clone(),
-                                );
-                                el.child(
-                                    h_flex()
-                                        .w_4()
-                                        .absolute()
-                                        .justify_end()
-                                        .when_else(
-                                            *copy_button_visibility
-                                                == CopyButtonVisibility::VisibleOnHover,
-                                            |this| {
-                                                this.top_0()
-                                                    .right_0()
-                                                    .visible_on_hover("code_block")
-                                            },
-                                            |this| this.top_1p5().right_1p5(),
-                                        )
-                                        .child(codeblock),
-                                )
+
+                                let any_hover = copy_button_visibility
+                                    == CopyButtonVisibility::VisibleOnHover
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::VisibleOnHover;
+                                let any_always = copy_button_visibility
+                                    == CopyButtonVisibility::AlwaysVisible
+                                    || wrap_button_visibility
+                                        == WrapButtonVisibility::AlwaysVisible;
+                                let use_hover = any_hover && !any_always;
+
+                                let mut button_row = h_flex()
+                                    .gap_0p5()
+                                    .absolute()
+                                    .bg(cx.theme().colors().editor_background)
+                                    .when_else(
+                                        use_hover,
+                                        |this| {
+                                            this.top_1().right_1().visible_on_hover("code_block")
+                                        },
+                                        |this| this.top_1p5().right_1p5(),
+                                    );
+
+                                if wrap_button_visibility != WrapButtonVisibility::Hidden {
+                                    let is_wrapped =
+                                        self.markdown.read(cx).is_code_block_wrapped(range.start);
+                                    button_row = button_row.child(render_wrap_code_block_button(
+                                        range.start,
+                                        is_wrapped,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                if copy_button_visibility != CopyButtonVisibility::Hidden {
+                                    button_row = button_row.child(render_copy_code_block_button(
+                                        range.end,
+                                        code,
+                                        self.markdown.clone(),
+                                    ));
+                                }
+
+                                el.child(button_row)
                             });
                         }
 
@@ -2125,6 +2311,7 @@ impl Element for MarkdownElement {
                     MarkdownTagEnd::Strikethrough => builder.pop_text_style(),
                     MarkdownTagEnd::Link => {
                         if builder.code_block_stack.is_empty() {
+                            builder.link_depth = builder.link_depth.saturating_sub(1);
                             builder.pop_text_style()
                         }
                     }
@@ -2159,9 +2346,12 @@ impl Element for MarkdownElement {
                     builder.push_text(text, range.clone());
                 }
                 MarkdownEvent::Code => {
-                    builder.push_text_style(self.style.inline_code.clone());
-                    builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
-                    builder.pop_text_style();
+                    self.push_markdown_code_span(
+                        &mut builder,
+                        &parsed_markdown.source[range.clone()],
+                        range.clone(),
+                        cx,
+                    );
                 }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
@@ -2179,6 +2369,19 @@ impl Element for MarkdownElement {
                 }
                 MarkdownEvent::InlineHtml => {
                     let html = &parsed_markdown.source[range.clone()];
+                    if let Some(code) = html
+                        .strip_prefix("<code>")
+                        .and_then(|html| html.strip_suffix("</code>"))
+                    {
+                        let code_start = range.start + "<code>".len();
+                        self.push_markdown_code_span(
+                            &mut builder,
+                            code,
+                            code_start..code_start + code.len(),
+                            cx,
+                        );
+                        continue;
+                    }
                     if html.starts_with("<code>") {
                         builder.push_text_style(self.style.inline_code.clone());
                         continue;
@@ -2286,6 +2489,44 @@ impl Element for MarkdownElement {
     }
 }
 
+fn collect_image_alt_text(
+    events_from_image_start: &[(Range<usize>, MarkdownEvent)],
+    source: &str,
+) -> Option<SharedString> {
+    let mut alt_text = String::new();
+    for (range, event) in events_from_image_start.iter().skip(1) {
+        match event {
+            MarkdownEvent::End(MarkdownTagEnd::Image) => break,
+            MarkdownEvent::Text => alt_text.push_str(&source[range.clone()]),
+            _ => {}
+        }
+    }
+    if alt_text.is_empty() {
+        None
+    } else {
+        Some(alt_text.into())
+    }
+}
+
+fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
+    let link_label = alt_text
+        .filter(|alt| !alt.is_empty())
+        .unwrap_or_else(|| dest_url.clone());
+
+    let label = format!("Failed to Load: {link_label}");
+
+    div()
+        .id("image-fallback")
+        .cursor_pointer()
+        .min_w_0()
+        .child(Label::new(label).color(Color::Warning).underline())
+        .tooltip(Tooltip::text(
+            "Image failed to load. Open `zed: log` for more details.",
+        ))
+        .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        .into_any_element()
+}
+
 fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
@@ -2316,6 +2557,29 @@ fn apply_heading_style(
     }
 
     heading
+}
+
+fn render_wrap_code_block_button(
+    id: usize,
+    is_wrapped: bool,
+    markdown: Entity<Markdown>,
+) -> impl IntoElement {
+    let (icon, tooltip) = if is_wrapped {
+        (IconName::TextUnwrap, "Unwrap Content")
+    } else {
+        (IconName::TextWrap, "Wrap Content")
+    };
+
+    IconButton::new(("wrap-code-block", id), icon)
+        .icon_size(IconSize::Small)
+        .icon_color(Color::Muted)
+        .tooltip(Tooltip::text(tooltip))
+        .on_click(move |_event, _window, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.toggle_code_block_wrap(id);
+                cx.notify();
+            });
+        })
 }
 
 fn render_copy_code_block_button(
@@ -2445,6 +2709,25 @@ impl TableState {
     fn end_cell(&mut self) {
         self.col_index += 1;
     }
+
+    fn current_cell_alignment(&self) -> Option<Alignment> {
+        if self.alignments.is_empty() {
+            return None;
+        }
+        if self.in_head {
+            return Some(Alignment::Center);
+        }
+        self.alignments.get(self.col_index).copied()
+    }
+}
+
+fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
+    match alignment {
+        Alignment::Left => Some(TextAlign::Left),
+        Alignment::Center => Some(TextAlign::Center),
+        Alignment::Right => Some(TextAlign::Right),
+        Alignment::None => None,
+    }
 }
 
 struct MarkdownElementBuilder {
@@ -2459,6 +2742,7 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
+    link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
@@ -2497,6 +2781,7 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
+            link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
             syntax_theme,
@@ -2558,6 +2843,14 @@ impl MarkdownElementBuilder {
             markdown_end,
         );
         self.push_div(div().pl_4(), range, markdown_end);
+    }
+
+    fn push_image_child(&mut self, child: impl IntoElement) {
+        self.flush_text();
+        self.div_stack
+            .last_mut()
+            .unwrap()
+            .extend([child.into_any_element()]);
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
@@ -2660,33 +2953,36 @@ impl MarkdownElementBuilder {
         self.pending_line.text.push_str(text);
         self.current_source_index = source_range.end;
 
+        // Compute the base text style once
+        let text_style = self.text_style();
+
         if let Some(Some(language)) = self.code_block_stack.last() {
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
                     self.pending_line
                         .runs
-                        .push(self.text_style().to_run(range.start - offset));
+                        .push(text_style.to_run(range.start - offset));
                 }
 
-                let mut run_style = self.text_style();
+                let run_len = range.len();
                 if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
-                    run_style = run_style.highlight(highlight);
+                    self.pending_line
+                        .runs
+                        .push(text_style.clone().highlight(highlight).to_run(run_len));
+                } else {
+                    self.pending_line.runs.push(text_style.to_run(run_len));
                 }
-
-                self.pending_line.runs.push(run_style.to_run(range.len()));
                 offset = range.end;
             }
 
             if offset < text.len() {
                 self.pending_line
                     .runs
-                    .push(self.text_style().to_run(text.len() - offset));
+                    .push(text_style.to_run(text.len() - offset));
             }
         } else {
-            self.pending_line
-                .runs
-                .push(self.text_style().to_run(text.len()));
+            self.pending_line.runs.push(text_style.to_run(text.len()));
         }
     }
 
@@ -3197,7 +3493,10 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3265,6 +3564,49 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    fn render_markdown_with_code_span_link(
+        markdown: &str,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        render_markdown_with_code_span_link_style(markdown, MarkdownStyle::default(), callback, cx)
+    }
+
+    fn render_markdown_with_code_span_link_style(
+        markdown: &str,
+        style: MarkdownStyle,
+        callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        struct TestWindow;
+
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, style)
+                    .on_code_span_link(callback)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
+        rendered.text
+    }
+
     fn render_markdown_with_language_registry(
         markdown: &str,
         language_registry: Option<Arc<LanguageRegistry>>,
@@ -3307,6 +3649,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -3472,6 +3815,37 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_centers_headers() {
+        let mut table = TableState::default();
+        table.start(vec![Alignment::Left, Alignment::Right, Alignment::None]);
+
+        table.start_head();
+        for _ in 0..3 {
+            assert_eq!(table.current_cell_alignment(), Some(Alignment::Center));
+            table.end_cell();
+        }
+
+        table.end_head();
+        table.start_row();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Left));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::Right));
+        table.end_cell();
+        assert_eq!(table.current_cell_alignment(), Some(Alignment::None));
+        table.end_cell();
+        table.end_row();
+
+        table.end();
+        assert_eq!(table.current_cell_alignment(), None);
+    }
+
+    #[test]
+    fn test_table_state_current_cell_alignment_outside_table() {
+        let table = TableState::default();
+        assert_eq!(table.current_cell_alignment(), None);
     }
 
     #[test]
@@ -3771,6 +4145,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_escape_non_ascii() {
+        // Cyrillic characters should not have backslashes added before them,
+        // but ASCII punctuation should still be escaped.
+        assert_eq!(Markdown::escape("Привет, мир"), r"Привет\, мир");
+        // Test with markdown special characters mixed in
+        assert_eq!(Markdown::escape("Привет, *мир*"), r"Привет\, \*мир\*");
+        // Test with the exact example from the issue (single quotes are also ASCII punctuation)
+        assert_eq!(
+            Markdown::escape("Отсутствует пробел справа от ','"),
+            r"Отсутствует пробел справа от \'\,\'"
+        );
+        // Test more non-ASCII scripts
+        assert_eq!(
+            Markdown::escape("こんにちは *world*"),
+            r"こんにちは \*world\*"
+        );
+        assert_eq!(Markdown::escape("العربيّة [link]"), r"العربيّة \[link\]");
+        assert_eq!(Markdown::escape("Ελληνικά _text_"), r"Ελληνικά \_text\_");
+        assert_eq!(Markdown::escape("עברית `code`"), r"עברית \`code\`");
+        // Non-ASCII followed by ASCII punctuation
+        assert_eq!(Markdown::escape("Test: тест"), r"Test\: тест");
+    }
+
     fn has_code_block(markdown: &str) -> bool {
         let parsed_data = parse_markdown_with_options(markdown, false, false);
         parsed_data
@@ -3799,12 +4197,12 @@ mod tests {
         ];
         for input in cases {
             let mut escaper = MarkdownEscaper::new();
-            let precomputed: usize = input.bytes().map(|b| escaper.next(b).output_len()).sum();
+            let precomputed: usize = input.chars().map(|c| escaper.next(c).output_len(c)).sum();
 
             let mut escaper = MarkdownEscaper::new();
             let mut output = String::new();
             for c in input.chars() {
-                escaper.next(c as u8).write_to(c, &mut output);
+                escaper.next(c).write_to(c, &mut output);
             }
 
             assert_eq!(precomputed, output.len(), "length mismatch for {:?}", input);
@@ -3842,6 +4240,75 @@ mod tests {
         assert!(rendered.links.is_empty());
         assert!(rendered.link_for_source_index(0).is_none());
         assert!(rendered.link_for_source_index(5).is_none());
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_detected_for_source_index(cx: &mut TestAppContext) {
+        let source = "see `foo.rs` for details";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/foo.rs");
+
+        let code_index = source.find("foo.rs").unwrap();
+        let link = rendered.link_for_source_index(code_index);
+        assert!(link.is_some());
+        assert_eq!(link.unwrap().destination_url, "file:///tmp/foo.rs");
+
+        assert!(
+            rendered
+                .link_for_source_index(source.find("see").unwrap())
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_when_mouse_interaction_is_prevented(
+        cx: &mut TestAppContext,
+    ) {
+        let callback_count = Arc::new(AtomicUsize::new(0));
+        let rendered = render_markdown_with_code_span_link_style(
+            "see `foo.rs` for details",
+            MarkdownStyle {
+                prevent_mouse_interaction: true,
+                ..MarkdownStyle::default()
+            },
+            {
+                let callback_count = callback_count.clone();
+                move |text, _cx| {
+                    callback_count.fetch_add(1, Ordering::Relaxed);
+                    (text == "foo.rs").then(|| "file:///tmp/foo.rs".into())
+                }
+            },
+            cx,
+        );
+
+        assert!(rendered.links.is_empty());
+        assert_eq!(callback_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_without_callback(cx: &mut TestAppContext) {
+        let rendered = render_markdown("see `foo.rs` for details", cx);
+
+        assert!(rendered.links.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_ignores_code_inside_markdown_link(cx: &mut TestAppContext) {
+        let source = "see [`foo.rs`](https://example.com) for details";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "foo.rs").then(|| "file:///tmp/foo.rs".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "https://example.com");
     }
 
     #[gpui::test]

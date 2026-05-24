@@ -11,11 +11,9 @@ use serde::{Deserialize, Serialize};
 
 /// Jumps to the definition of a symbol using the language server.
 ///
-/// Returns the file path and line number of the symbol's definition,
-/// along with a snippet of the source code at that location.
+/// Returns the file path and line number of the symbol's definition, along with a snippet of the source code at that location.
 ///
-/// Before using this tool, use read_file or grep to find the exact symbol
-/// name and line number of a usage you want to navigate from.
+/// Before using this tool, use read_file or grep to find the exact symbol name and line number of a usage you want to navigate from.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct GoToDefinitionToolInput {
     /// The symbol to find the definition of.

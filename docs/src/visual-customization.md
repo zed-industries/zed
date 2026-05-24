@@ -281,7 +281,7 @@ TBD: Centered layout related settings
   // Minimap related settings
   "minimap": {
     "show": "never",                // When to show (auto, always, never)
-    "display_in": "active_editor",  // Where to show (active_editor, all_editor)
+    "display_in": "active_editor",  // Where to show (active_editor, all_editors)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
@@ -384,6 +384,11 @@ TBD: Centered layout related settings
   "lsp_document_colors": "inlay",        // none, inlay, border, background
   // When to show the scrollbar in the completion menu.
   "completion_menu_scrollbar": "never", // auto, system, always, never
+
+  // How to display the LSP item kind (function, method, variable, etc.)
+  // of each entry in the completions menu. "symbol" shows a syntax-colored
+  // single-letter badge.
+  "completion_menu_item_kind": "off", // off, symbol
   // Turn on colorization of brackets in editors (configurable per language)
   "colorize_brackets": true,
 ```
