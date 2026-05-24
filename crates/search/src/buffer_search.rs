@@ -1128,6 +1128,11 @@ impl BufferSearchBar {
         let search = self
             .query_suggestion(seed_query_override, window, cx)
             .map(|suggestion| {
+                let suggestion = if self.default_options.contains(SearchOptions::REGEX) {
+                    regex::escape(&suggestion)
+                } else {
+                    suggestion
+                };
                 self.search(&suggestion, Some(self.default_options), true, window, cx)
             });
 
@@ -3252,6 +3257,73 @@ mod tests {
             .unindent(),
         })
         .await;
+    }
+
+    #[gpui::test]
+    async fn test_regex_search_escapes_seeded_selection(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let seeded_regex = r".\+*?()|[]{}^$#&-\~";
+        let buffer = cx.new(|cx| Buffer::local(format!("zed\nz.d\n{seeded_regex}\n"), cx));
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.enable_search_option(SearchOptions::REGEX, window, cx);
+            search_bar.dismiss(&Dismiss, window, cx);
+            search_bar
+        });
+
+        for (selected_text, row, expected_range) in [
+            ("z.d", 1, Point::new(1, 0)..Point::new(1, 3)),
+            (
+                seeded_regex,
+                2,
+                Point::new(2, 0)..Point::new(2, seeded_regex.len() as u32),
+            ),
+        ] {
+            editor.update_in(cx, |editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges([
+                        Point::new(row, 0)..Point::new(row, selected_text.len() as u32)
+                    ])
+                });
+            });
+
+            search_bar
+                .update_in(cx, |search_bar, window, cx| {
+                    search_bar.deploy(&Deploy::find(), None, window, cx);
+                    assert_eq!(search_bar.query(cx), regex::escape(selected_text));
+                    search_bar.update_matches(false, false, window, cx)
+                })
+                .await
+                .unwrap();
+
+            editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.search_background_highlights(cx),
+                    &[expected_range.clone()]
+                );
+            });
+        }
+
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("z.d", Some(SearchOptions::REGEX), true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx),
+                &[
+                    Point::new(0, 0)..Point::new(0, 3),
+                    Point::new(1, 0)..Point::new(1, 3)
+                ]
+            );
+        });
     }
 
     #[gpui::test]
