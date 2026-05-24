@@ -1,18 +1,13 @@
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
-use super::{
-    NodeRect, accent_class_name, add_class, add_to_event, parse_path_half_height, parse_translate,
-};
-
-
+use super::{NodeTracker, accent_class_name, add_class, add_to_event, parse_translate};
 
 pub(crate) struct ClassDiagramAccents {
     accent_count: usize,
     accent_g_stack: Vec<Option<usize>>,
     node_counter: usize,
-    node_rects: Vec<NodeRect>,
-    building_node: Option<NodeRect>,
+    nodes: NodeTracker,
     current_text_accent: Option<usize>,
 }
 
@@ -22,8 +17,7 @@ impl ClassDiagramAccents {
             accent_count,
             accent_g_stack: Vec::new(),
             node_counter: 0,
-            node_rects: Vec::new(),
-            building_node: None,
+            nodes: NodeTracker::default(),
             current_text_accent: None,
         }
     }
@@ -49,12 +43,7 @@ impl ClassDiagramAccents {
                     self.node_counter += 1;
 
                     if let Some((cx, cy)) = parse_translate(e) {
-                        self.building_node = Some(NodeRect {
-                            cx,
-                            cy,
-                            half_height: 30.0,
-                            accent_idx,
-                        });
+                        self.nodes.start_node(cx, cy, 30.0, accent_idx);
                     }
 
                     self.accent_g_stack.push(Some(accent_idx));
@@ -69,9 +58,7 @@ impl ClassDiagramAccents {
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(entry) = self.accent_g_stack.pop() {
                     if entry.is_some() {
-                        if let Some(rect) = self.building_node.take() {
-                            self.node_rects.push(rect);
-                        }
+                        self.nodes.finish_node();
                     }
                 }
                 Ok(event)
@@ -84,13 +71,7 @@ impl ClassDiagramAccents {
                 ) =>
             {
                 if e.name().as_ref() == b"path" {
-                    if let Some(ref mut builder) = self.building_node {
-                        if let Some(hh) = parse_path_half_height(e) {
-                            if hh > builder.half_height {
-                                builder.half_height = hh;
-                            }
-                        }
-                    }
+                    self.nodes.update_half_height(e);
                 }
 
                 Ok(event)
@@ -103,7 +84,8 @@ impl ClassDiagramAccents {
                 let is_text = e.name().as_ref() == b"text";
 
                 let accent_idx = if is_text {
-                    super::lookup_position_accent(&self.node_rects, e)
+                    self.nodes
+                        .lookup_accent(e)
                         .or_else(|| self.current_accent())
                 } else {
                     self.current_text_accent

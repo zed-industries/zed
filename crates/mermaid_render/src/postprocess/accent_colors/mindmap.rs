@@ -1,7 +1,7 @@
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
-use super::NodeRect;
+use super::NodeTracker;
 use crate::MermaidTheme;
 
 struct SectionClass {
@@ -11,8 +11,7 @@ struct SectionClass {
 pub(super) struct MindmapAccents {
     section_classes: Vec<SectionClass>,
     section_g_stack: Vec<Option<usize>>,
-    node_rects: Vec<NodeRect>,
-    building_node: Option<NodeRect>,
+    nodes: NodeTracker,
     current_text_section: Option<usize>,
 }
 
@@ -21,8 +20,7 @@ impl MindmapAccents {
         Self {
             section_classes: Vec::new(),
             section_g_stack: Vec::new(),
-            node_rects: Vec::new(),
-            building_node: None,
+            nodes: NodeTracker::default(),
             current_text_section: None,
         }
     }
@@ -33,12 +31,7 @@ impl MindmapAccents {
                 let section_idx = self.parse_section_class(e)?;
                 if let Some(idx) = section_idx {
                     if let Some((tx, ty)) = super::parse_translate(e) {
-                        self.building_node = Some(NodeRect {
-                            cx: tx,
-                            cy: ty,
-                            half_height: 0.0,
-                            accent_idx: idx,
-                        });
+                        self.nodes.start_node(tx, ty, 0.0, idx);
                     }
                     self.section_g_stack.push(Some(idx));
                 } else {
@@ -50,9 +43,7 @@ impl MindmapAccents {
             Event::End(e) if e.name().as_ref() == b"g" => {
                 if let Some(maybe_section) = self.section_g_stack.pop() {
                     if maybe_section.is_some() {
-                        if let Some(rect) = self.building_node.take() {
-                            self.node_rects.push(rect);
-                        }
+                        self.nodes.finish_node();
                     }
                 }
                 Ok(event)
@@ -64,14 +55,8 @@ impl MindmapAccents {
                     b"path" | b"rect" | b"circle" | b"polygon" | b"ellipse"
                 ) =>
             {
-                if let Some(ref mut builder) = self.building_node {
-                    if e.name().as_ref() == b"path" {
-                        if let Some(hh) = super::parse_path_half_height(e) {
-                            if hh > builder.half_height {
-                                builder.half_height = hh;
-                            }
-                        }
-                    }
+                if e.name().as_ref() == b"path" {
+                    self.nodes.update_half_height(e);
                 }
                 Ok(event)
             }
@@ -83,7 +68,7 @@ impl MindmapAccents {
 
                 let section_idx = self.current_section_accent().or_else(|| {
                     if is_text {
-                        super::lookup_position_accent(&self.node_rects, e)
+                        self.nodes.lookup_accent(e)
                     } else {
                         None
                     }

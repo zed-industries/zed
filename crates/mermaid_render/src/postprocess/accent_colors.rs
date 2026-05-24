@@ -14,6 +14,44 @@ pub(crate) struct NodeRect {
     pub accent_idx: usize,
 }
 
+#[derive(Default)]
+pub(crate) struct NodeTracker {
+    rects: Vec<NodeRect>,
+    building: Option<NodeRect>,
+}
+
+impl NodeTracker {
+    pub fn start_node(&mut self, cx: f64, cy: f64, half_height: f64, accent_idx: usize) {
+        self.building = Some(NodeRect {
+            cx,
+            cy,
+            half_height,
+            accent_idx,
+        });
+    }
+
+    pub fn finish_node(&mut self) {
+        debug_assert!(self.building.is_some());
+
+        if let Some(rect) = self.building.take() {
+            self.rects.push(rect);
+        }
+    }
+
+    pub fn update_half_height(&mut self, e: &BytesStart<'_>) {
+        if let Some(node) = &mut self.building
+            && let Some(hh) = parse_path_half_height(e)
+            && hh > node.half_height
+        {
+            node.half_height = hh;
+        }
+    }
+
+    pub fn lookup_accent(&self, e: &BytesStart<'_>) -> Option<usize> {
+        lookup_position_accent(&self.rects, e)
+    }
+}
+
 pub(crate) fn parse_translate(e: &BytesStart<'_>) -> Option<(f64, f64)> {
     let attr = e.try_get_attribute("transform").ok()??;
     let val = attr.unescape_value().ok()?;
@@ -84,20 +122,17 @@ pub(crate) fn current_stack_accent(stack: &[Option<usize>]) -> Option<usize> {
 }
 
 pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>) -> Option<usize> {
-    let x: f64 = e
-        .try_get_attribute("x")
-        .ok()??
-        .unescape_value()
-        .ok()?
-        .parse()
-        .ok()?;
-    let y: f64 = e
-        .try_get_attribute("y")
-        .ok()??
-        .unescape_value()
-        .ok()?
-        .parse()
-        .ok()?;
+    let parse_attr = |name| -> Option<f64> {
+        e.try_get_attribute(name)
+            .ok()??
+            .unescape_value()
+            .ok()?
+            .parse()
+            .ok()
+    };
+    let x: f64 = parse_attr("x")?;
+    let y: f64 = parse_attr("y")?;
+
     node_rects.iter().find_map(|rect| {
         let in_y = (y - rect.cy).abs() <= rect.half_height + 5.0;
         let in_x = (x - rect.cx).abs() <= rect.half_height * 2.0;
