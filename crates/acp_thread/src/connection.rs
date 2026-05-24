@@ -115,6 +115,11 @@ pub trait AgentConnection {
         self.supports_load_session() || self.supports_resume_session()
     }
 
+    /// Whether this agent supports additional session directories.
+    fn supports_session_additional_directories(&self) -> bool {
+        false
+    }
+
     fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn terminal_auth_task(
@@ -127,7 +132,7 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn supports_logout(&self, _cx: &App) -> bool {
+    fn supports_logout(&self) -> bool {
         false
     }
 
@@ -702,6 +707,7 @@ mod test_support {
         permission_requests: HashMap<acp::ToolCallId, PermissionOptions>,
         next_prompt_updates: Arc<Mutex<Vec<acp::SessionUpdate>>>,
         supports_load_session: bool,
+        supports_session_additional_directories: bool,
         agent_id: AgentId,
         telemetry_id: SharedString,
     }
@@ -724,6 +730,7 @@ mod test_support {
                 permission_requests: HashMap::default(),
                 sessions: Arc::default(),
                 supports_load_session: false,
+                supports_session_additional_directories: false,
                 agent_id: AgentId::new("stub"),
                 telemetry_id: "stub".into(),
             }
@@ -743,6 +750,14 @@ mod test_support {
 
         pub fn with_supports_load_session(mut self, supports_load_session: bool) -> Self {
             self.supports_load_session = supports_load_session;
+            self
+        }
+
+        pub fn with_supports_session_additional_directories(
+            mut self,
+            supports_session_additional_directories: bool,
+        ) -> Self {
+            self.supports_session_additional_directories = supports_session_additional_directories;
             self
         }
 
@@ -861,6 +876,10 @@ mod test_support {
 
         fn supports_load_session(&self) -> bool {
             self.supports_load_session
+        }
+
+        fn supports_session_additional_directories(&self) -> bool {
+            self.supports_session_additional_directories
         }
 
         fn load_session(
