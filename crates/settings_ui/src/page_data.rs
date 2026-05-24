@@ -4346,7 +4346,7 @@ fn window_and_layout_page() -> SettingsPage {
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Auto Preview",
-                description: "Whether to automatically open a preview when opening files with preview capababilities.",
+                description: "Whether to automatically open a preview when opening files with preview capabilities.",
                 field: Box::new(SettingField {
                     json_path: Some("preview_tabs.auto_preview"),
                     pick: |settings_content| {
