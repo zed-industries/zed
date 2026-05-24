@@ -126,9 +126,6 @@ pub trait Scheduler: Send + Sync {
 /// The caller is responsible for supplying a `session_id` that's distinct from
 /// every other live session on `scheduler`. Concrete schedulers typically wrap
 /// this in an inherent method that allocates the id from their own counter.
-///
-/// Motivating use case: a single-threaded actor owning `!Send` state (e.g. a
-/// CRDT replica behind `Rc<RefCell<…>>`) doing blocking filesystem I/O.
 pub fn spawn_dedicated_thread<F, Fut>(
     session_id: SessionId,
     scheduler: Arc<dyn Scheduler>,

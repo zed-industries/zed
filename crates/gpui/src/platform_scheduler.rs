@@ -52,10 +52,7 @@ impl PlatformScheduler {
     /// returned `Task` is that future's task: dropping it cancels the
     /// root, but detached children keep running until they finish. The
     /// thread shuts down once the executor and every task on it are gone.
-    ///
-    /// Motivating use case: a single-threaded actor owning `!Send` state
-    /// (e.g. a CRDT replica behind `Rc<RefCell<…>>`) doing blocking
-    /// filesystem I/O.
+    #[allow(dead_code, reason = "public API with no production callers yet")]
     pub fn spawn_dedicated<F, Fut>(self: &Arc<Self>, f: F) -> Task<Fut::Output>
     where
         F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
@@ -265,5 +262,168 @@ mod tests {
         });
         let output = futures::executor::block_on(task);
         assert_eq!(output, 3);
+    }
+
+    #[test]
+    fn spawn_dedicated_dropping_task_cancels_future() {
+        use parking_lot::Mutex;
+        use std::sync::mpsc;
+
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+
+        let (started_tx, started_rx) = mpsc::channel::<()>();
+        let (after_park_tx, after_park_rx) = mpsc::channel::<()>();
+        let observed_post_await_write = Arc::new(Mutex::new(false));
+
+        let task = {
+            let observed_post_await_write = observed_post_await_write.clone();
+            scheduler.spawn_dedicated(move |_executor| async move {
+                // Announce that the future is live on the dedicated thread.
+                started_tx
+                    .send(())
+                    .expect("started signal must be received");
+                // Park forever. Dropping the `Task` must cancel us here so
+                // the code below this `await` never runs.
+                futures::future::pending::<()>().await;
+                *observed_post_await_write.lock() = true;
+                after_park_tx
+                    .send(())
+                    .expect("after-park signal must be received");
+            })
+        };
+
+        // Wait until the dedicated future is actually parked at the await.
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("dedicated future failed to start");
+
+        // Drop the root Task: this must cancel the future.
+        drop(task);
+
+        // If cancellation works, the future never advances past `pending`,
+        // so this recv must time out.
+        assert!(
+            after_park_rx
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "dedicated future advanced past the await after its Task was dropped"
+        );
+        assert!(
+            !*observed_post_await_write.lock(),
+            "dedicated future ran code past the cancellation point"
+        );
+    }
+
+    #[test]
+    fn spawn_dedicated_thread_tears_down_after_work_completes() {
+        use std::sync::mpsc;
+
+        // Fires from `Drop` so we observe teardown of the dedicated future's
+        // captured state on whichever thread runs its destructor.
+        struct DropSignal {
+            tx: Option<mpsc::Sender<std::thread::ThreadId>>,
+        }
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(tx) = self.tx.take() {
+                    let _ = tx.send(std::thread::current().id());
+                }
+            }
+        }
+
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+        let (started_tx, started_rx) = mpsc::channel::<std::thread::ThreadId>();
+        let (drop_tx, drop_rx) = mpsc::channel::<std::thread::ThreadId>();
+
+        let task = scheduler.spawn_dedicated(move |_executor| async move {
+            // Captured by the future's state. When the future completes and
+            // its state is dropped on the dedicated thread, this guard's
+            // `Drop` fires and reports the thread id it ran on.
+            let _guard = DropSignal { tx: Some(drop_tx) };
+            started_tx
+                .send(std::thread::current().id())
+                .expect("started signal must be received");
+            // Future returns immediately. The dedicated thread should then
+            // drop the future (firing _guard), exit the recv loop, and exit.
+        });
+
+        let dedicated_thread_id = started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("dedicated future failed to start");
+        assert_ne!(
+            dedicated_thread_id,
+            std::thread::current().id(),
+            "dedicated future ran on the test thread"
+        );
+
+        // Drive the root task to completion so its body finishes.
+        futures::executor::block_on(task);
+
+        // The guard's drop runs from the dedicated thread as it tears down
+        // the future's captured state. If the executor/recv-loop were
+        // keeping the future alive past task completion, this would hang.
+        let drop_thread_id = drop_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("dedicated future's captured state was not dropped after task completion");
+        assert_eq!(
+            drop_thread_id, dedicated_thread_id,
+            "dedicated future's captured state must be dropped on the dedicated thread, not elsewhere"
+        );
+    }
+
+    #[test]
+    fn spawn_dedicated_detached_child_outlives_root() {
+        use std::sync::mpsc;
+
+        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+
+        // `gate_rx` lets the detached child park until the test explicitly
+        // releases it — after we've already observed the root completing.
+        let (gate_tx, gate_rx) = mpsc::channel::<()>();
+        let (child_done_tx, child_done_rx) = mpsc::channel::<std::thread::ThreadId>();
+
+        let task = scheduler.spawn_dedicated(move |executor| async move {
+            executor
+                .spawn(async move {
+                    // Blocking on `recv` is normally wrong inside an
+                    // executor, but the dedicated thread is exclusive to
+                    // this session, so blocking the only future on it is
+                    // fine — this is the property `spawn_dedicated` is
+                    // designed to provide.
+                    gate_rx
+                        .recv()
+                        .expect("gate sender dropped before child resumed");
+                    child_done_tx
+                        .send(std::thread::current().id())
+                        .expect("child_done receiver dropped");
+                })
+                .detach();
+            // Root finishes here. The detached child must keep the
+            // dedicated thread alive until it completes.
+        });
+
+        futures::executor::block_on(task);
+
+        // Negative assertion: the child has not finished, because the gate
+        // hasn't been released yet.
+        assert!(
+            child_done_rx
+                .recv_timeout(Duration::from_millis(50))
+                .is_err(),
+            "detached child finished before being released"
+        );
+
+        // Release the gate. The detached child should now complete on the
+        // dedicated thread.
+        gate_tx.send(()).expect("gate receiver dropped");
+
+        let child_thread_id = child_done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("detached child failed to complete after gate was released");
+        assert_ne!(
+            child_thread_id,
+            std::thread::current().id(),
+            "detached child ran on the test thread instead of the dedicated thread"
+        );
     }
 }

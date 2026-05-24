@@ -871,6 +871,79 @@ fn test_spawn_dedicated_determinism_under_many() {
     );
 }
 
+#[test]
+fn test_spawn_dedicated_dropping_task_cancels_future() {
+    use parking_lot::Mutex;
+
+    let counter_after = TestScheduler::once(async |scheduler| {
+        let counter = Arc::new(Mutex::new(0_u32));
+        let (resume_tx, resume_rx) = oneshot::channel::<()>();
+
+        let task = {
+            let counter = counter.clone();
+            scheduler.spawn_dedicated(move |_executor| async move {
+                *counter.lock() = 1;
+                // Park here until the test resumes us. If the task is
+                // dropped before this resolves, the second assignment
+                // below must never happen.
+                let _ = resume_rx.await;
+                *counter.lock() = 2;
+            })
+        };
+
+        // Let the dedicated future make its first observable step.
+        scheduler.run();
+        assert_eq!(*counter.lock(), 1);
+
+        // Cancel by dropping the root task, then unblock the parked oneshot.
+        // The future must not advance past the await: counter stays at 1.
+        drop(task);
+        let _ = resume_tx.send(());
+        scheduler.run();
+
+        *counter.lock()
+    });
+
+    assert_eq!(
+        counter_after, 1,
+        "dropping the dedicated task must cancel the root future before its second write"
+    );
+}
+
+#[test]
+fn test_spawn_dedicated_detached_child_runs_after_root_completes() {
+    use parking_lot::Mutex;
+
+    let child_ran = TestScheduler::once(async |scheduler| {
+        let child_ran = Arc::new(Mutex::new(false));
+
+        let task = {
+            let child_ran = child_ran.clone();
+            scheduler.spawn_dedicated(move |executor| async move {
+                executor
+                    .spawn(async move {
+                        *child_ran.lock() = true;
+                    })
+                    .detach();
+                // Root returns immediately, before the child has had a
+                // chance to run.
+            })
+        };
+
+        task.await;
+
+        // Drain the dedicated session. The detached child must run.
+        scheduler.run();
+
+        *child_ran.lock()
+    });
+
+    assert!(
+        child_ran,
+        "detached child must complete after the root, not be cancelled with it"
+    );
+}
+
 // The production smoke test for `spawn_dedicated` lives in the `gpui` crate
 // alongside `PlatformScheduler`, which is the real production implementation
 // of the `Scheduler` trait. See `crates/gpui/src/platform_scheduler.rs`.
