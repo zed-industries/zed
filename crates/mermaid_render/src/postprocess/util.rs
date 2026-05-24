@@ -33,10 +33,26 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
     let candidate = build(text_c);
     let result = if wcag_contrast_ratio(rgba, candidate) >= 4.5 {
         candidate
-    } else if bg_luminance > 0.18 {
-        Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
     } else {
-        Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        // Binary search for the maximum chroma that still meets 4.5:1.
+        let mut lo = 0.0_f32;
+        let mut hi = text_c;
+        for _ in 0..16 {
+            let mid = (lo + hi) * 0.5;
+            if wcag_contrast_ratio(rgba, build(mid)) >= 4.5 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        let best = build(lo);
+        if wcag_contrast_ratio(rgba, best) >= 4.5 {
+            best
+        } else if bg_luminance > 0.18 {
+            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+        } else {
+            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+        }
     };
     Hsla::from(result)
 }
