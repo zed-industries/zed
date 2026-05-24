@@ -5,7 +5,7 @@ use super::{
     NodeRect, accent_class_name, add_class, add_to_event, parse_path_half_height, parse_translate,
 };
 
-const SHAPE_TAGS: &[&[u8]] = &[b"rect", b"path", b"circle", b"polygon", b"ellipse"];
+
 
 pub(crate) struct ClassDiagramAccents {
     accent_count: usize,
@@ -78,7 +78,10 @@ impl ClassDiagramAccents {
             }
 
             Event::Start(e) | Event::Empty(e)
-                if SHAPE_TAGS.iter().any(|tag| e.name().as_ref() == *tag) =>
+                if matches!(
+                    e.name().as_ref(),
+                    b"rect" | b"path" | b"circle" | b"polygon" | b"ellipse"
+                ) =>
             {
                 if e.name().as_ref() == b"path" {
                     if let Some(ref mut builder) = self.building_node {
@@ -126,6 +129,6 @@ impl ClassDiagramAccents {
     }
 
     fn current_accent(&self) -> Option<usize> {
-        self.accent_g_stack.iter().rev().find_map(|entry| *entry)
+        super::current_stack_accent(&self.accent_g_stack)
     }
 }

@@ -79,6 +79,10 @@ pub(crate) fn add_class<'a>(e: &BytesStart<'_>, class_to_add: &str) -> Result<By
     Ok(new_elem)
 }
 
+pub(crate) fn current_stack_accent(stack: &[Option<usize>]) -> Option<usize> {
+    stack.iter().rev().find_map(|entry| *entry)
+}
+
 pub(crate) fn lookup_position_accent(node_rects: &[NodeRect], e: &BytesStart<'_>) -> Option<usize> {
     let x: f64 = e
         .try_get_attribute("x")

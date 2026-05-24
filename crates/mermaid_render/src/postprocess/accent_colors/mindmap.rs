@@ -140,7 +140,7 @@ impl MindmapAccents {
     }
 
     fn current_section_accent(&self) -> Option<usize> {
-        self.section_g_stack.iter().rev().find_map(|entry| *entry)
+        super::current_stack_accent(&self.section_g_stack)
     }
 
     fn section_class_name(&self, idx: usize) -> Option<&str> {

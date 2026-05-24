@@ -117,10 +117,14 @@ fn skip_css_block(chars: &mut std::iter::Peekable<std::str::CharIndices>) {
     }
 }
 
-fn strip_css_angle_units(css: &mut String) {
-    while let Some(pos) = css.find("deg)") {
-        css.replace_range(pos..pos + 3, "");
+fn replace_all_in_place(css: &mut String, needle: &str, replacement: &str) {
+    while let Some(pos) = css.find(needle) {
+        css.replace_range(pos..pos + needle.len(), replacement);
     }
+}
+
+fn strip_css_angle_units(css: &mut String) {
+    replace_all_in_place(css, "deg)", ")");
 }
 
 /// Strip `!important` from mermaid's generated CSS so that our injected
@@ -128,9 +132,7 @@ fn strip_css_angle_units(css: &mut String) {
 /// around a usvg cascade bug where competing `!important` rules are
 /// resolved by first-wins rather than the CSS spec's last-wins.
 fn strip_css_important(css: &mut String) {
-    while let Some(pos) = css.find("!important") {
-        css.replace_range(pos..pos + 10, "");
-    }
+    replace_all_in_place(css, "!important", "");
 }
 
 #[cfg(test)]
