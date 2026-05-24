@@ -4,19 +4,19 @@ use chrono::{DateTime, Utc};
 use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{
     GetAuthenticatedUserResponse, KnownOrUnknown, Organization, OrganizationId, Plan, PlanInfo,
+    UpdateSystemSettingsBody,
 };
 use cloud_api_types::OrganizationConfiguration;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 use collections::{HashMap, HashSet, hash_map::Entry};
-use db::kvp::KeyValueStore;
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, TaskExt,
-    WeakEntity,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task,
+    TaskExt, WeakEntity,
 };
 use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
@@ -27,8 +27,6 @@ use std::{
 };
 use text::ReplicaId;
 use util::{ResultExt, TryFutureExt as _};
-
-const CURRENT_ORGANIZATION_ID_KEY: &str = "current_organization_id";
 
 pub type LegacyUserId = u64;
 
@@ -708,24 +706,41 @@ impl UserStore {
         &mut self,
         organization: Arc<Organization>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let is_same_organization = self
             .current_organization
             .as_ref()
             .is_some_and(|current| current.id == organization.id);
 
-        if !is_same_organization {
-            let organization_id = organization.id.0.to_string();
-            self.current_organization.replace(organization);
-            cx.emit(Event::OrganizationChanged);
-            cx.notify();
-
-            let kvp = KeyValueStore::global(cx);
-            db::write_and_log(cx, move || async move {
-                kvp.write_kvp(CURRENT_ORGANIZATION_ID_KEY.into(), organization_id)
-                    .await
-            });
+        if is_same_organization {
+            return Task::ready(Ok(()));
         }
+
+        let organization_id = organization.id.clone();
+        self.current_organization.replace(organization);
+        cx.emit(Event::OrganizationChanged);
+        cx.notify();
+
+        let Some(client) = self.client.upgrade() else {
+            return Task::ready(Ok(()));
+        };
+        let Some(system_id) = client.telemetry().system_id().map(|id| id.to_string()) else {
+            // Without a system ID we have no addressable target row on the
+            // server, so the selection stays purely session-local.
+            return Task::ready(Ok(()));
+        };
+        let cloud_client = client.cloud_client();
+
+        cx.background_spawn(async move {
+            let body = UpdateSystemSettingsBody {
+                selected_organization_id: Some(organization_id),
+            };
+            cloud_client
+                .update_system_settings(system_id, body)
+                .await
+                .context("failed to persist selected organization")?;
+            Ok(())
+        })
     }
 
     pub fn organizations(&self) -> &Vec<Arc<Organization>> {
@@ -861,28 +876,14 @@ impl UserStore {
         }
 
         self.organizations = response.organizations.into_iter().map(Arc::new).collect();
-        let persisted_org_id = KeyValueStore::global(cx)
-            .read_kvp(CURRENT_ORGANIZATION_ID_KEY)
-            .log_err()
-            .flatten()
-            .map(|id| OrganizationId(Arc::from(id)));
 
-        self.current_organization = persisted_org_id
-            .and_then(|persisted_id| {
+        self.current_organization = response
+            .default_organization_id
+            .and_then(|default_organization_id| {
                 self.organizations
                     .iter()
-                    .find(|org| org.id == persisted_id)
+                    .find(|organization| organization.id == default_organization_id)
                     .cloned()
-            })
-            .or_else(|| {
-                response
-                    .default_organization_id
-                    .and_then(|default_organization_id| {
-                        self.organizations
-                            .iter()
-                            .find(|organization| organization.id == default_organization_id)
-                            .cloned()
-                    })
             })
             .or_else(|| self.organizations.first().cloned());
         self.plans_by_organization = response

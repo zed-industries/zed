@@ -2386,7 +2386,10 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
             .run(ToolInput::resolved(input), event_stream.clone(), cx)
     });
     let output = exists_result.await.unwrap();
-    assert_eq!(output, LanguageModelToolResultContent::Text("B".into()));
+    assert_eq!(
+        output,
+        LanguageModelToolResultContent::Text("     1\tB".into())
+    );
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
