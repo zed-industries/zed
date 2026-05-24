@@ -350,6 +350,7 @@ fn run_example() {
     application().run(|cx: &mut App| {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
+            disabled: false,
             items: vec![],
         }]);
 

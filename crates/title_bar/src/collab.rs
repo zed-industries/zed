@@ -5,8 +5,8 @@ use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
-    canvas, point,
+    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, TaskExt,
+    WeakEntity, canvas, point,
 };
 use gpui::{App, Task, Window};
 use icons::IconName;
@@ -214,7 +214,7 @@ impl TitleBar {
 
                         Some(
                             v_flex()
-                                .id(("collaborator", collaborator.user.id))
+                                .id(("collaborator", collaborator.user.legacy_id))
                                 .child(facepile)
                                 .child(render_color_ribbon(player_color.cursor))
                                 .cursor_pointer()
@@ -261,7 +261,7 @@ impl TitleBar {
         current_user: &Arc<User>,
         cx: &App,
     ) -> Option<Div> {
-        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
+        if room.role_for_user(user.legacy_id) == Some(proto::ChannelRole::Guest) {
             return None;
         }
 
@@ -383,10 +383,29 @@ impl TitleBar {
             ConnectionQuality::Poor => (IconName::SignalMedium, Some(Color::Warning), "Poor"),
             ConnectionQuality::Lost => (IconName::SignalLow, Some(Color::Error), "Lost"),
         };
+
         let quality_label: SharedString = quality_label.into();
+
+        children.push(
+            h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("leave-call", IconName::Exit)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(Tooltip::text("Leave Call"))
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, _window, cx| {
+                            ActiveCall::global(cx)
+                                .update(cx, |call, cx| call.hang_up(cx))
+                                .detach_and_log_err(cx);
+                        }),
+                )
+                .child(Divider::vertical().color(DividerColor::Border))
+                .into_any_element(),
+        );
+
         children.push(
             IconButton::new("call-quality", signal_icon)
-                .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .when_some(signal_color, |button, color| button.icon_color(color))
                 .tooltip(move |_window, cx| {
@@ -411,23 +430,6 @@ impl TitleBar {
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(ShowCallStats), cx);
                 })
-                .into_any_element(),
-        );
-        children.push(
-            h_flex()
-                .gap_1()
-                .child(
-                    IconButton::new("leave-call", IconName::Exit)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave Call"))
-                        .icon_size(IconSize::Small)
-                        .on_click(move |_, _window, cx| {
-                            ActiveCall::global(cx)
-                                .update(cx, |call, cx| call.hang_up(cx))
-                                .detach_and_log_err(cx);
-                        }),
-                )
-                .child(Divider::vertical().color(DividerColor::Border))
                 .into_any_element(),
         );
 

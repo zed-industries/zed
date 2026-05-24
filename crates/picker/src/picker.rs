@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::{
     cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     Color, Divider, DocumentationAside, DocumentationSide, Label, ListItem, ListItemSpacing,
     ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
@@ -33,6 +33,12 @@ enum ElementContainer {
 pub enum Direction {
     Up,
     Down,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollBehavior {
+    RevealSelected,
+    PreserveOffset,
 }
 
 actions!(
@@ -119,6 +125,9 @@ pub trait PickerDelegate: Sized + 'static {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> bool {
+        true
+    }
+    fn select_on_hover(&self) -> bool {
         true
     }
 
@@ -684,9 +693,19 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
+    }
+
+    pub fn update_matches_with_options(
+        &mut self,
+        query: String,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let delegate_pending_update_matches = self.delegate.update_matches(query, window, cx);
 
-        self.matches_updated(window, cx);
+        self.matches_updated(scroll_behavior, window, cx);
         // This struct ensures that we can synchronously drop the task returned by the
         // delegate's `update_matches` method and the task that the picker is spawning.
         // If we simply capture the delegate's task into the picker's task, when the picker's
@@ -706,19 +725,40 @@ impl<D: PickerDelegate> Picker<D> {
                 })?;
                 delegate_pending_update_matches.await;
                 this.update_in(cx, |this, window, cx| {
-                    this.matches_updated(window, cx);
+                    this.matches_updated(scroll_behavior, window, cx);
                 })
             }),
         });
     }
 
-    fn matches_updated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let ElementContainer::List(state) = &mut self.element_container {
-            state.reset(self.delegate.match_count());
+    fn matches_updated(
+        &mut self,
+        scroll_behavior: ScrollBehavior,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let match_count = self.delegate.match_count();
+        match &mut self.element_container {
+            ElementContainer::List(state) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    state.reset(match_count);
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {
+                    let offset = state.logical_scroll_top();
+                    state.reset(match_count);
+                    state.scroll_to(offset);
+                }
+            },
+            ElementContainer::UniformList(_) => match scroll_behavior {
+                ScrollBehavior::RevealSelected => {
+                    let index = self.delegate.selected_index();
+                    self.scroll_to_item_index(index);
+                }
+                ScrollBehavior::PreserveOffset => {}
+            },
         }
-
-        let index = self.delegate.selected_index();
-        self.scroll_to_item_index(index);
         self.pending_update_matches = None;
         if let Some(secondary) = self.confirm_on_update.take() {
             self.do_confirm(secondary, window, cx);
@@ -746,6 +786,13 @@ impl<D: PickerDelegate> Picker<D> {
             ElementContainer::UniformList(scroll_handle) => {
                 scroll_handle.scroll_to_item(ix, ScrollStrategy::Nearest)
             }
+        }
+    }
+
+    pub fn is_scrolled_to_end(&self) -> Option<bool> {
+        match &self.element_container {
+            ElementContainer::List(state) => state.is_scrolled_to_end(),
+            ElementContainer::UniformList(scroll_handle) => scroll_handle.is_scrolled_to_end(),
         }
     }
 
@@ -788,12 +835,14 @@ impl<D: PickerDelegate> Picker<D> {
                     this.handle_click(ix, event.modifiers.platform, window, cx)
                 }),
             )
-            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                if *hovered {
-                    this.set_selected_index(ix, None, false, window, cx);
-                    cx.notify();
-                }
-            }))
+            .when(self.delegate.select_on_hover(), |this| {
+                this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                    if *hovered {
+                        this.set_selected_index(ix, None, false, window, cx);
+                        cx.notify();
+                    }
+                }))
+            })
             .children(self.delegate.render_match(
                 ix,
                 ix == self.delegate.selected_index(),
@@ -833,7 +882,7 @@ impl<D: PickerDelegate> Picker<D> {
                 el.with_width_from_item(Some(widest_item))
             })
             .flex_grow()
-            .py_1()
+            .py(DynamicSpacing::Base04.rems(cx))
             .track_scroll(&scroll_handle)
             .into_any_element(),
             ElementContainer::List(state) => list(
@@ -844,7 +893,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
             .with_sizing_behavior(sizing_behavior)
             .flex_grow()
-            .py_2()
+            .py(DynamicSpacing::Base04.rems(cx))
             .into_any_element(),
         }
     }
@@ -955,7 +1004,7 @@ mod tests {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
             cx.set_global(store);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
     }
@@ -1097,8 +1146,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .children(self.delegate.render_header(window, cx))
                         .child(self.render_element_container(cx))
                         .when(self.show_scrollbar, |this| {
-                            let base_scrollbar_config =
-                                Scrollbars::new(ScrollAxes::Vertical).width_sm();
+                            let base_scrollbar_config = Scrollbars::new(ScrollAxes::Vertical);
 
                             this.map(|this| match &self.element_container {
                                 ElementContainer::List(state) => this.custom_scrollbars(
@@ -1118,13 +1166,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.delegate.match_count() == 0, |el| {
                 el.when_some(self.delegate.no_matches_text(window, cx), |el, text| {
                     el.child(
-                        v_flex().flex_grow().py_2().child(
-                            ListItem::new("empty_state")
-                                .inset(true)
-                                .spacing(ListItemSpacing::Sparse)
-                                .disabled(true)
-                                .child(Label::new(text).color(Color::Muted)),
-                        ),
+                        v_flex()
+                            .flex_grow()
+                            .py(DynamicSpacing::Base04.rems(cx))
+                            .child(
+                                ListItem::new("empty_state")
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .disabled(true)
+                                    .child(Label::new(text).color(Color::Muted)),
+                            ),
                     )
                 })
             })

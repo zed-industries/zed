@@ -9,12 +9,14 @@ use client::ChannelId;
 use collections::HashMap;
 use editor::Editor;
 use file_icons::FileIcons;
-use fuzzy::{CharBag, PathMatch, PathMatchCandidate, StringMatch, StringMatchCandidate};
+use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, actions, rems,
+    KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
+use language::{BufferSnapshot, Point};
 use open_path_prompt::{
     OpenPathPrompt,
     file_finder_settings::{FileFinderSettings, FileFinderWidth},
@@ -28,7 +30,7 @@ use settings::Settings;
 use std::{
     borrow::Cow,
     cmp,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Component, Path, PathBuf},
     sync::{
         Arc,
@@ -36,9 +38,10 @@ use std::{
     },
 };
 use ui::{
-    ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
+    ButtonLike, CommonAnimationExt, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
+use ui_input::ErasedEditor;
 use util::{
     ResultExt, maybe,
     paths::{PathStyle, PathWithPosition},
@@ -610,10 +613,7 @@ impl Matches {
         // We build a sorted Vec<Match>, eliminating duplicate search matches.
         // Search matches with the same paths should have equal `ProjectPanelOrdMatch`, so we should
         // not have any duplicates after building the final list.
-        for new_match in new_history_matches
-            .into_values()
-            .chain(new_search_matches.into_iter())
-        {
+        for new_match in new_history_matches.into_values().chain(new_search_matches) {
             match self.position(&new_match, currently_opened) {
                 Ok(_duplicate) => continue,
                 Err(i) => {
@@ -663,15 +663,6 @@ impl Matches {
 
         // For file-vs-file matches, use the existing detailed comparison.
         if let (Some(a_panel), Some(b_panel)) = (a.panel_match(), b.panel_match()) {
-            let a_in_filename = Self::is_filename_match(a_panel);
-            let b_in_filename = Self::is_filename_match(b_panel);
-
-            match (a_in_filename, b_in_filename) {
-                (true, false) => return cmp::Ordering::Greater,
-                (false, true) => return cmp::Ordering::Less,
-                _ => {}
-            }
-
             return a_panel.cmp(b_panel);
         }
 
@@ -691,32 +682,6 @@ impl Matches {
             Match::CreateNew(_) => 0.0,
         }
     }
-
-    /// Determines if the match occurred within the filename rather than in the path
-    fn is_filename_match(panel_match: &ProjectPanelOrdMatch) -> bool {
-        if panel_match.0.positions.is_empty() {
-            return false;
-        }
-
-        if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_unix_str();
-
-            if let Some(filename_pos) = path_str.rfind(filename)
-                && panel_match.0.positions[0] >= filename_pos
-            {
-                let mut prev_position = panel_match.0.positions[0];
-                for p in &panel_match.0.positions[1..] {
-                    if *p != prev_position + 1 {
-                        return false;
-                    }
-                    prev_position = *p;
-                }
-                return true;
-            }
-        }
-
-        false
-    }
 }
 
 fn matching_history_items<'a>(
@@ -731,25 +696,21 @@ fn matching_history_items<'a>(
     let history_items_by_worktrees = history_items
         .into_iter()
         .chain(currently_opened)
-        .filter_map(|found_path| {
-            let candidate = PathMatchCandidate {
-                is_dir: false, // You can't open directories as project items
-                path: &found_path.project.path,
-                // Only match history items names, otherwise their paths may match too many queries, producing false positives.
-                // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
-                // it would be shown first always, despite the latter being a better match.
-                char_bag: CharBag::from_iter(
-                    found_path
-                        .project
-                        .path
-                        .file_name()?
-                        .to_string()
-                        .to_lowercase()
-                        .chars(),
-                ),
-            };
+        .map(|found_path| {
+            // Only match history items names, otherwise their paths may match too many queries,
+            // producing false positives. E.g. `foo` would match both `something/foo/bar.rs` and
+            // `something/foo/foo.rs` and if the former is a history item, it would be shown first
+            // always, despite the latter being a better match.
+            let candidate = PathMatchCandidate::new(
+                &found_path.project.path,
+                false,
+                worktree_name_by_id
+                    .as_ref()
+                    .and_then(|m| m.get(&found_path.project.worktree_id))
+                    .map(|prefix| prefix.as_ref()),
+            );
             candidates_paths.insert(&found_path.project, found_path);
-            Some((found_path.project.worktree_id, candidate))
+            (found_path.project.worktree_id, candidate)
         })
         .fold(
             HashMap::default(),
@@ -767,17 +728,30 @@ fn matching_history_items<'a>(
         let worktree_root_name = worktree_name_by_id
             .as_ref()
             .and_then(|w| w.get(&worktree).cloned());
+
         matching_history_paths.extend(
-            fuzzy::match_fixed_path_set(
+            fuzzy_nucleo::match_fixed_path_set(
                 candidates,
                 worktree.to_usize(),
                 worktree_root_name,
                 query.path_query(),
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 max_results,
                 path_style,
             )
             .into_iter()
+            // filter matches where at least one matched position is in filename portion, to prevent directory matches, nucleo scores them higher as history items are matched against their full path
+            .filter(|path_match| {
+                if let Some(filename) = path_match.path.file_name() {
+                    let filename_start = path_match.path.as_unix_str().len() - filename.len();
+                    path_match
+                        .positions
+                        .iter()
+                        .any(|&pos| pos >= filename_start)
+                } else {
+                    true
+                }
+            })
             .filter_map(|path_match| {
                 candidates_paths
                     .remove_entry(&ProjectPath {
@@ -833,6 +807,7 @@ struct FileSearchQuery {
     raw_query: String,
     file_query_end: Option<usize>,
     path_position: PathWithPosition,
+    line_range: Option<RangeInclusive<u32>>,
 }
 
 impl FileSearchQuery {
@@ -842,6 +817,92 @@ impl FileSearchQuery {
             None => &self.raw_query,
         }
     }
+
+    fn selection_range(&self, buffer_snapshot: &BufferSnapshot) -> Option<Range<Point>> {
+        if let Some(line_range) = self.line_range.clone() {
+            return Some(buffer_range_for_line_range(buffer_snapshot, line_range));
+        }
+
+        let row = self.path_position.row.map(|row| row.saturating_sub(1))?;
+        let col = self.path_position.column.unwrap_or(0).saturating_sub(1);
+        let point = buffer_snapshot.point_from_external_input(row, col);
+        Some(point..point)
+    }
+}
+
+fn parse_file_search_query(raw_query: &str) -> FileSearchQuery {
+    let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
+
+    if let Some((path_query, start_line, end_line)) = parse_line_range_query(&raw_query) {
+        let path_query = path_query.to_owned();
+        return FileSearchQuery {
+            raw_query,
+            file_query_end: Some(path_query.len()),
+            path_position: PathWithPosition {
+                path: PathBuf::from(&path_query),
+                row: Some(start_line),
+                column: None,
+            },
+            line_range: end_line.map(|end| start_line..=end),
+        };
+    }
+
+    let path_position = PathWithPosition::parse_str(&raw_query);
+    let path_str = path_position.path.to_str();
+    let path_trimmed = path_str.unwrap_or(&raw_query).trim_end_matches(':');
+    let file_query_end = if path_trimmed == raw_query {
+        None
+    } else {
+        path_str.map(str::len)
+    };
+
+    FileSearchQuery {
+        raw_query,
+        file_query_end,
+        path_position,
+        line_range: None,
+    }
+}
+
+fn parse_line_range_query(raw_query: &str) -> Option<(&str, u32, Option<u32>)> {
+    let (path_query, line_range) = raw_query.rsplit_once(':')?;
+    if path_query.is_empty() {
+        return None;
+    }
+
+    let (start_line, end_line) = line_range.split_once('-')?;
+    let start_line = start_line.parse::<u32>().ok()?;
+    if start_line == 0 {
+        return None;
+    }
+
+    let end_line = end_line
+        .parse::<u32>()
+        .ok()
+        .filter(|&end| end != 0 && end >= start_line);
+
+    Some((path_query, start_line, end_line))
+}
+
+fn buffer_range_for_line_range(
+    buffer_snapshot: &BufferSnapshot,
+    line_range: RangeInclusive<u32>,
+) -> Range<Point> {
+    let max_point = buffer_snapshot.max_point();
+    let start_line = line_range.start().saturating_sub(1);
+    let start_point = if start_line > max_point.row {
+        max_point
+    } else {
+        Point::new(start_line, 0)
+    };
+    let end_line = *line_range.end();
+    let end_point = if end_line > max_point.row {
+        max_point
+    } else {
+        Point::new(end_line, 0)
+    };
+
+    start_point..end_point
 }
 
 impl FileFinderDelegate {
@@ -940,11 +1001,11 @@ impl FileFinderDelegate {
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         cx.spawn_in(window, async move |picker, cx| {
-            let matches = fuzzy::match_path_sets(
+            let matches = fuzzy_nucleo::match_path_sets(
                 candidate_sets.as_slice(),
                 query.path_query(),
                 &relative_to,
-                false,
+                fuzzy_nucleo::Case::Ignore,
                 100,
                 &cancel_flag,
                 cx.background_executor().clone(),
@@ -1452,7 +1513,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
@@ -1516,23 +1576,8 @@ impl PickerDelegate for FileFinderDelegate {
             cx.notify();
             Task::ready(())
         } else {
-            let path_position = PathWithPosition::parse_str(raw_query);
-            let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
-            let path = path_position.path.clone();
-            let path_str = path_position.path.to_str();
-            let path_trimmed = path_str.unwrap_or(&raw_query).trim_end_matches(':');
-            let file_query_end = if path_trimmed == raw_query {
-                None
-            } else {
-                // Safe to unwrap as we won't get here when the unwrap in if fails
-                Some(path_str.unwrap().len())
-            };
-
-            let query = FileSearchQuery {
-                raw_query,
-                file_query_end,
-                path_position,
-            };
+            let query = parse_file_search_query(raw_query);
+            let path = query.path_position.path.clone();
 
             cx.spawn_in(window, async move |this, cx| {
                 let _ = maybe!(async move {
@@ -1675,17 +1720,7 @@ impl PickerDelegate for FileFinderDelegate {
                 }
             });
 
-            let row = self
-                .latest_search_query
-                .as_ref()
-                .and_then(|query| query.path_position.row)
-                .map(|row| row.saturating_sub(1));
-            let col = self
-                .latest_search_query
-                .as_ref()
-                .and_then(|query| query.path_position.column)
-                .unwrap_or(0)
-                .saturating_sub(1);
+            let selection_query = self.latest_search_query.clone();
             let finder = self.file_finder.clone();
             let workspace = self.workspace.clone();
 
@@ -1693,9 +1728,7 @@ impl PickerDelegate for FileFinderDelegate {
                 let item = open_task
                     .await
                     .notify_workspace_async_err(workspace, &mut cx)?;
-                if let Some(row) = row
-                    && let Some(active_editor) = item.downcast::<Editor>()
-                {
+                if let Some(active_editor) = item.downcast::<Editor>() {
                     active_editor
                         .downgrade()
                         .update_in(cx, |editor, window, cx| {
@@ -1703,8 +1736,15 @@ impl PickerDelegate for FileFinderDelegate {
                                 return;
                             };
                             let buffer_snapshot = buffer.read(cx).snapshot();
-                            let point = buffer_snapshot.point_from_external_input(row, col);
-                            editor.go_to_singleton_buffer_point(point, window, cx);
+                            let Some(selection_query) = selection_query.as_ref() else {
+                                return;
+                            };
+                            let Some(selection_range) =
+                                selection_query.selection_range(&buffer_snapshot)
+                            else {
+                                return;
+                            };
+                            editor.go_to_singleton_buffer_range(selection_range, window, cx);
                         })
                         .log_err();
                 }
@@ -1783,6 +1823,41 @@ impl PickerDelegate for FileFinderDelegate {
         )
     }
 
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        let has_search_query = self.latest_search_query.is_some();
+        let is_project_scan_running = {
+            let worktree_store = self.project.read(cx).worktree_store();
+            !worktree_store.read(cx).initial_scan_completed()
+        };
+
+        h_flex()
+            .flex_none()
+            .h_9()
+            .px_2p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(editor.render(window, cx))
+            .when(is_project_scan_running && has_search_query, |this| {
+                this.child(
+                    h_flex()
+                        .id("project-scan-indicator")
+                        .tooltip(Tooltip::text("Project Scan in Progress…"))
+                        .child(
+                            Icon::new(IconName::LoadCircle)
+                                .color(Color::Accent)
+                                .size(IconSize::Small)
+                                .with_rotate_animation(2),
+                        ),
+                )
+            })
+    }
+
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
@@ -1796,8 +1871,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("filter-menu-popover")
                         .with_handle(self.filter_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
+                        .attach(gpui::Anchor::BottomRight)
+                        .anchor(gpui::Anchor::BottomLeft)
                         .offset(gpui::Point {
                             x: px(1.0),
                             y: px(1.0),
@@ -1856,8 +1931,8 @@ impl PickerDelegate for FileFinderDelegate {
                         .child(
                             PopoverMenu::new("split-menu-popover")
                                 .with_handle(self.split_popover_menu_handle.clone())
-                                .attach(gpui::Corner::BottomRight)
-                                .anchor(gpui::Corner::BottomLeft)
+                                .attach(gpui::Anchor::BottomRight)
+                                .anchor(gpui::Anchor::BottomLeft)
                                 .offset(gpui::Point {
                                     x: px(1.0),
                                     y: px(1.0),

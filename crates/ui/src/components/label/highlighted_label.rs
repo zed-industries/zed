@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyleRefinement, StyledText};
+use gpui_util::debug_panic;
 
 use crate::{LabelCommon, LabelLike, LabelSize, LineHeightStyle, prelude::*};
 
@@ -14,14 +15,48 @@ pub struct HighlightedLabel {
 impl HighlightedLabel {
     /// Constructs a label with the given characters highlighted.
     /// Characters are identified by UTF-8 byte position.
-    pub fn new(label: impl Into<SharedString>, highlight_indices: Vec<usize>) -> Self {
+    #[track_caller]
+    pub fn new(label: impl Into<SharedString>, mut highlight_indices: Vec<usize>) -> Self {
         let label = label.into();
-        for &run in &highlight_indices {
-            assert!(
-                label.is_char_boundary(run),
-                "highlight index {run} is not a valid UTF-8 boundary"
+
+        if let Some(index) = highlight_indices
+            .iter()
+            .find(|&i| !label.is_char_boundary(*i))
+        {
+            let location = std::panic::Location::caller();
+            debug_panic!(
+                "highlight index {index} is not a valid UTF-8 boundary (called from {location})"
             );
+            highlight_indices.clear();
         }
+
+        Self {
+            base: LabelLike::new(),
+            label,
+            highlight_indices,
+        }
+    }
+
+    /// Constructs a label with the given byte ranges highlighted.
+    /// Assumes that the highlight ranges are valid UTF-8 byte positions.
+    pub fn from_ranges(
+        label: impl Into<SharedString>,
+        highlight_ranges: Vec<Range<usize>>,
+    ) -> Self {
+        let label = label.into();
+        let highlight_indices = highlight_ranges
+            .iter()
+            .flat_map(|range| {
+                let mut indices = Vec::new();
+                let mut index = range.start;
+                while index < range.end {
+                    indices.push(index);
+                    index += label[index..].chars().next().map_or(0, |c| c.len_utf8());
+                }
+                indices
+            })
+            .collect();
+
         Self {
             base: LabelLike::new(),
             label,

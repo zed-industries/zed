@@ -308,7 +308,9 @@ CREATE TABLE public.project_repositories (
     merge_message character varying,
     remote_upstream_url character varying,
     remote_origin_url character varying,
-    linked_worktrees text
+    linked_worktrees text,
+    repository_dir_abs_path character varying,
+    common_dir_abs_path character varying
 );
 
 CREATE TABLE public.project_repository_statuses (
@@ -332,7 +334,8 @@ CREATE TABLE public.projects (
     room_id integer,
     host_connection_id integer,
     host_connection_server_id integer,
-    windows_paths boolean DEFAULT false
+    windows_paths boolean DEFAULT false,
+    features text DEFAULT ''::text NOT NULL
 );
 
 CREATE SEQUENCE public.projects_id_seq
@@ -483,7 +486,8 @@ CREATE TABLE public.worktrees (
     visible boolean NOT NULL,
     scan_id bigint NOT NULL,
     is_complete boolean DEFAULT false NOT NULL,
-    completed_scan_id bigint
+    completed_scan_id bigint,
+    root_repo_common_dir character varying
 );
 
 ALTER TABLE ONLY public.breakpoints ALTER COLUMN id SET DEFAULT nextval('public.breakpoints_id_seq'::regclass);

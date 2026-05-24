@@ -14,7 +14,8 @@ use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use settings::Settings;
-use theme::{ActiveTheme, ThemeSettings};
+use theme::ActiveTheme;
+use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -78,29 +79,37 @@ fn outline_for_editor(
     cx: &mut App,
 ) -> Option<Task<Vec<OutlineItem<Anchor>>>> {
     let multibuffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-    let (excerpt_id, _, buffer_snapshot) = multibuffer.as_singleton()?;
+    let buffer_snapshot = multibuffer.as_singleton()?;
     let buffer_id = buffer_snapshot.remote_id();
     let task = editor.update(cx, |editor, cx| editor.buffer_outline_items(buffer_id, cx));
 
     Some(cx.background_executor().spawn(async move {
         task.await
             .into_iter()
-            .map(|item| OutlineItem {
-                depth: item.depth,
-                range: Anchor::range_in_buffer(excerpt_id, item.range),
-                source_range_for_text: Anchor::range_in_buffer(
-                    excerpt_id,
-                    item.source_range_for_text,
-                ),
-                text: item.text,
-                highlight_ranges: item.highlight_ranges,
-                name_ranges: item.name_ranges,
-                body_range: item
-                    .body_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
-                annotation_range: item
-                    .annotation_range
-                    .map(|r| Anchor::range_in_buffer(excerpt_id, r)),
+            .filter_map(|item| {
+                Some(OutlineItem {
+                    depth: item.depth,
+                    range: multibuffer.anchor_in_buffer(item.range.start)?
+                        ..multibuffer.anchor_in_buffer(item.range.end)?,
+                    source_range_for_text: multibuffer
+                        .anchor_in_buffer(item.source_range_for_text.start)?
+                        ..multibuffer.anchor_in_buffer(item.source_range_for_text.end)?,
+                    text: item.text,
+                    highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
+                    body_range: item.body_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                    annotation_range: item.annotation_range.and_then(|r| {
+                        Some(
+                            multibuffer.anchor_in_buffer(r.start)?
+                                ..multibuffer.anchor_in_buffer(r.end)?,
+                        )
+                    }),
+                })
             })
             .collect()
     }))
@@ -222,10 +231,14 @@ impl OutlineViewDelegate {
 
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
+        let Some(selected_match) = self.matches.get(ix) else {
+            self.selected_match_index = self.matches.len();
+            return;
+        };
+
         self.selected_match_index = ix;
 
-        if navigate && !self.matches.is_empty() {
-            let selected_match = &self.matches[self.selected_match_index];
+        if navigate {
             let outline_item = &self.outline.items[selected_match.candidate_id];
 
             self.active_editor.update(cx, |active_editor, cx| {
@@ -258,6 +271,10 @@ impl PickerDelegate for OutlineViewDelegate {
 
     fn selected_index(&self) -> usize {
         self.selected_match_index
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        ix < self.matches.len()
     }
 
     fn set_selected_index(
@@ -445,13 +462,13 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use futures::stream::StreamExt as _;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::FakeLspAdapter;
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::stream::StreamExt as _;
     use util::{path, rel_path::rel_path};
     use workspace::{AppState, MultiWorkspace, Workspace};
 
@@ -693,6 +710,70 @@ mod tests {
             selected_candidate_id, 0,
             "Empty query should fall back to the first symbol when cursor is outside all symbol ranges"
         );
+    }
+
+    #[gpui::test]
+    async fn test_outline_stale_hover_index_after_matches_shrink(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let mut source = String::new();
+        for index in 0..69 {
+            source.push_str(&format!("struct Keep{index};\n"));
+        }
+        for index in 69..74 {
+            source.push_str(&format!("struct Drop{index};\n"));
+        }
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "a.rs": source }))
+            .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(language::rust_lang())
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = cx.read(|cx| workspace.read(cx).workspace().clone());
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.rs")), None, true, window, cx)
+            })
+            .await
+            .unwrap();
+
+        let outline_view = open_outline_view(&workspace, cx);
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 74);
+        });
+
+        outline_view
+            .update_in(cx, |outline_view, window, cx| {
+                outline_view
+                    .delegate
+                    .update_matches("Keep".to_string(), window, cx)
+            })
+            .await;
+        outline_view.read_with(cx, |outline_view, _| {
+            assert_eq!(outline_view.delegate.matches.len(), 69);
+        });
+
+        outline_view.update_in(cx, |outline_view, window, cx| {
+            outline_view.set_selected_index(73, None, false, window, cx);
+        });
     }
 
     #[gpui::test]
