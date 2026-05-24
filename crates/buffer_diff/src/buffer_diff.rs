@@ -59,6 +59,17 @@ pub struct BufferDiffUpdate {
     buffer_snapshot: text::BufferSnapshot,
 }
 
+impl BufferDiffUpdate {
+    pub fn set_base_text_snapshot(
+        &mut self,
+        base_text: language::BufferSnapshot,
+        base_text_exists: bool,
+    ) {
+        self.base_text = base_text;
+        self.base_text_exists = base_text_exists;
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DiffHunkStatus {
     pub kind: DiffHunkStatusKind,

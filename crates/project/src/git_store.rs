@@ -51,7 +51,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Language, LanguageRegistry,
+    Buffer, BufferEvent, Capability, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -142,6 +142,9 @@ struct BufferGitState {
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
     oid_texts: HashMap<git::Oid, Arc<str>>,
+    head_text_buffer: Entity<Buffer>,
+    index_text_buffer: Entity<Buffer>,
+    oid_text_buffers: HashMap<Option<git::Oid>, Entity<Buffer>>,
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
@@ -156,6 +159,26 @@ enum DiffBasesChange {
         head: Option<String>,
     },
     SetBoth(Option<String>),
+}
+
+fn base_text_buffer(base_text: impl Into<String>, cx: &mut Context<Buffer>) -> Buffer {
+    let mut buffer = Buffer::local(base_text, cx);
+    buffer.set_capability(Capability::ReadOnly, cx);
+    buffer
+}
+
+fn set_base_text_buffer_language(
+    base_text_buffer: &Entity<Buffer>,
+    language: Option<Arc<Language>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    cx: &mut AsyncApp,
+) {
+    base_text_buffer.update(cx, |base_text_buffer, cx| {
+        if let Some(language_registry) = language_registry {
+            base_text_buffer.set_language_registry(language_registry);
+        }
+        base_text_buffer.set_language_async(language, cx);
+    });
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -941,23 +964,45 @@ impl GitStore {
                                 .into(),
                         ),
                     };
-                    let buffer_diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, cx));
+                    let base_text_exists = content.is_some();
+                    let base_text = content.as_deref().unwrap_or_default().to_owned();
+                    let base_text_buffer = cx.new(|cx| base_text_buffer(base_text, cx));
+                    set_base_text_buffer_language(
+                        &base_text_buffer,
+                        buffer_snapshot.language().cloned(),
+                        language_registry.clone(),
+                        cx,
+                    );
+                    let base_text_snapshot =
+                        base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                    let buffer_diff = cx.new(|cx| {
+                        BufferDiff::new_with_base_text_buffer(
+                            &buffer_snapshot.text,
+                            base_text_buffer.clone(),
+                            base_text_exists,
+                            cx,
+                        )
+                    });
 
-                    buffer_diff
+                    let update = buffer_diff
                         .update(cx, |buffer_diff, cx| {
-                            buffer_diff.language_changed(
+                            buffer_diff.update_diff(
+                                buffer_snapshot.text.clone(),
+                                &base_text_snapshot,
+                                base_text_exists,
                                 buffer_snapshot.language().cloned(),
-                                language_registry,
-                                cx,
-                            );
-                            buffer_diff.set_base_text(
-                                content.clone(),
-                                buffer_snapshot.language().cloned(),
-                                buffer_snapshot.text,
                                 cx,
                             )
                         })
-                        .await?;
+                        .await;
+                    buffer_diff.update(cx, |buffer_diff, cx| {
+                        buffer_diff.language_changed(
+                            buffer_snapshot.language().cloned(),
+                            language_registry,
+                            cx,
+                        );
+                        buffer_diff.set_snapshot(update, cx)
+                    });
                     let unstaged_diff = this
                         .update(cx, |this, cx| this.open_unstaged_diff(buffer.clone(), cx))?
                         .await?;
@@ -975,14 +1020,15 @@ impl GitStore {
                         let diff_state = this
                             .diffs
                             .entry(buffer_id)
-                            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+                            .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
                         diff_state.update(cx, |state, _| {
-                            if let Some(oid) = oid {
-                                if let Some(content) = content {
-                                    state.oid_texts.insert(oid, content);
-                                }
+                            if let Some(oid) = oid
+                                && let Some(content) = content
+                            {
+                                state.oid_texts.insert(oid, content);
                             }
+                            state.oid_text_buffers.insert(oid, base_text_buffer.clone());
                             state.oid_diffs.insert(oid, buffer_diff.downgrade());
                         });
                     })?;
@@ -1084,9 +1130,39 @@ impl GitStore {
             let diff_state = this
                 .diffs
                 .entry(buffer_id)
-                .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+                .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
 
-            let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+            let diff = match kind {
+                DiffKind::Unstaged => {
+                    let diff_state = diff_state.read(cx);
+                    let base_text_buffer = diff_state.index_text_buffer.clone();
+                    let base_text_exists = diff_state.index_text.is_some();
+                    cx.new(|cx| {
+                        BufferDiff::new_with_base_text_buffer(
+                            &text_snapshot,
+                            base_text_buffer,
+                            base_text_exists,
+                            cx,
+                        )
+                    })
+                }
+                DiffKind::Uncommitted => {
+                    let diff_state = diff_state.read(cx);
+                    let base_text_buffer = diff_state.head_text_buffer.clone();
+                    let base_text_exists = diff_state.head_text.is_some();
+                    cx.new(|cx| {
+                        BufferDiff::new_with_base_text_buffer(
+                            &text_snapshot,
+                            base_text_buffer,
+                            base_text_exists,
+                            cx,
+                        )
+                    })
+                }
+                DiffKind::SinceOid(_) => {
+                    unreachable!("open_diff_internal is not used for OID diffs")
+                }
+            };
 
             cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
             diff_state.update(cx, |diff_state, cx| {
@@ -1102,7 +1178,16 @@ impl GitStore {
                         let unstaged_diff = if let Some(diff) = diff_state.unstaged_diff() {
                             diff
                         } else {
-                            let unstaged_diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
+                            let base_text_buffer = diff_state.index_text_buffer.clone();
+                            let base_text_exists = diff_state.index_text.is_some();
+                            let unstaged_diff = cx.new(|cx| {
+                                BufferDiff::new_with_base_text_buffer(
+                                    &text_snapshot,
+                                    base_text_buffer,
+                                    base_text_exists,
+                                    cx,
+                                )
+                            });
                             diff_state.unstaged_diff = Some(unstaged_diff.downgrade());
                             unstaged_diff
                         };
@@ -1185,7 +1270,7 @@ impl GitStore {
         let buffer_git_state = self
             .diffs
             .entry(buffer_id)
-            .or_insert_with(|| cx.new(|_| BufferGitState::new(git_store)));
+            .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
         let conflict_set = cx.new(|cx| ConflictSet::new(buffer_id, is_unmerged, cx));
 
         self._subscriptions
@@ -3674,7 +3759,10 @@ impl GitStore {
 }
 
 impl BufferGitState {
-    fn new(_git_store: WeakEntity<GitStore>) -> Self {
+    fn new(_git_store: WeakEntity<GitStore>, cx: &mut Context<Self>) -> Self {
+        let head_text_buffer = cx.new(|cx| base_text_buffer("", cx));
+        let index_text_buffer = cx.new(|cx| base_text_buffer("", cx));
+
         Self {
             unstaged_diff: Default::default(),
             uncommitted_diff: Default::default(),
@@ -3688,6 +3776,9 @@ impl BufferGitState {
             head_text: Default::default(),
             index_text: Default::default(),
             oid_texts: Default::default(),
+            head_text_buffer,
+            index_text_buffer,
+            oid_text_buffers: Default::default(),
             head_changed: Default::default(),
             index_changed: Default::default(),
             language_changed: Default::default(),
@@ -3868,6 +3959,8 @@ impl BufferGitState {
         let uncommitted_diff = self.uncommitted_diff();
         let head = self.head_text.clone();
         let index = self.index_text.clone();
+        let head_text_buffer = self.head_text_buffer.clone();
+        let index_text_buffer = self.index_text_buffer.clone();
         let index_changed = self.index_changed;
         let head_changed = self.head_changed;
         let language_changed = self.language_changed;
@@ -3878,12 +3971,13 @@ impl BufferGitState {
             _ => false,
         };
 
-        let oid_diffs: Vec<(Option<git::Oid>, Entity<BufferDiff>, Option<Arc<str>>)> = self
+        let oid_diffs: Vec<(Option<git::Oid>, Entity<BufferDiff>, Entity<Buffer>, bool)> = self
             .oid_diffs
             .iter()
             .filter_map(|(oid, weak)| {
-                let base_text = oid.and_then(|oid| self.oid_texts.get(&oid).cloned());
-                weak.upgrade().map(|diff| (*oid, diff, base_text))
+                let diff = weak.upgrade()?;
+                let base_text_buffer = self.oid_text_buffers.get(oid)?.clone();
+                Some((*oid, diff, base_text_buffer, oid.is_some()))
             })
             .collect();
 
@@ -3893,6 +3987,7 @@ impl BufferGitState {
                 if let Some(oid) = oid {
                     self.oid_texts.remove(oid);
                 }
+                self.oid_text_buffers.remove(oid);
             }
             alive
         });
@@ -3902,14 +3997,41 @@ impl BufferGitState {
                 buffer.remote_id()
             );
 
+            let mut index_edited_base_text = None;
             let mut new_unstaged_diff = None;
             if let Some(unstaged_diff) = &unstaged_diff {
+                let index_base_text_exists = index.is_some();
+                let index_base_text_snapshot = if index_changed {
+                    let base_text = index.clone().unwrap_or_default();
+                    let base_text_diff = index_text_buffer.update(cx, |base_text_buffer, cx| {
+                        base_text_buffer.diff(base_text.clone(), cx)
+                    });
+                    let base_text_diff = base_text_diff.await;
+                    let edited_base_text = index_text_buffer.update(cx, |base_text_buffer, cx| {
+                        base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
+                        let edits = if base_text_buffer.version() == base_text_diff.base_version {
+                            base_text_diff.edits
+                        } else {
+                            vec![(
+                                0..base_text_buffer.len(),
+                                text::LineEnding::normalize_arc(base_text),
+                            )]
+                        };
+                        base_text_buffer.snapshot_with_edits(edits, cx)
+                    });
+                    let edited_base_text = edited_base_text.await;
+                    let snapshot = edited_base_text.snapshot().clone();
+                    index_edited_base_text = Some(edited_base_text);
+                    snapshot
+                } else {
+                    index_text_buffer.read_with(cx, |buffer, _| buffer.snapshot())
+                };
                 new_unstaged_diff = Some(
                     cx.update(|cx| {
                         unstaged_diff.read(cx).update_diff(
                             buffer.clone(),
-                            index,
-                            index_changed.then_some(false),
+                            &index_base_text_snapshot,
+                            index_base_text_exists,
                             language.clone(),
                             cx,
                         )
@@ -3922,23 +4044,67 @@ impl BufferGitState {
             // for a bit
             yield_now().await;
 
+            let mut head_edited_base_text = None;
             let mut new_uncommitted_diff = None;
             if let Some(uncommitted_diff) = &uncommitted_diff {
-                new_uncommitted_diff = if index_matches_head {
-                    new_unstaged_diff.clone()
+                if language_changed {
+                    set_base_text_buffer_language(
+                        &head_text_buffer,
+                        language.clone(),
+                        language_registry.clone(),
+                        cx,
+                    );
+                }
+                let head_base_text_exists = head.is_some();
+                let head_base_text_snapshot = if head_changed {
+                    let base_text = head.clone().unwrap_or_default();
+                    let base_text_diff = head_text_buffer.update(cx, |base_text_buffer, cx| {
+                        base_text_buffer.diff(base_text.clone(), cx)
+                    });
+                    let base_text_diff = base_text_diff.await;
+                    let edited_base_text = head_text_buffer.update(cx, |base_text_buffer, cx| {
+                        base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
+                        let edits = if base_text_buffer.version() == base_text_diff.base_version {
+                            base_text_diff.edits
+                        } else {
+                            vec![(
+                                0..base_text_buffer.len(),
+                                text::LineEnding::normalize_arc(base_text),
+                            )]
+                        };
+                        base_text_buffer.snapshot_with_edits(edits, cx)
+                    });
+                    let edited_base_text = edited_base_text.await;
+                    let snapshot = edited_base_text.snapshot().clone();
+                    head_edited_base_text = Some(edited_base_text);
+                    snapshot
                 } else {
-                    Some(
+                    head_text_buffer.read_with(cx, |buffer, _| buffer.snapshot())
+                };
+                new_uncommitted_diff = if index_matches_head {
+                    new_unstaged_diff.clone().map(|mut update| {
+                        update.set_base_text_snapshot(
+                            head_base_text_snapshot.clone(),
+                            head_base_text_exists,
+                        );
+                        update
+                    })
+                } else {
+                    None
+                };
+                if new_uncommitted_diff.is_none() {
+                    new_uncommitted_diff = Some(
                         cx.update(|cx| {
                             uncommitted_diff.read(cx).update_diff(
                                 buffer.clone(),
-                                head,
-                                head_changed.then_some(true),
+                                &head_base_text_snapshot,
+                                head_base_text_exists,
                                 language.clone(),
                                 cx,
                             )
                         })
                         .await,
-                    )
+                    );
                 }
             }
 
@@ -3971,64 +4137,78 @@ impl BufferGitState {
                 return Ok(());
             }
 
-            let unstaged_changed_range = if let Some((unstaged_diff, new_unstaged_diff)) =
-                unstaged_diff.as_ref().zip(new_unstaged_diff.clone())
+            let unstaged_changed_range = if let (Some(unstaged_diff), Some(new_unstaged_diff)) =
+                (unstaged_diff.as_ref(), new_unstaged_diff.clone())
             {
-                let task = unstaged_diff.update(cx, |diff, cx| {
+                Some(unstaged_diff.update(cx, |diff, cx| {
+                    if let Some(edited_base_text) = index_edited_base_text {
+                        index_text_buffer.update(cx, |base_text_buffer, cx| {
+                            base_text_buffer.fast_forward(edited_base_text, cx)
+                        });
+                    }
                     // For git index buffer we skip assigning the language as we do not really need to perform any syntax highlighting on
                     // it. As a result, by skipping it we are potentially shaving off a lot of RSS plus we get a snappier feel for large diff
                     // view multibuffers.
-                    diff.set_snapshot(new_unstaged_diff, &buffer, cx)
-                });
-                Some(task.await)
+                    diff.set_snapshot(new_unstaged_diff, cx)
+                }))
             } else {
                 None
             };
 
             yield_now().await;
 
-            if let Some((uncommitted_diff, new_uncommitted_diff)) =
-                uncommitted_diff.as_ref().zip(new_uncommitted_diff.clone())
+            if let (Some(uncommitted_diff), Some(new_uncommitted_diff)) =
+                (uncommitted_diff.as_ref(), new_uncommitted_diff.clone())
             {
-                uncommitted_diff
-                    .update(cx, |diff, cx| {
-                        if language_changed {
-                            diff.language_changed(language.clone(), language_registry.clone(), cx);
-                        }
-                        diff.set_snapshot_with_secondary(
-                            new_uncommitted_diff,
-                            &buffer,
-                            unstaged_changed_range.flatten(),
-                            true,
-                            cx,
-                        )
-                    })
-                    .await;
+                uncommitted_diff.update(cx, |diff, cx| {
+                    if let Some(edited_base_text) = head_edited_base_text {
+                        head_text_buffer.update(cx, |base_text_buffer, cx| {
+                            base_text_buffer.fast_forward(edited_base_text, cx)
+                        });
+                    }
+                    if language_changed {
+                        diff.language_changed(language.clone(), language_registry.clone(), cx);
+                    }
+                    diff.set_snapshot_with_secondary(
+                        new_uncommitted_diff,
+                        unstaged_changed_range.flatten(),
+                        true,
+                        cx,
+                    )
+                });
             }
 
             yield_now().await;
 
-            for (oid, oid_diff, base_text) in oid_diffs {
+            for (oid, oid_diff, base_text_buffer, base_text_exists) in oid_diffs {
+                if language_changed {
+                    set_base_text_buffer_language(
+                        &base_text_buffer,
+                        language.clone(),
+                        language_registry.clone(),
+                        cx,
+                    );
+                }
+                let base_text_snapshot =
+                    base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
                 let new_oid_diff = cx
                     .update(|cx| {
                         oid_diff.read(cx).update_diff(
                             buffer.clone(),
-                            base_text,
-                            None,
+                            &base_text_snapshot,
+                            base_text_exists,
                             language.clone(),
                             cx,
                         )
                     })
                     .await;
 
-                oid_diff
-                    .update(cx, |diff, cx| {
-                        if language_changed {
-                            diff.language_changed(language.clone(), language_registry.clone(), cx);
-                        }
-                        diff.set_snapshot(new_oid_diff, &buffer, cx)
-                    })
-                    .await;
+                oid_diff.update(cx, |diff, cx| {
+                    if language_changed {
+                        diff.language_changed(language.clone(), language_registry.clone(), cx);
+                    }
+                    diff.set_snapshot(new_oid_diff, cx)
+                });
 
                 log::debug!(
                     "finished recalculating oid diff for buffer {} oid {:?}",

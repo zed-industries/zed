@@ -9365,6 +9365,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9409,10 +9410,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
+        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
     } else {
         panic!("Unexpected event {event:?}");
     }
@@ -9468,6 +9470,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9511,6 +9514,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
