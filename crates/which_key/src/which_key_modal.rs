@@ -22,7 +22,10 @@ pub struct WhichKeyModal {
     scroll_handle: ScrollHandle,
     bindings: Vec<(SharedString, SharedString)>,
     pending_keys: SharedString,
+    manual: bool,
+    showing_continuations: bool,
     _pending_input_subscription: Subscription,
+    _keystroke_subscription: Option<Subscription>,
     _focus_out_subscription: Subscription,
 }
 
@@ -32,9 +35,18 @@ impl WhichKeyModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut this = Self::new_inner(workspace, window, cx);
+        this.update_pending_keys(window, cx);
+        this
+    }
+
+    pub fn new_manual(
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // Keep focus where it currently is
         let focus_handle = window.focused(cx).unwrap_or(cx.focus_handle());
-
         let handle = cx.weak_entity();
         let mut this = Self {
             _workspace: workspace,
@@ -42,6 +54,60 @@ impl WhichKeyModal {
             scroll_handle: ScrollHandle::new(),
             bindings: Vec::new(),
             pending_keys: SharedString::new_static(""),
+            manual: true,
+            showing_continuations: false,
+            _pending_input_subscription: cx.observe_pending_input(
+                window,
+                |this: &mut Self, window, cx| {
+                    if window.pending_input_keystrokes().is_some() {
+                        this.showing_continuations = true;
+                        this.update_pending_keys(window, cx);
+                    } else if this.showing_continuations {
+                        cx.emit(DismissEvent);
+                    }
+                },
+            ),
+            _keystroke_subscription: None,
+            _focus_out_subscription: window.on_focus_out(&focus_handle, cx, move |_, _, cx| {
+                handle.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
+            }),
+        };
+        this.update_all_bindings(window, cx);
+        // Defer the keystroke observer so it doesn't fire for the keystroke
+        // that triggered ToggleWhichKey.
+        cx.defer_in(window, |this, _window, cx| {
+            this._keystroke_subscription = Some(cx.observe_keystrokes(
+                |this, _event, _window, cx| {
+                    if !this.showing_continuations {
+                        this.dismiss(cx);
+                    }
+                },
+            ));
+        });
+        this
+    }
+
+    pub fn is_manual(&self) -> bool {
+        self.manual
+    }
+
+    fn new_inner(
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // Keep focus where it currently is
+        let focus_handle = window.focused(cx).unwrap_or(cx.focus_handle());
+        let handle = cx.weak_entity();
+        Self {
+            _workspace: workspace,
+            focus_handle: focus_handle.clone(),
+            scroll_handle: ScrollHandle::new(),
+            bindings: Vec::new(),
+            pending_keys: SharedString::new_static(""),
+            manual: false,
+            showing_continuations: false,
+            _keystroke_subscription: None,
             _pending_input_subscription: cx.observe_pending_input(
                 window,
                 |this: &mut Self, window, cx| {
@@ -51,9 +117,7 @@ impl WhichKeyModal {
             _focus_out_subscription: window.on_focus_out(&focus_handle, cx, move |_, _, cx| {
                 handle.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
             }),
-        };
-        this.update_pending_keys(window, cx);
-        this
+        }
     }
 
     pub fn dismiss(&self, cx: &mut Context<Self>) {
@@ -70,13 +134,18 @@ impl WhichKeyModal {
         let binding_data = bindings
             .into_iter()
             .map(|(keystrokes, action_name)| {
-                // Map to remaining keystrokes and action name
                 let remaining = keystrokes[pending_keys.len()..].to_vec();
                 (remaining, action_name)
             })
             .collect();
         let title = text_for_keystrokes(&pending_keys, cx).into();
         self.sort_and_finalize_bindings(binding_data, title, cx);
+    }
+
+    fn update_all_bindings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let binding_data =
+            Self::collect_filtered_bindings(window, &[], Some(&self.focus_handle), false);
+        self.sort_and_finalize_bindings(binding_data, "Keybindings".into(), cx);
     }
 
     fn collect_filtered_bindings(
@@ -93,8 +162,8 @@ impl WhichKeyModal {
         };
         bindings
             .iter()
+            // Map to keystrokes
             .map(|binding| {
-                // Map to keystrokes
                 (
                     binding
                         .keystrokes()
@@ -104,13 +173,14 @@ impl WhichKeyModal {
                     binding.action(),
                 )
             })
+            // Check if this binding matches any filtered keystroke pattern
             .filter(|(keystrokes, _action)| {
-                // Check if this binding matches any filtered keystroke pattern
                 !FILTERED_KEYSTROKES.iter().any(|filtered| {
                     keystrokes.len() >= filtered.len()
                         && keystrokes[..filtered.len()] == filtered[..]
                 })
             })
+            // Map to remaining keystrokes and action name
             .map(|(keystrokes, action)| {
                 let action_name: SharedString =
                     command_palette::humanize_action_name(action.name()).into();
@@ -316,10 +386,10 @@ impl ModalView for WhichKeyModal {
 fn group_bindings(
     binding_data: Vec<(Vec<Keystroke>, SharedString)>,
 ) -> Vec<(Vec<Keystroke>, SharedString)> {
-    // Group bindings by the visible identity of their first keystroke
     type GroupKey = Option<(Modifiers, String)>;
     let mut groups: HashMap<GroupKey, Vec<(Vec<Keystroke>, SharedString)>> = HashMap::new();
 
+    // Group bindings by the visible identity of their first keystroke
     for (remaining_keystrokes, action_name) in binding_data {
         let first_key = remaining_keystrokes
             .first()
@@ -369,4 +439,426 @@ fn group_bindings(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Action, Entity, Keystroke, TestAppContext, VisualTestContext, actions};
+    use project::Project;
+    use settings::KeymapFile;
+    use workspace::{AppState, MultiWorkspace, Workspace};
+
+    actions!(
+        test_which_key,
+        [
+            TestActionA,
+            TestActionB,
+            TestChordAction,
+            TestChordAction2,
+        ]
+    );
+
+    fn init_test(cx: &mut TestAppContext) -> std::sync::Arc<AppState> {
+        cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            workspace::init(app_state.clone(), cx);
+            crate::init(cx);
+            app_state
+        })
+    }
+
+    fn open_which_key_manual(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<WhichKeyModal> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                WhichKeyModal::new_manual(workspace_handle, window, cx)
+            });
+        });
+        cx.run_until_parked();
+        workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<WhichKeyModal>(cx)
+            })
+            .expect("WhichKeyModal should be open")
+    }
+
+    fn open_which_key_pending(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<WhichKeyModal> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                WhichKeyModal::new(workspace_handle, window, cx)
+            });
+        });
+        cx.run_until_parked();
+        workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<WhichKeyModal>(cx)
+            })
+            .expect("WhichKeyModal should be open")
+    }
+
+    #[gpui::test]
+    async fn test_manual_modal_shows_keybindings_title(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.update(|_window, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": { "ctrl-a": "test_which_key::TestActionA" } }]"#,
+                cx,
+            ));
+        });
+
+        let modal = open_which_key_manual(&workspace, cx);
+
+        modal.read_with(cx, |modal, _| {
+            assert_eq!(modal.pending_keys.as_ref(), "Keybindings");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_manual_modal_lists_bindings(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.update(|_window, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": {
+                    "ctrl-a": "test_which_key::TestActionA",
+                    "ctrl-b": "test_which_key::TestActionB"
+                } }]"#,
+                cx,
+            ));
+        });
+
+        let modal = open_which_key_manual(&workspace, cx);
+
+        modal.read_with(cx, |modal, _| {
+            let action_names: Vec<&str> =
+                modal.bindings.iter().map(|(_, a)| a.as_ref()).collect();
+            assert!(
+                action_names.contains(&"test which key: test action a"),
+                "expected TestActionA in bindings, got: {:?}",
+                action_names
+            );
+            assert!(
+                action_names.contains(&"test which key: test action b"),
+                "expected TestActionB in bindings, got: {:?}",
+                action_names
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_which_key_action_opens_modal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        workspace.update_in(cx, |_, window, cx| {
+            window.dispatch_action(
+                crate::ToggleWhichKey.boxed_clone(),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let modal = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<WhichKeyModal>(cx)
+            })
+            .expect("ToggleWhichKey should open the modal");
+
+        modal.read_with(cx, |modal, _| {
+            assert_eq!(modal.pending_keys.as_ref(), "Keybindings");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_pending_key_modal_shows_continuations(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.update(|_window, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": { "ctrl-k ctrl-d": "test_which_key::TestChordAction" } }]"#,
+                cx,
+            ));
+        });
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        let modal = open_which_key_pending(&workspace, cx);
+
+        modal.read_with(cx, |modal, _| {
+            assert!(
+                !modal.bindings.is_empty(),
+                "pending key modal should list continuations"
+            );
+            let action_names: Vec<&str> =
+                modal.bindings.iter().map(|(_, a)| a.as_ref()).collect();
+            assert!(
+                action_names.contains(&"test which key: test chord action"),
+                "expected TestChordAction continuation, got: {:?}",
+                action_names
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_escape_dismisses_manual_modal(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let _modal = open_which_key_manual(&workspace, cx);
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_modal::<WhichKeyModal>(cx).is_none(),
+                "modal should be dismissed after escape"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_which_key_closes_if_already_open(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let _modal = open_which_key_manual(&workspace, cx);
+
+        workspace.update_in(cx, |_, window, cx| {
+            window.dispatch_action(crate::ToggleWhichKey.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                workspace.active_modal::<WhichKeyModal>(cx).is_none(),
+                "second toggle should dismiss the modal"
+            );
+        });
+    }
+
+    #[test]
+    fn test_group_bindings_collapses_shared_prefix() {
+        let key_a = Keystroke::parse("a").unwrap();
+        let key_b = Keystroke::parse("b").unwrap();
+        let key_c = Keystroke::parse("c").unwrap();
+
+        let bindings = vec![
+            (vec![key_a.clone(), key_b], "Action One".into()),
+            (vec![key_a.clone(), key_c], "Action Two".into()),
+        ];
+
+        let grouped = group_bindings(bindings);
+
+        assert_eq!(grouped.len(), 1, "two bindings sharing first key should collapse into one group");
+        let (keystrokes, action) = &grouped[0];
+        assert_eq!(keystrokes.len(), 1);
+        assert_eq!(keystrokes[0], key_a);
+        assert_eq!(action.as_ref(), "+2 keybinds");
+    }
+
+    #[test]
+    fn test_group_bindings_preserves_direct_binding_with_chord_prefix() {
+        let key_h = Keystroke::parse("ctrl-h").unwrap();
+        let key_b = Keystroke::parse("b").unwrap();
+        let key_k = Keystroke::parse("k").unwrap();
+
+        let bindings = vec![
+            (vec![key_h.clone()], "Deploy Replace".into()),
+            (vec![key_h.clone(), key_b], "Toggle Which Key".into()),
+            (vec![key_h.clone(), key_k], "Describe Key".into()),
+        ];
+
+        let grouped = group_bindings(bindings);
+
+        let direct: Vec<_> = grouped
+            .iter()
+            .filter(|(_, a)| a.as_ref() == "Deploy Replace")
+            .collect();
+        assert_eq!(
+            direct.len(),
+            1,
+            "direct binding should appear individually, got: {:?}",
+            grouped.iter().map(|(_, a)| a.as_ref()).collect::<Vec<_>>()
+        );
+
+        let groups: Vec<_> = grouped
+            .iter()
+            .filter(|(_, a)| a.starts_with('+'))
+            .collect();
+        assert_eq!(
+            groups.len(),
+            1,
+            "chord bindings should be collapsed into one group"
+        );
+        assert_eq!(groups[0].1.as_ref(), "+2 keybinds");
+    }
+
+    #[test]
+    fn test_group_bindings_keeps_unique_prefixes() {
+        let key_a = Keystroke::parse("a").unwrap();
+        let key_b = Keystroke::parse("b").unwrap();
+
+        let bindings = vec![
+            (vec![key_a], "Action A".into()),
+            (vec![key_b], "Action B".into()),
+        ];
+
+        let grouped = group_bindings(bindings);
+
+        assert_eq!(grouped.len(), 2, "bindings with different first keys stay separate");
+    }
+
+    #[test]
+    fn test_group_bindings_handles_empty_keystrokes() {
+        let bindings: Vec<(Vec<Keystroke>, SharedString)> = vec![
+            (vec![], "Direct Action".into()),
+        ];
+
+        let grouped = group_bindings(bindings);
+
+        assert_eq!(grouped.len(), 1);
+        assert_eq!(grouped[0].1.as_ref(), "Direct Action");
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_bindings_are_deduped(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.update(|_window, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": { "ctrl-k ctrl-d": "test_which_key::TestChordAction" } }]"#,
+                cx,
+            ));
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": { "ctrl-k ctrl-d": "test_which_key::TestChordAction" } }]"#,
+                cx,
+            ));
+        });
+
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        let modal = open_which_key_pending(&workspace, cx);
+
+        modal.read_with(cx, |modal, _| {
+            let matching: Vec<_> = modal
+                .bindings
+                .iter()
+                .filter(|(_, a)| a.as_ref() == "test which key: test chord action")
+                .collect();
+            assert_eq!(
+                matching.len(),
+                1,
+                "duplicate bindings should be deduped, got: {:?}",
+                modal.bindings
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_manual_modal_shows_continuations_on_chord_prefix(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.update(|_window, cx| {
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
+                r#"[{ "bindings": {
+                    "ctrl-k ctrl-d": "test_which_key::TestChordAction",
+                    "ctrl-k ctrl-e": "test_which_key::TestChordAction2"
+                } }]"#,
+                cx,
+            ));
+        });
+
+        let modal = open_which_key_manual(&workspace, cx);
+
+        // Initially shows all bindings with "Keybindings" title
+        modal.read_with(cx, |modal, _| {
+            assert_eq!(modal.pending_keys.as_ref(), "Keybindings");
+            assert!(!modal.showing_continuations);
+        });
+
+        // Press ctrl-k to enter pending input
+        cx.simulate_keystrokes("ctrl-k");
+        cx.run_until_parked();
+
+        // Modal should still be open, now showing continuations
+        let modal = workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.active_modal::<WhichKeyModal>(cx)
+            })
+            .expect("modal should still be open after chord prefix");
+
+        modal.read_with(cx, |modal, _| {
+            assert!(modal.showing_continuations);
+            let action_names: Vec<&str> =
+                modal.bindings.iter().map(|(_, a)| a.as_ref()).collect();
+            assert!(
+                action_names.contains(&"test which key: test chord action"),
+                "expected continuations for ctrl-k, got: {:?}",
+                action_names
+            );
+        });
+    }
+
+    #[test]
+    fn test_group_bindings_dedupes_with_different_key_char() {
+        let key_a = Keystroke::parse("k").unwrap();
+        let mut key_a_with_char = key_a.clone();
+        key_a_with_char.key_char = Some("k".to_string());
+
+        let bindings = vec![
+            (vec![key_a], "zed: describe key".into()),
+            (vec![key_a_with_char], "zed: describe key".into()),
+        ];
+
+        let grouped = group_bindings(bindings);
+
+        assert_eq!(
+            grouped.len(),
+            1,
+            "bindings differing only in key_char should dedup, got: {:?}",
+            grouped.iter().map(|(_, a)| a.as_ref()).collect::<Vec<_>>()
+        );
+    }
 }

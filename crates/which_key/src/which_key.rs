@@ -17,7 +17,9 @@ actions!(
     zed,
     [
         /// Captures the next keystroke and describes what action it would trigger.
-        DescribeKey
+        DescribeKey,
+        /// Shows all available keybindings for the current context.
+        ToggleWhichKey,
     ]
 );
 
@@ -36,11 +38,20 @@ pub fn init(cx: &mut App) {
             });
         });
 
+        workspace.register_action(|workspace, _: &ToggleWhichKey, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                WhichKeyModal::new_manual(workspace_handle, window, cx)
+            });
+        });
+
         let mut timer = None;
         cx.observe_pending_input(window, move |workspace, window, cx| {
             if window.pending_input_keystrokes().is_none() {
                 if let Some(modal) = workspace.active_modal::<WhichKeyModal>(cx) {
-                    modal.update(cx, |modal, cx| modal.dismiss(cx));
+                    if !modal.read(cx).is_manual() {
+                        modal.update(cx, |modal, cx| modal.dismiss(cx));
+                    }
                 };
                 timer.take();
                 return;
