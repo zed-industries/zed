@@ -247,8 +247,6 @@ path = "examples/grid_layout.rs"
 name = "list_example"
 path = "examples/list_example.rs"
 
-
-
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"

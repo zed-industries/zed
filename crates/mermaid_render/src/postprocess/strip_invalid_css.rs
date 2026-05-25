@@ -60,7 +60,7 @@ fn strip_unsupported_css(css: &str) -> String {
     let mut result = String::with_capacity(css.len());
     let mut chars = css.char_indices().peekable();
 
-    while let Some(&(i, _)) = chars.peek() {
+    while let Some((i, ch)) = chars.next() {
         let remaining = &css[i..];
 
         if remaining.starts_with("@keyframes") || remaining.starts_with("@-webkit-keyframes") {
@@ -73,7 +73,6 @@ fn strip_unsupported_css(css: &str) -> String {
             continue;
         }
 
-        let (_, ch) = chars.next().expect("peeked successfully above");
         result.push(ch);
     }
 

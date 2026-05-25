@@ -334,7 +334,6 @@ pub struct Markdown {
     options: MarkdownOptions,
     mermaid_state: MermaidState,
     _mermaid_theme_subscription: Option<Subscription>,
-    last_mermaid_theme_id: Option<String>,
     mermaid_showing_code: HashSet<usize>,
     copied_code_blocks: HashSet<ElementId>,
     wrapped_code_blocks: HashSet<usize>,
@@ -502,7 +501,7 @@ impl Markdown {
 
         let theme_subscription = if options.render_mermaid_diagrams {
             Some(
-                cx.observe_global::<settings::SettingsStore>(|this: &mut Self, cx| {
+                cx.observe_global::<theme::GlobalTheme>(|this: &mut Self, cx| {
                     this.invalidate_mermaid_cache(cx);
                 }),
             )
@@ -527,7 +526,6 @@ impl Markdown {
             options,
             mermaid_state: MermaidState::default(),
             _mermaid_theme_subscription: theme_subscription,
-            last_mermaid_theme_id: None,
             mermaid_showing_code: HashSet::default(),
             copied_code_blocks: HashSet::default(),
             wrapped_code_blocks: HashSet::default(),
@@ -582,15 +580,8 @@ impl Markdown {
             return;
         }
 
-        let current_theme_id = cx.theme().id.clone();
-        if self.last_mermaid_theme_id.as_ref() == Some(&current_theme_id) {
-            return;
-        }
-        self.last_mermaid_theme_id = Some(current_theme_id);
-
         self.mermaid_state.clear();
-        let parsed_markdown = self.parsed_markdown.clone();
-        self.mermaid_state.update(&parsed_markdown, cx);
+        self.mermaid_state.update(&self.parsed_markdown, cx);
         cx.notify();
     }
 

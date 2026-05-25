@@ -103,10 +103,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for StripForeignObject<
 }
 
 pub(super) fn process<'a>(
-    events: impl Iterator<Item = Result<Event<'a>>>,
+    inner: impl Iterator<Item = Result<Event<'a>>>,
 ) -> impl Iterator<Item = Result<Event<'a>>> {
     StripForeignObject {
-        inner: events,
+        inner,
         foreign_depth: 0,
         fallback_depth: 0,
         has_native_text: false,

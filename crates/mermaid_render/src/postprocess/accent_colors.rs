@@ -1,3 +1,10 @@
+//! Injects CSS classes to set accent colors. Mermaid broadly speaking does not
+//! provide a mechanism to color individual nodes. A few diagram types support
+//! `:::my-css-class` on nodes, but most don't.
+//! 
+//! [`inject_css`](super::inject_css) then injects CSS rules for the classes
+//! that this module injects.
+
 mod class_diagram;
 mod mindmap;
 mod sequence_diagram;
@@ -76,7 +83,7 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
     Some(y.abs())
 }
 
-/// Returns the CSS class name for a given accent index (e.g., `"zed-accent-0"`).
+// These arrays are basically just optimized versions of `format!("zed-accent-{i}")`
 const ACCENT_CLASSES: [&str; 8] = [
     "zed-accent-0",
     "zed-accent-1",
@@ -107,7 +114,7 @@ fn chart_color_class_name(index: usize) -> &'static str {
     CHART_COLOR_CLASSES[index % CHART_COLOR_CLASSES.len()]
 }
 
-/// Wraps `add_class` and preserves the `Start`/`Empty` variant of the original event.
+/// Wraps [`add_class`] and preserves the `Start`/`Empty` variant of the original event.
 pub(crate) fn add_to_event<'a>(ev: &Event<'_>, e: &BytesStart<'_>, cl: &str) -> Result<Event<'a>> {
     let new_elem = add_class(e, cl)?;
     Ok(match ev {
@@ -197,14 +204,17 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
     DiagramType::SequenceDiagram
 }
 
+/// Different diagrams require different state when computing accent colors.
 enum Handler {
+    /// Before we have identified the diagram type 
     Pending,
+    /// Diagram type doesn't require injecting classes. 
+    Passthrough,
     Flowchart(class_diagram::ClassDiagramAccents),
     Mindmap(mindmap::MindmapAccents),
     ClassDiagram(class_diagram::ClassDiagramAccents),
     StateDiagram(class_diagram::ClassDiagramAccents),
     Sequence(sequence_diagram::SequenceDiagramAccents),
-    Passthrough,
 }
 
 struct AccentColors<I> {

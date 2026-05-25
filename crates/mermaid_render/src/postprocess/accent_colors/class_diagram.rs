@@ -86,7 +86,7 @@ impl ClassDiagramAccents {
                 let accent_idx = if is_text {
                     self.nodes
                         .lookup_accent(e)
-                        .or_else(|| self.current_accent())
+                        .or_else(|| super::current_stack_accent(&self.accent_g_stack))
                 } else {
                     self.current_text_accent
                 };
@@ -108,9 +108,5 @@ impl ClassDiagramAccents {
 
             _ => Ok(event),
         }
-    }
-
-    fn current_accent(&self) -> Option<usize> {
-        super::current_stack_accent(&self.accent_g_stack)
     }
 }

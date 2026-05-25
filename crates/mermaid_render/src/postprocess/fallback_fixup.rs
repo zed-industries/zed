@@ -125,8 +125,8 @@ impl<'a, I> FallbackFixup<'a, I> {
 
     fn process_non_text_event(&self, event: Event<'a>) -> Result<Event<'a>> {
         let is_start = matches!(event, Event::Start(_));
-        match event {
-            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"rect" => {
+        match &event {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"rect" => {
                 let mut new_elem = BytesStart::new("rect");
                 for attr in e.attributes() {
                     let attr = attr?;

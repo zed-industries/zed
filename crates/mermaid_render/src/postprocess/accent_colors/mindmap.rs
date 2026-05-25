@@ -59,17 +59,15 @@ impl MindmapAccents {
             Event::Start(e) | Event::Empty(e)
                 if e.name().as_ref() == b"text" || e.name().as_ref() == b"tspan" =>
             {
-                let is_text = e.name().as_ref() == b"text";
-
                 let section_idx = self.current_section_accent().or_else(|| {
-                    if is_text {
+                    if e.name().as_ref() == b"text" {
                         self.nodes.lookup_accent(e)
                     } else {
                         None
                     }
                 });
 
-                if is_text {
+                if e.name().as_ref() == b"text" {
                     self.current_text_section = section_idx;
                 }
 

@@ -10,9 +10,7 @@
 //! Many modules contain internal structs that implement [`Iterator`] to make
 //! reasoning about lifetimes simpler, but these are private implementation
 //! details.
-//!
-//! The [`accent_colors`] module is slightly different to the rest, since it
-//! behaves differently based on the type of diagram being rendered.
+
 
 mod accent_colors;
 mod element_fixup;
