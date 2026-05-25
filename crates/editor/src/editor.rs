@@ -9231,7 +9231,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 edited_buffer,
-                is_local,
+                source,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -9242,7 +9242,7 @@ impl Editor {
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&snapshot, cx);
-                if *is_local && self.has_active_edit_prediction() {
+                if source.is_local() && self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 

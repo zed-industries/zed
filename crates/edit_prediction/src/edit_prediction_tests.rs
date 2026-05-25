@@ -26,8 +26,8 @@ use gpui::{
 };
 use indoc::indoc;
 use language::{
-    Anchor, Buffer, Capability, CursorShape, Diagnostic, DiagnosticEntry, DiagnosticSet,
-    DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
+    Anchor, Buffer, BufferEditSource, Capability, CursorShape, Diagnostic, DiagnosticEntry,
+    DiagnosticSet, DiagnosticSeverity, Operation, Point, Selection, SelectionGoal,
 };
 
 use lsp::LanguageServerId;
@@ -350,6 +350,70 @@ async fn test_diagnostics_refresh_suppressed_while_following(cx: &mut TestAppCon
             BufferEditPrediction::Jump { prediction } if prediction.snapshot.file().unwrap().full_path(cx) == Path::new(path!("root/2.txt"))
         );
     });
+}
+
+#[gpui::test]
+async fn test_diagnostics_refresh_suppressed_after_agent_edit(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(
+            false,
+            vec![EditPredictionJumpsFeatureFlag::NAME.to_string()],
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "1.txt": "Hello!\nHow\nBye\n",
+            "2.txt": "Hola!\nComo\nAdios\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+            project.set_active_path(Some(path.clone()), cx);
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.start_transaction();
+        buffer.edit([(Point::new(1, 3)..Point::new(1, 3), "!")], None, cx);
+        buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
+    });
+    cx.run_until_parked();
+
+    update_test_diagnostics(&project, path!("/root/2.txt"), "Sentence is incomplete", cx);
+    cx.run_until_parked();
+    assert_no_predict_request_ready(&mut requests.predict);
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(Point::new(1, 4)..Point::new(1, 4), "?")], None, cx);
+    });
+    cx.run_until_parked();
+
+    update_test_diagnostics(
+        &project,
+        path!("/root/2.txt"),
+        "Sentence is still incomplete",
+        cx,
+    );
+
+    let (_request, respond_tx) = requests.predict.next().await.unwrap();
+    respond_tx.send(empty_response()).unwrap();
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -2496,6 +2560,39 @@ fn assert_no_predict_request_ready(
     if requests.next().now_or_never().flatten().is_some() {
         panic!("Unexpected prediction request while throttled.");
     }
+}
+
+fn update_test_diagnostics(
+    project: &Entity<Project>,
+    path: &str,
+    message: &str,
+    cx: &mut TestAppContext,
+) {
+    let diagnostic = lsp::Diagnostic {
+        range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+        severity: Some(lsp::DiagnosticSeverity::ERROR),
+        message: message.to_string(),
+        ..Default::default()
+    };
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path).unwrap(),
+                        diagnostics: vec![diagnostic],
+                        version: None,
+                    },
+                    None,
+                    language::DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap();
+        });
+    });
 }
 
 struct RequestChannels {
