@@ -131,17 +131,34 @@ impl StreamingDiff {
 
     pub fn push_new(&mut self, text: &str) -> Vec<CharOperation> {
         self.new.extend(text.chars());
+
+        let fast_path_hunks = self.fast_path_matching();
+        if !fast_path_hunks.is_empty() {
+            return fast_path_hunks;
+        }
+
         self.scores.swap_columns(0, self.scores.cols - 1);
         self.scores
             .resize(self.old.len() + 1, self.new.len() - self.new_text_ix + 1);
         self.equal_runs.retain(|(_i, j), _| *j == self.new_text_ix);
+
+        let band_width = Self::band_width(self.old.len(), self.new.len());
 
         for j in self.new_text_ix + 1..=self.new.len() {
             let relative_j = j - self.new_text_ix;
 
             self.scores
                 .set(0, relative_j, j as f64 * Self::INSERTION_SCORE);
-            for i in 1..=self.old.len() {
+
+            let diag_center = if self.old.len() > 0 {
+                (j as f64 * self.old.len() as f64 / self.new.len() as f64) as usize
+            } else {
+                0
+            };
+            let i_start = cmp::max(1, diag_center.saturating_sub(band_width));
+            let i_end = cmp::min(self.old.len(), diag_center + band_width);
+
+            for i in i_start..=i_end {
                 let insertion_score = self.scores.get(i, relative_j - 1) + Self::INSERTION_SCORE;
                 let deletion_score = self.scores.get(i - 1, relative_j) + Self::DELETION_SCORE;
                 let equality_score = if self.old[i - 1] == self.new[j - 1] {
@@ -175,6 +192,56 @@ impl StreamingDiff {
         self.old_text_ix = next_old_text_ix;
         self.new_text_ix = next_new_text_ix;
         hunks
+    }
+
+    fn band_width(old_len: usize, new_len: usize) -> usize {
+        if old_len < 500 || new_len < 500 {
+            return old_len;
+        }
+        let ratio = old_len as f64 / cmp::max(new_len, 1) as f64;
+        let base_width = cmp::max((old_len as f64 * 0.1) as usize, 500);
+        if ratio < 0.5 || ratio > 2.0 {
+            cmp::max(base_width, (old_len as f64 * 0.3) as usize)
+        } else {
+            base_width
+        }
+    }
+
+    fn fast_path_matching(&mut self) -> Vec<CharOperation> {
+        let remaining_old = self.old.len() - self.old_text_ix;
+        let remaining_new = self.new.len() - self.new_text_ix;
+        if remaining_old == 0 && remaining_new == 0 {
+            return Vec::new();
+        }
+
+        let match_limit = cmp::min(remaining_old, remaining_new);
+        let mut keep_chars = 0;
+        for k in 0..match_limit {
+            if self.old[self.old_text_ix + k] == self.new[self.new_text_ix + k] {
+                keep_chars = k + 1;
+            } else {
+                break;
+            }
+        }
+
+        if keep_chars == 0 {
+            return Vec::new();
+        }
+
+        let keep_bytes: usize = self.old[self.old_text_ix..self.old_text_ix + keep_chars]
+            .iter()
+            .map(|c| c.len_utf8())
+            .sum();
+        self.old_text_ix += keep_chars;
+        self.new_text_ix += keep_chars;
+
+        self.scores
+            .resize(self.old.len() + 1, self.new.len() - self.new_text_ix + 1);
+        for i in 0..=self.old.len() {
+            self.scores.set(i, 0, i as f64 * Self::DELETION_SCORE);
+        }
+
+        vec![CharOperation::Keep { bytes: keep_bytes }]
     }
 
     fn backtrack(&self, old_text_ix: usize, new_text_ix: usize) -> Vec<CharOperation> {
