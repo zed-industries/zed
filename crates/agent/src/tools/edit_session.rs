@@ -17,16 +17,19 @@ use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use language::language_settings::{self, FormatOnSave};
-use language::{Buffer, BufferEvent, LanguageRegistry};
+use language::{Buffer, BufferEvent, DiskState, LanguageRegistry};
 use language_model::LanguageModelToolResultContent;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
-use project::{AgentLocation, Project, ProjectPath};
+use project::{AgentLocation, File, Project, ProjectPath, Worktree, WorktreeId};
 use reindent::{Reindenter, compute_indent_delta};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 use streaming_parser::{EditEvent, StreamingParser, WriteEvent};
@@ -34,6 +37,8 @@ use text::ToOffset;
 use ui::SharedString;
 use util::rel_path::RelPath;
 use util::{Deferred, ResultExt};
+
+static NEXT_DIRECT_GLOBAL_SKILL_WORKTREE_ID: AtomicUsize = AtomicUsize::new(usize::MAX / 2);
 
 /// Operating mode used internally by `EditSession`/`Pipeline` to choose between
 /// applying granular edits (the `edit_file` tool) or replacing/creating the
@@ -296,10 +301,7 @@ pub(crate) async fn run_session(
 ) -> Result<EditSessionOutput, EditSessionOutput> {
     match result {
         EditSessionResult::Completed(session) => {
-            session
-                .context
-                .ensure_buffer_saved(&session.buffer, cx)
-                .await;
+            session.save(cx).await;
             let (new_text, diff) = session.compute_new_text_and_diff(cx).await;
             Ok(EditSessionOutput::Success {
                 old_text: session.old_text.clone(),
@@ -312,10 +314,7 @@ pub(crate) async fn run_session(
             error,
             session: Some(session),
         } => {
-            session
-                .context
-                .ensure_buffer_saved(&session.buffer, cx)
-                .await;
+            session.save(cx).await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
             Err(EditSessionOutput::Error {
                 error,
@@ -364,11 +363,34 @@ pub(crate) struct EditSession {
     parser: StreamingParser,
     pipeline: Pipeline,
     context: Arc<EditSessionContext>,
-    /// Keeps the hidden `~/.agents/skills/` worktree alive for the session.
-    /// `WorktreeStore` only holds a `Weak` reference to invisible worktrees,
-    /// so without this the worktree drops between `new` and the buffer save.
-    _global_skill_worktree: Option<Entity<project::Worktree>>,
+    backing: EditSessionBacking,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
+}
+
+enum EditSessionBacking {
+    Project {
+        /// Keeps the hidden `~/.agents/skills/` worktree alive for the
+        /// session. `WorktreeStore` only holds a `Weak` reference to invisible
+        /// worktrees, so without this the worktree drops between `new` and the
+        /// buffer save.
+        _global_skill_worktree: Option<Entity<Worktree>>,
+    },
+    DirectGlobalSkill {
+        worktree: Entity<Worktree>,
+        path: Arc<RelPath>,
+    },
+}
+
+enum PreparedEditSessionPath {
+    Project {
+        project_path: ProjectPath,
+        global_skill_worktree: Option<Entity<Worktree>>,
+    },
+    DirectGlobalSkill {
+        worktree: Entity<Worktree>,
+        path: Arc<RelPath>,
+        abs_path: PathBuf,
+    },
 }
 
 enum Pipeline {
@@ -660,38 +682,48 @@ impl EditSession {
     ) -> Result<Self, String> {
         let path = expand_user_home(&path);
 
-        // `~/.agents/skills/` lives outside every worktree. Resolve through a
-        // hidden worktree we attach on demand, bypassing `find_project_path`
-        // which only consults *visible* worktrees. Restricted to local
-        // projects — `project.fs()` is the *remote* fs for SSH/collab
-        // projects and global skills always live on the user's local machine.
+        // `~/.agents/skills/` lives outside every project worktree. Local
+        // projects can attach it as a hidden project worktree; remote projects
+        // must use the app-local filesystem directly because their worktree
+        // store points at the remote host.
         let (fs, is_local) = context.project.read_with(cx, |project, _cx| {
             (project.fs().clone(), project.is_local())
         });
-        let (project_path, global_skill_worktree) = if is_local
-            && resolve_global_skill_creation_target(&path, fs.as_ref())
-                .await
-                .is_some()
+        let prepared_path = if let Some(skill_target) =
+            resolve_global_skill_creation_target(&path, fs.as_ref()).await
         {
-            let worktree = ensure_global_skills_worktree(&context.project, cx).await?;
-            let project_path = resolve_global_skill_project_path(&worktree, &path, mode, cx)?;
-            (project_path, Some(worktree))
+            if is_local {
+                let worktree = ensure_global_skills_worktree(&context.project, cx).await?;
+                let project_path =
+                    resolve_global_skill_project_path(&worktree, &skill_target, mode, cx)?;
+                PreparedEditSessionPath::Project {
+                    project_path,
+                    global_skill_worktree: Some(worktree),
+                }
+            } else {
+                let (worktree, path, abs_path) =
+                    prepare_direct_global_skill_path(skill_target, mode, fs, cx).await?;
+                PreparedEditSessionPath::DirectGlobalSkill {
+                    worktree,
+                    path,
+                    abs_path,
+                }
+            }
         } else {
-            (
-                cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?,
-                None,
-            )
+            PreparedEditSessionPath::Project {
+                project_path: cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?,
+                global_skill_worktree: None,
+            }
         };
 
-        let Some(abs_path) =
-            cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return Err(format!(
-                "Worktree at '{}' does not exist",
-                path.to_string_lossy()
-            ));
+        let abs_path = match &prepared_path {
+            PreparedEditSessionPath::Project { project_path, .. } => cx
+                .update(|cx| context.project.read(cx).absolute_path(project_path, cx))
+                .ok_or_else(|| {
+                    format!("Worktree at '{}' does not exist", path.to_string_lossy())
+                })?,
+            PreparedEditSessionPath::DirectGlobalSkill { abs_path, .. } => abs_path.clone(),
         };
-
         event_stream.update_fields(
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
         );
@@ -700,11 +732,32 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let buffer = context
-            .project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))
-            .await
-            .map_err(|e| e.to_string())?;
+        let (buffer, backing) = match prepared_path {
+            PreparedEditSessionPath::Project {
+                project_path,
+                global_skill_worktree,
+            } => {
+                let buffer = context
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                (
+                    buffer,
+                    EditSessionBacking::Project {
+                        _global_skill_worktree: global_skill_worktree,
+                    },
+                )
+            }
+            PreparedEditSessionPath::DirectGlobalSkill { worktree, path, .. } => {
+                let buffer =
+                    open_direct_global_skill_buffer(&worktree, path.clone(), mode, cx).await?;
+                (
+                    buffer,
+                    EditSessionBacking::DirectGlobalSkill { worktree, path },
+                )
+            }
+        };
 
         let file_changed_since_last_read =
             ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
@@ -741,9 +794,28 @@ impl EditSession {
             parser: StreamingParser::default(),
             pipeline: Pipeline::new(mode, file_changed_since_last_read),
             context,
-            _global_skill_worktree: global_skill_worktree,
+            backing,
             _finalize_diff_guard: finalize_diff_guard,
         })
+    }
+
+    async fn save(&self, cx: &mut AsyncApp) {
+        match &self.backing {
+            EditSessionBacking::Project { .. } => {
+                self.context.ensure_buffer_saved(&self.buffer, cx).await;
+            }
+            EditSessionBacking::DirectGlobalSkill { worktree, path } => {
+                save_direct_global_skill_buffer(
+                    &self.buffer,
+                    worktree,
+                    path.clone(),
+                    &self.context,
+                    cx,
+                )
+                .await
+                .log_err();
+            }
+        }
     }
 
     pub(crate) async fn finalize_edit(
@@ -1095,6 +1167,127 @@ async fn resolve_dirty_buffer(
             return Err(error);
         }
     }
+    Ok(())
+}
+
+async fn prepare_direct_global_skill_path(
+    skill_target: PathBuf,
+    mode: EditSessionMode,
+    fs: Arc<dyn fs::Fs>,
+    cx: &mut AsyncApp,
+) -> Result<(Entity<Worktree>, Arc<RelPath>, PathBuf), String> {
+    let skills_dir =
+        resolve_global_skill_creation_target(&agent_skills::global_skills_dir(), fs.as_ref())
+            .await
+            .ok_or_else(|| "Could not resolve the global skills directory".to_string())?;
+
+    let worktree = Worktree::local(
+        Arc::<std::path::Path>::from(skills_dir),
+        false,
+        fs,
+        Arc::new(AtomicUsize::new(1)),
+        true,
+        WorktreeId::from_usize(
+            NEXT_DIRECT_GLOBAL_SKILL_WORKTREE_ID.fetch_add(1, Ordering::Relaxed),
+        ),
+        cx,
+    )
+    .await
+    .map_err(|err| format!("Opening global skills directory: {err}"))?;
+
+    let scan_complete = worktree.read_with(cx, |worktree, _cx| {
+        worktree.as_local().map(|local| local.scan_complete())
+    });
+    if let Some(scan_complete) = scan_complete {
+        scan_complete.await;
+    }
+
+    let project_path = resolve_global_skill_project_path(&worktree, &skill_target, mode, cx)?;
+    let abs_path = worktree.read_with(cx, |worktree, _cx| worktree.absolutize(&project_path.path));
+
+    Ok((worktree, project_path.path, abs_path))
+}
+
+async fn open_direct_global_skill_buffer(
+    worktree: &Entity<Worktree>,
+    path: Arc<RelPath>,
+    mode: EditSessionMode,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Buffer>, String> {
+    let entry_exists =
+        worktree.read_with(cx, |worktree, _cx| worktree.entry_for_path(&path).is_some());
+
+    if entry_exists {
+        let loaded = worktree
+            .update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx))
+            .await
+            .map_err(|err| err.to_string())?;
+
+        let buffer = cx.new(|cx| {
+            let mut buffer = Buffer::local(loaded.text, cx);
+            buffer.file_updated(loaded.file.clone(), cx);
+            buffer.set_encoding(loaded.encoding);
+            buffer.set_has_bom(loaded.has_bom);
+            let version = buffer.version();
+            buffer.did_save(version, loaded.file.disk_state.mtime(), cx);
+            buffer
+        });
+        return Ok(buffer);
+    }
+
+    if mode == EditSessionMode::Edit {
+        return Err("Can't edit file: path not found".to_string());
+    }
+
+    let file = Arc::new(File {
+        worktree: worktree.clone(),
+        path: path.clone(),
+        disk_state: DiskState::New,
+        entry_id: None,
+        is_local: true,
+        is_private: false,
+    });
+    Ok(cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.file_updated(file, cx);
+        let version = buffer.version();
+        buffer.did_save(version, None, cx);
+        buffer
+    }))
+}
+
+async fn save_direct_global_skill_buffer(
+    buffer: &Entity<Buffer>,
+    worktree: &Entity<Worktree>,
+    path: Arc<RelPath>,
+    context: &EditSessionContext,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let (text, line_ending, encoding, has_bom, version) = buffer.read_with(cx, |buffer, _cx| {
+        (
+            buffer.as_rope().clone(),
+            buffer.line_ending(),
+            buffer.encoding(),
+            buffer.has_bom(),
+            buffer.version(),
+        )
+    });
+
+    let new_file = worktree
+        .update(cx, |worktree, cx| {
+            worktree.write_file(path, text, line_ending, encoding, has_bom, cx)
+        })
+        .await?;
+    let mtime = new_file.disk_state.mtime();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.file_updated(new_file, cx);
+        buffer.did_save(version, mtime, cx);
+    });
+    context.action_log.update(cx, |log, cx| {
+        log.buffer_edited(buffer.clone(), cx);
+    });
+
     Ok(())
 }
 

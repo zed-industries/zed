@@ -145,14 +145,11 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             // `~/.agents/skills/` lives outside every worktree, so bypass
-            // `find_project_path` and create the directory directly. Only do
-            // this for local projects — `project.fs()` is the *remote* fs for
-            // SSH/collab projects and global skills always live on the user's
-            // local machine.
-            let is_local = project.read_with(cx, |project, _cx| project.is_local());
-            if is_local
-                && let Some(skill_target) =
-                    resolve_global_skill_creation_target(&expanded_path, fs.as_ref()).await
+            // `find_project_path` and create the directory directly. `fs`
+            // is the app-local filesystem even for remote projects, which is
+            // where global skills are supposed to live.
+            if let Some(skill_target) =
+                resolve_global_skill_creation_target(&expanded_path, fs.as_ref()).await
             {
                 futures::select! {
                     result = fs.create_dir(&skill_target).fuse() => {
@@ -572,13 +569,11 @@ mod tests {
         assert!(!fs.is_dir(&outside_path).await);
     }
 
-    /// On remote/collab projects, the carve-out must not fire — `project.fs()`
-    /// is the remote fs and we don't want to touch a remote machine's home
-    /// directory.
+    /// On remote/collab projects, global skills are still local to this Zed
+    /// instance, so the carve-out should create them via the app-local fs
+    /// instead of rejecting them as outside the project.
     #[gpui::test]
-    async fn test_create_directory_skip_skills_carve_out_for_remote_projects(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_create_directory_global_skill_in_remote_project(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(path!("/root"), json!({ "project": {} }))
@@ -609,16 +604,9 @@ mod tests {
             ))
             .unwrap();
 
-        let result = task.await;
-        assert!(
-            result
-                .as_ref()
-                .err()
-                .is_some_and(|e| e.contains("outside the project")),
-            "got: {result:?}",
-        );
+        task.await.unwrap();
         let skill_dir = agent_skills::global_skills_dir().join("remote-skill");
-        assert!(!fs.is_dir(&skill_dir).await);
+        assert!(fs.is_dir(&skill_dir).await);
     }
 
     /// `..` segments that point *out of* the skills tree after canonicalization

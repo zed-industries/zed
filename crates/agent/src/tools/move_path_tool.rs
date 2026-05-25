@@ -9,6 +9,7 @@ use crate::{
 };
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
+use fs::{RemoveOptions, RenameOptions, read_dir_items};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -16,7 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{path::Path, sync::Arc};
-use util::markdown::MarkdownInlineCode;
+use util::{markdown::MarkdownInlineCode, paths::PathStyle, rel_path::RelPath};
 
 /// Moves or rename a file or directory in the project, and returns confirmation that the move succeeded.
 ///
@@ -177,20 +178,74 @@ impl AgentTool for MovePathTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
-            // Gate the skills carve-out on local projects: `project.fs()` is
-            // the *remote* fs on SSH/collab projects and global skills always
-            // live on the user's local machine.
             let is_local = project.read_with(cx, |project, _cx| project.is_local());
             let expanded_source = expand_user_home(&input.source_path);
             let expanded_dest = expand_user_home(&input.destination_path);
-            let source_in_skills = is_local
-                && resolve_global_skill_path(&expanded_source, fs.as_ref())
-                    .await
-                    .is_some();
-            let dest_in_skills = is_local
-                && resolve_global_skill_creation_target(&expanded_dest, fs.as_ref())
-                    .await
-                    .is_some();
+            let source_skill_target = resolve_global_skill_path(&expanded_source, fs.as_ref()).await;
+            let dest_skill_target =
+                resolve_global_skill_creation_target(&expanded_dest, fs.as_ref()).await;
+
+            if !is_local
+                && let (Some(source), Some(destination)) = (
+                    source_skill_target.as_ref(),
+                    dest_skill_target.as_ref(),
+                )
+            {
+                futures::select! {
+                    result = fs.rename(
+                        source,
+                        destination,
+                        RenameOptions {
+                            create_parents: true,
+                            ..Default::default()
+                        },
+                    ).fuse() => {
+                        result.map_err(|e| {
+                            format!(
+                                "Moving {} to {}: {e}",
+                                input.source_path, input.destination_path
+                            )
+                        })?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Move cancelled by user".to_string());
+                    }
+                }
+                return Ok(format!(
+                    "Moved {} to {}",
+                    input.source_path, input.destination_path
+                ));
+            }
+
+            if !is_local
+                && let Some(source) = source_skill_target.as_ref()
+                && dest_skill_target.is_none()
+            {
+                let move_task =
+                    move_global_skill_to_project(source, &input.destination_path, &project, &fs, cx)
+                        .fuse();
+                futures::pin_mut!(move_task);
+                futures::select! {
+                    result = move_task => {
+                        result.map_err(|e| {
+                            format!(
+                                "Moving {} to {}: {e}",
+                                input.source_path, input.destination_path
+                            )
+                        })?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Move cancelled by user".to_string());
+                    }
+                }
+                return Ok(format!(
+                    "Moved {} to {}",
+                    input.source_path, input.destination_path
+                ));
+            }
+
+            let source_in_skills = is_local && source_skill_target.is_some();
+            let dest_in_skills = is_local && dest_skill_target.is_some();
 
             // Kept in scope past `rename_task` because `WorktreeStore` only
             // holds invisible worktrees by `Weak`.
@@ -263,6 +318,93 @@ fn resolve_source_entry_id(
         .entry_for_path(&project_path, cx)
         .map(|entry| entry.id)
         .ok_or_else(|| format!("Source path {source_path} was not found in the project."))
+}
+
+async fn move_global_skill_to_project(
+    source: &Path,
+    destination_path: &str,
+    project: &Entity<Project>,
+    fs: &Arc<dyn fs::Fs>,
+    cx: &mut gpui::AsyncApp,
+) -> Result<(), String> {
+    let source_metadata = fs
+        .metadata(source)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Source path {} was not found.", source.display()))?;
+
+    let (destination_project_path, destination_worktree) =
+        project.read_with(cx, |project, cx| -> Result<_, String> {
+            let destination_project_path = project
+                .find_project_path(destination_path, cx)
+                .ok_or_else(|| {
+                    format!("Destination path {destination_path} was outside the project.")
+                })?;
+            if project
+                .entry_for_path(&destination_project_path, cx)
+                .is_some()
+            {
+                return Err(format!(
+                    "Destination path {destination_path} already exists."
+                ));
+            }
+            let destination_worktree = project
+                .worktree_for_id(destination_project_path.worktree_id, cx)
+                .ok_or_else(|| format!("No worktree for path {destination_path}"))?;
+            Ok((destination_project_path, destination_worktree))
+        })?;
+
+    let items = read_dir_items(fs.as_ref(), source)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for (item_path, is_directory) in items {
+        let relative_path = item_path.strip_prefix(source).map_err(|_| {
+            format!(
+                "Could not resolve {} relative to {}",
+                item_path.display(),
+                source.display()
+            )
+        })?;
+        let path = if relative_path.as_os_str().is_empty() {
+            destination_project_path.path.clone()
+        } else {
+            let relative_path = RelPath::new(relative_path, PathStyle::local())
+                .map_err(|e| format!("Invalid source path {}: {e}", item_path.display()))?;
+            destination_project_path.path.join(relative_path.as_ref())
+        };
+
+        let content = if is_directory {
+            None
+        } else {
+            Some(fs.load_bytes(&item_path).await.map_err(|e| e.to_string())?)
+        };
+
+        destination_worktree
+            .update(cx, |worktree, cx| {
+                worktree.create_entry(path, is_directory, content, cx)
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    if source_metadata.is_dir {
+        fs.remove_dir(
+            source,
+            RemoveOptions {
+                recursive: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    } else {
+        fs.remove_file(source, RemoveOptions::default())
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -654,6 +796,66 @@ mod tests {
         assert!(!fs.is_dir(&skills_dir.join("shared-skill")).await);
     }
 
+    #[gpui::test]
+    async fn test_move_path_global_skill_to_project_in_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "zed": {} })).await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_dir(&skills_dir.join("test-skill")).await.unwrap();
+        fs.insert_file(
+            skills_dir.join("test-skill").join("SKILL.md"),
+            b"---\nname: test-skill\ndescription: move me\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root/zed").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let input = MovePathToolInput {
+            source_path: "~/.agents/skills/test-skill".into(),
+            destination_path: "zed/.agents/skills/test-skill".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "move should succeed: {result:?}");
+        assert!(
+            fs.is_dir(Path::new(path!("/root/zed/.agents/skills/test-skill")))
+                .await
+        );
+        assert!(
+            fs.is_file(Path::new(path!(
+                "/root/zed/.agents/skills/test-skill/SKILL.md"
+            )))
+            .await
+        );
+        assert!(!fs.is_dir(&skills_dir.join("test-skill")).await);
+    }
+
     /// Both source and destination resolve through the hidden worktree.
     #[gpui::test]
     async fn test_move_path_rename_within_global_skills(cx: &mut TestAppContext) {
@@ -697,8 +899,62 @@ mod tests {
         assert!(!fs.is_dir(&skills_dir.join("old-name")).await);
     }
 
-    /// The carve-out must not fire on remote/collab projects — it would
-    /// otherwise touch the agent's local home directory.
+    #[gpui::test]
+    async fn test_move_path_rename_within_global_skills_in_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_dir(&skills_dir.join("old-name")).await.unwrap();
+        fs.insert_file(
+            skills_dir.join("old-name").join("SKILL.md"),
+            b"---\nname: old-name\ndescription: rename me\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let source = skills_dir.join("old-name").to_string_lossy().into_owned();
+        let destination = skills_dir.join("new-name").to_string_lossy().into_owned();
+        let input = MovePathToolInput {
+            source_path: source,
+            destination_path: destination,
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "rename should succeed: {result:?}");
+        assert!(fs.is_dir(&skills_dir.join("new-name")).await);
+        assert!(!fs.is_dir(&skills_dir.join("old-name")).await);
+    }
+
+    /// Cross-host project-to-global moves stay rejected on remote/collab
+    /// projects rather than pretending a filesystem rename can cross machines.
     #[gpui::test]
     async fn test_move_path_skip_skills_carve_out_for_remote_projects(cx: &mut TestAppContext) {
         init_test(cx);

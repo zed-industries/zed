@@ -322,6 +322,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_write_creates_global_skill_file_in_remote_project(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skill_dir = agent_skills::global_skills_dir().join("remote-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        let (write_tool, project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs.clone(), &[path!("/root/project").as_ref()]).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "~/.agents/skills/remote-skill/SKILL.md".into(),
+                    content: "hello from remote project".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.next_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                agent_client_protocol::schema::PermissionOptionId::new("allow"),
+                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        task.await.expect("write should succeed");
+        let on_disk = fs.load(&skill_dir.join("SKILL.md")).await.unwrap();
+        assert_eq!(on_disk, "hello from remote project");
+    }
+
+    #[gpui::test]
     async fn test_streaming_write_create_file(cx: &mut TestAppContext) {
         let (write_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"dir": {}})).await;

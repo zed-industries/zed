@@ -351,6 +351,68 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_streaming_edit_global_skill_file_in_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skill_dir = agent_skills::global_skills_dir().join("remote-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+        fs.insert_file(
+            &skill_file,
+            b"---\nname: remote-skill\ndescription: original\n---\nbody".to_vec(),
+        )
+        .await;
+
+        let (edit_tool, project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs.clone(), &[path!("/root/project").as_ref()]).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: skill_file.clone(),
+                    edits: vec![Edit {
+                        old_text: "description: original".into(),
+                        new_text: "description: updated".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.next_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.expect("edit should succeed")
+        else {
+            panic!("expected success");
+        };
+        assert!(new_text.contains("description: updated"), "got: {new_text}");
+        let on_disk = String::from_utf8(fs.load_bytes(&skill_file).await.unwrap()).unwrap();
+        assert!(on_disk.contains("description: updated"), "got: {on_disk}");
+    }
+
+    #[gpui::test]
     async fn test_streaming_edit_granular_edits(cx: &mut TestAppContext) {
         let (edit_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"file.txt": "line 1\nline 2\nline 3\n"})).await;
