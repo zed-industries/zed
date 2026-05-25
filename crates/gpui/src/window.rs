@@ -5085,6 +5085,23 @@ impl Window {
             .possible_next_bindings_for_input(input, &self.context_stack())
     }
 
+    /// Find the bindings that can follow the current input sequence for a specific focus handle's
+    /// context stack. Returns an empty `Vec` if the focus handle is not present in the most
+    /// recently rendered frame's dispatch tree (e.g. before the first render or if the handle
+    /// has gone stale).
+    pub fn possible_bindings_for_input_in(
+        &self,
+        input: &[Keystroke],
+        focus_handle: &FocusHandle,
+    ) -> Vec<KeyBinding> {
+        let Some(context_stack) = self.context_stack_for_focus_handle(focus_handle) else {
+            return Vec::new();
+        };
+        self.rendered_frame
+            .dispatch_tree
+            .possible_next_bindings_for_input(input, &context_stack)
+    }
+
     fn context_stack_for_focus_handle(
         &self,
         focus_handle: &FocusHandle,
