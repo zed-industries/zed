@@ -88,7 +88,7 @@ Reference these in the skill body. The agent can read them using the file path s
 
 1. Decide on scope (global vs project-local) based on the user's needs.
 2. Choose a descriptive, hyphenated name.
-3. Create the directory structure.
+3. Create the directory structure. The `create_directory` tool normally only creates directories inside the current project, but it has a special allow case for global skills under `~/.agents/skills`.
 4. Write the `SKILL.md` with frontmatter and instructions.
 5. Optionally add supporting files (templates, examples, references).
 
