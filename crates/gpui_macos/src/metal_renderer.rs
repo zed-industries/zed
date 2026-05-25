@@ -7,9 +7,9 @@ use cocoa::{
     quartzcore::AutoresizingMask,
 };
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, BackgroundGpu, Bounds, ContentMask, DevicePixels, LinearColorStopGpu,
+    MonochromeSprite, PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad,
+    ScaledPixels, Scene, Shadow, Size, Surface, Underline, point, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -139,7 +139,7 @@ pub(crate) struct MetalRenderer {
 pub struct PathRasterizationVertex {
     pub xy_position: Point<ScaledPixels>,
     pub st_position: Point<f32>,
-    pub color: Background,
+    pub color: BackgroundGpu,
     pub bounds: Bounds<ScaledPixels>,
 }
 
@@ -751,6 +751,15 @@ impl MetalRenderer {
         let alpha = if self.opaque { 1. } else { 0. };
         let mut instance_offset = 0;
 
+        let gradient_stops_offset =
+            match copy_gradient_stops(scene, instance_buffer, &mut instance_offset) {
+                Some(offset) => offset,
+                None => anyhow::bail!(
+                    "scene too large: {} gradient stops won't fit in instance buffer",
+                    scene.gradient_stops.len()
+                ),
+            };
+
         let mut command_encoder = new_command_encoder_for_texture(
             command_buffer,
             texture,
@@ -774,6 +783,7 @@ impl MetalRenderer {
                     &scene.quads[range],
                     instance_buffer,
                     &mut instance_offset,
+                    gradient_stops_offset,
                     viewport_size,
                     command_encoder,
                 ),
@@ -785,6 +795,7 @@ impl MetalRenderer {
                         paths,
                         instance_buffer,
                         &mut instance_offset,
+                        gradient_stops_offset,
                         viewport_size,
                         command_buffer,
                     );
@@ -877,6 +888,7 @@ impl MetalRenderer {
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
+        gradient_stops_offset: usize,
         viewport_size: Size<DevicePixels>,
         command_buffer: &metal::CommandBufferRef,
     ) -> bool {
@@ -937,6 +949,11 @@ impl MetalRenderer {
             PathRasterizationInputIndex::Vertices as u64,
             Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            PathRasterizationInputIndex::GradientStops as u64,
+            Some(&instance_buffer.metal_buffer),
+            gradient_stops_offset as u64,
         );
         let buffer_contents =
             unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
@@ -1026,6 +1043,7 @@ impl MetalRenderer {
         quads: &[Quad],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
+        gradient_stops_offset: usize,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
@@ -1049,6 +1067,16 @@ impl MetalRenderer {
             QuadInputIndex::Quads as u64,
             Some(&instance_buffer.metal_buffer),
             *instance_offset as u64,
+        );
+        command_encoder.set_vertex_buffer(
+            QuadInputIndex::GradientStops as u64,
+            Some(&instance_buffer.metal_buffer),
+            gradient_stops_offset as u64,
+        );
+        command_encoder.set_fragment_buffer(
+            QuadInputIndex::GradientStops as u64,
+            Some(&instance_buffer.metal_buffer),
+            gradient_stops_offset as u64,
         );
 
         command_encoder.set_vertex_bytes(
@@ -1620,6 +1648,29 @@ fn align_offset(offset: &mut usize) {
     *offset = (*offset).div_ceil(256) * 256;
 }
 
+fn copy_gradient_stops(
+    scene: &Scene,
+    instance_buffer: &mut InstanceBuffer,
+    instance_offset: &mut usize,
+) -> Option<usize> {
+    align_offset(instance_offset);
+    let stops = scene.gradient_stops.as_slice();
+    let bytes_len = mem::size_of_val(stops);
+    let offset = *instance_offset;
+    let next_offset = offset + bytes_len.max(mem::size_of::<LinearColorStopGpu>());
+    if next_offset > instance_buffer.size {
+        return None;
+    }
+    if !stops.is_empty() {
+        unsafe {
+            let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8).add(offset);
+            ptr::copy_nonoverlapping(stops.as_ptr() as *const u8, buffer_contents, bytes_len);
+        }
+    }
+    *instance_offset = next_offset;
+    Some(offset)
+}
+
 #[repr(C)]
 enum ShadowInputIndex {
     Vertices = 0,
@@ -1632,6 +1683,7 @@ enum QuadInputIndex {
     Vertices = 0,
     Quads = 1,
     ViewportSize = 2,
+    GradientStops = 3,
 }
 
 #[repr(C)]
@@ -1664,6 +1716,7 @@ enum SurfaceInputIndex {
 enum PathRasterizationInputIndex {
     Vertices = 0,
     ViewportSize = 1,
+    GradientStops = 2,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -12106,7 +12106,7 @@ impl Focusable for BreakpointPromptEditor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LineHighlight {
     pub background: Background,
     pub border: Option<gpui::Hsla>,

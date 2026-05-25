@@ -3491,11 +3491,13 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
+        let background = quad.background.opacity(opacity);
+        let background = self.next_frame.scene.intern_background(&background);
         self.next_frame.scene.insert_primitive(Quad {
             order: 0,
             bounds: snapped_bounds,
             content_mask: self.snapped_content_mask(),
-            background: quad.background.opacity(opacity),
+            background,
             border_color: quad.border_color.opacity(opacity),
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
@@ -3514,7 +3516,8 @@ impl Window {
         let opacity = self.element_opacity();
         path.content_mask = content_mask;
         let color: Background = color.into();
-        path.color = color.opacity(opacity);
+        let color = color.opacity(opacity);
+        path.color = self.next_frame.scene.intern_background(&color);
         self.next_frame
             .scene
             .insert_primitive(path.scale(scale_factor));

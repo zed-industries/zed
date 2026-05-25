@@ -667,19 +667,17 @@ impl Style {
 
         window.paint_shadows(bounds, corner_radii, &self.box_shadow);
 
-        let background_color = self.background.as_ref().and_then(Fill::color);
-        if background_color.is_some_and(|color| !color.is_transparent()) {
-            let mut border_color = match background_color {
-                Some(color) => match color.tag {
+        let background = self.background.as_ref().and_then(Fill::color);
+        if background.is_some_and(|bg| !bg.is_transparent()) {
+            let mut border_color = match background {
+                Some(bg) => match bg.tag {
                     BackgroundTag::Solid
                     | BackgroundTag::PatternSlash
-                    | BackgroundTag::Checkerboard => color.solid,
+                    | BackgroundTag::Checkerboard => bg.solid,
 
-                    BackgroundTag::LinearGradient => color
-                        .colors
-                        .first()
-                        .map(|stop| stop.color)
-                        .unwrap_or_default(),
+                    BackgroundTag::LinearGradient => {
+                        bg.colors.first().map(|stop| stop.color).unwrap_or_default()
+                    }
                 },
                 None => Hsla::default(),
             };
@@ -687,7 +685,7 @@ impl Style {
             window.paint_quad(quad(
                 bounds,
                 corner_radii,
-                background_color.unwrap_or_default(),
+                background.cloned().unwrap_or_default(),
                 Edges::default(),
                 border_color,
                 self.border_style,
@@ -811,12 +809,12 @@ pub enum Fill {
 }
 
 impl Fill {
-    /// Unwrap this fill into a solid color, if it is one.
+    /// Unwrap this fill into its background, if it is a color fill.
     ///
-    /// If the fill is not a solid color, this method returns `None`.
-    pub fn color(&self) -> Option<Background> {
+    /// If the fill is not a color fill, this method returns `None`.
+    pub fn color(&self) -> Option<&Background> {
         match self {
-            Fill::Color(color) => Some(*color),
+            Fill::Color(color) => Some(color),
         }
     }
 }

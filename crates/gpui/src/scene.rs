@@ -5,8 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, BackgroundFill, BackgroundGpu, BackgroundTag, Bounds,
+    ContentMask, Corners, Edges, Gradient, Hsla, LinearColorStopGpu, Pixels, Point, Radians,
+    ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -36,6 +37,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub gradient_stops: Vec<LinearColorStopGpu>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +54,39 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.gradient_stops.clear();
+    }
+
+    /// Converts a user-facing [`Background`] into its GPU representation,
+    /// interning any gradient stops into [`Scene::gradient_stops`].
+    pub fn intern_background(&mut self, background: &Background) -> BackgroundGpu {
+        let fill = match background.tag {
+            BackgroundTag::Solid | BackgroundTag::PatternSlash | BackgroundTag::Checkerboard => {
+                BackgroundFill {
+                    solid: background.solid,
+                }
+            }
+            BackgroundTag::LinearGradient => {
+                let stops = background.stops();
+                let stop_offset = self.gradient_stops.len() as u32;
+                let stop_count = stops.len() as u32;
+                self.gradient_stops
+                    .extend(stops.iter().copied().map(LinearColorStopGpu::new));
+                BackgroundFill {
+                    gradient: Gradient {
+                        stop_offset,
+                        stop_count,
+                        color_space: background.color_space,
+                        _pad: 0,
+                    },
+                }
+            }
+        };
+        BackgroundGpu {
+            tag: background.tag,
+            fill,
+            gradient_angle_or_pattern_height: background.gradient_angle_or_pattern_height,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -481,7 +516,7 @@ pub enum PrimitiveBatch {
     Surfaces(Range<usize>),
 }
 
-#[derive(Default, Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 #[repr(C)]
 #[expect(missing_docs)]
 pub struct Quad {
@@ -489,7 +524,7 @@ pub struct Quad {
     pub border_style: BorderStyle,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Background,
+    pub background: BackgroundGpu,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
@@ -739,7 +774,7 @@ pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub bounds: Bounds<P>,
     pub content_mask: ContentMask<P>,
     pub vertices: Vec<PathVertex<P>>,
-    pub color: Background,
+    pub color: BackgroundGpu,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,

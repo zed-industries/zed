@@ -2,7 +2,7 @@
 
 use gpui::{
     App, Bounds, ColorSpace, Context, Half, Render, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, size,
+    linear_color_stop, linear_gradient, linear_gradient_stops, point, prelude::*, px, size,
 };
 use gpui_platform::application;
 
@@ -205,6 +205,52 @@ impl Render for GradientViewer {
                         )
                         .color_space(color_space)),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_3()
+                    .h_24()
+                    .text_color(gpui::white())
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient_stops(
+                            90.,
+                            [
+                                linear_color_stop(gpui::red(), 0.0),
+                                linear_color_stop(gpui::yellow(), 0.33),
+                                linear_color_stop(gpui::green(), 0.66),
+                                linear_color_stop(gpui::blue(), 1.0),
+                            ],
+                        )
+                        .color_space(color_space)),
+                    )
+                    .child(
+                        div().flex_1().rounded_xl().bg(linear_gradient_stops(
+                            45.,
+                            [
+                                linear_color_stop(gpui::red(), 0.0),
+                                linear_color_stop(gpui::white(), 0.5),
+                                linear_color_stop(gpui::blue(), 1.0),
+                            ],
+                        )
+                        .color_space(color_space)),
+                    ),
+            )
+            .child(
+                div().h_24().rounded_xl().bg(linear_gradient_stops(
+                    90.,
+                    [
+                        linear_color_stop(gpui::rgb(0xff0000), 0.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0xff7f00), 1.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0xffff00), 2.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0x00ff00), 3.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0x0000ff), 4.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0x4b0082), 5.0 / 6.0),
+                        linear_color_stop(gpui::rgb(0x9400d3), 6.0 / 6.0),
+                    ],
+                )
+                .color_space(color_space)),
             )
             .child(div().h_24().child(canvas(
                 move |_, _, _| {},

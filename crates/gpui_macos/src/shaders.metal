@@ -34,23 +34,14 @@ float blur_along_x(float x, float y, float sigma, float corner,
                    float2 half_size);
 float4 over(float4 below, float4 above);
 float radians(float degrees);
-float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
-  float4 solid_color, float4 color0, float4 color1);
-
-struct GradientColor {
-  float4 solid;
-  float4 color0;
-  float4 color1;
-};
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
+float4 fill_color(BackgroundGpu background, float2 position, Bounds_ScaledPixels bounds,
+  float4 solid_color, constant LinearColorStopGpu *gradient_stops);
 
 struct QuadVertexOutput {
   uint quad_id [[flat]];
   float4 position [[position]];
   float4 border_color [[flat]];
   float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -59,8 +50,6 @@ struct QuadFragmentInput {
   float4 position [[position]];
   float4 border_color [[flat]];
   float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
 };
 
 vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
@@ -79,30 +68,27 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
-  GradientColor gradient = prepare_fill_color(
-    quad.background.tag,
-    quad.background.color_space,
-    quad.background.solid,
-    quad.background.colors[0].color,
-    quad.background.colors[1].color
-  );
+  float4 background_solid = float4(0.);
+  if (quad.background.tag != BackgroundTag_LinearGradient) {
+    background_solid = hsla_to_rgba(quad.background.fill.solid);
+  }
 
   return QuadVertexOutput{
       quad_id,
       device_position,
       border_color,
-      gradient.solid,
-      gradient.color0,
-      gradient.color1,
+      background_solid,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+                              [[buffer(QuadInputIndex_Quads)]],
+                              constant LinearColorStopGpu *gradient_stops
+                              [[buffer(QuadInputIndex_GradientStops)]]) {
   Quad quad = quads[input.quad_id];
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
+    input.background_solid, gradient_stops);
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -758,13 +744,14 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant LinearColorStopGpu *gradient_stops [[buffer(PathRasterizationInputIndex_GradientStops)]]
 ) {
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
 
   PathRasterizationVertex v = vertices[input.vertex_id];
-  Background background = v.color;
+  BackgroundGpu background = v.color;
   Bounds_ScaledPixels path_bounds = v.bounds;
   float alpha;
   if (length(float2(dx.x, dy.x)) < 0.001) {
@@ -779,21 +766,17 @@ fragment float4 path_rasterization_fragment(
     alpha = saturate(0.5 - distance);
   }
 
-  GradientColor gradient_color = prepare_fill_color(
-    background.tag,
-    background.color_space,
-    background.solid,
-    background.colors[0].color,
-    background.colors[1].color
-  );
+  float4 solid_color = float4(0.);
+  if (background.tag != BackgroundTag_LinearGradient) {
+    solid_color = hsla_to_rgba(background.fill.solid);
+  }
 
   float4 color = fill_color(
     background,
     input.position.xy,
     path_bounds,
-    gradient_color.solid,
-    gradient_color.color0,
-    gradient_color.color1
+    solid_color,
+    gradient_stops
   );
   return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
@@ -1137,44 +1120,51 @@ float4 over(float4 below, float4 above) {
   return result;
 }
 
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
-                                     Hsla color0, Hsla color1) {
-  GradientColor out;
-  if (tag == 0 || tag == 2 || tag == 3) {
-    out.solid = hsla_to_rgba(solid);
-  } else if (tag == 1) {
-    out.color0 = hsla_to_rgba(color0);
-    out.color1 = hsla_to_rgba(color1);
-
-    // Prepare color space in vertex for avoid conversion
-    // in fragment shader for performance reasons
-    if (color_space == 1) {
-      // Oklab
-      out.color0 = srgb_to_oklab(out.color0);
-      out.color1 = srgb_to_oklab(out.color1);
-    }
-  }
-
-  return out;
-}
-
 float2x2 rotate2d(float angle) {
     float s = sin(angle);
     float c = cos(angle);
     return float2x2(c, -s, s, c);
 }
 
-float4 fill_color(Background background,
+float4 sample_gradient(float t,
+                       uint color_space,
+                       constant LinearColorStopGpu *stops,
+                       uint offset,
+                       uint count) {
+  // count is always >= 2 (constructors enforce that). Clamp t and walk the
+  // stops to find the segment that brackets it.
+  uint i = 0;
+  for (uint k = 0; k + 1 < count; ++k) {
+    i = (t >= stops[offset + k].percentage) ? k : i;
+  }
+  LinearColorStopGpu a = stops[offset + i];
+  LinearColorStopGpu b = stops[offset + i + 1];
+  float span = max(b.percentage - a.percentage, 1e-6);
+  float local_t = clamp((t - a.percentage) / span, 0.0, 1.0);
+
+  float4 ca = hsla_to_rgba(a.color);
+  float4 cb = hsla_to_rgba(b.color);
+  if (color_space == ColorSpace_Oklab) {
+    ca = srgb_to_oklab(ca);
+    cb = srgb_to_oklab(cb);
+    return oklab_to_srgb(mix(ca, cb, local_t));
+  } else {
+    return mix(ca, cb, local_t);
+  }
+}
+
+float4 fill_color(BackgroundGpu background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
-                      float4 solid_color, float4 color0, float4 color1) {
+                      float4 solid_color,
+                      constant LinearColorStopGpu *gradient_stops) {
   float4 color;
 
   switch (background.tag) {
-    case 0:
+    case BackgroundTag_Solid:
       color = solid_color;
       break;
-    case 1: {
+    case BackgroundTag_LinearGradient: {
       // -90 degrees to match the CSS gradient angle.
       float gradient_angle = background.gradient_angle_or_pattern_height;
       float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
@@ -1199,22 +1189,9 @@ float4 fill_color(Background background,
           t = (t + half_size.y) / bounds.size.height;
       }
 
-      // Adjust t based on the stop percentages
-      t = (t - background.colors[0].percentage)
-        / (background.colors[1].percentage
-        - background.colors[0].percentage);
-      t = clamp(t, 0.0, 1.0);
-
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
-      }
+      Gradient gradient = background.fill.gradient;
+      color = sample_gradient(t, gradient.color_space, gradient_stops,
+                              gradient.stop_offset, gradient.stop_count);
 
       // Dither to reduce banding in gradients (especially dark/alpha).
       // Triangular-distributed noise breaks up 8-bit quantization steps.
@@ -1231,7 +1208,7 @@ float4 fill_color(Background background,
 
       break;
     }
-    case 2: {
+    case BackgroundTag_PatternSlash: {
         float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
         float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;
         float pattern_interval = fmod(gradient_angle_or_pattern_height, 65535.0f) / 255.0f;
@@ -1247,18 +1224,17 @@ float4 fill_color(Background background,
         color.a *= saturate(0.5 - distance);
         break;
     }
-    case 3: {
-        // checkerboard
+    case BackgroundTag_Checkerboard: {
         float size = background.gradient_angle_or_pattern_height;
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
-        
+
         float x_index = floor(relative_position.x / size);
         float y_index = floor(relative_position.y / size);
         float should_be_colored = fmod(x_index + y_index, 2.0);
-        
+
         color = solid_color;
         color.a *= saturate(should_be_colored);
-        break; 
+        break;
     }
   }
 
