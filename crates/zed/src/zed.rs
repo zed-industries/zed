@@ -71,6 +71,7 @@ use settings::{
     update_settings_file,
 };
 use sidebar::Sidebar;
+#[cfg(debug_assertions)]
 use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{
