@@ -2494,7 +2494,7 @@ impl LspAdapter for RuffLspAdapter {
                 None,
                 LanguageServerBinaryOptions {
                     allow_path_lookup: true,
-                    allow_binary_download: false,
+                    fetch_when_missing: false,
                     pre_release: false,
                 },
                 cached_binary,

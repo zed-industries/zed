@@ -522,7 +522,12 @@ message Envelope {
     LanguageServerShowDocumentRequest language_server_show_document_request = 490;
     ExecuteLspCommand execute_lsp_command = 491;
     ExecuteLspCommandResponse execute_lsp_command_response = 492;
-    RefreshDocumentHighlights refresh_document_highlights = 493; // current max
+    RefreshDocumentHighlights refresh_document_highlights = 493;
+
+    UpdatePendingToolInstalls update_pending_tool_installs = 494;
+    ApproveToolInstall approve_tool_install = 495;
+    GetPendingToolInstalls get_pending_tool_installs = 496;
+    GetPendingToolInstallsResponse get_pending_tool_installs_response = 497; // current max
   }
 
   reserved 87 to 88;

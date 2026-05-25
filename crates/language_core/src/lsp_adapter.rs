@@ -23,5 +23,6 @@ pub enum BinaryStatus {
     Starting,
     Stopping,
     Stopped,
+    DownloadBlocked { reason: String },
     Failed { error: String },
 }

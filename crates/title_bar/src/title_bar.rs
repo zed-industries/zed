@@ -34,8 +34,8 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
-    trusted_worktrees::TrustedWorktrees,
+    Project, binary_downloads::BinaryDownloads, git_store::GitStoreEvent,
+    project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
 use settings::{Settings as _, SettingsStore};
@@ -54,6 +54,7 @@ use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
     AccessibleMode, MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    binary_downloads_modal::project_blocks_binary_downloads,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -328,6 +329,7 @@ impl Render for TitleBar {
                             },
                         )
                         .children(self.render_restricted_mode(cx))
+                        .children(self.render_binary_downloads_disabled(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -493,6 +495,9 @@ impl TitleBar {
             }),
         );
         subscriptions.push(cx.observe(&user_store, |_a, _, cx| cx.notify()));
+        if let Some(binary_downloads) = BinaryDownloads::try_get_global(cx) {
+            subscriptions.push(cx.observe(&binary_downloads, |_, _, cx| cx.notify()));
+        }
         if let Some(workspace_entity) = workspace.weak_handle().upgrade() {
             subscriptions.push(cx.subscribe(
                 &workspace_entity,
@@ -626,6 +631,11 @@ impl TitleBar {
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(_) => (None, "Mock Remote Project", IconName::Server),
+            // Compiled in when feature unification enables remote/test-support
+            // without this crate's test-support.
+            #[cfg(not(any(test, feature = "test-support")))]
+            #[allow(unreachable_patterns)]
+            _ => (None, "Remote Project", IconName::Server),
         };
 
         let nickname = nickname.unwrap_or_else(|| host.clone());
@@ -738,6 +748,80 @@ impl TitleBar {
 
         if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
+            Some(div().child(button).ml_0p5().into_any_element())
+        } else {
+            Some(button.into_any_element())
+        }
+    }
+
+    /// Compact indicator shown next to the title bar when the project has
+    /// `allow_binary_downloads` effectively disabled. Restricted Mode takes
+    /// precedence: this indicator is only shown when Restricted Mode isn't.
+    pub fn render_binary_downloads_disabled(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let project = self.project.read(cx);
+        if TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx) {
+            return None;
+        }
+        if !project_blocks_binary_downloads(project, cx) {
+            return None;
+        }
+
+        let project_worktrees = project
+            .worktree_store()
+            .read(cx)
+            .worktrees()
+            .map(|worktree| worktree.read(cx).id())
+            .collect::<std::collections::HashSet<_>>();
+        let pending_installs = BinaryDownloads::try_get_global(cx)
+            .map(|store| {
+                store
+                    .read(cx)
+                    .pending_tool_installs()
+                    .into_iter()
+                    .filter(|install| match install.worktree_id {
+                        Some(worktree_id) => project_worktrees.contains(&worktree_id),
+                        None => true,
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        let label = if pending_installs > 0 {
+            format!("Downloads Off ({pending_installs})")
+        } else {
+            "Downloads Off".to_string()
+        };
+
+        let (button_style, tint) = if pending_installs > 0 {
+            (ButtonStyle::Tinted(TintColor::Warning), Color::Warning)
+        } else {
+            (ButtonStyle::Subtle, Color::Muted)
+        };
+        let button = Button::new("binary_downloads_disabled_trigger", label)
+            .style(button_style)
+            .label_size(LabelSize::Small)
+            .color(tint)
+            .start_icon(
+                Icon::new(IconName::CloudDownload)
+                    .size(IconSize::Small)
+                    .color(tint),
+            )
+            .tooltip(|_, cx| {
+                Tooltip::with_meta(
+                    "Tool downloads disabled",
+                    Some(&ToggleWorktreeSecurity),
+                    "Zed won't download language servers, formatters, debug adapters, agent servers, extensions, npm packages, or Node.js",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(true, window, cx)
+                    })
+                    .log_err();
+            }));
+
+        if ui::utils::MACOS_SDK_26_OR_LATER {
             Some(div().child(button).ml_0p5().into_any_element())
         } else {
             Some(button.into_any_element())

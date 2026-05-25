@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use collections::HashMap;
 pub use dap_types::{StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest};
 use fs::Fs;
-use futures::io::BufReader;
-use gpui::{AsyncApp, SharedString};
+use futures::{StreamExt as _, io::BufReader};
+use gpui::{AppContext as _, AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
@@ -18,10 +18,12 @@ use std::{
     borrow::Borrow,
     ffi::OsStr,
     fmt::Debug,
+    future::Future,
     net::IpAddr,
     ops::Deref,
     path::{Path, PathBuf},
-    sync::Arc,
+    pin::Pin,
+    sync::{Arc, OnceLock},
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
 use util::{archive::extract_zip, rel_path::RelPath};
@@ -47,6 +49,16 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
     fn is_headless(&self) -> bool;
+
+    /// Call right before a debug adapter binary would be downloaded; blocks
+    /// until downloads are permitted. Default allows immediately.
+    async fn request_binary_download_approval(&self, _tool: &str) -> bool {
+        true
+    }
+
+    async fn wait_until_binary_downloads_allowed(&self, _tool: &str) -> bool {
+        true
+    }
 }
 
 #[derive(
@@ -285,6 +297,14 @@ pub async fn download_adapter_from_github(
         return Ok(version_path);
     }
 
+    anyhow::ensure!(
+        delegate
+            .request_binary_download_approval(adapter_name.as_ref())
+            .await,
+        "{}",
+        util::downloads_disabled_error_with_retry(adapter_name, "start the debug session again")
+    );
+
     if !adapter_path.exists() {
         fs.create_dir(adapter_path.as_path())
             .await
@@ -343,6 +363,104 @@ pub async fn download_adapter_from_github(
     .await;
 
     Ok(version_path)
+}
+
+/// Returns the locally installed adapter path when `probe_installed` finds one
+/// (spawning `refresh_in_background` at most once per process, gated
+/// silently); otherwise requests download approval fail-fast and awaits
+/// `download`. A successful foreground download also marks the refresh as
+/// done.
+pub async fn get_or_download_adapter(
+    tool_name: &'static str,
+    delegate: &Arc<dyn DapDelegate>,
+    probe_installed: impl Future<Output = Option<PathBuf>>,
+    download: impl Future<Output = Result<PathBuf>>,
+    refresh_in_background: Option<(
+        &OnceLock<()>,
+        &AsyncApp,
+        Pin<Box<dyn Future<Output = ()> + Send + 'static>>,
+    )>,
+) -> Result<PathBuf> {
+    match probe_installed.await {
+        Some(installed_path) => {
+            if let Some((refresh_done, cx, refresh)) = refresh_in_background
+                && refresh_done.set(()).is_ok()
+            {
+                cx.background_spawn({
+                    let delegate = delegate.clone();
+                    async move {
+                        if delegate
+                            .wait_until_binary_downloads_allowed(tool_name)
+                            .await
+                        {
+                            refresh.await;
+                        }
+                    }
+                })
+                .detach();
+            }
+            Ok(installed_path)
+        }
+        None => {
+            anyhow::ensure!(
+                delegate.request_binary_download_approval(tool_name).await,
+                "{}",
+                util::downloads_disabled_error_with_retry(
+                    tool_name,
+                    "start the debug session again"
+                )
+            );
+            let downloaded_path = download.await?;
+            if let Some((refresh_done, _, _)) = refresh_in_background {
+                refresh_done.set(()).ok();
+            }
+            Ok(downloaded_path)
+        }
+    }
+}
+
+pub async fn latest_installed_version_path(
+    adapter_dir_name: &str,
+    delegate: &dyn DapDelegate,
+) -> Option<PathBuf> {
+    let adapter_dir = paths::debug_adapters_dir().join(adapter_dir_name);
+    let prefix = format!("{adapter_dir_name}_");
+    let fs = delegate.fs();
+    let mut entries = fs.read_dir(&adapter_dir).await.ok()?;
+    let mut newest = None;
+    while let Some(entry) = entries.next().await {
+        let Ok(path) = entry else {
+            continue;
+        };
+        let Some(version) = path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .and_then(|file_name| file_name.strip_prefix(&prefix))
+        else {
+            continue;
+        };
+        if !fs.is_dir(&path).await {
+            continue;
+        }
+        let key = version_sort_key(version);
+        if newest
+            .as_ref()
+            .is_none_or(|(newest_key, _)| *newest_key < key)
+        {
+            newest = Some((key, path));
+        }
+    }
+    newest.map(|(_, path)| path)
+}
+
+// Numeric version components parsed from the `<name>_<version>` dir suffix;
+// plain string ordering would rank v1.9 above v1.11.
+fn version_sort_key(version: &str) -> Vec<u64> {
+    version
+        .split(|c: char| !c.is_ascii_digit())
+        .filter(|chunk| !chunk.is_empty())
+        .map(|chunk| chunk.parse().unwrap_or(u64::MAX))
+        .collect()
 }
 
 #[async_trait(?Send)]

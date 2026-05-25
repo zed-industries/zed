@@ -563,7 +563,7 @@ impl Copilot {
         cx: &mut AsyncApp,
     ) {
         let start_language_server = async {
-            let server_path = get_copilot_lsp(fs, node_runtime).await?;
+            let server_path = get_copilot_lsp(fs, node_runtime, cx).await?;
 
             let arguments: Vec<OsString> = vec!["--stdio".into()];
             let binary = LanguageServerBinary {
@@ -1344,39 +1344,91 @@ async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
 }
 
-async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
-    const PACKAGE_NAME: &str = "@github/copilot-language-server";
+const COPILOT_PACKAGE_NAME: &str = "@github/copilot-language-server";
+
+async fn get_copilot_lsp(
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+    cx: &AsyncApp,
+) -> anyhow::Result<PathBuf> {
+    let binary_path = copilot_lsp_native_binary_path()?;
+
+    // A usable local server exists; return it immediately and refresh the
+    // install in the background so startup never blocks on (or fails from) the
+    // npm registry.
+    if fs.is_file(&binary_path).await {
+        cx.spawn(async move |cx| {
+            let wait = cx.update(|cx| {
+                project::binary_downloads::BinaryDownloads::try_get_global(cx).and_then(|store| {
+                    store.update(cx, |store, cx| {
+                        store.wait_until_tool_allowed(None, COPILOT_PACKAGE_NAME, cx)
+                    })
+                })
+            });
+            if !project::binary_downloads::await_downloads_allowed(wait, COPILOT_PACKAGE_NAME).await
+            {
+                return;
+            }
+            cx.background_spawn(async move {
+                install_latest_copilot_lsp(fs, node_runtime).await.log_err();
+            })
+            .await;
+        })
+        .detach();
+        return Ok(binary_path);
+    }
+
+    let blocked = cx.update(|cx| {
+        project::binary_downloads::request_tool_install(None, COPILOT_PACKAGE_NAME, cx).is_some()
+    });
+    anyhow::ensure!(
+        !blocked,
+        "{}",
+        util::downloads_disabled_error_with_retry(COPILOT_PACKAGE_NAME, "restart Copilot")
+    );
+
+    fs.create_dir(paths::copilot_dir()).await?;
+    install_latest_copilot_lsp(fs.clone(), node_runtime).await?;
+
+    anyhow::ensure!(
+        fs.is_file(&binary_path).await,
+        "GitHub Copilot native language server binary was not installed"
+    );
+    Ok(binary_path)
+}
+
+async fn install_latest_copilot_lsp(
+    fs: Arc<dyn Fs>,
+    node_runtime: NodeRuntime,
+) -> anyhow::Result<()> {
+    const PACKAGE_NAME: &str = COPILOT_PACKAGE_NAME;
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
-    let latest_version = node_runtime
-        .npm_package_latest_version(PACKAGE_NAME)
-        .await?;
-    let server_path = paths::copilot_dir().join(SERVER_PATH);
     let binary_path = copilot_lsp_native_binary_path()?;
+    let server_path = paths::copilot_dir().join(SERVER_PATH);
 
-    fs.create_dir(paths::copilot_dir()).await?;
-
-    let should_install = !fs.is_file(&binary_path).await
-        || node_runtime
+    let should_install = if fs.is_file(&binary_path).await {
+        let latest_version = node_runtime
+            .npm_package_latest_version(PACKAGE_NAME)
+            .await?;
+        node_runtime
             .should_install_npm_package(
                 PACKAGE_NAME,
                 &server_path,
                 paths::copilot_dir(),
                 VersionStrategy::Latest(&latest_version),
             )
-            .await;
+            .await
+    } else {
+        true
+    };
     if should_install {
         node_runtime
             .npm_install_latest_packages(paths::copilot_dir(), &[PACKAGE_NAME])
             .await?;
     }
-
-    if fs.is_file(&binary_path).await {
-        return Ok(binary_path);
-    }
-
-    anyhow::bail!("GitHub Copilot native language server binary was not installed")
+    Ok(())
 }
 
 fn copilot_lsp_native_binary_path() -> anyhow::Result<PathBuf> {
@@ -1826,6 +1878,30 @@ mod tests {
                 "Copilot should be starting after disable_ai is set to false"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_get_copilot_lsp_uses_local_binary_without_network(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let binary_path = copilot_lsp_native_binary_path().expect("supported platform in tests");
+        let parent = binary_path
+            .parent()
+            .expect("native binary path has a parent directory");
+        fs.create_dir(parent).await.expect("create parent dirs");
+        fs.insert_file(&binary_path, Vec::new()).await;
+
+        let resolved_path = get_copilot_lsp(fs.clone(), NodeRuntime::unavailable(), &cx.to_async())
+            .await
+            .expect("local binary must be returned even when npm is unavailable");
+        assert_eq!(resolved_path, binary_path);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_get_copilot_lsp_errors_without_local_binary_or_network(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let result = get_copilot_lsp(fs, NodeRuntime::unavailable(), &cx.to_async()).await;
+        assert!(result.is_err());
     }
 
     fn init_test(cx: &mut TestAppContext) {

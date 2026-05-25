@@ -57,7 +57,7 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
         let id = self.id.clone();
         let extension = self.extension.clone();
         cx.spawn(async move |cx| {
-            let extension_project = extension_project(worktree_store, cx)?;
+            let extension_project = extension_project(worktree_store.clone(), cx)?;
             let mut command = extension
                 .context_server_command(id.clone(), extension_project.clone())
                 .await?;

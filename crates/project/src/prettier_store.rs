@@ -652,6 +652,13 @@ impl PrettierStore {
                             needs_install |= !new_plugins.is_empty();
                         })?;
                         if needs_install {
+                            let blocked = cx.update(|cx| {
+                                crate::binary_downloads::request_tool_install(None, "prettier", cx)
+                                    .is_some()
+                            });
+                            if blocked {
+                                return Err(Arc::new(anyhow!(util::downloads_disabled_error_with_retry("prettier", "format again"))));
+                            }
                             log::info!("Initializing default prettier with plugins {new_plugins:?}");
                             let installed_plugins = new_plugins.clone();
                             cx.background_spawn(async move {
@@ -696,6 +703,19 @@ impl PrettierStore {
             not_installed_plugins: plugins_to_install,
         };
     }
+
+    fn worktree_restricted_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(worktree_id) =
+            File::from_dyn(buffer.read(cx).file()).map(|file| file.worktree_id(cx))
+        else {
+            return false;
+        };
+        !crate::trusted_worktrees::worktree_trusted(&self.worktree_store, worktree_id, cx)
+    }
 }
 
 pub fn prettier_plugins_for_language(
@@ -714,6 +734,17 @@ pub(super) async fn format_with_prettier(
     range_utf16: Option<Range<OffsetUtf16>>,
     cx: &mut AsyncApp,
 ) -> Option<Result<language::Diff>> {
+    let restricted_worktree = prettier_store
+        .update(cx, |prettier_store, cx| {
+            prettier_store.worktree_restricted_for_buffer(buffer, cx)
+        })
+        .ok()?;
+    if restricted_worktree {
+        return Some(Err(anyhow!(
+            "cannot format with prettier: the buffer belongs to an untrusted worktree in restricted mode"
+        )));
+    }
+
     let prettier_instance = prettier_store
         .update(cx, |prettier_store, cx| {
             prettier_store.prettier_instance_for_buffer(buffer, cx)

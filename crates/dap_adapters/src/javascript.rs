@@ -21,7 +21,6 @@ impl JsDebugAdapter {
     const ADAPTER_PATH: &'static str = "js-debug/src/dapDebugServer.js";
 
     async fn fetch_latest_adapter_version(
-        &self,
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
@@ -50,7 +49,7 @@ impl JsDebugAdapter {
         &self,
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
+        adapter_path: PathBuf,
         user_args: Option<Vec<String>>,
         user_env: Option<HashMap<String, String>>,
         _: &mut AsyncApp,
@@ -129,21 +128,6 @@ impl JsDebugAdapter {
                     .or_insert("ui".into());
             }
         }
-
-        let adapter_path = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Couldn't find JavaScript dap directory")?
-            .join(Self::ADAPTER_PATH)
-        };
 
         let arguments = if let Some(mut args) = user_args {
             args.insert(0, adapter_path.to_string_lossy().into_owned());
@@ -508,30 +492,64 @@ impl DebugAdapter for JsDebugAdapter {
         user_env: Option<HashMap<String, String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        if self.checked.set(()).is_ok() {
-            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-                adapters::download_adapter_from_github(
-                    self.name(),
-                    version,
-                    adapters::DownloadedFileType::GzipTar,
-                    delegate.as_ref(),
-                )
-                .await?;
-            } else {
-                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
-            }
-        }
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            adapters::get_or_download_adapter(
+                Self::ADAPTER_NAME,
+                delegate,
+                async {
+                    let version_path = adapters::latest_installed_version_path(
+                        Self::ADAPTER_NAME,
+                        delegate.as_ref(),
+                    )
+                    .await?;
+                    let adapter_path = version_path.join(Self::ADAPTER_PATH);
+                    delegate
+                        .fs()
+                        .is_file(&adapter_path)
+                        .await
+                        .then_some(adapter_path)
+                },
+                async {
+                    delegate.output_to_console(format!(
+                        "Checking latest version of {}...",
+                        self.name()
+                    ));
+                    let version = Self::fetch_latest_adapter_version(delegate).await?;
+                    let version_path = adapters::download_adapter_from_github(
+                        self.name(),
+                        version,
+                        adapters::DownloadedFileType::GzipTar,
+                        delegate.as_ref(),
+                    )
+                    .await?;
+                    Ok(version_path.join(Self::ADAPTER_PATH))
+                },
+                Some((&self.checked, cx, {
+                    let delegate = delegate.clone();
+                    Box::pin(async move {
+                        if let Some(version) = Self::fetch_latest_adapter_version(&delegate)
+                            .await
+                            .log_err()
+                        {
+                            adapters::download_adapter_from_github(
+                                DebugAdapterName::from(Self::ADAPTER_NAME),
+                                version,
+                                adapters::DownloadedFileType::GzipTar,
+                                delegate.as_ref(),
+                            )
+                            .await
+                            .log_err();
+                        }
+                    })
+                })),
+            )
+            .await?
+        };
 
-        self.get_installed_binary(
-            delegate,
-            config,
-            user_installed_path,
-            user_args,
-            user_env,
-            cx,
-        )
-        .await
+        self.get_installed_binary(delegate, config, adapter_path, user_args, user_env, cx)
+            .await
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {

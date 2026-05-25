@@ -104,7 +104,7 @@ pub struct LanguageServerBinaryOptions {
     /// Whether the adapter should look at the users system
     pub allow_path_lookup: bool,
     /// Whether the adapter should download its own version
-    pub allow_binary_download: bool,
+    pub fetch_when_missing: bool,
     /// Whether the adapter should download a pre-release version
     pub pre_release: bool,
 }

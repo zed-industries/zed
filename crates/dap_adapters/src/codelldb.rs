@@ -1,20 +1,26 @@
-use std::{env::consts, path::PathBuf, sync::OnceLock};
+use std::{
+    env::consts,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::adapters::{DebugTaskDefinition, latest_github_release};
-use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
 use task::{DebugRequest, DebugScenario, ZedDebugConfig};
-use util::fs::remove_matching;
+use util::{ResultExt as _, fs::remove_matching};
 
 use crate::*;
 
 #[derive(Default)]
 pub(crate) struct CodeLldbDebugAdapter {
-    path_to_codelldb: OnceLock<String>,
+    /// Gates the background update check to once per process; the resolved
+    /// path is deliberately not cached because a refresh deletes the old
+    /// version dir.
+    checked: OnceLock<()>,
 }
 
 impl CodeLldbDebugAdapter {
@@ -45,8 +51,34 @@ impl CodeLldbDebugAdapter {
         })
     }
 
+    fn binary_path_in_version_dir(version_path: &Path) -> PathBuf {
+        version_path
+            .join("extension")
+            .join("adapter")
+            .join(format!("codelldb{}", consts::EXE_SUFFIX))
+    }
+
+    async fn download_latest(delegate: &Arc<dyn DapDelegate>) -> Result<PathBuf> {
+        delegate.output_to_console(format!(
+            "Checking latest version of {}...",
+            Self::ADAPTER_NAME
+        ));
+        let version = Self::fetch_latest_adapter_version(delegate).await?;
+        adapters::download_adapter_from_github(
+            DebugAdapterName::from(Self::ADAPTER_NAME),
+            version.clone(),
+            adapters::DownloadedFileType::Vsix,
+            delegate.as_ref(),
+        )
+        .await?;
+        let adapter_path = paths::debug_adapters_dir().join(Self::ADAPTER_NAME);
+        let version_path =
+            adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
+        remove_matching(&adapter_path, |entry| entry != version_path).await;
+        Ok(version_path)
+    }
+
     async fn fetch_latest_adapter_version(
-        &self,
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release =
@@ -331,55 +363,40 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         user_installed_path: Option<PathBuf>,
         user_args: Option<Vec<String>>,
         user_env: Option<HashMap<String, String>>,
-        _: &mut AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let mut command = user_installed_path
-            .map(|p| p.to_string_lossy().into_owned())
-            .or(self.path_to_codelldb.get().cloned());
-
-        if command.is_none() {
-            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-            let version_path = match self.fetch_latest_adapter_version(delegate).await {
-                Ok(version) => {
-                    adapters::download_adapter_from_github(
-                        self.name(),
-                        version.clone(),
-                        adapters::DownloadedFileType::Vsix,
+        let command = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path.to_string_lossy().into_owned()
+        } else {
+            let binary_path = adapters::get_or_download_adapter(
+                Self::ADAPTER_NAME,
+                delegate,
+                async {
+                    let version_path = adapters::latest_installed_version_path(
+                        Self::ADAPTER_NAME,
                         delegate.as_ref(),
                     )
                     .await?;
-                    let version_path =
-                        adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
-                    remove_matching(&adapter_path, |entry| entry != version_path).await;
-                    version_path
-                }
-                Err(e) => {
-                    delegate.output_to_console("Unable to fetch latest version".to_string());
-                    log::error!("Error fetching latest version of {}: {}", self.name(), e);
-                    delegate.output_to_console(format!(
-                        "Searching for adapters in: {}",
-                        adapter_path.display()
-                    ));
-                    let mut paths = delegate
+                    let binary_path = Self::binary_path_in_version_dir(&version_path);
+                    delegate
                         .fs()
-                        .read_dir(&adapter_path)
+                        .is_file(&binary_path)
                         .await
-                        .context("No cached adapter directory")?;
-                    paths
-                        .next()
-                        .await
-                        .context("No cached adapter found")?
-                        .context("No cached adapter found")?
-                }
-            };
-            let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir
-                .join(format!("codelldb{}", consts::EXE_SUFFIX))
-                .to_string_lossy()
-                .into_owned();
-            self.path_to_codelldb.set(path.clone()).ok();
-            command = Some(path);
+                        .then_some(binary_path)
+                },
+                async {
+                    let version_path = Self::download_latest(delegate).await?;
+                    Ok(Self::binary_path_in_version_dir(&version_path))
+                },
+                Some((&self.checked, cx, {
+                    let delegate = delegate.clone();
+                    Box::pin(async move {
+                        Self::download_latest(&delegate).await.log_err();
+                    })
+                })),
+            )
+            .await?;
+            binary_path.to_string_lossy().into_owned()
         };
         let mut json_config = config.config.clone();
 
@@ -399,7 +416,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         }
 
         Ok(DebugAdapterBinary {
-            command: Some(command.unwrap()),
+            command: Some(command),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             arguments: user_args.unwrap_or_else(|| {
                 if let Some(config) = json_config.as_object_mut()
