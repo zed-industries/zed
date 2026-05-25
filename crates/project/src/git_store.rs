@@ -34,11 +34,11 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, CommitData, CommitDetails, CommitDiff, CommitFile, CommitOptions,
-        CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate, GitRepository,
-        GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
-        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
-        Worktree as GitWorktree, delete_branch_flag,
+        Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
+        CommitOptions, CreateWorktreeTarget, DiffType, FetchOptions, GitCommitTemplate,
+        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
+        PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs,
+        UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -318,6 +318,7 @@ pub struct RepositorySnapshot {
     pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub branch_list: Arc<[Branch]>,
+    pub branch_list_error: Option<SharedString>,
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
@@ -2942,15 +2943,17 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let branches = repository_handle
+        let branches_scan = repository_handle
             .update(&mut cx, |repository_handle, _| repository_handle.branches())
             .await??;
 
         Ok(proto::GitBranchesResponse {
-            branches: branches
+            branches: branches_scan
+                .branches
                 .into_iter()
                 .map(|branch| branch_to_proto(&branch))
                 .collect::<Vec<_>>(),
+            error: branches_scan.error.map(|error| error.to_string()),
         })
     }
     async fn handle_get_default_branch(
@@ -4189,6 +4192,7 @@ impl RepositorySnapshot {
             work_directory_abs_path,
             branch: None,
             branch_list: Arc::from([]),
+            branch_list_error: None,
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
@@ -4204,6 +4208,10 @@ impl RepositorySnapshot {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
             branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
+            branch_list_error: self
+                .branch_list_error
+                .as_ref()
+                .map(|error| error.to_string()),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses: self
                 .statuses_by_path
@@ -4291,6 +4299,10 @@ impl RepositorySnapshot {
         proto::UpdateRepository {
             branch_summary: self.branch.as_ref().map(branch_to_proto),
             branch_list: self.branch_list.iter().map(branch_to_proto).collect(),
+            branch_list_error: self
+                .branch_list_error
+                .as_ref()
+                .map(|error| error.to_string()),
             head_commit_details: self.head_commit.as_ref().map(commit_details_to_proto),
             updated_statuses,
             removed_statuses,
@@ -6609,12 +6621,23 @@ impl Repository {
                             .await;
                         // TODO would be nice to not have to do this manually
                         if result.is_ok() {
-                            let branches = backend.branches().await?;
-                            let branch = branches.into_iter().find(|branch| branch.is_head);
+                            let branches_scan = backend.branches().await?;
+                            let branch_list_error = branches_scan.error;
+                            let branch_list: Arc<[Branch]> = branches_scan.branches.into();
+                            let branch = branch_list.iter().find(|branch| branch.is_head).cloned();
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
+                                let branch_list_changed =
+                                    *branch_list != *this.snapshot.branch_list;
+                                let branch_list_error_changed =
+                                    this.snapshot.branch_list_error != branch_list_error;
                                 this.snapshot.branch = branch;
+                                this.snapshot.branch_list = branch_list;
+                                this.snapshot.branch_list_error = branch_list_error;
                                 cx.emit(RepositoryEvent::HeadChanged);
+                                if branch_list_changed || branch_list_error_changed {
+                                    cx.emit(RepositoryEvent::BranchListChanged);
+                                }
                                 this.snapshot.clone()
                             })?;
                             if let Some(updates_tx) = updates_tx {
@@ -6913,7 +6936,7 @@ impl Repository {
         })
     }
 
-    pub fn branches(&mut self) -> oneshot::Receiver<Result<Vec<Branch>>> {
+    pub fn branches(&mut self) -> oneshot::Receiver<Result<BranchesScanResult>> {
         let id = self.id;
         self.send_job("branches", None, move |repo, _| async move {
             match repo {
@@ -6934,7 +6957,10 @@ impl Repository {
                         .map(|branch| proto_to_branch(&branch))
                         .collect();
 
-                    Ok(branches)
+                    Ok(BranchesScanResult {
+                        branches,
+                        error: response.error.map(SharedString::from),
+                    })
                 }
             }
         })
@@ -7701,10 +7727,14 @@ impl Repository {
         if update.is_last_update {
             let new_branch_list: Arc<[Branch]> =
                 update.branch_list.iter().map(proto_to_branch).collect();
-            if *self.snapshot.branch_list != *new_branch_list {
+            let new_branch_list_error = update.branch_list_error.map(SharedString::from);
+            if *self.snapshot.branch_list != *new_branch_list
+                || self.snapshot.branch_list_error != new_branch_list_error
+            {
                 cx.emit(RepositoryEvent::BranchListChanged);
             }
             self.snapshot.branch_list = new_branch_list;
+            self.snapshot.branch_list_error = new_branch_list_error;
         }
 
         // We don't store any merge head state for downstream projects; the upstream
@@ -9272,6 +9302,10 @@ async fn compute_snapshot(
         futures::future::join3(branches_future, head_commit_future, worktrees_future).await;
     log::debug!("fetched branches, head commit, worktrees");
 
+    let BranchesScanResult {
+        branches,
+        error: branch_list_error,
+    } = branches;
     let branch = branches.iter().find(|branch| branch.is_head).cloned();
     let branch_list: Arc<[Branch]> = branches.into();
 
@@ -9289,6 +9323,7 @@ async fn compute_snapshot(
         let head_changed =
             branch != this.snapshot.branch || head_commit != this.snapshot.head_commit;
         let branch_list_changed = *branch_list != *this.snapshot.branch_list;
+        let branch_list_error_changed = branch_list_error != this.snapshot.branch_list_error;
         let worktrees_changed = *linked_worktrees != *this.snapshot.linked_worktrees;
 
         this.snapshot = RepositorySnapshot {
@@ -9296,6 +9331,7 @@ async fn compute_snapshot(
             work_directory_abs_path,
             branch,
             branch_list: branch_list.clone(),
+            branch_list_error,
             head_commit,
             remote_origin_url,
             remote_upstream_url,
@@ -9308,7 +9344,7 @@ async fn compute_snapshot(
             cx.emit(RepositoryEvent::HeadChanged);
         }
 
-        if branch_list_changed {
+        if branch_list_changed || branch_list_error_changed {
             cx.emit(RepositoryEvent::BranchListChanged);
         }
 

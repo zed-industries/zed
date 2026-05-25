@@ -23,18 +23,26 @@ pub(crate) fn render_skills_setup_page(
             .map(|idx| idx.global_skills.clone())
             .unwrap_or_default(),
         SettingsUiFile::Project((worktree_id, _)) => {
-            let wt_id = usize::from(*worktree_id);
+            let worktree_id = usize::from(*worktree_id);
             skill_index
-                .and_then(|idx| {
-                    idx.project_skills
+                .and_then(|index| {
+                    index
+                        .project_skills
                         .iter()
-                        .find(|g| g.worktree_id.0 == wt_id)
-                        .map(|g| g.skills.clone())
+                        .find(|group| group.worktree_id.0 == worktree_id)
+                        .map(|group| group.skills.clone())
                 })
                 .unwrap_or_default()
         }
         _ => Vec::new(),
-    };
+    }
+    .into_iter()
+    .filter(|skill| {
+        !settings_window
+            .hidden_deleted_skill_directory_paths
+            .contains(&skill.directory_path)
+    })
+    .collect();
 
     v_flex()
         .id("skills-page")
@@ -129,20 +137,42 @@ fn render_skill_row(skill: &Skill, cx: &mut Context<SettingsWindow>) -> AnyEleme
                     .icon_size(IconSize::Small)
                     .tooltip(Tooltip::text("Delete Skill"))
                     .on_click(cx.listener(
-                        move |_this, _event, _window, cx| {
+                        move |settings_window, _event, _window, cx| {
                             let directory_path = directory_path.clone();
+                            if !settings_window
+                                .hidden_deleted_skill_directory_paths
+                                .insert(directory_path.clone())
+                            {
+                                return;
+                            }
+                            cx.notify();
+
                             let app_state = workspace::AppState::global(cx);
                             let fs = app_state.fs.clone();
-                            cx.spawn(async move |_this, _cx| {
-                                fs.remove_dir(
-                                    &directory_path,
-                                    RemoveOptions {
-                                        recursive: true,
-                                        ignore_if_not_exists: true,
-                                    },
-                                )
-                                .await
-                                .log_err();
+                            cx.spawn(async move |settings_window, cx| {
+                                let remove_result = fs
+                                    .remove_dir(
+                                        &directory_path,
+                                        RemoveOptions {
+                                            recursive: true,
+                                            ignore_if_not_exists: true,
+                                        },
+                                    )
+                                    .await;
+                                if let Err(error) = remove_result {
+                                    log::error!(
+                                        "failed to delete skill directory {}: {error:#}",
+                                        directory_path.display()
+                                    );
+                                    settings_window
+                                        .update(cx, |settings_window, cx| {
+                                            settings_window
+                                                .hidden_deleted_skill_directory_paths
+                                                .remove(&directory_path);
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
                             })
                             .detach();
                         },

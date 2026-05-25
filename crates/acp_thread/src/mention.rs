@@ -51,6 +51,8 @@ pub enum MentionUri {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         abs_path: Option<PathBuf>,
         line_range: RangeInclusive<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        column: Option<u32>,
     },
     Fetch {
         url: Url,
@@ -105,6 +107,17 @@ impl MentionUri {
             Ok(start_line..=end_line)
         }
 
+        let parse_column =
+            |input: Option<String>| -> Option<u32> { input?.parse::<u32>().ok()?.checked_sub(1) };
+        let validate_query_params = |url: &Url, allowed: &[&str]| -> Result<()> {
+            for (key, _) in url.query_pairs() {
+                if !allowed.contains(&key.as_ref()) {
+                    bail!("invalid query parameter")
+                }
+            }
+            Ok(())
+        };
+
         let parse_absolute_path = |input: &str| -> Result<Self> {
             let (path_input, fragment) = input
                 .split_once('#')
@@ -114,6 +127,7 @@ impl MentionUri {
                 return Ok(MentionUri::Selection {
                     abs_path: Some(path_input.into()),
                     line_range: fragment,
+                    column: None,
                 });
             }
 
@@ -123,10 +137,12 @@ impl MentionUri {
                 let line = row
                     .checked_sub(1)
                     .context("Line numbers should be 1-based")?;
-                // TODO: Preserve column info too.
                 Ok(MentionUri::Selection {
                     abs_path: Some(abs_path),
                     line_range: line..=line,
+                    column: path_with_position
+                        .column
+                        .map(|column| column.saturating_sub(1)),
                 })
             } else {
                 Ok(MentionUri::File { abs_path })
@@ -156,8 +172,10 @@ impl MentionUri {
                 let path = normalized.as_ref();
 
                 if let Some(fragment) = url.fragment() {
+                    validate_query_params(&url, &["symbol", "column"])?;
                     let line_range = parse_line_range(fragment).log_err().unwrap_or(1..=1);
-                    if let Some(name) = single_query_param(&url, "symbol")? {
+                    let column = parse_column(query_param(&url, "column"));
+                    if let Some(name) = query_param(&url, "symbol") {
                         Ok(Self::Symbol {
                             name,
                             abs_path: path.into(),
@@ -167,6 +185,7 @@ impl MentionUri {
                         Ok(Self::Selection {
                             abs_path: Some(path.into()),
                             line_range,
+                            column,
                         })
                     }
                 } else if input.ends_with("/") {
@@ -216,9 +235,11 @@ impl MentionUri {
                         .fragment()
                         .context("Missing fragment for untitled buffer selection")?;
                     let line_range = parse_line_range(fragment)?;
+                    validate_query_params(&url, &["column"])?;
                     Ok(Self::Selection {
                         abs_path: None,
                         line_range,
+                        column: parse_column(query_param(&url, "column")),
                     })
                 } else if let Some(name) = path.strip_prefix("/agent/symbol/") {
                     let fragment = url
@@ -245,13 +266,15 @@ impl MentionUri {
                         abs_path: path.into(),
                     })
                 } else if path.starts_with("/agent/selection") {
+                    validate_query_params(&url, &["path", "column"])?;
                     let fragment = url.fragment().context("Missing fragment for selection")?;
                     let line_range = parse_line_range(fragment)?;
-                    let path =
-                        single_query_param(&url, "path")?.context("Missing path for selection")?;
+                    let column = parse_column(query_param(&url, "column"));
+                    let path = query_param(&url, "path").context("Missing path for selection")?;
                     Ok(Self::Selection {
                         abs_path: Some(path.into()),
                         line_range,
+                        column,
                     })
                 } else if path.starts_with("/agent/terminal-selection") {
                     let line_count = single_query_param(&url, "lines")?
@@ -460,6 +483,7 @@ impl MentionUri {
                 abs_path,
                 name,
                 line_range,
+                ..
             } => {
                 let mut url = Url::parse("file:///").unwrap();
                 url.set_path(&abs_path.to_string_lossy());
@@ -474,6 +498,7 @@ impl MentionUri {
             MentionUri::Selection {
                 abs_path,
                 line_range,
+                column,
             } => {
                 let mut url = if let Some(path) = abs_path {
                     let mut url = Url::parse("file:///").unwrap();
@@ -484,6 +509,10 @@ impl MentionUri {
                     url.set_path("/agent/untitled-buffer");
                     url
                 };
+                if let Some(column) = column {
+                    url.query_pairs_mut()
+                        .append_pair("column", &(column + 1).to_string());
+                }
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
                     line_range.start() + 1,
@@ -562,6 +591,11 @@ impl fmt::Display for MentionLink<'_> {
 
 fn default_include_errors() -> bool {
     true
+}
+
+fn query_param(url: &Url, name: &'static str) -> Option<String> {
+    url.query_pairs()
+        .find_map(|(key, value)| (key == name).then(|| value.to_string()))
 }
 
 fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
@@ -698,6 +732,7 @@ mod tests {
                 abs_path: path,
                 name,
                 line_range,
+                ..
             } => {
                 assert_eq!(path, Path::new(path!("/path/to/file.rs")));
                 assert_eq!(name, "MySymbol");
@@ -717,6 +752,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
                 assert_eq!(line_range.start(), &4);
@@ -748,6 +784,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: None,
                 line_range,
+                ..
             } => {
                 assert_eq!(line_range.start(), &0);
                 assert_eq!(line_range.end(), &9);
@@ -895,10 +932,34 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
                 assert_eq!(line_range.start(), &41);
                 assert_eq!(line_range.end(), &41);
+            }
+            _ => panic!("Expected Selection variant"),
+        }
+    }
+
+    #[test]
+    fn test_parse_absolute_file_path_with_row_and_column() {
+        let file_path = "/path/to/file.rs:42:5";
+        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        match &parsed {
+            MentionUri::Selection {
+                abs_path: path,
+                line_range,
+                column,
+            } => {
+                assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
+                assert_eq!(line_range.start(), &41);
+                assert_eq!(line_range.end(), &41);
+                assert_eq!(column, &Some(4));
+
+                let parsed_again = MentionUri::parse(parsed.to_uri().as_ref(), PathStyle::Posix)
+                    .expect("selection URI with column should parse");
+                assert_eq!(parsed_again, parsed.clone());
             }
             _ => panic!("Expected Selection variant"),
         }
@@ -912,6 +973,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
                 assert_eq!(line_range.start(), &41);
@@ -941,6 +1003,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(
                     path.as_ref().unwrap(),
@@ -961,6 +1024,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(
                     path.as_ref().unwrap(),
@@ -993,6 +1057,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new("/path/to/file.rs"));
                 assert_eq!(line_range.start(), &41);
@@ -1010,6 +1075,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(
                     path.as_ref().unwrap(),
@@ -1031,6 +1097,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
                 assert_eq!(line_range.start(), &1871);
@@ -1048,6 +1115,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
                 assert_eq!(line_range.start(), &9);
@@ -1063,6 +1131,7 @@ mod tests {
             MentionUri::Selection {
                 abs_path: path,
                 line_range,
+                ..
             } => {
                 assert_eq!(path.as_ref().unwrap(), Path::new(path!("/path/to/file.rs")));
                 assert_eq!(line_range.start(), &9);

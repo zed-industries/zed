@@ -39,6 +39,7 @@ pub struct ThreadItem {
     icon_visible: bool,
     custom_icon_from_external_svg: Option<SharedString>,
     title: SharedString,
+    title_slot: Option<AnyElement>,
     title_label_color: Option<Color>,
     title_generating: bool,
     highlight_positions: Vec<usize>,
@@ -71,6 +72,7 @@ impl ThreadItem {
             icon_visible: true,
             custom_icon_from_external_svg: None,
             title: title.into(),
+            title_slot: None,
             title_label_color: None,
             title_generating: false,
             highlight_positions: Vec::new(),
@@ -137,6 +139,11 @@ impl ThreadItem {
 
     pub fn title_label_color(mut self, color: Color) -> Self {
         self.title_label_color = Some(color);
+        self
+    }
+
+    pub fn title_slot(mut self, element: impl IntoElement) -> Self {
+        self.title_slot = Some(element.into_any_element());
         self
     }
 
@@ -317,7 +324,9 @@ impl RenderOnce for ThreadItem {
         let title = self.title;
         let highlight_positions = self.highlight_positions;
 
-        let title_label = if self.title_generating {
+        let title_label = if let Some(title_slot) = self.title_slot {
+            title_slot
+        } else if self.title_generating {
             Label::new(title)
                 .color(Color::Muted)
                 .with_animation(

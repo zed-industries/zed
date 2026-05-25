@@ -43,10 +43,12 @@ use ::ui::IconName;
 use agent_client_protocol::schema as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
+use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
-    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, Window, actions,
+    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, TaskExt, Window,
+    actions,
 };
 use language::{
     LanguageRegistry,
@@ -57,6 +59,7 @@ use language_model::{
 };
 use project::{AgentId, DisableAiSettings};
 use prompt_store::{PromptBuilder, rules_to_skills_migration};
+use rope::Point;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
@@ -112,6 +115,42 @@ pub(crate) fn resolve_agent_image(
     None
 }
 
+pub(crate) fn open_abs_path_at_point(
+    workspace: &mut Workspace,
+    abs_path: PathBuf,
+    point: Point,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> bool {
+    let project = workspace.project();
+    let Some(path) = project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
+    else {
+        return false;
+    };
+
+    let item = workspace.open_path(path, None, true, window, cx);
+    window
+        .spawn(cx, async move |cx| {
+            let Some(editor) = item.await?.downcast::<Editor>() else {
+                return Ok(());
+            };
+            let range = point..point;
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    editor.change_selections(
+                        SelectionEffects::scroll(Autoscroll::center()),
+                        window,
+                        cx,
+                        |selections| selections.select_ranges([range]),
+                    );
+                })
+                .ok();
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    true
+}
+
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";
 const PARALLEL_AGENT_LAYOUT_BACKFILL_KEY: &str = "parallel_agent_layout_backfilled";
 
@@ -160,6 +199,8 @@ actions!(
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Renames the currently selected thread.
+        RenameSelectedThread,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
@@ -244,6 +285,8 @@ actions!(
         ScrollOutputToNextMessage,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
+        /// Starts a new terminal thread.
+        NewTerminalThread,
     ]
 );
 
@@ -850,6 +893,10 @@ mod tests {
                 !filter.is_hidden(&NewThread),
                 "NewThread should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be visible by default"
+            );
         });
 
         // Disable agent
@@ -868,6 +915,10 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewThread),
                 "NewThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&NewTerminalThread),
+                "NewTerminalThread should be hidden when agent is disabled"
             );
         });
 
