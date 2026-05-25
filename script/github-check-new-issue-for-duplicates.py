@@ -583,6 +583,11 @@ Return empty arrays where nothing relevant is found."""
 
     response = call_claude(anthropic_key, system_prompt, user_content, max_tokens=2048)
 
+    # Claude sometimes wraps JSON in a ```json ... ``` fence despite the prompt forbidding it
+    fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
+    if fence:
+        response = fence.group(1)
+
     try:
         data = json.loads(response)
     except json.JSONDecodeError as e:
