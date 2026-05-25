@@ -204,10 +204,8 @@ fn run_example() {
 #[cfg(not(target_family = "wasm"))]
 fn main() {
     env_logger::builder()
-        .filter_level(log::LevelFilter::Debug)
-        .filter_module("wgpu", log::LevelFilter::Warn)
-        .filter_module("naga", log::LevelFilter::Warn)
-        .filter_module("blade", log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module("gpui", log::LevelFilter::Info)
         .init();
     run_example();
 }
