@@ -1,6 +1,7 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    authorize_symlink_access, build_global_skill_project_path, canonicalize_worktree_roots,
+    detect_symlink_escape, ensure_global_skills_worktree, expand_user_home,
+    resolve_global_skill_path, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -9,6 +10,7 @@ use crate::{
 use action_log::ActionLog;
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
+use fs::RemoveOptions;
 use futures::{FutureExt as _, SinkExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, ProjectPath};
@@ -83,6 +85,7 @@ impl AgentTool for DeletePathTool {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
             let path = input.path;
+            let expanded_path = expand_user_home(&path);
 
             let decision = cx.update(|cx| {
                 decide_permission_for_path(Self::NAME, &path, AgentSettings::get_global(cx))
@@ -101,7 +104,7 @@ impl AgentTool for DeletePathTool {
             });
 
             let settings_kind =
-                sensitive_settings_kind(Path::new(&path), &canonical_roots, fs.as_ref()).await;
+                sensitive_settings_kind(&expanded_path, &canonical_roots, fs.as_ref()).await;
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && settings_kind.is_some() {
@@ -147,15 +150,49 @@ impl AgentTool for DeletePathTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            let is_local = project.read_with(cx, |project, _cx| project.is_local());
+            let global_skill_path = resolve_global_skill_path(&expanded_path, fs.as_ref())
+                .await
+                .map(|_| expanded_path.clone());
+
+            if !is_local && let Some(global_skill_path) = global_skill_path.as_ref() {
+                delete_global_skill_direct(global_skill_path, &path, &fs, &event_stream).await?;
+                return Ok(format!("Deleted {path}"));
+            }
+
+            let global_skills_worktree = if global_skill_path.is_some() {
+                Some(ensure_global_skills_worktree(&project, cx).await?)
+            } else {
+                None
+            };
+
             let (project_path, worktree_snapshot) = project.read_with(cx, |project, cx| {
-                let project_path = project.find_project_path(&path, cx).ok_or_else(|| {
-                    format!("Couldn't delete {path} because that path isn't in this project.")
-                })?;
-                let worktree = project
-                    .worktree_for_id(project_path.worktree_id, cx)
-                    .ok_or_else(|| {
-                        format!("Couldn't delete {path} because that path isn't in this project.")
-                    })?;
+                let project_path = match (
+                    global_skills_worktree.as_ref(),
+                    global_skill_path.as_ref(),
+                ) {
+                    (Some(worktree), Some(global_skill_path)) => {
+                        build_global_skill_project_path(worktree, global_skill_path, cx)?
+                    }
+                    _ => project
+                        .find_project_path(&expanded_path, cx)
+                        .ok_or_else(|| {
+                            format!(
+                                "Couldn't delete {path} because that path isn't in this project."
+                            )
+                        })?,
+                };
+                let worktree = if let Some(worktree) = global_skills_worktree.as_ref() {
+                    worktree.clone()
+                } else {
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .ok_or_else(|| {
+                            format!(
+                                "Couldn't delete {path} because that path isn't in this project."
+                            )
+                        })?
+                };
                 let worktree_snapshot = worktree.read(cx).snapshot();
                 Result::<_, String>::Ok((project_path, worktree_snapshot))
             })?;
@@ -218,9 +255,54 @@ impl AgentTool for DeletePathTool {
                     return Err("Delete cancelled by user".to_string());
                 }
             }
+            drop(global_skills_worktree);
             Ok(format!("Deleted {path}"))
         })
     }
+}
+
+async fn delete_global_skill_direct(
+    global_skill_path: &Path,
+    display_path: &str,
+    fs: &Arc<dyn fs::Fs>,
+    event_stream: &ToolCallEventStream,
+) -> Result<(), String> {
+    let metadata = fs
+        .metadata(global_skill_path)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!("Couldn't delete {display_path} because that path was not found.")
+        })?;
+
+    let delete_task = async {
+        if metadata.is_dir {
+            fs.remove_dir(
+                global_skill_path,
+                RemoveOptions {
+                    recursive: true,
+                    ..Default::default()
+                },
+            )
+            .await
+        } else {
+            fs.remove_file(global_skill_path, RemoveOptions::default())
+                .await
+        }
+    }
+    .fuse();
+    futures::pin_mut!(delete_task);
+
+    futures::select! {
+        result = delete_task => {
+            result.map_err(|e| format!("Deleting {display_path}: {e}"))?;
+        }
+        _ = event_stream.cancelled_by_user().fuse() => {
+            return Err("Delete cancelled by user".to_string());
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -246,6 +328,117 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skill_dir = agent_skills::global_skills_dir().join("delete-me");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            skill_dir.join("SKILL.md"),
+            b"---\nname: delete-me\ndescription: delete me\n---\nbody".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(DeletePathToolInput {
+                    path: "~/.agents/skills/delete-me".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "delete should succeed: {result:?}");
+        assert!(!fs.is_dir(&skill_dir).await);
+        assert!(!fs.is_file(&skill_dir.join("SKILL.md")).await);
+    }
+
+    #[gpui::test]
+    async fn test_delete_path_global_skill_directory_in_remote_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skill_dir = agent_skills::global_skills_dir().join("remote-delete-me");
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            skill_dir.join("SKILL.md"),
+            b"---\nname: remote-delete-me\ndescription: delete me\n---\nbody".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+        cx.executor().run_until_parked();
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(DeletePathTool::new(project, action_log));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(DeletePathToolInput {
+                    path: "~/.agents/skills/remote-delete-me".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|title| title.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "delete should succeed: {result:?}");
+        assert!(!fs.is_dir(&skill_dir).await);
+        assert!(!fs.is_file(&skill_dir.join("SKILL.md")).await);
     }
 
     #[gpui::test]
