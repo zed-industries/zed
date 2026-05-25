@@ -2535,7 +2535,7 @@ impl EditPredictionStore {
                 all_language_settings(None, cx).edit_predictions.provider,
                 EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi
             );
-        if is_cloud_zeta && self.user_store.read(cx).current_user().is_none() {
+        if is_cloud_zeta && !self.client.cloud_client().has_credentials() {
             return Task::ready(Ok(None));
         }
 
