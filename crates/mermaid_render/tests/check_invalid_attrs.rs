@@ -229,6 +229,122 @@ fn accent_colors_auto_applied_to_nodes() {
 }
 
 #[test]
+fn generics_not_double_escaped() {
+    let theme = rgb_theme();
+    let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
+    let svg = mermaid_render::render_to_svg(source, &theme)
+        .expect("render failed");
+    assert!(!svg.contains("&amp;lt;"), "Double-escaped &amp;lt; found in SVG");
+    assert!(!svg.contains("&amp;gt;"), "Double-escaped &amp;gt; found in SVG");
+}
+
+#[test]
+fn backslash_n_converted_to_line_break() {
+    let theme = rgb_theme();
+    let source = r#"graph TD
+    L7["Layer 7\nHTTP, FTP"]
+    L6["Layer 6\nEncryption"]
+    L7 --> L6"#;
+    let svg = mermaid_render::render_to_svg(source, &theme)
+        .expect("render failed");
+    assert!(
+        !svg.contains(r"\n"),
+        "Literal \\n should not appear in SVG output"
+    );
+    assert!(
+        svg.contains(">Layer 7<") && svg.contains(">HTTP, FTP<"),
+        "Label lines should be split into separate <text> elements"
+    );
+}
+
+#[test]
+fn class_diagram_fallback_text_uses_accent_classes() {
+    let theme = rgb_theme();
+    let source = r#"classDiagram
+    class Animal {
+        +String name
+        +makeSound() void
+    }
+    class Dog {
+        +String breed
+        +bark() void
+    }
+    Dog --|> Animal"#;
+
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(&svg);
+    let mut in_fallback = false;
+    let mut accent_classes: Vec<String> = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                if e.name().as_ref() == b"g" {
+                    if let Ok(Some(attr)) = e.try_get_attribute("data-merman-foreignobject") {
+                        if attr.value.as_ref() == b"fallback" {
+                            in_fallback = true;
+                        }
+                    }
+                }
+                if in_fallback && e.name().as_ref() == b"text" {
+                    if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
+                        let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                        for token in class.split_whitespace() {
+                            if token.starts_with("zed-accent-") {
+                                accent_classes.push(token.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(e)) if e.name().as_ref() == b"g" => {
+                in_fallback = false;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        !accent_classes.is_empty(),
+        "expected zed-accent-N classes on text elements in fallback groups",
+    );
+}
+
+#[test]
+fn sequence_diagram_tspan_uses_accent_classes() {
+    let theme = rgb_theme();
+    let source = "sequenceDiagram\n    participant Database";
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_str(&svg);
+    let mut accent_classes: Vec<String> = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) if e.name().as_ref() == b"tspan" => {
+                if let Ok(Some(class_attr)) = e.try_get_attribute("class") {
+                    let class = class_attr.unescape_value().unwrap_or_default().to_string();
+                    for token in class.split_whitespace() {
+                        if token.starts_with("zed-accent-") {
+                            accent_classes.push(token.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        !accent_classes.is_empty(),
+        "expected zed-accent-N classes on tspan elements in sequence diagram",
+    );
+}
+
+#[test]
 fn no_empty_attributes_or_nan_with_rgb_theme() {
     let theme = rgb_theme();
     let mut all_issues = Vec::new();
