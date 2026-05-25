@@ -9255,27 +9255,8 @@ impl LineWithInvisibles {
         cx: &mut App,
     ) {
         let extract_whitespace_info = |invisible: &Invisible| {
-            let (token_offset, token_end_offset, invisible_symbol) = match invisible {
-                Invisible::Tab {
-                    line_start_offset,
-                    line_end_offset,
-                } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
-                Invisible::Whitespace { line_offset } => {
-                    (*line_offset, line_offset + 1, &layout.space_invisible)
-                }
-            };
-
-            let x_offset: ScrollPixelOffset = self.x_for_index(token_offset).into();
-            let invisible_offset: ScrollPixelOffset =
-                ((layout.position_map.em_width - invisible_symbol.width).max(Pixels::ZERO) / 2.0)
-                    .into();
-            let origin = content_origin
-                + gpui::point(
-                    Pixels::from(
-                        x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
-                    ),
-                    line_y,
-                );
+            let ([token_offset, token_end_offset], invisible_symbol, origin) =
+                self.invisible_paint_info(invisible, layout, content_origin, line_y);
 
             (
                 [token_offset, token_end_offset],
@@ -9357,6 +9338,40 @@ impl LineWithInvisibles {
                 }
             }
         }
+    }
+
+    fn invisible_paint_info<'a>(
+        &self,
+        invisible: &Invisible,
+        layout: &'a EditorLayout,
+        content_origin: gpui::Point<Pixels>,
+        line_y: Pixels,
+    ) -> ([usize; 2], &'a ShapedLine, gpui::Point<Pixels>) {
+        let (token_offset, token_end_offset, invisible_symbol) = match invisible {
+            Invisible::Tab {
+                line_start_offset,
+                line_end_offset,
+            } => (*line_start_offset, *line_end_offset, &layout.tab_invisible),
+            Invisible::Whitespace { line_offset } => {
+                (*line_offset, line_offset + 1, &layout.space_invisible)
+            }
+        };
+
+        let x_offset: ScrollPixelOffset = self.x_for_index(token_offset).into();
+        let invisible_offset = invisible_marker_offset(
+            invisible,
+            layout.position_map.em_width,
+            invisible_symbol.width,
+        );
+        let origin = content_origin
+            + gpui::point(
+                Pixels::from(
+                    x_offset + invisible_offset - layout.position_map.scroll_pixel_position.x,
+                ),
+                line_y,
+            );
+
+        ([token_offset, token_end_offset], invisible_symbol, origin)
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
@@ -9449,6 +9464,19 @@ impl LineWithInvisibles {
             TextAlign::Left => px(0.0),
             TextAlign::Center => (content_width - line_width) / 2.0,
             TextAlign::Right => content_width - line_width,
+        }
+    }
+}
+
+fn invisible_marker_offset(
+    invisible: &Invisible,
+    em_width: Pixels,
+    invisible_symbol_width: Pixels,
+) -> ScrollPixelOffset {
+    match invisible {
+        Invisible::Tab { .. } => Pixels::ZERO.into(),
+        Invisible::Whitespace { .. } => {
+            ((em_width - invisible_symbol_width).max(Pixels::ZERO) / 2.0).into()
         }
     }
 }
@@ -13044,6 +13072,120 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_tab_invisible_markers_are_left_aligned(cx: &mut TestAppContext) {
+        const TAB_SIZE: u32 = 4;
+
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
+            s.defaults.whitespace_map = Some(settings::WhitespaceMapContent {
+                space: Some('\u{00b7}'),
+                tab: Some('\u{2192}'),
+            });
+        });
+
+        let state = draw_new_editor_layout(cx, EditorMode::full(), "\t\t", px(500.0), false);
+        let Some(line_layout) = state.position_map.line_layouts.first() else {
+            panic!("expected a line layout for tab invisibles");
+        };
+
+        assert_eq!(
+            line_layout.invisibles,
+            vec![
+                Invisible::Tab {
+                    line_start_offset: 0,
+                    line_end_offset: TAB_SIZE as usize,
+                },
+                Invisible::Tab {
+                    line_start_offset: TAB_SIZE as usize,
+                    line_end_offset: TAB_SIZE as usize * 2,
+                },
+            ]
+        );
+
+        let line_y = state.position_map.line_height
+            * (DisplayRow(0).as_f64() - state.position_map.scroll_position.y) as f32;
+        for invisible in &line_layout.invisibles {
+            let ([start, _], _, origin) =
+                line_layout.invisible_paint_info(invisible, &state, state.content_origin, line_y);
+            let expected_x = state.content_origin.x
+                + Pixels::from(
+                    ScrollPixelOffset::from(line_layout.x_for_index(start))
+                        - state.position_map.scroll_pixel_position.x,
+                );
+
+            assert_eq!(origin.x, expected_x);
+        }
+    }
+
+    #[gpui::test]
+    fn test_space_invisible_markers_keep_centering_offset(cx: &mut TestAppContext) {
+        init_test(cx, |s| {
+            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+            s.defaults.whitespace_map = Some(settings::WhitespaceMapContent {
+                space: Some('\u{00b7}'),
+                tab: Some('\u{2192}'),
+            });
+        });
+
+        let state = draw_new_editor_layout(cx, EditorMode::full(), "  ", px(500.0), false);
+        let Some(line_layout) = state.position_map.line_layouts.first() else {
+            panic!("expected a line layout for space invisibles");
+        };
+
+        assert_eq!(
+            line_layout.invisibles,
+            vec![
+                Invisible::Whitespace { line_offset: 0 },
+                Invisible::Whitespace { line_offset: 1 },
+            ]
+        );
+
+        let line_y = state.position_map.line_height
+            * (DisplayRow(0).as_f64() - state.position_map.scroll_position.y) as f32;
+        for invisible in &line_layout.invisibles {
+            let ([start, _], _, origin) =
+                line_layout.invisible_paint_info(invisible, &state, state.content_origin, line_y);
+            let expected_x = state.content_origin.x
+                + Pixels::from(
+                    ScrollPixelOffset::from(line_layout.x_for_index(start))
+                        + invisible_marker_offset(
+                            invisible,
+                            state.position_map.em_width,
+                            state.space_invisible.width,
+                        )
+                        - state.position_map.scroll_pixel_position.x,
+                );
+
+            assert_eq!(origin.x, expected_x);
+        }
+
+        assert_eq!(
+            invisible_marker_offset(&Invisible::Whitespace { line_offset: 0 }, px(10.0), px(2.0)),
+            4.0
+        );
+        assert_eq!(
+            invisible_marker_offset(
+                &Invisible::Whitespace { line_offset: 0 },
+                px(10.0),
+                px(12.0)
+            ),
+            0.0
+        );
+        assert_eq!(
+            invisible_marker_offset(
+                &Invisible::Tab {
+                    line_start_offset: 0,
+                    line_end_offset: 4,
+                },
+                px(10.0),
+                px(2.0)
+            ),
+            0.0
+        );
+    }
+
+    #[gpui::test]
     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
         init_test(cx, |s| {
             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
@@ -13174,6 +13316,22 @@ mod tests {
         editor_width: Pixels,
         show_line_numbers: bool,
     ) -> Vec<Invisible> {
+        draw_new_editor_layout(cx, editor_mode, input_text, editor_width, show_line_numbers)
+            .position_map
+            .line_layouts
+            .iter()
+            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
+            .cloned()
+            .collect()
+    }
+
+    fn draw_new_editor_layout(
+        cx: &mut TestAppContext,
+        editor_mode: EditorMode,
+        input_text: &str,
+        editor_width: Pixels,
+        show_line_numbers: bool,
+    ) -> EditorLayout {
         info!(
             "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
             f32::from(editor_width)
@@ -13199,12 +13357,6 @@ mod tests {
             |_, _| EditorElement::new(&editor, style),
         );
         state
-            .position_map
-            .line_layouts
-            .iter()
-            .flat_map(|line_with_invisibles| &line_with_invisibles.invisibles)
-            .cloned()
-            .collect()
     }
 
     #[gpui::test]
