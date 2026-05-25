@@ -1,7 +1,7 @@
 //! Injects CSS classes to set accent colors. Mermaid broadly speaking does not
 //! provide a mechanism to color individual nodes. A few diagram types support
 //! `:::my-css-class` on nodes, but most don't.
-//! 
+//!
 //! [`inject_css`](super::inject_css) then injects CSS rules for the classes
 //! that this module injects.
 

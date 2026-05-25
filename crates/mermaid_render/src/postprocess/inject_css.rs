@@ -219,21 +219,41 @@ fn chart_color_css(theme: &MermaidTheme) -> String {
     css
 }
 
+fn should_scope_css_line(trimmed: &str) -> bool {
+    !trimmed.is_empty()
+        && (trimmed.starts_with('.')
+            || trimmed.starts_with("foreignObject")
+            || trimmed.starts_with("g.")
+            || trimmed.starts_with("text.")
+            || trimmed.starts_with("rect.")
+            || trimmed.starts_with("path.")
+            || trimmed.starts_with("defs")
+            || trimmed.starts_with('#'))
+}
+
+fn scoped_selector_count(raw_css: &str) -> usize {
+    raw_css.lines().fold(0, |count, line| {
+        let trimmed = line.trim();
+        if !should_scope_css_line(trimmed) {
+            return count;
+        }
+        let Some((selectors, _)) = trimmed.split_once('{') else {
+            return count;
+        };
+        count.saturating_add(selectors.split(',').count())
+    })
+}
+
 fn scope_css(raw_css: &str, svg_id: &str) -> String {
-    let mut result = String::with_capacity(raw_css.len());
+    let scoped_selector_prefix_len = svg_id.len().saturating_add(2);
+    let result_capacity = raw_css
+        .len()
+        .saturating_add(scoped_selector_count(raw_css).saturating_mul(scoped_selector_prefix_len));
+    let mut result = String::with_capacity(result_capacity);
     for line in raw_css.lines() {
         let trimmed = line.trim();
-        let should_scope = !trimmed.is_empty()
-            && (trimmed.starts_with('.')
-                || trimmed.starts_with("foreignObject")
-                || trimmed.starts_with("g.")
-                || trimmed.starts_with("text.")
-                || trimmed.starts_with("rect.")
-                || trimmed.starts_with("path.")
-                || trimmed.starts_with("defs")
-                || trimmed.starts_with('#'));
 
-        if should_scope {
+        if should_scope_css_line(trimmed) {
             if let Some(brace) = trimmed.find('{') {
                 let (selectors, rest) = trimmed.split_at(brace);
                 let mut first = true;

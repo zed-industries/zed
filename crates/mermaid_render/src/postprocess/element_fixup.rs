@@ -81,16 +81,25 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
 }
 
 impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
-    fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<BytesStart<'a>> {
-        let style = e
+    fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
+        const WHITE_BACKGROUND_STYLE: &str = "background-color: white";
+
+        let Some(style) = e
             .try_get_attribute("style")?
             .map(|a| a.unescape_value())
-            .transpose()?;
-        let new_style = style.as_deref().unwrap_or_default().replace(
-            "background-color: white",
+            .transpose()?
+        else {
+            return Ok(None);
+        };
+        if !style.contains(WHITE_BACKGROUND_STYLE) {
+            return Ok(None);
+        }
+
+        let new_style = style.replace(
+            WHITE_BACKGROUND_STYLE,
             &format!("background-color: {}", self.background_css),
         );
-        rewrite_attr(e, b"style", &new_style)
+        Ok(Some(rewrite_attr(e, b"style", &new_style)?))
     }
 
     fn fix_text_fill(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
@@ -110,8 +119,11 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
         match &event {
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"svg" && !self.svg_seen => {
                 self.svg_seen = true;
-                let new_elem = self.rewrite_svg_style(e)?;
-                Ok(Some(rewrap(&event, new_elem)))
+                if let Some(new_elem) = self.rewrite_svg_style(e)? {
+                    Ok(Some(rewrap(&event, new_elem)))
+                } else {
+                    Ok(Some(event))
+                }
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"rect" => {
