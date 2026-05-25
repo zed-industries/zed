@@ -73,7 +73,7 @@ use serde_json::Value;
 use settings::WorktreeId;
 use std::{
     ffi::OsStr,
-    fmt::Debug,
+    fmt::{self, Debug},
     hash::Hash,
     mem,
     ops::{DerefMut, Range},
@@ -106,6 +106,29 @@ pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
 };
+
+#[derive(Debug)]
+pub struct BinaryDownloadsDisabled {
+    tool: String,
+}
+
+impl BinaryDownloadsDisabled {
+    pub fn new(tool: impl Into<String>) -> Self {
+        Self { tool: tool.into() }
+    }
+}
+
+impl fmt::Display for BinaryDownloadsDisabled {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "binary downloads are disabled; not installing {}",
+            self.tool
+        )
+    }
+}
+
+impl std::error::Error for BinaryDownloadsDisabled {}
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
 pub use syntax_map::{
@@ -830,11 +853,16 @@ where
                 return (Ok(cached_binary.clone()), None);
             }
 
-            if !binary_options.allow_binary_download {
-                return (
-                    Err(anyhow::anyhow!("downloading language servers disabled")),
-                    None,
+            if !binary_options.allow_binary_downloads {
+                let reason =
+                    BinaryDownloadsDisabled::new(format!("language server {}", self.name().0));
+                delegate.update_status(
+                    self.name(),
+                    BinaryStatus::Disabled {
+                        reason: reason.to_string(),
+                    },
                 );
+                return (Err(reason.into()), None);
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await

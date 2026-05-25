@@ -120,6 +120,7 @@ impl HeadlessProject {
                 cx,
             );
         }
+        project::binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));

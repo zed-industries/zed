@@ -1,5 +1,6 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
+pub mod binary_downloads;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
@@ -1211,6 +1212,7 @@ impl Project {
                     cx,
                 );
             }
+            binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1435,6 +1437,10 @@ impl Project {
                     cx,
                 );
             }
+            // Binary-downloads tracking is intentionally not registered for
+            // remote projects: the local Zed never downloads anything for
+            // them, and the remote server has its own `BinaryDownloads`
+            // global wired up in `HeadlessProject::new`.
 
             let weak_self = cx.weak_entity();
 

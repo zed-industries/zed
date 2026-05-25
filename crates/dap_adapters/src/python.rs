@@ -121,6 +121,8 @@ impl PythonDebugAdapter {
         std::fs::create_dir_all(&download_dir)?;
         let venv_python = self.base_venv_path(toolchain, delegate).await?;
 
+        delegate.await_binary_downloads_allowed("debugpy").await;
+
         let installation_succeeded = util::command::new_command(venv_python.as_ref())
             .args([
                 "-m",
