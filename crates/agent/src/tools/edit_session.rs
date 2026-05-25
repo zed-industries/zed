@@ -4,7 +4,10 @@ mod streaming_parser;
 
 use crate::{
     Thread, ToolCallEventStream,
-    tools::tool_permissions::{expand_user_home, resolve_global_skill_creation_target},
+    tools::tool_permissions::{
+        build_global_skill_project_path, ensure_global_skills_worktree, expand_user_home,
+        resolve_global_skill_creation_target,
+    },
 };
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -1095,27 +1098,6 @@ async fn resolve_dirty_buffer(
     Ok(())
 }
 
-/// Attach a hidden worktree rooted at `~/.agents/skills/` and await its
-/// initial scan, so `entry_for_path` can see whatever `create_directory`
-/// just put on disk. Idempotent.
-async fn ensure_global_skills_worktree(
-    project: &Entity<Project>,
-    cx: &mut AsyncApp,
-) -> Result<Entity<project::Worktree>, String> {
-    let skills_dir = agent_skills::global_skills_dir();
-    let task = project.update(cx, |project, cx| {
-        project.find_or_create_worktree(&skills_dir, false, cx)
-    });
-    let (worktree, _) = task.await.map_err(|e: anyhow::Error| e.to_string())?;
-    let scan_complete = worktree.read_with(cx, |worktree, _cx| {
-        worktree.as_local().map(|local| local.scan_complete())
-    });
-    if let Some(scan_complete) = scan_complete {
-        scan_complete.await;
-    }
-    Ok(worktree)
-}
-
 /// Build a `ProjectPath` from the hidden skills worktree directly,
 /// enforcing the same Edit/Write invariants `resolve_path` does for normal
 /// worktrees. `Project::find_project_path` can't be used because it only
@@ -1127,29 +1109,20 @@ fn resolve_global_skill_project_path(
     cx: &mut AsyncApp,
 ) -> Result<ProjectPath, String> {
     cx.update(|cx| {
+        let project_path = build_global_skill_project_path(worktree, path, cx)?;
         let worktree = worktree.read(cx);
-        let relative = path
-            .strip_prefix(worktree.abs_path().as_ref())
-            .map_err(|_| {
-                format!(
-                    "{} is not inside the global skills directory",
-                    path.display()
-                )
-            })?;
-        let rel_path = RelPath::new(relative, util::paths::PathStyle::local())
-            .map_err(|err| format!("Invalid skill path {}: {err}", path.display()))?
-            .into_arc();
+        let rel_path = &project_path.path;
 
         match mode {
             EditSessionMode::Edit => {
                 let entry = worktree
-                    .entry_for_path(&rel_path)
+                    .entry_for_path(rel_path)
                     .ok_or_else(|| "Can't edit file: path not found".to_string())?;
                 if !entry.is_file() {
                     return Err("Can't edit file: path is a directory".to_string());
                 }
             }
-            EditSessionMode::Write => match worktree.entry_for_path(&rel_path) {
+            EditSessionMode::Write => match worktree.entry_for_path(rel_path) {
                 Some(entry) if !entry.is_file() => {
                     return Err("Can't write to file: path is a directory".to_string());
                 }
@@ -1168,10 +1141,7 @@ fn resolve_global_skill_project_path(
             },
         }
 
-        Ok(ProjectPath {
-            worktree_id: worktree.id(),
-            path: rel_path,
-        })
+        Ok(project_path)
     })
 }
 

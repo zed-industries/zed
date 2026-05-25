@@ -6,12 +6,13 @@ use agent_client_protocol::schema as acp;
 use agent_skills::is_agents_skills_path;
 use anyhow::{Result, anyhow};
 use fs::Fs;
-use gpui::{App, Entity, Task, WeakEntity};
-use project::{Project, ProjectPath};
+use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
+use project::{Project, ProjectPath, Worktree};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use util::paths::component_matches_ignore_ascii_case;
+use util::rel_path::RelPath;
 
 pub enum SensitiveSettingsKind {
     Local,
@@ -174,6 +175,54 @@ pub fn expand_user_home(path: impl AsRef<Path>) -> PathBuf {
     let mut expanded = paths::home_dir().clone();
     expanded.extend(components);
     expanded
+}
+
+/// Attach (idempotently) a hidden worktree at `~/.agents/skills/` and await
+/// its initial scan. Needed because `Project::find_project_path` only sees
+/// *visible* worktrees, so tools that touch the global skills tree must go
+/// through this handle instead.
+pub async fn ensure_global_skills_worktree(
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Worktree>, String> {
+    let skills_dir = agent_skills::global_skills_dir();
+    let task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&skills_dir, false, cx)
+    });
+    let (worktree, _) = task.await.map_err(|e: anyhow::Error| e.to_string())?;
+    let scan_complete = worktree.read_with(cx, |worktree, _cx| {
+        worktree.as_local().map(|local| local.scan_complete())
+    });
+    if let Some(scan_complete) = scan_complete {
+        scan_complete.await;
+    }
+    Ok(worktree)
+}
+
+/// Build a `ProjectPath` for `abs_path` inside the hidden global-skills
+/// worktree. Does not check that the entry exists; callers that require it
+/// should follow up with `worktree.entry_for_path(...)`.
+pub fn build_global_skill_project_path(
+    worktree: &Entity<Worktree>,
+    abs_path: &Path,
+    cx: &App,
+) -> Result<ProjectPath, String> {
+    let worktree = worktree.read(cx);
+    let relative = abs_path
+        .strip_prefix(worktree.abs_path().as_ref())
+        .map_err(|_| {
+            format!(
+                "{} is not inside the global skills directory",
+                abs_path.display()
+            )
+        })?;
+    let rel_path = RelPath::new(relative, util::paths::PathStyle::local())
+        .map_err(|err| format!("Invalid skill path {}: {err}", abs_path.display()))?
+        .into_arc();
+    Ok(ProjectPath {
+        worktree_id: worktree.id(),
+        path: rel_path,
+    })
 }
 
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:

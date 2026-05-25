@@ -1,6 +1,7 @@
 use super::tool_permissions::{
-    authorize_symlink_escapes, canonicalize_worktree_roots, collect_symlink_escapes,
-    sensitive_settings_kind,
+    authorize_symlink_escapes, build_global_skill_project_path, canonicalize_worktree_roots,
+    collect_symlink_escapes, ensure_global_skills_worktree, expand_user_home,
+    resolve_global_skill_creation_target, resolve_global_skill_path, sensitive_settings_kind,
 };
 use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
@@ -10,7 +11,7 @@ use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
-use project::Project;
+use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -176,23 +177,63 @@ impl AgentTool for MovePathTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            // Gate the skills carve-out on local projects: `project.fs()` is
+            // the *remote* fs on SSH/collab projects and global skills always
+            // live on the user's local machine.
+            let is_local = project.read_with(cx, |project, _cx| project.is_local());
+            let expanded_source = expand_user_home(&input.source_path);
+            let expanded_dest = expand_user_home(&input.destination_path);
+            let source_in_skills = is_local
+                && resolve_global_skill_path(&expanded_source, fs.as_ref())
+                    .await
+                    .is_some();
+            let dest_in_skills = is_local
+                && resolve_global_skill_creation_target(&expanded_dest, fs.as_ref())
+                    .await
+                    .is_some();
+
+            // Kept in scope past `rename_task` because `WorktreeStore` only
+            // holds invisible worktrees by `Weak`.
+            let global_skills_worktree = if source_in_skills || dest_in_skills {
+                Some(ensure_global_skills_worktree(&project, cx).await?)
+            } else {
+                None
+            };
+            let source_worktree = global_skills_worktree.as_ref().filter(|_| source_in_skills);
+            let dest_worktree = global_skills_worktree.as_ref().filter(|_| dest_in_skills);
+
             let rename_task = project.update(cx, |project, cx| {
-                match project
-                    .find_project_path(&input.source_path, cx)
-                    .and_then(|project_path| project.entry_for_path(&project_path, cx))
-                {
-                    Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                        Some(project_path) => Ok(project.rename_entry(entity.id, project_path, cx)),
-                        None => Err(format!(
-                            "Destination path {} was outside the project.",
-                            input.destination_path
-                        )),
-                    },
-                    None => Err(format!(
-                        "Source path {} was not found in the project.",
-                        input.source_path
-                    )),
-                }
+                let source_entry_id = if let Some(worktree) = source_worktree {
+                    let project_path =
+                        build_global_skill_project_path(worktree, &expanded_source, cx)?;
+                    worktree
+                        .read(cx)
+                        .entry_for_path(&project_path.path)
+                        .map(|entry| entry.id)
+                        .ok_or_else(|| {
+                            format!(
+                                "Source path {} was not found in the project.",
+                                input.source_path
+                            )
+                        })?
+                } else {
+                    resolve_source_entry_id(project, &input.source_path, cx)?
+                };
+
+                let destination_path = if let Some(worktree) = dest_worktree {
+                    build_global_skill_project_path(worktree, &expanded_dest, cx)?
+                } else {
+                    project
+                        .find_project_path(&input.destination_path, cx)
+                        .ok_or_else(|| {
+                            format!(
+                                "Destination path {} was outside the project.",
+                                input.destination_path
+                            )
+                        })?
+                };
+
+                Ok::<_, String>(project.rename_entry(source_entry_id, destination_path, cx))
             })?;
 
             futures::select! {
@@ -201,12 +242,27 @@ impl AgentTool for MovePathTool {
                     return Err("Move cancelled by user".to_string());
                 }
             };
+            drop(global_skills_worktree);
             Ok(format!(
                 "Moved {} to {}",
                 input.source_path, input.destination_path
             ))
         })
     }
+}
+
+fn resolve_source_entry_id(
+    project: &Project,
+    source_path: &str,
+    cx: &App,
+) -> Result<ProjectEntryId, String> {
+    let project_path: ProjectPath = project
+        .find_project_path(source_path, cx)
+        .ok_or_else(|| format!("Source path {source_path} was not found in the project."))?;
+    project
+        .entry_for_path(&project_path, cx)
+        .map(|entry| entry.id)
+        .ok_or_else(|| format!("Source path {source_path} was not found in the project."))
 }
 
 #[cfg(test)]
@@ -467,6 +523,236 @@ mod tests {
                 Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
+        );
+    }
+
+    /// Moving a project file into the global skills directory must succeed
+    /// (previously failed with "parent directory doesn't exist" because
+    /// `find_project_path` can't see the hidden skills worktree).
+    #[gpui::test]
+    async fn test_move_path_project_to_global_skill(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "draft-skill": {
+                        "SKILL.md": "---\nname: draft-skill\ndescription: in-progress skill\n---\nbody",
+                    },
+                },
+            }),
+        )
+        .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let dest = skills_dir
+            .join("draft-skill")
+            .to_string_lossy()
+            .into_owned();
+        let input = MovePathToolInput {
+            source_path: "project/draft-skill".into(),
+            destination_path: dest.clone(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "move should succeed: {result:?}");
+        assert!(fs.is_dir(&skills_dir.join("draft-skill")).await);
+        assert!(
+            fs.is_file(&skills_dir.join("draft-skill").join("SKILL.md"))
+                .await
+        );
+        assert!(
+            !fs.is_dir(Path::new(path!("/root/project/draft-skill")))
+                .await
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_path_global_skill_to_project(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_dir(&skills_dir.join("shared-skill"))
+            .await
+            .unwrap();
+        fs.insert_file(
+            skills_dir.join("shared-skill").join("SKILL.md"),
+            b"---\nname: shared-skill\ndescription: promote me\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let source = skills_dir
+            .join("shared-skill")
+            .to_string_lossy()
+            .into_owned();
+        let input = MovePathToolInput {
+            source_path: source,
+            destination_path: "project/shared-skill".into(),
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "move should succeed: {result:?}");
+        assert!(
+            fs.is_dir(Path::new(path!("/root/project/shared-skill")))
+                .await
+        );
+        assert!(
+            fs.is_file(Path::new(path!("/root/project/shared-skill/SKILL.md")))
+                .await
+        );
+        assert!(!fs.is_dir(&skills_dir.join("shared-skill")).await);
+    }
+
+    /// Both source and destination resolve through the hidden worktree.
+    #[gpui::test]
+    async fn test_move_path_rename_within_global_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_dir(&skills_dir.join("old-name")).await.unwrap();
+        fs.insert_file(
+            skills_dir.join("old-name").join("SKILL.md"),
+            b"---\nname: old-name\ndescription: rename me\n---\nbody".to_vec(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let source = skills_dir.join("old-name").to_string_lossy().into_owned();
+        let destination = skills_dir.join("new-name").to_string_lossy().into_owned();
+        let input = MovePathToolInput {
+            source_path: source,
+            destination_path: destination,
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(result.is_ok(), "rename should succeed: {result:?}");
+        assert!(fs.is_dir(&skills_dir.join("new-name")).await);
+        assert!(!fs.is_dir(&skills_dir.join("old-name")).await);
+    }
+
+    /// The carve-out must not fire on remote/collab projects — it would
+    /// otherwise touch the agent's local home directory.
+    #[gpui::test]
+    async fn test_move_path_skip_skills_carve_out_for_remote_projects(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "project": {
+                    "draft-skill": { "SKILL.md": "body" },
+                },
+            }),
+        )
+        .await;
+        let skills_dir = agent_skills::global_skills_dir();
+        fs.create_dir(&skills_dir).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+        cx.executor().run_until_parked();
+        let tool = Arc::new(MovePathTool::new(project));
+
+        let dest = skills_dir
+            .join("draft-skill")
+            .to_string_lossy()
+            .into_owned();
+        let input = MovePathToolInput {
+            source_path: "project/draft-skill".into(),
+            destination_path: dest,
+        };
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("outside the project")),
+            "got: {result:?}",
+        );
+        assert!(!fs.is_dir(&skills_dir.join("draft-skill")).await);
+        assert!(
+            fs.is_dir(Path::new(path!("/root/project/draft-skill")))
+                .await
         );
     }
 }
