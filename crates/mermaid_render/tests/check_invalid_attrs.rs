@@ -32,18 +32,12 @@ const DIAGRAMS: &[(&str, &str)] = &[
         "class",
         "classDiagram\n    class Foo {\n        +bar() void\n    }",
     ),
-    (
-        "pie",
-        "pie title Test\n    \"A\" : 42\n    \"B\" : 58",
-    ),
+    ("pie", "pie title Test\n    \"A\" : 42\n    \"B\" : 58"),
     (
         "gantt",
         "gantt\n    title Test\n    dateFormat YYYY-MM-DD\n    section S\n        Task :a1, 2025-01-01, 7d",
     ),
-    (
-        "mindmap",
-        "mindmap\n  root((Root))\n    Child1\n    Child2",
-    ),
+    ("mindmap", "mindmap\n  root((Root))\n    Child1\n    Child2"),
     (
         "journey",
         "journey\n    title Test\n    section S\n        Task: 5: Actor",
@@ -106,20 +100,45 @@ fn rgb_theme() -> MermaidTheme {
             rgb(208, 114, 119),
             rgb(222, 193, 132),
             rgb(161, 193, 129),
-        ].map(mermaid_render::text_color_for_background),
+        ]
+        .map(mermaid_render::text_color_for_background),
         er_attr_bg_odd: rgb(47, 52, 62),
         er_attr_bg_even: rgb(46, 52, 62),
         error_color: rgb(220, 38, 38),
         warning_color: rgb(217, 119, 6),
         accent_colors: vec![
-            mermaid_render::AccentColor { foreground: rgb(116, 173, 232), background: rgb(116, 173, 232) },
-            mermaid_render::AccentColor { foreground: rgb(190, 80, 70), background: rgb(190, 80, 70) },
-            mermaid_render::AccentColor { foreground: rgb(191, 149, 106), background: rgb(191, 149, 106) },
-            mermaid_render::AccentColor { foreground: rgb(180, 119, 207), background: rgb(180, 119, 207) },
-            mermaid_render::AccentColor { foreground: rgb(110, 180, 191), background: rgb(110, 180, 191) },
-            mermaid_render::AccentColor { foreground: rgb(208, 114, 119), background: rgb(208, 114, 119) },
-            mermaid_render::AccentColor { foreground: rgb(222, 193, 132), background: rgb(222, 193, 132) },
-            mermaid_render::AccentColor { foreground: rgb(161, 193, 129), background: rgb(161, 193, 129) },
+            mermaid_render::AccentColor {
+                foreground: rgb(116, 173, 232),
+                background: rgb(116, 173, 232),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(190, 80, 70),
+                background: rgb(190, 80, 70),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(191, 149, 106),
+                background: rgb(191, 149, 106),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(180, 119, 207),
+                background: rgb(180, 119, 207),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(110, 180, 191),
+                background: rgb(110, 180, 191),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(208, 114, 119),
+                background: rgb(208, 114, 119),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(222, 193, 132),
+                background: rgb(222, 193, 132),
+            },
+            mermaid_render::AccentColor {
+                foreground: rgb(161, 193, 129),
+                background: rgb(161, 193, 129),
+            },
         ],
     }
 }
@@ -167,22 +186,28 @@ fn check_svg_issues(name: &str, svg: &str) -> Vec<String> {
                     let val = attr.unescape_value().unwrap_or_default();
                     let visual_attr = matches!(
                         key.as_str(),
-                        "fill" | "stroke" | "width" | "height" | "x" | "y" | "r"
-                            | "cx" | "cy" | "rx" | "ry" | "stroke-width"
+                        "fill"
+                            | "stroke"
+                            | "width"
+                            | "height"
+                            | "x"
+                            | "y"
+                            | "r"
+                            | "cx"
+                            | "cy"
+                            | "rx"
+                            | "ry"
+                            | "stroke-width"
                     );
                     if visual_attr && val.is_empty() {
-                        issues.push(format!(
-                            "{name}: <{tag}> has empty {key}=\"\"\n"
-                        ));
+                        issues.push(format!("{name}: <{tag}> has empty {key}=\"\"\n"));
                     }
                     // Check for CSS length units that usvg can't parse
                     if visual_attr
                         && matches!(key.as_str(), "width" | "height")
                         && val.ends_with("px")
                     {
-                        issues.push(format!(
-                            "{name}: <{tag}> has {key}=\"{val}\" (px suffix)\n"
-                        ));
+                        issues.push(format!("{name}: <{tag}> has {key}=\"{val}\" (px suffix)\n"));
                     }
                 }
             }
@@ -205,8 +230,7 @@ fn accent_colors_auto_applied_to_nodes() {
     // automatic accent colors applied to its node groups.
     let source = "stateDiagram-v2\n    [*] --> Idle\n    Idle --> Processing\n    Processing --> Done\n    Done --> [*]";
 
-    let svg = mermaid_render::render_to_svg(source, &theme)
-        .expect("render failed");
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
 
     // accent_fill_and_text darkens the background color for dark mode.
     // The stroke colors are direct hex conversions of the accent rgb values.
@@ -232,10 +256,15 @@ fn accent_colors_auto_applied_to_nodes() {
 fn generics_not_double_escaped() {
     let theme = rgb_theme();
     let source = "classDiagram\n    class Shelter {\n        -List~Animal~ animals\n        +adopt(Animal a) bool\n    }";
-    let svg = mermaid_render::render_to_svg(source, &theme)
-        .expect("render failed");
-    assert!(!svg.contains("&amp;lt;"), "Double-escaped &amp;lt; found in SVG");
-    assert!(!svg.contains("&amp;gt;"), "Double-escaped &amp;gt; found in SVG");
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
+    assert!(
+        !svg.contains("&amp;lt;"),
+        "Double-escaped &amp;lt; found in SVG"
+    );
+    assert!(
+        !svg.contains("&amp;gt;"),
+        "Double-escaped &amp;gt; found in SVG"
+    );
 }
 
 #[test]
@@ -245,8 +274,7 @@ fn backslash_n_converted_to_line_break() {
     L7["Layer 7\nHTTP, FTP"]
     L6["Layer 6\nEncryption"]
     L7 --> L6"#;
-    let svg = mermaid_render::render_to_svg(source, &theme)
-        .expect("render failed");
+    let svg = mermaid_render::render_to_svg(source, &theme).expect("render failed");
     assert!(
         !svg.contains(r"\n"),
         "Literal \\n should not appear in SVG output"

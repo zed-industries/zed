@@ -89,11 +89,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for StripForeignObject<
             if !self.has_native_text {
                 match &event {
                     Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
-                        if e.try_get_attribute("class")
-                            .ok()
-                            .flatten()
-                            .is_some()
-                        {
+                        if e.try_get_attribute("class").ok().flatten().is_some() {
                             self.has_native_text = true;
                         }
                     }

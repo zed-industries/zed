@@ -2,9 +2,9 @@
 #![recursion_limit = "256"]
 
 //! Crate for rendering Mermaid diagram strings to SVG strings.
-//! 
-//! The entrypoint to this crate is [`render_to_svg`]. 
-//! 
+//!
+//! The entrypoint to this crate is [`render_to_svg`].
+//!
 //! It takes a `&str` and a [`MermaidTheme`]. The output is an SVG with the
 //! following properties:
 //! - The style matches the provided theme
@@ -13,18 +13,18 @@
 //! - The SVG has been tweaked based on the assumption that it will be rasterized
 //!   using `usvg`/`resvg`. Some bugs/quirks of `usvg`/`resvg` are accounted for
 //!   in this crate.
-//! 
+//!
 //! This module uses the [`merman`] crate for rendering, rather than
 //! `mermaid-rs`, which was used in the previous implementation of mermaid
 //! rendering in Zed. Merman provides significantly more accurate rendering, and
 //! seems to be somewhat faster, but by default has poor CSS, making diagrams
 //! look weird without significant cleanup. This is made worse by the fact that
 //! `usvg`/`resvg` doesn't support some features that [`merman`] relies on.
-//! 
+//!
 //! As such, this crate is quite large. But the code is very self-contained, and
 //! has few dependencies. In fact, the [`gpui`] dependency is only needed for
 //! the [`Hsla`] and [`Rgba`] color types.
-//! 
+//!
 //! The render function operates in two stages:
 //! - [`render`] the mermaid text to SVG using [`merman`].
 //! - [`postprocess`] the SVG to clean incorrect output and add styling.
@@ -33,7 +33,7 @@
 //! using [`quick_xml`], which produces an iterator of
 //! [`Event<'_>`](quick_xml::events::Event)s. This iterator is then repeatedly
 //! transformed, and finally collected back into an SVG string.
-//! 
+//!
 //! Each pass in this pipeline is split into its own module.
 
 mod postprocess;
@@ -158,5 +158,3 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
     let svg = postprocess::postprocess(&svg, theme)?;
     Ok(svg)
 }
-
-

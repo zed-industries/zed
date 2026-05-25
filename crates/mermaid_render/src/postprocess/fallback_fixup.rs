@@ -108,7 +108,8 @@ impl<'a, I> FallbackFixup<'a, I> {
         if self.text_buffer.is_empty() {
             return;
         }
-        let text = if self.text_buffer.contains("&amp;lt;") || self.text_buffer.contains("&amp;gt;") {
+        let text = if self.text_buffer.contains("&amp;lt;") || self.text_buffer.contains("&amp;gt;")
+        {
             let fixed = self
                 .text_buffer
                 .replace("&amp;lt;", "&lt;")

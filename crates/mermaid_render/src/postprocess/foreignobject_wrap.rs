@@ -31,8 +31,7 @@ pub(super) fn process(svg: &str) -> Result<String> {
 
         let is_fo_start =
             matches!(&event, Event::Start(e) if e.name().as_ref() == b"foreignObject");
-        let is_fo_end =
-            matches!(&event, Event::End(e) if e.name().as_ref() == b"foreignObject");
+        let is_fo_end = matches!(&event, Event::End(e) if e.name().as_ref() == b"foreignObject");
 
         if is_fo_start {
             if foreign_object_depth == 0 {
@@ -62,8 +61,7 @@ fn emit_buffered(buffer: Vec<Event<'_>>, writer: &mut Writer<Vec<u8>>) -> Result
             Event::Text(t) => {
                 let processed = {
                     let decoded = t.decode().unwrap_or_default();
-                    let text =
-                        escape::unescape(&decoded).unwrap_or_else(|_| decoded.clone());
+                    let text = escape::unescape(&decoded).unwrap_or_else(|_| decoded.clone());
                     emit_text_content(&text, writer)?
                 };
                 if !processed {
@@ -78,10 +76,7 @@ fn emit_buffered(buffer: Vec<Event<'_>>, writer: &mut Writer<Vec<u8>>) -> Result
     Ok(())
 }
 
-fn emit_text_content(
-    text: &str,
-    writer: &mut Writer<Vec<u8>>,
-) -> Result<bool> {
+fn emit_text_content(text: &str, writer: &mut Writer<Vec<u8>>) -> Result<bool> {
     if !text.contains("\\n") {
         return Ok(false);
     }
@@ -92,11 +87,10 @@ fn emit_text_content(
             writer.write_event(Event::Empty(BytesStart::new("br")))?;
         }
         first_segment = false;
-        writer.write_event(Event::Text(BytesText::from_escaped(
-            escape::escape(segment),
-        )))?;
+        writer.write_event(Event::Text(BytesText::from_escaped(escape::escape(
+            segment,
+        ))))?;
     }
 
     Ok(true)
 }
-

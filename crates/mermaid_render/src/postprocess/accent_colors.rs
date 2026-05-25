@@ -78,13 +78,25 @@ pub(crate) fn parse_path_half_height(e: &BytesStart<'_>) -> Option<f64> {
 
 /// Returns the CSS class name for a given accent index (e.g., `"zed-accent-0"`).
 const ACCENT_CLASSES: [&str; 8] = [
-    "zed-accent-0", "zed-accent-1", "zed-accent-2", "zed-accent-3",
-    "zed-accent-4", "zed-accent-5", "zed-accent-6", "zed-accent-7",
+    "zed-accent-0",
+    "zed-accent-1",
+    "zed-accent-2",
+    "zed-accent-3",
+    "zed-accent-4",
+    "zed-accent-5",
+    "zed-accent-6",
+    "zed-accent-7",
 ];
 
 const CHART_COLOR_CLASSES: [&str; 8] = [
-    "zed-chart-0", "zed-chart-1", "zed-chart-2", "zed-chart-3",
-    "zed-chart-4", "zed-chart-5", "zed-chart-6", "zed-chart-7",
+    "zed-chart-0",
+    "zed-chart-1",
+    "zed-chart-2",
+    "zed-chart-3",
+    "zed-chart-4",
+    "zed-chart-5",
+    "zed-chart-6",
+    "zed-chart-7",
 ];
 
 pub(crate) fn accent_class_name(index: usize) -> &'static str {
@@ -302,9 +314,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for AccentColors<I> {
                         DiagramType::Flowchart => {
                             Handler::Flowchart(class_diagram::ClassDiagramAccents::new(count))
                         }
-                        DiagramType::Mindmap => {
-                            Handler::Mindmap(mindmap::MindmapAccents::new())
-                        }
+                        DiagramType::Mindmap => Handler::Mindmap(mindmap::MindmapAccents::new()),
                         DiagramType::ClassDiagram => {
                             Handler::ClassDiagram(class_diagram::ClassDiagramAccents::new(count))
                         }

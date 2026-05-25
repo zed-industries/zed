@@ -116,9 +116,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
                 Ok(Some(rewrap(&event, new_elem)))
             }
 
-            Event::Start(ref e) | Event::Empty(ref e)
-                if e.name().as_ref() == b"rect" =>
-            {
+            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"rect" => {
                 if is_bad_rect(e)? {
                     if matches!(event, Event::Start(_)) {
                         self.skip_rect_depth = 1;
@@ -129,9 +127,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
                 }
             }
 
-            Event::Start(ref e) | Event::Empty(ref e)
-                if e.name().as_ref() == b"text" =>
-            {
+            Event::Start(ref e) | Event::Empty(ref e) if e.name().as_ref() == b"text" => {
                 if let Some(new_elem) = self.fix_text_fill(e)? {
                     Ok(Some(rewrap(&event, new_elem)))
                 } else {

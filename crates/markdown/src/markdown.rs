@@ -501,9 +501,11 @@ impl Markdown {
         let focus_handle = cx.focus_handle();
 
         let theme_subscription = if options.render_mermaid_diagrams {
-            Some(cx.observe_global::<settings::SettingsStore>(|this: &mut Self, cx| {
-                this.invalidate_mermaid_cache(cx);
-            }))
+            Some(
+                cx.observe_global::<settings::SettingsStore>(|this: &mut Self, cx| {
+                    this.invalidate_mermaid_cache(cx);
+                }),
+            )
         } else {
             None
         };
@@ -575,8 +577,7 @@ impl Markdown {
     }
 
     pub fn invalidate_mermaid_cache(&mut self, cx: &mut Context<Self>) {
-        if !self.options.render_mermaid_diagrams
-            || self.parsed_markdown.mermaid_diagrams.is_empty()
+        if !self.options.render_mermaid_diagrams || self.parsed_markdown.mermaid_diagrams.is_empty()
         {
             return;
         }

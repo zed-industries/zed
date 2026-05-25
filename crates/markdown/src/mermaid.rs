@@ -1,7 +1,7 @@
 use collections::HashMap;
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity,
-    ImageSource, RenderImage, StyledText, Task, img, pulsating_between,
+    Animation, AnimationExt, AnyElement, ClickEvent, ClipboardItem, Context, Entity, ImageSource,
+    RenderImage, StyledText, Task, img, pulsating_between,
 };
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -108,10 +108,8 @@ impl CachedMermaidDiagram {
         let task = cx.spawn(async move |this, cx| {
             let value = cx
                 .background_spawn(async move {
-                    let svg_string = mermaid_render::render_to_svg(
-                        &contents.contents,
-                        &mermaid_theme,
-                    )?;
+                    let svg_string =
+                        mermaid_render::render_to_svg(&contents.contents, &mermaid_theme)?;
                     let scale = contents.scale as f32 / 100.0;
                     svg_renderer
                         .render_single_frame(svg_string.as_bytes(), scale)
@@ -159,10 +157,8 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
     let is_dark = !cx.theme().appearance.is_light();
 
     let players = cx.theme().players();
-    let git_branch_colors =
-        std::array::from_fn(|i| players.0[i % players.0.len()].cursor);
-    let git_branch_label_colors =
-        git_branch_colors.map(mermaid_render::text_color_for_background);
+    let git_branch_colors = std::array::from_fn(|i| players.0[i % players.0.len()].cursor);
+    let git_branch_label_colors = git_branch_colors.map(mermaid_render::text_color_for_background);
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
@@ -220,7 +216,6 @@ fn parse_mermaid_info(info: &str) -> Option<u32> {
 /// supports them, because we have not yet written custom CSS to ensure text is
 /// readable.
 fn is_supported_diagram_type(source: &str) -> bool {
-
     /// If updating this list, also update the system prompt!
     const SUPPORTED_PREFIXES: &[&str] = &[
         "flowchart",
@@ -551,8 +546,6 @@ mod tests {
     use gpui::{Context, IntoElement, Render, RenderImage, TestAppContext, Window, size};
     use std::sync::Arc;
     use ui::prelude::*;
-
-
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {

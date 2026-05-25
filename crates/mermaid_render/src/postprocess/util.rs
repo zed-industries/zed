@@ -54,9 +54,19 @@ pub fn text_color_for_background(background: Hsla) -> Hsla {
         if meets_contrast(best) {
             best
         } else if bg_luminance > 0.18 {
-            Rgba { r: 0.0, g: 0.0, b: 0.0, a: 1.0 }
+            Rgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            }
         } else {
-            Rgba { r: 1.0, g: 1.0, b: 1.0, a: 1.0 }
+            Rgba {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            }
         }
     };
     Hsla::from(result)
@@ -112,7 +122,6 @@ fn contrast_ratio_between(luminance_a: f32, luminance_b: f32) -> f32 {
     };
     (lighter + 0.05) / (darker + 0.05)
 }
-
 
 #[cfg(test)]
 fn wcag_contrast_ratio(a: Rgba, b: Rgba) -> f32 {
