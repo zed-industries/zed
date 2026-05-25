@@ -1962,7 +1962,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_a.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "second.rs",
@@ -1976,7 +1976,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let active = pane_b.read(cx).active_item().unwrap();
             let editor = active.to_any_view().downcast::<Editor>().unwrap();
-            let path = editor.read(cx).project_path(cx).unwrap();
+            let path = editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 path.path.file_name().unwrap(),
                 "main.rs",
@@ -2056,7 +2056,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_a_active = pane_a.read(cx).active_item().unwrap();
             let pane_a_editor = pane_a_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_a_path = pane_a_editor.read(cx).project_path(cx).unwrap();
+            let pane_a_path = pane_a_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_a_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2161,7 +2161,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_b_active = pane_b.read(cx).active_item().unwrap();
             let pane_b_editor = pane_b_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_b_path = pane_b_editor.read(cx).project_path(cx).unwrap();
+            let pane_b_path = pane_b_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_b_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2232,7 +2232,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "second.rs",
@@ -2294,7 +2294,7 @@ async fn test_breakpoint_jumps_only_in_proper_split_view(
         .read_with(cx, |_multi, cx| {
             let pane_c_active = pane_c.read(cx).active_item().unwrap();
             let pane_c_editor = pane_c_active.to_any_view().downcast::<Editor>().unwrap();
-            let pane_c_path = pane_c_editor.read(cx).project_path(cx).unwrap();
+            let pane_c_path = pane_c_editor.read(cx).active_project_path(cx).unwrap();
             assert_eq!(
                 pane_c_path.path.file_name().unwrap(),
                 "main.rs",

@@ -12,7 +12,7 @@ use gpui::{
     Focusable, IntoElement, Render, Task, Window,
 };
 use language::{self, Buffer, OffsetRangeExt, Point};
-use project::Project;
+use project::{Project, ProjectPath};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -375,6 +375,10 @@ impl Item for TextDiffView {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.diff_editor.read(cx).for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.diff_editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
