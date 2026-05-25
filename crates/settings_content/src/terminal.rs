@@ -183,6 +183,12 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// When opening a new terminal in a workspace with multiple worktrees, prompt
+    /// for which worktree to use as the working directory. When `false`, the
+    /// `working_directory` strategy is used without prompting.
+    ///
+    /// Default: false
+    pub prompt_directory_for_new_terminals: Option<bool>,
 }
 
 /// Shell configuration to open the terminal with.

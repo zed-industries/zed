@@ -924,6 +924,7 @@ impl VsCodeSettings {
             scroll_multiplier: None,
             toolbar: None,
             show_count_badge: None,
+            prompt_directory_for_new_terminals: None,
             flexible: None,
         })
     }

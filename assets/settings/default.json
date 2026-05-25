@@ -1978,6 +1978,10 @@
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
     "bell": "off",
+    // When opening a new terminal in a workspace with multiple worktrees, prompt for which
+    // worktree to use as the working directory. When `false`, the `working_directory`
+    // strategy is used without prompting.
+    "prompt_directory_for_new_terminals": false,
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

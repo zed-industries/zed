@@ -1,10 +1,11 @@
-use std::{cmp, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+use std::{cmp, path::PathBuf, process::ExitStatus, rc::Rc, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
+    terminal_worktree_picker::{TerminalWorktreePicker, collect_worktree_entries},
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
@@ -653,6 +654,56 @@ impl TerminalPanel {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        if !action.local && should_prompt_for_worktree(workspace, cx) {
+            Self::prompt_worktree_then_open(workspace, action.local, window, cx);
+            return;
+        }
+
+        let cwd = if action.local {
+            None
+        } else {
+            default_working_directory(workspace, cx)
+        };
+        Self::open_terminal_in_directory(workspace, action.local, cwd, window, cx);
+    }
+
+    fn prompt_worktree_then_open(
+        workspace: &mut Workspace,
+        local: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let entries = collect_worktree_entries(workspace, cx);
+        let workspace_handle = workspace.weak_handle();
+        workspace.toggle_modal(window, cx, move |window, cx| {
+            TerminalWorktreePicker::new(
+                entries,
+                Rc::new(move |path, window, cx| {
+                    workspace_handle
+                        .update(cx, |workspace, cx| {
+                            Self::open_terminal_in_directory(
+                                workspace,
+                                local,
+                                Some(path),
+                                window,
+                                cx,
+                            );
+                        })
+                        .log_err();
+                }),
+                window,
+                cx,
+            )
+        });
+    }
+
+    fn open_terminal_in_directory(
+        workspace: &mut Workspace,
+        local: bool,
+        cwd: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
         let center_pane = workspace.active_pane();
         let center_pane_has_focus = center_pane.focus_handle(cx).contains_focused(window, cx);
         let active_center_item_is_terminal = center_pane
@@ -661,13 +712,11 @@ impl TerminalPanel {
             .is_some_and(|item| item.downcast::<TerminalView>().is_some());
 
         if center_pane_has_focus && active_center_item_is_terminal {
-            let working_directory = default_working_directory(workspace, cx);
-            let local = action.local;
             Self::add_center_terminal(workspace, window, cx, move |project, cx| {
                 if local {
                     project.create_local_terminal(cx)
                 } else {
-                    project.create_terminal_shell(working_directory, cx)
+                    project.create_terminal_shell(cwd, cx)
                 }
             })
             .detach_and_log_err(cx);
@@ -680,15 +729,10 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                if action.local {
+                if local {
                     this.add_local_terminal_shell(RevealStrategy::Always, window, cx)
                 } else {
-                    this.add_terminal_shell(
-                        default_working_directory(workspace, cx),
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
+                    this.add_terminal_shell(cwd, RevealStrategy::Always, window, cx)
                 }
             })
             .detach_and_log_err(cx);
@@ -1198,6 +1242,11 @@ fn is_enabled_in_workspace(workspace: &Workspace, cx: &App) -> bool {
     workspace.project().read(cx).supports_terminal(cx)
 }
 
+pub(crate) fn should_prompt_for_worktree(workspace: &Workspace, cx: &App) -> bool {
+    TerminalSettings::get_global(cx).prompt_directory_for_new_terminals
+        && workspace.visible_worktrees(cx).take(2).count() > 1
+}
+
 pub fn new_terminal_pane(
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
@@ -1604,15 +1653,20 @@ impl Panel for TerminalPanel {
             return;
         }
         cx.defer_in(window, |this, window, cx| {
-            let Ok(kind) = this
-                .workspace
-                .update(cx, |workspace, cx| default_working_directory(workspace, cx))
-            else {
+            let Ok(default_cwd) = this.workspace.update(cx, |workspace, cx| {
+                if should_prompt_for_worktree(workspace, cx) {
+                    TerminalPanel::prompt_worktree_then_open(workspace, false, window, cx);
+                    None
+                } else {
+                    Some(default_working_directory(workspace, cx))
+                }
+            }) else {
                 return;
             };
-
-            this.add_terminal_shell(kind, RevealStrategy::Always, window, cx)
-                .detach_and_log_err(cx)
+            if let Some(cwd) = default_cwd {
+                this.add_terminal_shell(cwd, RevealStrategy::Always, window, cx)
+                    .detach_and_log_err(cx);
+            }
         })
     }
 
@@ -1729,6 +1783,7 @@ mod tests {
 
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal as _};
+    use picker::PickerDelegate as _;
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
@@ -2347,6 +2402,284 @@ mod tests {
         assert_eq!(
             center_items_after, center_items_before,
             "Center pane should not gain a new terminal when panel is focused"
+        );
+    }
+
+    async fn init_workspace_with_panel_and_worktrees(
+        cx: &mut TestAppContext,
+        worktree_paths: &[&std::path::Path],
+    ) -> (gpui::WindowHandle<MultiWorkspace>, Entity<TerminalPanel>) {
+        let fs = FakeFs::new(cx.executor());
+        for path in worktree_paths.iter().copied() {
+            fs.insert_tree(path, serde_json::json!({})).await;
+        }
+        let project = Project::test(fs, worktree_paths.iter().copied(), cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+        let terminal_panel = window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    let panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                })
+            })
+            .expect("Failed to initialize workspace with terminal panel");
+
+        (window_handle, terminal_panel)
+    }
+
+    fn set_prompt_for_worktree(cx: &mut TestAppContext, enabled: bool) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .terminal
+                    .get_or_insert_default()
+                    .prompt_directory_for_new_terminals = Some(enabled);
+            });
+        });
+    }
+
+    fn dispatch_new_terminal(
+        window_handle: gpui::WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+        local: bool,
+    ) {
+        window_handle
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    TerminalPanel::new_terminal(
+                        workspace,
+                        &workspace::NewTerminal { local },
+                        window,
+                        cx,
+                    );
+                })
+            })
+            .expect("Failed to dispatch new_terminal");
+    }
+
+    fn active_worktree_picker(
+        window_handle: gpui::WindowHandle<MultiWorkspace>,
+        cx: &mut TestAppContext,
+    ) -> Option<Entity<crate::terminal_worktree_picker::TerminalWorktreePicker>> {
+        window_handle
+            .read_with(cx, |multi_workspace, cx| multi_workspace.active_modal(cx))
+            .expect("Failed to read active modal")
+    }
+
+    #[gpui::test]
+    async fn new_terminal_does_not_show_picker_when_setting_disabled(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[
+                std::path::Path::new(util::path!("/alpha")),
+                std::path::Path::new(util::path!("/beta")),
+            ],
+        )
+        .await;
+        // setting defaults to false; do not enable.
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        dispatch_new_terminal(window_handle, cx, false);
+        cx.run_until_parked();
+
+        assert!(
+            active_worktree_picker(window_handle, cx).is_none(),
+            "Picker must not appear when setting is disabled"
+        );
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after,
+            panel_items_before + 1,
+            "Terminal should be created directly when setting is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn new_terminal_shows_picker_with_multiple_worktrees_when_setting_enabled(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[
+                std::path::Path::new(util::path!("/alpha")),
+                std::path::Path::new(util::path!("/beta")),
+            ],
+        )
+        .await;
+        set_prompt_for_worktree(cx, true);
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        dispatch_new_terminal(window_handle, cx, false);
+        cx.run_until_parked();
+
+        assert!(
+            active_worktree_picker(window_handle, cx).is_some(),
+            "Picker must appear when setting is enabled and multiple worktrees exist"
+        );
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after, panel_items_before,
+            "No terminal should be created before the user selects a worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn new_terminal_does_not_show_picker_with_single_worktree(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[std::path::Path::new(util::path!("/only"))],
+        )
+        .await;
+        set_prompt_for_worktree(cx, true);
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        dispatch_new_terminal(window_handle, cx, false);
+        cx.run_until_parked();
+
+        assert!(
+            active_worktree_picker(window_handle, cx).is_none(),
+            "Picker must not appear when only one worktree is visible"
+        );
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after,
+            panel_items_before + 1,
+            "Terminal should be created directly when there's a single worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn new_terminal_with_local_flag_bypasses_picker(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, _terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[
+                std::path::Path::new(util::path!("/alpha")),
+                std::path::Path::new(util::path!("/beta")),
+            ],
+        )
+        .await;
+        set_prompt_for_worktree(cx, true);
+
+        dispatch_new_terminal(window_handle, cx, true);
+        cx.run_until_parked();
+
+        assert!(
+            active_worktree_picker(window_handle, cx).is_none(),
+            "Local terminals must bypass the picker regardless of the setting"
+        );
+    }
+
+    #[gpui::test]
+    async fn picker_confirm_creates_terminal_in_selected_worktree(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[
+                std::path::Path::new(util::path!("/alpha")),
+                std::path::Path::new(util::path!("/beta")),
+            ],
+        )
+        .await;
+        set_prompt_for_worktree(cx, true);
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        dispatch_new_terminal(window_handle, cx, false);
+        cx.run_until_parked();
+
+        let picker = active_worktree_picker(window_handle, cx)
+            .expect("Picker should be active after dispatching new_terminal");
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                let inner = picker.read(cx).inner_picker();
+                inner.update(cx, |inner, cx| {
+                    inner.delegate.set_selected_index(1, window, cx);
+                    inner.delegate.confirm(false, window, cx);
+                });
+            })
+            .expect("Failed to confirm picker selection");
+        cx.run_until_parked();
+
+        assert!(
+            active_worktree_picker(window_handle, cx).is_none(),
+            "Picker should be dismissed after confirmation"
+        );
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after,
+            panel_items_before + 1,
+            "A terminal should be created after confirming the picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn dismissing_picker_creates_no_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel_and_worktrees(
+            cx,
+            &[
+                std::path::Path::new(util::path!("/alpha")),
+                std::path::Path::new(util::path!("/beta")),
+            ],
+        )
+        .await;
+        set_prompt_for_worktree(cx, true);
+
+        let panel_items_before =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+
+        dispatch_new_terminal(window_handle, cx, false);
+        cx.run_until_parked();
+
+        let picker = active_worktree_picker(window_handle, cx)
+            .expect("Picker should be active after dispatching new_terminal");
+
+        window_handle
+            .update(cx, |_, window, cx| {
+                let inner = picker.read(cx).inner_picker();
+                inner.update(cx, |inner, cx| {
+                    inner.delegate.dismissed(window, cx);
+                });
+            })
+            .expect("Failed to dismiss picker");
+        cx.run_until_parked();
+
+        let panel_items_after =
+            terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(
+            panel_items_after, panel_items_before,
+            "No terminal should be created when the picker is dismissed"
         );
     }
 

@@ -5236,7 +5236,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn terminal_panel_section() -> [SettingsPageItem; 4] {
+    fn terminal_panel_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("Terminal Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5282,6 +5282,28 @@ fn panels_page() -> SettingsPage {
                             .terminal
                             .get_or_insert_default()
                             .show_count_badge = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prompt Directory For New Terminals",
+                description: "When opening a new terminal in a workspace with multiple worktrees, prompt for which worktree to use as the working directory.",
+                field: Box::new(SettingField {
+                    json_path: Some("terminal.prompt_directory_for_new_terminals"),
+                    pick: |settings_content| {
+                        settings_content
+                            .terminal
+                            .as_ref()?
+                            .prompt_directory_for_new_terminals
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .terminal
+                            .get_or_insert_default()
+                            .prompt_directory_for_new_terminals = value;
                     },
                 }),
                 metadata: None,
