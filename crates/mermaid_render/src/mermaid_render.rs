@@ -32,32 +32,32 @@
 //! The postprocessing is also split up into stages. We parse the generated SVG
 //! using [`quick_xml`], which produces an iterator of
 //! [`Event<'_>`](quick_xml::events::Event)s. This iterator is then repeatedly
-//! transformed, and finally collected back into an SVG string. 
-//! 
+//! transformed, and finally collected back into an SVG string.
+//!
 //! This approach:
 //! - Avoids doing multiple expensive string insertions.
 //! - Avoids parsing the SVG multiple times (without needing to put all the
 //!   logic in one huge function).
 //! - But is quite a bit more complex.
-//! 
+//!
 //! I think this complexity is justified because of the drastic performance
 //! impact, as well as the low-risk nature; this code cannot panic, and errors
 //! in the output just produce weird-looking diagrams.
-//! 
+//!
 //! ## Color handling
-//! 
+//!
 //! We try to match the users theme, and also apply accent colors to diagrams to
 //! make them more visually interesting. Accent colors are derived from the
 //! `player_colors` in the Zed theme.
-//! 
+//!
 //! There are three parts to color handling:
-//! 
+//!
 //! 1. A [`merman::MermaidConfig`] is passed when initially rendering the
 //!    diagram. This sets most "normal" colors (background, text, etc.). However,
 //!    it's not possible to color nodes individually, and not all parts of the
 //!    diagrams are correctly themed.
 //! 2. `postprocess::accent_colors` injects custom CSS classes (e.g.
-//!    `zed-accent-0`) to specific elements, based on the diagram type and 
+//!    `zed-accent-0`) to specific elements, based on the diagram type and
 //!    node.
 //! 3. `postprocess::inject_css` injects CSS rules for the classes applied by
 //!    `accent_colors`

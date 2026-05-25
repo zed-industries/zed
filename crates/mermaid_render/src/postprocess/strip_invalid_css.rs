@@ -8,6 +8,8 @@
 //! Also removes `!important` declarations (so that our injected theme CSS
 //! always wins).
 
+use std::borrow::Cow;
+
 use anyhow::Result;
 use quick_xml::events::{BytesText, Event};
 
@@ -37,8 +39,10 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> Iterator for StripInvalidCss<I> 
                     Ok(s) => s,
                     Err(e) => return Some(Err(e.into())),
                 };
-                let processed = strip_unsupported_css(css_text);
-                return Some(Ok(Event::Text(BytesText::from_escaped(processed))));
+                return Some(match strip_unsupported_css(css_text) {
+                    Cow::Borrowed(_) => Ok(event),
+                    Cow::Owned(processed) => Ok(Event::Text(BytesText::from_escaped(processed))),
+                });
             }
             _ => {}
         }
@@ -56,25 +60,31 @@ pub(super) fn process<'a>(
     }
 }
 
-fn strip_unsupported_css(css: &str) -> String {
-    let mut result = String::with_capacity(css.len());
+fn strip_unsupported_css(css: &str) -> Cow<'_, str> {
     let mut chars = css.char_indices().peekable();
+    let mut result = None;
+    let mut copied_until = 0;
 
-    while let Some((i, ch)) = chars.next() {
+    while let Some((i, _)) = chars.next() {
         let remaining = &css[i..];
 
-        if remaining.starts_with("@keyframes") || remaining.starts_with("@-webkit-keyframes") {
+        if remaining.starts_with("@keyframes")
+            || remaining.starts_with("@-webkit-keyframes")
+            || remaining.starts_with(":root")
+        {
+            let result = result.get_or_insert_with(|| String::with_capacity(css.len()));
+            result.push_str(&css[copied_until..i]);
             skip_css_block(&mut chars);
-            continue;
+            copied_until = chars.peek().map_or(css.len(), |&(i, _)| i);
         }
-
-        if remaining.starts_with(":root") {
-            skip_css_block(&mut chars);
-            continue;
-        }
-
-        result.push(ch);
     }
+
+    let mut result = if let Some(mut result) = result {
+        result.push_str(&css[copied_until..]);
+        Cow::Owned(result)
+    } else {
+        Cow::Borrowed(css)
+    };
 
     strip_css_angle_units(&mut result);
     strip_css_important(&mut result);
@@ -102,13 +112,14 @@ fn skip_css_block(chars: &mut std::iter::Peekable<std::str::CharIndices>) {
     }
 }
 
-fn replace_all_in_place(css: &mut String, needle: &str, replacement: &str) {
-    while let Some(pos) = css.find(needle) {
-        css.replace_range(pos..pos + needle.len(), replacement);
+fn replace_all_in_place(css: &mut Cow<'_, str>, needle: &str, replacement: &str) {
+    while let Some(pos) = css.as_ref().find(needle) {
+        css.to_mut()
+            .replace_range(pos..pos + needle.len(), replacement);
     }
 }
 
-fn strip_css_angle_units(css: &mut String) {
+fn strip_css_angle_units(css: &mut Cow<'_, str>) {
     replace_all_in_place(css, "deg)", ")");
 }
 
@@ -116,7 +127,7 @@ fn strip_css_angle_units(css: &mut String) {
 /// theme CSS (which uses `!important`) always takes priority. This works
 /// around a usvg cascade bug where competing `!important` rules are
 /// resolved by first-wins rather than the CSS spec's last-wins.
-fn strip_css_important(css: &mut String) {
+fn strip_css_important(css: &mut Cow<'_, str>) {
     replace_all_in_place(css, "!important", "");
 }
 

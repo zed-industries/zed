@@ -206,9 +206,9 @@ fn detect_diagram_type(e: &BytesStart<'_>) -> DiagramType {
 
 /// Different diagrams require different state when computing accent colors.
 enum Handler {
-    /// Before we have identified the diagram type 
+    /// Before we have identified the diagram type
     Pending,
-    /// Diagram type doesn't require injecting classes. 
+    /// Diagram type doesn't require injecting classes.
     Passthrough,
     Flowchart(class_diagram::ClassDiagramAccents),
     Mindmap(mindmap::MindmapAccents),

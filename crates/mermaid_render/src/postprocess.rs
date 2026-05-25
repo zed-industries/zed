@@ -11,7 +11,6 @@
 //! reasoning about lifetimes simpler, but these are private implementation
 //! details.
 
-
 mod accent_colors;
 mod element_fixup;
 mod fallback_fixup;
@@ -51,7 +50,7 @@ pub(super) fn postprocess(svg: &str, theme: &MermaidTheme) -> Result<String> {
     let events = strip_invalid_css::process(events);
     let events = inject_css::process(events, theme, &svg_id);
 
-    let mut writer = quick_xml::Writer::new(Vec::new());
+    let mut writer = quick_xml::Writer::new(Vec::with_capacity(svg.len()));
     for event in events {
         writer.write_event(event?)?;
     }

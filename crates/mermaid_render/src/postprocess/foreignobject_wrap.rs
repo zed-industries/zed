@@ -17,7 +17,7 @@ use quick_xml::{Reader, Writer};
 pub(super) fn process(svg: &str) -> Result<String> {
     let mut reader = Reader::from_str(svg);
     reader.config_mut().check_end_names = false;
-    let mut writer = Writer::new(Vec::new());
+    let mut writer = Writer::new(Vec::with_capacity(svg.len()));
 
     let mut foreign_object_depth: usize = 0;
     let mut buffer = Vec::new();

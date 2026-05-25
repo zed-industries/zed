@@ -20,6 +20,21 @@ use quick_xml::events::{BytesText, Event};
 
 use crate::MermaidTheme;
 
+/// Morally equivalent to `format!(".section-{i}")`, but without allocating
+const MINDMAP_SECTION_SELECTORS: [&str; 11] = [
+    ".section-0",
+    ".section-1",
+    ".section-2",
+    ".section-3",
+    ".section-4",
+    ".section-5",
+    ".section-6",
+    ".section-7",
+    ".section-8",
+    ".section-9",
+    ".section-10",
+];
+
 struct InjectCss<'a, I> {
     inner: I,
     injected_css: String,
@@ -103,7 +118,8 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         .iter()
         .map(|c| crate::css_color(crate::postprocess::util::text_color_for_background(*c)))
         .collect();
-    let mut css = String::new();
+    // Current blocks total 5,392 bytes with #rrggbbaa colors; round to 5,400.
+    let mut css = String::with_capacity(5_400);
 
     let emit = |css: &mut String, selector: &str, color: &str, txt: &str| {
         let section_index = selector
@@ -130,20 +146,16 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         &text_colors[0],
     );
     emit(&mut css, ".section--1", &colors[1], &text_colors[1]);
-    for i in 0..=10 {
+    for (i, selector) in MINDMAP_SECTION_SELECTORS.iter().enumerate() {
         let ci = 2 + (i % 6);
-        emit(
-            &mut css,
-            &format!(".section-{i}"),
-            &colors[ci],
-            &text_colors[ci],
-        );
+        emit(&mut css, selector, &colors[ci], &text_colors[ci]);
     }
     css
 }
 
 fn git_branch_css(theme: &MermaidTheme) -> String {
-    let mut css = String::new();
+    // Each block is around 145 bytes, add some headroom
+    let mut css = String::with_capacity(8 * 160);
     for i in 0..8 {
         let c = crate::css_color(theme.git_branch_colors[i]);
         let lbl = crate::css_color(theme.git_branch_label_colors[i]);
@@ -168,7 +180,8 @@ fn adjust_lightness(color: &mut gpui::Hsla, dark_mode: bool) {
 }
 
 fn accent_css(theme: &MermaidTheme) -> String {
-    let mut css = String::new();
+    // Each block is around 400 bytes, add some headroom
+    let mut css = String::with_capacity(theme.accent_colors.len() * 420);
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
         let mut bg = accent.background;
@@ -190,7 +203,8 @@ fn accent_css(theme: &MermaidTheme) -> String {
 }
 
 fn chart_color_css(theme: &MermaidTheme) -> String {
-    let mut css = String::new();
+    // Each block is around 230 bytes, add some headroom
+    let mut css = String::with_capacity(8 * 250);
     for i in 0..8 {
         let color = crate::css_color(theme.git_branch_colors[i]);
         let class = format!(".zed-chart-{i}");
