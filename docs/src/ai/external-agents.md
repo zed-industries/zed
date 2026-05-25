@@ -34,20 +34,7 @@ This list is curated, not exhaustive. Open the ACP Registry in Zed for the curre
 
 Open the [Agent Panel](./agent-panel.md), then use the agent selector or the new-thread menu to start a thread with an installed external agent.
 
-You can also create keybindings for specific agents with {#action agent::NewExternalAgentThread}. Use the agent ID from the installed registry entry.
-
-```json [keymap]
-[
-  {
-    "bindings": {
-      "cmd-alt-c": [
-        "agent::NewExternalAgentThread",
-        { "agent": { "custom": { "name": "codex-acp" } } }
-      ]
-    }
-  }
-]
-```
+You can also create keybindings for specific agents with {#action agent::NewExternalAgentThread}.
 
 ## Configuration Boundaries {#configuration-boundaries}
 
