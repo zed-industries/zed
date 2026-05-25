@@ -591,9 +591,9 @@ Return empty arrays where nothing relevant is found."""
     try:
         data = json.loads(response)
     except json.JSONDecodeError as e:
-        log(f"  Failed to parse response: {e}")
-        log(f"  Raw response: {response}")
-        return [], [], []
+        log(f"  Failed to parse Claude response as JSON: {e}")
+        log(f"  Raw response:\n{response}")
+        sys.exit(1)
 
     likely = data.get("likely_duplicates", [])
     possible = data.get("possible_duplicates", [])
@@ -662,6 +662,8 @@ if __name__ == "__main__":
                 commented = True
             except requests.RequestException as e:
                 log(f"  Failed to post comment: {e}")
+                log(f"  Comment we were trying to post:\n{comment_body}")
+                sys.exit(1)
 
     print(json.dumps({
         "skipped": False,
