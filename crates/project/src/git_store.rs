@@ -550,18 +550,26 @@ impl GitStore {
                             };
                             let project_environment = project_environment.downgrade();
                             let fs = fs.clone();
-                            for repo in this.repositories.values() {
+                            let repositories_to_respawn = this
+                                .repositories
+                                .iter()
+                                .filter_map(|(repository_id, repo)| {
+                                    repo.read(cx)
+                                        .job_sender
+                                        .is_closed()
+                                        .then_some((*repository_id, repo.clone()))
+                                })
+                                .collect::<Vec<_>>();
+                            for (repository_id, repo) in repositories_to_respawn {
+                                let is_trusted = this.repository_is_trusted(repository_id, cx);
                                 repo.update(cx, |repo, cx| {
-                                    if repo.job_sender.is_closed() {
-                                        let is_trusted = repo.is_trusted();
-                                        repo.respawn_local_worker(
-                                            project_environment.clone(),
-                                            fs.clone(),
-                                            is_trusted,
-                                            cx,
-                                        );
-                                        repo.schedule_scan(None, cx);
-                                    }
+                                    repo.respawn_local_worker(
+                                        project_environment.clone(),
+                                        fs.clone(),
+                                        is_trusted,
+                                        cx,
+                                    );
+                                    repo.schedule_scan(None, cx);
                                 })
                             }
                             cx.emit(GitStoreEvent::GlobalConfigurationUpdated);
@@ -1604,6 +1612,21 @@ impl GitStore {
 
     fn on_jobs_updated(&mut self, _: Entity<Repository>, _: &JobsUpdated, cx: &mut Context<Self>) {
         cx.emit(GitStoreEvent::JobsUpdated)
+    }
+
+    fn repository_is_trusted(&self, repository_id: RepositoryId, cx: &mut Context<Self>) -> bool {
+        let Some(worktree_ids) = self.worktree_ids.get(&repository_id) else {
+            return false;
+        };
+        let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
+            return false;
+        };
+
+        worktree_ids.iter().any(|worktree_id| {
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.can_trust(&self.worktree_store, *worktree_id, cx)
+            })
+        })
     }
 
     /// Update our list of repositories and schedule git scans in response to a notification from a worktree,
