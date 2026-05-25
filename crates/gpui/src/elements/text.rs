@@ -160,7 +160,7 @@ impl Element for Text {
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
         if self.id.is_some() {
-            Some(accesskit::Role::TextRun)
+            Some(accesskit::Role::Label)
         } else {
             None
         }
