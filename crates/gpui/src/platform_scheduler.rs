@@ -38,10 +38,6 @@ impl PlatformScheduler {
         }
     }
 
-    pub fn allocate_session_id(&self) -> SessionId {
-        SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
-    }
-
     /// Spawn work on a fresh OS thread that's exclusive to the returned
     /// task and anything spawned on the executor it provides. Blocking
     /// syscalls inside that work don't disturb any other executor in the
@@ -154,6 +150,10 @@ impl Scheduler for PlatformScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    fn allocate_session_id(&self) -> SessionId {
+        SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {

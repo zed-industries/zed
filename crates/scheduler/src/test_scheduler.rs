@@ -152,14 +152,6 @@ impl TestScheduler {
         self.state.lock().is_main_thread
     }
 
-    /// Allocate a new session ID for foreground task scheduling.
-    /// This is used by GPUI's TestDispatcher to map dispatcher instances to sessions.
-    pub fn allocate_session_id(&self) -> SessionId {
-        let mut state = self.state.lock();
-        state.next_session_id.0 += 1;
-        state.next_session_id
-    }
-
     /// Spawn work on a fresh foreground session. In the test world this
     /// is just a new session driven by the test scheduler's run loop
     /// alongside everything else; the returned future may be `!Send`.
@@ -678,6 +670,12 @@ impl Scheduler for TestScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    fn allocate_session_id(&self) -> SessionId {
+        let mut state = self.state.lock();
+        state.next_session_id.0 += 1;
+        state.next_session_id
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {
