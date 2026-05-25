@@ -11,6 +11,8 @@ You can configure permissions for tool actions, including situations where they 
 
 To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
 
+To choose which built-in tools and MCP tools are available in a Zed Agent thread, use [Agent Profiles](./agent-profiles.md). Profiles control tool availability; tool permissions control allow, deny, and confirm behavior.
+
 ## Read & Search Tools
 
 ### `diagnostics`

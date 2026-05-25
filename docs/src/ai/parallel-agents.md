@@ -47,6 +47,18 @@ Each thread runs independently, so you can send a prompt, open a second thread, 
 
 Each thread can use a different agent, so you can run Zed's built-in agent in one thread and an [external agent](./external-agents.md) like Claude Code or Codex in another.
 
+### Thread Types {#thread-types}
+
+The Threads Sidebar can hold different thread types:
+
+| Thread type           | Configuration                                                                   |
+| --------------------- | ------------------------------------------------------------------------------- |
+| Zed Agent thread      | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
+| External agent thread | Uses the ACP integration and the agent's native configuration                   |
+| Terminal thread       | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
+
+For terminal-backed CLI/TUI workflows, see [Terminal Threads](./terminal-threads.md).
+
 ## Multiple Projects {#multiple-projects}
 
 The Threads Sidebar can hold multiple projects at once. Each project gets its own group with its own threads and conversation history. This mirrors how Zed handles projects in general — see [Windows & Projects](../windows-and-projects.md) for more on how projects open and how to manage them.
@@ -76,5 +88,6 @@ After the agent finishes, review the diff and merge the changes through your nor
 ## See Also {#see-also}
 
 - [Agent Panel](./agent-panel.md): Manage individual threads and configure the agent
-- [External Agents](./external-agents.md): Use Claude Code, Gemini CLI, and other agents
+- [External Agents](./external-agents.md): Use ACP-integrated external agents
+- [Terminal Threads](./terminal-threads.md): Run agent CLIs and TUIs directly in Zed
 - [Tools](./tools.md): Built-in tools available in each thread

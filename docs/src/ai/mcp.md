@@ -16,6 +16,14 @@ We welcome contributions that help advance Zed's MCP feature coverage (Discovery
 
 Zed also handles the `notifications/tools/list_changed` notification from MCP servers. When a server adds, removes, or modifies its available tools at runtime, Zed automatically reloads the tool list without requiring a server restart.
 
+## Agent Path Support {#agent-path-support}
+
+| Agent path                                | MCP behavior                                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------------------- |
+| [Zed Agent](./zed-agent.md)               | Uses Zed-configured MCP servers directly                                                |
+| [External Agents](./external-agents.md)   | Zed can forward configured MCP servers over ACP; agents may also read native MCP config |
+| [Terminal Threads](./terminal-threads.md) | Native CLIs/TUIs read their own MCP configuration                                       |
+
 ## Installing MCP Servers
 
 ### As Extensions
@@ -91,7 +99,7 @@ Once installation is complete, you can return to the Agent Panel and start promp
 How reliably MCP tools get called can vary from model to model.
 Mentioning the MCP server by name can help the model pick tools from that server.
 
-However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-panel.md#custom-profiles) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
+However, if you want to _ensure_ a given MCP server will be used, you can create [a custom profile](./agent-profiles.md) where all built-in tools (or the ones that could cause conflicts with the server's tools) are turned off and only the tools coming from the MCP server are turned on.
 
 As an example, [the Dagger team suggests](https://container-use.com/agent-integrations#zed) doing that with their [Container Use MCP server](https://zed.dev/extensions/mcp-server-container-use):
 

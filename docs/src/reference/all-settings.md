@@ -5265,7 +5265,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [Set Up AI](../ai/set-up-ai.md) under the AI section to learn more about AI setup.
 
 ## Collaboration Panel
 

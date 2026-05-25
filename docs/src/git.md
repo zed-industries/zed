@@ -275,7 +275,7 @@ Zed currently supports LLM-powered commit message generation.
 You can ask AI to generate a commit message by focusing on the message editor within the Git Panel and either clicking on the pencil icon in the bottom left, or reaching for the {#action git::GenerateCommitMessage} ({#kb git::GenerateCommitMessage}) keybinding.
 
 > Note that you need to have an LLM provider configured either via your own API keys or through Zed's hosted AI models.
-> Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
+> Visit [Set Up AI](./ai/set-up-ai.md) to learn how to configure AI.
 
 You can specify your preferred model to use by providing a `commit_message_model` agent setting.
 See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
@@ -296,7 +296,7 @@ From there, you can modify the prompt to match your desired format.
 
 <!-- Add media -->
 
-Any specific instructions for commit messages added to [Rules files](./ai/rules.md) are also picked up by the model tasked with writing your commit message.
+Any specific instructions for commit messages added to [instruction files](./ai/instructions.md) are also picked up by the model tasked with writing your commit message.
 
 ## Git Integrations
 
@@ -335,8 +335,8 @@ You can configure multiple custom providers if you work with several self-hosted
 
 Zed also has a Copy Permalink feature to create a permanent link to a code snippet on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
-Trigger this action via the [Command Palette](./getting-started.md#command-palette) (search for `permalink`),
-by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
+Trigger this action via the [Command Palette](./command-palette.md) (search for `permalink`),
+by creating a [custom key binding](./key-bindings.md#user-keymaps) to the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
