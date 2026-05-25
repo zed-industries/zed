@@ -3449,7 +3449,8 @@ impl Window {
         result
     }
 
-    /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
+    /// Paint one or more box shadows (drop or inset) into the scene for the next frame at the
+    /// current z-index. Mirrors CSS `box-shadow`, including the `inset` keyword.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_shadows(
@@ -3463,16 +3464,57 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
+        let element_bounds = self.cover_bounds(bounds);
+        let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
-            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
-            self.next_frame.scene.insert_primitive(Shadow {
-                order: 0,
-                blur_radius: shadow.blur_radius.scale(scale_factor),
-                bounds: self.cover_bounds(shadow_bounds),
-                content_mask,
-                corner_radii: corner_radii.scale(scale_factor),
-                color: shadow.color.opacity(opacity),
-            });
+            if shadow.inset {
+                // CSS inset shadow: the visible shadow is the blurred *complement* of a "hole"
+                // rect, masked to the element. The hole is the element offset by `offset` and
+                // shrunk on every side by `spread_radius`. Negative spread expands the hole
+                // (and therefore shrinks the visible shadow); CSS allows this.
+                let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
+                // Match CSS: each corner of the hole = max(0, element_corner - spread).
+                // `Pixels` supports subtraction; clamp at zero so a large spread can't produce
+                // negative radii (which would be nonsensical and could break the SDF).
+                let zero = Pixels::ZERO;
+                let hole_corner_radii = Corners {
+                    top_left: (corner_radii.top_left - shadow.spread_radius).max(zero),
+                    top_right: (corner_radii.top_right - shadow.spread_radius).max(zero),
+                    bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
+                    bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
+                };
+                self.next_frame.scene.insert_primitive(Shadow {
+                    order: 0,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                    bounds: self.cover_bounds(hole),
+                    content_mask,
+                    corner_radii: hole_corner_radii.scale(scale_factor),
+                    color: shadow.color.opacity(opacity),
+                    element_bounds,
+                    element_corner_radii,
+                    inset: 1,
+                    _pad: 0,
+                });
+            } else {
+                // CSS drop shadow: shadow rect is the element offset by `offset` and dilated by
+                // `spread_radius`. The shader inflates this further by `3 * blur_radius` for the
+                // gaussian tail.
+                let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+                self.next_frame.scene.insert_primitive(Shadow {
+                    order: 0,
+                    blur_radius: shadow.blur_radius.scale(scale_factor),
+                    bounds: self.cover_bounds(shadow_bounds),
+                    content_mask,
+                    corner_radii: corner_radii.scale(scale_factor),
+                    color: shadow.color.opacity(opacity),
+                    // Unused by the shader for drop shadows, but we still pass valid values so
+                    // the GPU struct is well-defined.
+                    element_bounds,
+                    element_corner_radii,
+                    inset: 0,
+                    _pad: 0,
+                });
+            }
         }
     }
 

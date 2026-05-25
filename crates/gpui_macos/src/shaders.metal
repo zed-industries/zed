@@ -468,14 +468,22 @@ vertex ShadowVertexOutput shadow_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
-  float margin = 3. * shadow.blur_radius;
-  // Set the bounds of the shadow and adjust its size based on the shadow's
-  // spread radius to achieve the spreading effect
-  Bounds_ScaledPixels bounds = shadow.bounds;
-  bounds.origin.x -= margin;
-  bounds.origin.y -= margin;
-  bounds.size.width += 2. * margin;
-  bounds.size.height += 2. * margin;
+  // The geometry rect we rasterize differs between drop and inset shadows.
+  //   - Drop: shadow.bounds (already offset + spread-dilated by the CPU), inflated by
+  //     3 * blur_radius so the gaussian tail has room outside the rect.
+  //   - Inset: the element's own bounds. The shadow lives entirely inside the element,
+  //     so the geometry never needs to extend beyond it.
+  Bounds_ScaledPixels bounds;
+  if (shadow.inset != 0u) {
+    bounds = shadow.element_bounds;
+  } else {
+    float margin = 3. * shadow.blur_radius;
+    bounds = shadow.bounds;
+    bounds.origin.x -= margin;
+    bounds.origin.y -= margin;
+    bounds.size.width += 2. * margin;
+    bounds.size.height += 2. * margin;
+  }
 
   float4 device_position =
       to_device_position(unit_vertex, bounds, viewport_size);
@@ -515,6 +523,10 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     }
   }
 
+  // `alpha` is the (blurred) coverage of `shadow.bounds`:
+  //   - For drop shadows, that's the shadow rect itself, so this is the shadow's intensity.
+  //   - For inset shadows, that's the "hole" rect, so we'll invert it below to get the
+  //     blurred *complement* (the dark ring) and then clip it to the element.
   float alpha;
   if (shadow.blur_radius == 0.) {
     float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
@@ -536,6 +548,16 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                gaussian(y, shadow.blur_radius) * step;
       y += step;
     }
+  }
+
+  if (shadow.inset != 0u) {
+    // Invert: the inset shadow lives *outside* the hole rect.
+    alpha = 1. - alpha;
+    // Clip to the element's rounded rect so the shadow never escapes the element.
+    // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                      shadow.element_corner_radii);
+    alpha *= saturate(0.5 - element_distance);
   }
 
   return input.color * float4(1., 1., 1., alpha);
@@ -1251,14 +1273,14 @@ float4 fill_color(Background background,
         // checkerboard
         float size = background.gradient_angle_or_pattern_height;
         float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
-        
+
         float x_index = floor(relative_position.x / size);
         float y_index = floor(relative_position.y / size);
         float should_be_colored = fmod(x_index + y_index, 2.0);
-        
+
         color = solid_color;
         color.a *= saturate(should_be_colored);
-        break; 
+        break;
     }
   }
 
