@@ -659,24 +659,26 @@ impl EditSession {
 
         // `~/.agents/skills/` lives outside every worktree. Resolve through a
         // hidden worktree we attach on demand, bypassing `find_project_path`
-        // which only consults *visible* worktrees.
-        let fs = context
-            .project
-            .read_with(cx, |project, _cx| project.fs().clone());
-        let (project_path, global_skill_worktree) =
-            if resolve_global_skill_creation_target(&path, fs.as_ref())
+        // which only consults *visible* worktrees. Restricted to local
+        // projects — `project.fs()` is the *remote* fs for SSH/collab
+        // projects and global skills always live on the user's local machine.
+        let (fs, is_local) = context.project.read_with(cx, |project, _cx| {
+            (project.fs().clone(), project.is_local())
+        });
+        let (project_path, global_skill_worktree) = if is_local
+            && resolve_global_skill_creation_target(&path, fs.as_ref())
                 .await
                 .is_some()
-            {
-                let worktree = ensure_global_skills_worktree(&context.project, cx).await?;
-                let project_path = resolve_global_skill_project_path(&worktree, &path, mode, cx)?;
-                (project_path, Some(worktree))
-            } else {
-                (
-                    cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?,
-                    None,
-                )
-            };
+        {
+            let worktree = ensure_global_skills_worktree(&context.project, cx).await?;
+            let project_path = resolve_global_skill_project_path(&worktree, &path, mode, cx)?;
+            (project_path, Some(worktree))
+        } else {
+            (
+                cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?,
+                None,
+            )
+        };
 
         let Some(abs_path) =
             cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))

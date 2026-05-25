@@ -145,9 +145,14 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             // `~/.agents/skills/` lives outside every worktree, so bypass
-            // `find_project_path` and create the directory directly.
-            if let Some(skill_target) =
-                resolve_global_skill_creation_target(&expanded_path, fs.as_ref()).await
+            // `find_project_path` and create the directory directly. Only do
+            // this for local projects — `project.fs()` is the *remote* fs for
+            // SSH/collab projects and global skills always live on the user's
+            // local machine.
+            let is_local = project.read_with(cx, |project, _cx| project.is_local());
+            if is_local
+                && let Some(skill_target) =
+                    resolve_global_skill_creation_target(&expanded_path, fs.as_ref()).await
             {
                 futures::select! {
                     result = fs.create_dir(&skill_target).fuse() => {
@@ -565,6 +570,55 @@ mod tests {
             "got: {result:?}",
         );
         assert!(!fs.is_dir(&outside_path).await);
+    }
+
+    /// On remote/collab projects, the carve-out must not fire — `project.fs()`
+    /// is the remote fs and we don't want to touch a remote machine's home
+    /// directory.
+    #[gpui::test]
+    async fn test_create_directory_skip_skills_carve_out_for_remote_projects(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.create_dir(util::paths::home_dir()).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        project.update(cx, |project, _cx| {
+            project.mark_as_collab_for_testing();
+        });
+        cx.executor().run_until_parked();
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CreateDirectoryToolInput {
+                    path: "~/.agents/skills/remote-skill".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("outside the project")),
+            "got: {result:?}",
+        );
+        let skill_dir = agent_skills::global_skills_dir().join("remote-skill");
+        assert!(!fs.is_dir(&skill_dir).await);
     }
 
     /// `..` segments that point *out of* the skills tree after canonicalization
