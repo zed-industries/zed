@@ -1307,7 +1307,7 @@ fn register_actions(
 
         impl WorkspaceError for DebugError {
             fn primary_message(&self) -> SharedString {
-                SharedString::new_static("Debug action")
+                SharedString::new_static("This is an error.")
             }
 
             fn severity(&self) -> ErrorSeverity {
@@ -1323,7 +1323,7 @@ fn register_actions(
 
         impl WorkspaceError for SecondDebugError {
             fn primary_message(&self) -> SharedString {
-                SharedString::new_static("Second debug action")
+                SharedString::new_static("This is some error to ignore.")
             }
 
             fn severity(&self) -> ErrorSeverity {
