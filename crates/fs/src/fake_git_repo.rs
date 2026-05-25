@@ -489,7 +489,7 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+    fn stash_entries(&self) -> BoxFuture<'static, Result<git::stash::GitStash>> {
         self.with_state_async(false, |state| Ok(state.stash_entries.clone()))
     }
 
@@ -1127,7 +1127,7 @@ impl GitRepository for FakeGitRepository {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
-    ) -> BoxFuture<'_, Result<git::status::GitDiffStat>> {
+    ) -> BoxFuture<'static, Result<git::status::GitDiffStat>> {
         fn count_lines(s: &str) -> u32 {
             if s.is_empty() {
                 0
