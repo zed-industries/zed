@@ -172,13 +172,6 @@ pub struct JumpExampleSpec {
     pub diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
     pub future_edit_history: String,
     pub navigation_history: Vec<JumpExampleRecentFile>,
-    pub git_log: Vec<JumpExampleGitCommit>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct JumpExampleGitCommit {
-    pub sha: String,
-    pub files: Vec<Arc<Path>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

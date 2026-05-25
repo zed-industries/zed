@@ -5571,7 +5571,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.32",
- "git",
  "gpui",
  "heapless",
  "indoc",

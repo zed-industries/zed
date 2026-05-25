@@ -7,13 +7,11 @@ use std::{
 use anyhow::{Context as _, Result};
 pub use cloud_api_types::JumpExampleTrigger;
 use cloud_api_types::{
-    JumpExampleGitCommit, JumpExampleRecentFile, JumpExampleSpec, SubmitJumpExampleBody,
-    SubmitJumpExampleResponse,
+    JumpExampleRecentFile, JumpExampleSpec, SubmitJumpExampleBody, SubmitJumpExampleResponse,
 };
-use git::repository::{LogOrder, LogSource};
-use gpui::{AppContext as _, AsyncApp, Context, Entity, TaskExt as _, WeakEntity};
+use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, TaskExt as _, WeakEntity};
 use language::{BufferSnapshot, File, Point};
-use project::{Project, git_store::Repository};
+use project::Project;
 use release_channel::AppVersion;
 
 use text::ToPoint as _;
@@ -22,7 +20,6 @@ use crate::{EditPredictionStore, ProjectState, StoredEvent, example_spec::Recent
 
 pub const JUMP_EXAMPLE_FUTURE_EVENT_COUNT: usize = 2;
 pub const JUMP_EXAMPLE_TTL: Duration = Duration::from_secs(60 * 2);
-pub const JUMP_EXAMPLE_GIT_LOG_COMMIT_COUNT: usize = 20;
 pub const JUMP_EXAMPLE_NAVIGATION_COUNT: usize = 20;
 
 pub struct PendingJumpExampleCapture {
@@ -39,7 +36,6 @@ pub struct PendingJumpExampleCapture {
     diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
     repository_url: Option<String>,
     revision: Option<String>,
-    git_log: Vec<JumpExampleGitCommit>,
 }
 
 pub fn start_jump_example_capture(
@@ -82,11 +78,6 @@ pub fn start_jump_example_capture(
             position.to_point(&snapshot).row,
             100,
         );
-
-        // todo! cache and re-use
-        let git_log = collect_jump_example_git_log(repository.clone(), cx)
-            .await
-            .unwrap_or_default();
 
         let (uncommitted_diff, edit_history_events) = if repository.is_some() {
             let uncommitted_diffs = ep_store
@@ -158,7 +149,6 @@ pub fn start_jump_example_capture(
                     started_at: now,
                     future_events: Vec::new(),
                     navigation_history: Vec::new(),
-                    git_log,
                 });
             drain_completed_jump_example_captures(project_state, cx);
         });
@@ -176,9 +166,9 @@ pub fn drain_completed_jump_example_captures(
     let mut capture_index = 0;
     while capture_index < project_state.pending_jump_example_captures.len() {
         let capture = &project_state.pending_jump_example_captures[capture_index];
-        if capture.future_events.len() < JUMP_EXAMPLE_FUTURE_EVENT_COUNT
-            && now.saturating_duration_since(capture.started_at) < JUMP_EXAMPLE_TTL
-        {
+        let finished = capture.future_events.len() >= JUMP_EXAMPLE_FUTURE_EVENT_COUNT
+            || now.saturating_duration_since(capture.started_at) >= JUMP_EXAMPLE_TTL;
+        if !finished {
             capture_index += 1;
             continue;
         }
@@ -196,22 +186,27 @@ pub fn drain_completed_jump_example_captures(
     }
 }
 
-async fn submit_jump_example_capture_task(
+fn submit_jump_example_capture_task(
     this: WeakEntity<EditPredictionStore>,
     capture: PendingJumpExampleCapture,
     cx: &mut AsyncApp,
-) -> Result<()> {
-    let (organization_id, client, llm_token, app_version) = this.update(cx, |this, cx| {
-        (
-            this.user_store
-                .read(cx)
-                .current_organization()
-                .map(|organization| organization.id.clone()),
-            this.client.clone(),
-            this.llm_token.clone(),
-            AppVersion::global(cx),
-        )
-    })?;
+) -> Task<Result<()>> {
+    let Some((organization_id, client, llm_token, app_version)) = this
+        .update(cx, |this, cx| {
+            (
+                this.user_store
+                    .read(cx)
+                    .current_organization()
+                    .map(|organization| organization.id.clone()),
+                this.client.clone(),
+                this.llm_token.clone(),
+                AppVersion::global(cx),
+            )
+        })
+        .ok()
+    else {
+        return Task::ready(Ok(()));
+    };
     cx.background_spawn(async move {
         let PendingJumpExampleCapture {
             trigger,
@@ -227,7 +222,6 @@ async fn submit_jump_example_capture_task(
             diagnostics,
             repository_url,
             revision,
-            git_log,
         } = capture;
         let future_edit_history = render_jump_example_events(&future_events, &worktree_root_name);
 
@@ -247,7 +241,6 @@ async fn submit_jump_example_capture_task(
             diagnostics,
             future_edit_history,
             navigation_history: jump_example_recent_files(navigation_history),
-            git_log,
         };
         let body = SubmitJumpExampleBody { example };
         let json_bytes = serde_json::to_vec(&body)?;
@@ -267,62 +260,9 @@ async fn submit_jump_example_capture_task(
             organization_id,
             app_version,
         )
-        .await
+        .await?;
+        Ok(())
     })
-    .await?;
-    Ok(())
-}
-
-// todo! cache and re-use
-async fn collect_jump_example_git_log(
-    repository: Option<Entity<Repository>>,
-    cx: &mut AsyncApp,
-) -> Result<Vec<JumpExampleGitCommit>> {
-    let Some(repository) = repository else {
-        return Ok(Vec::new());
-    };
-    let mut commit_shas = Vec::new();
-    for _ in 0..10 {
-        let (shas, is_loading) = repository.update(cx, |repository, cx| {
-            let response = repository.graph_data(
-                LogSource::All,
-                LogOrder::DateOrder,
-                0..JUMP_EXAMPLE_GIT_LOG_COMMIT_COUNT,
-                cx,
-            );
-            (
-                response
-                    .commits
-                    .iter()
-                    .map(|commit| commit.sha.to_string())
-                    .collect::<Vec<_>>(),
-                response.is_loading,
-            )
-        });
-        commit_shas = shas;
-        if !commit_shas.is_empty() || !is_loading {
-            break;
-        }
-        cx.background_executor()
-            .timer(Duration::from_millis(100))
-            .await;
-    }
-
-    let mut commits = Vec::new();
-    for sha in commit_shas {
-        let diff = repository
-            .update(cx, |repository, _| repository.load_commit_diff(sha.clone()))
-            .await??;
-        commits.push(JumpExampleGitCommit {
-            sha,
-            files: diff
-                .files
-                .into_iter()
-                .map(|file| file.path.as_std_path().into())
-                .collect(),
-        });
-    }
-    Ok(commits)
 }
 
 fn jump_example_recent_files(files: Vec<RecentFile>) -> Vec<JumpExampleRecentFile> {
