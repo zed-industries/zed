@@ -300,6 +300,7 @@ async fn test_ssh_collaboration_git_branches(
     let new_branch = branches[2];
 
     let branches_b = branches_b
+        .branches
         .into_iter()
         .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
