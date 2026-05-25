@@ -114,14 +114,16 @@ pub(crate) fn runnable_ranges(
     })
 }
 
+type RunnableMatchCaptures = SmallVec<[RunnableMatchCapture; 4]>;
+
 struct RunnableMatchGroup {
     range: Range<usize>,
-    captures: SmallVec<[RunnableMatchCapture; 4]>,
+    captures: RunnableMatchCaptures,
 }
 
 struct GroupedRunnableMatches {
     groups: SmallVec<[RunnableMatchGroup; 1]>,
-    shared_captures: SmallVec<[RunnableMatchCapture; 4]>,
+    shared_captures: RunnableMatchCaptures,
 }
 
 fn runnable_tags_from_pattern(
