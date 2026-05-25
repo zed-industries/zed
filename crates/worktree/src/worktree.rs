@@ -3122,8 +3122,6 @@ impl BackgroundScannerState {
         parent_path: Arc<RelPath>,
         entries: impl IntoIterator<Item = Entry>,
         ignore: Option<Arc<Gitignore>>,
-        watcher: &dyn Watcher,
-        remove_missing_entries: bool,
     ) {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
@@ -3155,23 +3153,6 @@ impl BackgroundScannerState {
             self.snapshot
                 .ignores_by_parent_abs_path
                 .insert(abs_parent_path, (ignore, false));
-        }
-
-        let entries = entries.into_iter().collect::<Vec<_>>();
-        if remove_missing_entries {
-            let new_entry_paths = entries
-                .iter()
-                .map(|entry| entry.path.clone())
-                .collect::<HashSet<_>>();
-            let removed_child_paths = self
-                .snapshot
-                .child_entries(&parent_path)
-                .filter(|entry| !new_entry_paths.contains(&entry.path))
-                .map(|entry| entry.path.clone())
-                .collect::<Vec<_>>();
-            for path in removed_child_paths {
-                self.remove_path(&path, watcher);
-            }
         }
 
         let parent_entry_id = parent_entry.id;
@@ -4318,7 +4299,8 @@ impl BackgroundScanner {
             None,
         )
         .await;
-        self.scan_directories_once(&request.directory_paths).await;
+        self.scan_directories_non_recursively(&request.directory_paths)
+            .await;
         {
             let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
@@ -4755,7 +4737,7 @@ impl BackgroundScanner {
         !mem::take(&mut self.state.lock().await.paths_to_scan).is_empty()
     }
 
-    async fn scan_directories_once(&self, paths: &[Arc<RelPath>]) {
+    async fn scan_directories_non_recursively(&self, paths: &[Arc<RelPath>]) {
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
         {
             let state = self.state.lock().await;
@@ -4913,27 +4895,24 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
-        let mut remove_missing_entries = true;
+        let mut observed_child_paths = HashSet::default();
+        let mut listing_complete = true;
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
             .await?
-            .filter_map(|entry| {
-                if entry.is_err() {
-                    remove_missing_entries = false;
-                }
-                async move {
-                    match entry {
-                        Ok(entry) => Some(entry),
-                        Err(error) => {
-                            log::error!("error processing entry {:?}", error);
-                            None
-                        }
-                    }
-                }
-            })
             .collect::<Vec<_>>()
-            .await;
+            .await
+            .into_iter()
+            .filter_map(|entry| {
+                entry
+                    .map_err(|error| {
+                        listing_complete = false;
+                        error.context("error processing entry")
+                    })
+                    .log_err()
+            })
+            .collect::<Vec<_>>();
 
         // Ensure that .git and .gitignore are processed first.
         swap_to_front(&mut child_paths, GITIGNORE);
@@ -4952,9 +4931,9 @@ impl BackgroundScanner {
                 .to_str()
                 .and_then(|name| Some(job.path.join(RelPath::unix(name).ok()?)))
             else {
-                remove_missing_entries = false;
                 continue;
             };
+            observed_child_paths.insert(child_path.clone());
 
             if self.track_git_repositories {
                 if child_name == DOT_GIT {
@@ -4998,12 +4977,8 @@ impl BackgroundScanner {
 
             let child_metadata = match self.fs.metadata(&child_abs_path).await {
                 Ok(Some(metadata)) => metadata,
-                Ok(None) => {
-                    remove_missing_entries = false;
-                    continue;
-                }
+                Ok(None) => continue,
                 Err(err) => {
-                    remove_missing_entries = false;
                     log::error!("error processing {:?}: {err:#}", child_abs_path.display());
                     continue;
                 }
@@ -5023,7 +4998,6 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        remove_missing_entries = false;
                         log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
                         continue;
                     }
@@ -5036,7 +5010,6 @@ impl BackgroundScanner {
                     None => match self.fs.canonicalize(&root_abs_path).await {
                         Ok(path) => root_canonical_path.insert(path),
                         Err(err) => {
-                            remove_missing_entries = false;
                             log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
                             continue;
                         }
@@ -5059,6 +5032,15 @@ impl BackgroundScanner {
                 }
 
                 child_entry.canonical_path = Some(canonical_path.into());
+            }
+
+            if self.is_path_private(&child_path) {
+                log::debug!("detected private file: {child_path:?}");
+                child_entry.is_private = true;
+            }
+            if self.settings.is_path_hidden(&child_path) {
+                log::debug!("detected hidden file: {child_path:?}");
+                child_entry.is_hidden = true;
             }
 
             if child_entry.is_dir() {
@@ -5092,24 +5074,22 @@ impl BackgroundScanner {
                     self.settings.is_path_always_included(&child_path, false);
             }
 
-            {
-                let relative_path = job
-                    .path
-                    .join(RelPath::unix(child_name.to_str().unwrap()).unwrap());
-                if self.is_path_private(&relative_path) {
-                    log::debug!("detected private file: {relative_path:?}");
-                    child_entry.is_private = true;
-                }
-                if self.settings.is_path_hidden(&relative_path) {
-                    log::debug!("detected hidden file: {relative_path:?}");
-                    child_entry.is_hidden = true;
-                }
-            }
-
             new_entries.push(child_entry);
         }
 
         let mut state = self.state.lock().await;
+
+        if listing_complete {
+            let removed_child_paths = state
+                .snapshot
+                .child_entries(&job.path)
+                .filter(|entry| !observed_child_paths.contains(&entry.path))
+                .map(|entry| entry.path.clone())
+                .collect::<Vec<_>>();
+            for path in removed_child_paths {
+                state.remove_path(&path, self.watcher.as_ref());
+            }
+        }
 
         // Identify any subdirectories that should not be scanned.
         let mut job_ix = 0;
@@ -5132,13 +5112,7 @@ impl BackgroundScanner {
             }
         }
 
-        state.populate_dir(
-            job.path.clone(),
-            new_entries,
-            new_ignore,
-            self.watcher.as_ref(),
-            remove_missing_entries,
-        );
+        state.populate_dir(job.path.clone(), new_entries, new_ignore);
 
         self.watcher.add(job.abs_path.as_ref()).log_err();
 
@@ -5153,9 +5127,9 @@ impl BackgroundScanner {
         }
 
         for new_job in new_jobs.into_iter().flatten() {
-            job.scan_queue
-                .try_send(new_job)
-                .expect("channel is unbounded");
+            if job.scan_queue.try_send(new_job).is_err() {
+                break;
+            }
         }
 
         Ok(())
