@@ -144,6 +144,38 @@ pub async fn resolve_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathB
     }
 }
 
+/// Like [`resolve_global_skill_path`], but uses ancestor-canonicalization so
+/// it accepts paths whose leaf (or intermediate directories) don't exist yet —
+/// e.g. the `~/.agents/skills/<new-skill>/SKILL.md` target before
+/// `create_directory` runs.
+pub async fn resolve_global_skill_creation_target(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    let canonical_path = canonicalize_with_ancestors(path, fs).await?;
+    let canonical_skills_dir = canonical_global_skills_dir(fs).await?;
+    canonical_path
+        .starts_with(&canonical_skills_dir)
+        .then_some(canonical_path)
+}
+
+/// Expand a leading `~` component to the user's home directory. Other tilde
+/// forms (e.g. `~user`) are left alone. The model often echoes the
+/// `~/.agents/skills/<name>` notation from skill instructions verbatim.
+pub fn expand_user_home(path: impl AsRef<Path>) -> PathBuf {
+    let path = path.as_ref();
+    let mut components = path.components();
+    let Some(first) = components.next() else {
+        return path.to_path_buf();
+    };
+    if first.as_os_str() != "~" {
+        return path.to_path_buf();
+    }
+    let mut expanded = paths::home_dir().clone();
+    expanded.extend(components);
+    expanded
+}
+
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
 /// either inside a `.zed/` local-settings directory, inside `.agents/skills/`, or inside
 /// the global config dir.

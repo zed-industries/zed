@@ -277,6 +277,51 @@ mod tests {
     use util::rel_path::{RelPath, rel_path};
 
     #[gpui::test]
+    async fn test_streaming_write_creates_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.create_dir(&skill_dir).await.unwrap();
+        let (write_tool, _project, _action_log, _fs, _thread) =
+            setup_test_with_fs(cx, fs.clone(), &[path!("/root/project").as_ref()]).await;
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            write_tool.clone().run(
+                ToolInput::resolved(WriteFileToolInput {
+                    path: "~/.agents/skills/my-skill/SKILL.md".into(),
+                    content: "hello".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.next_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                agent_client_protocol::schema::PermissionOptionId::new("allow"),
+                agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        task.await.expect("write should succeed");
+        let on_disk = fs.load(&skill_dir.join("SKILL.md")).await.unwrap();
+        assert_eq!(on_disk, "hello");
+    }
+
+    #[gpui::test]
     async fn test_streaming_write_create_file(cx: &mut TestAppContext) {
         let (write_tool, _project, _action_log, _fs, _thread) =
             setup_test(cx, json!({"dir": {}})).await;

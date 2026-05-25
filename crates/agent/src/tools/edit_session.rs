@@ -2,7 +2,10 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
-use crate::{Thread, ToolCallEventStream};
+use crate::{
+    Thread, ToolCallEventStream,
+    tools::tool_permissions::{expand_user_home, resolve_global_skill_creation_target},
+};
 use acp_thread::Diff;
 use action_log::ActionLog;
 use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
@@ -224,17 +227,26 @@ impl EditSessionContext {
         cx: &App,
     ) -> SharedString {
         let project = self.project.read(cx);
-        if let Some(project_path) = project.find_project_path(path, cx)
+        let base: SharedString = if let Some(project_path) = project.find_project_path(path, cx)
             && let Some(short) = project.short_full_path_for_project_path(&project_path, cx)
         {
-            return short.into();
-        }
-
-        let display = path.to_string_lossy();
-        if display.is_empty() {
-            default.into()
+            short.into()
         } else {
-            display.into_owned().into()
+            let display = path.to_string_lossy();
+            if display.is_empty() {
+                default.into()
+            } else {
+                display.into_owned().into()
+            }
+        };
+
+        // Streaming tool input re-fires `initial_title` for every chunk and
+        // overwrites the tool call's title, so the `(agent skills)` decoration
+        // the auth prompt sets is otherwise clobbered by later partial inputs.
+        if agent_skills::is_agents_skills_path(path) {
+            format!("{base} (agent skills)").into()
+        } else {
+            base
         }
     }
 
@@ -349,6 +361,10 @@ pub(crate) struct EditSession {
     parser: StreamingParser,
     pipeline: Pipeline,
     context: Arc<EditSessionContext>,
+    /// Keeps the hidden `~/.agents/skills/` worktree alive for the session.
+    /// `WorktreeStore` only holds a `Weak` reference to invisible worktrees,
+    /// so without this the worktree drops between `new` and the buffer save.
+    _global_skill_worktree: Option<Entity<project::Worktree>>,
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
 }
 
@@ -639,7 +655,28 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<Self, String> {
-        let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+        let path = expand_user_home(&path);
+
+        // `~/.agents/skills/` lives outside every worktree. Resolve through a
+        // hidden worktree we attach on demand, bypassing `find_project_path`
+        // which only consults *visible* worktrees.
+        let fs = context
+            .project
+            .read_with(cx, |project, _cx| project.fs().clone());
+        let (project_path, global_skill_worktree) =
+            if resolve_global_skill_creation_target(&path, fs.as_ref())
+                .await
+                .is_some()
+            {
+                let worktree = ensure_global_skills_worktree(&context.project, cx).await?;
+                let project_path = resolve_global_skill_project_path(&worktree, &path, mode, cx)?;
+                (project_path, Some(worktree))
+            } else {
+                (
+                    cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?,
+                    None,
+                )
+            };
 
         let Some(abs_path) =
             cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
@@ -699,6 +736,7 @@ impl EditSession {
             parser: StreamingParser::default(),
             pipeline: Pipeline::new(mode, file_changed_since_last_read),
             context,
+            _global_skill_worktree: global_skill_worktree,
             _finalize_diff_guard: finalize_diff_guard,
         })
     }
@@ -1053,6 +1091,86 @@ async fn resolve_dirty_buffer(
         }
     }
     Ok(())
+}
+
+/// Attach a hidden worktree rooted at `~/.agents/skills/` and await its
+/// initial scan, so `entry_for_path` can see whatever `create_directory`
+/// just put on disk. Idempotent.
+async fn ensure_global_skills_worktree(
+    project: &Entity<Project>,
+    cx: &mut AsyncApp,
+) -> Result<Entity<project::Worktree>, String> {
+    let skills_dir = agent_skills::global_skills_dir();
+    let task = project.update(cx, |project, cx| {
+        project.find_or_create_worktree(&skills_dir, false, cx)
+    });
+    let (worktree, _) = task.await.map_err(|e: anyhow::Error| e.to_string())?;
+    let scan_complete = worktree.read_with(cx, |worktree, _cx| {
+        worktree.as_local().map(|local| local.scan_complete())
+    });
+    if let Some(scan_complete) = scan_complete {
+        scan_complete.await;
+    }
+    Ok(worktree)
+}
+
+/// Build a `ProjectPath` from the hidden skills worktree directly,
+/// enforcing the same Edit/Write invariants `resolve_path` does for normal
+/// worktrees. `Project::find_project_path` can't be used because it only
+/// consults *visible* worktrees.
+fn resolve_global_skill_project_path(
+    worktree: &Entity<project::Worktree>,
+    path: &std::path::Path,
+    mode: EditSessionMode,
+    cx: &mut AsyncApp,
+) -> Result<ProjectPath, String> {
+    cx.update(|cx| {
+        let worktree = worktree.read(cx);
+        let relative = path
+            .strip_prefix(worktree.abs_path().as_ref())
+            .map_err(|_| {
+                format!(
+                    "{} is not inside the global skills directory",
+                    path.display()
+                )
+            })?;
+        let rel_path = RelPath::new(relative, util::paths::PathStyle::local())
+            .map_err(|err| format!("Invalid skill path {}: {err}", path.display()))?
+            .into_arc();
+
+        match mode {
+            EditSessionMode::Edit => {
+                let entry = worktree
+                    .entry_for_path(&rel_path)
+                    .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+                if !entry.is_file() {
+                    return Err("Can't edit file: path is a directory".to_string());
+                }
+            }
+            EditSessionMode::Write => match worktree.entry_for_path(&rel_path) {
+                Some(entry) if !entry.is_file() => {
+                    return Err("Can't write to file: path is a directory".to_string());
+                }
+                Some(_) => {}
+                None => {
+                    let parent = rel_path
+                        .parent()
+                        .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+                    let parent_entry = worktree.entry_for_path(parent).ok_or_else(|| {
+                        "Can't create file: parent directory doesn't exist".to_string()
+                    })?;
+                    if !parent_entry.is_dir() {
+                        return Err("Can't create file: parent is not a directory".to_string());
+                    }
+                }
+            },
+        }
+
+        Ok(ProjectPath {
+            worktree_id: worktree.id(),
+            path: rel_path,
+        })
+    })
 }
 
 fn resolve_path(

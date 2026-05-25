@@ -1,6 +1,6 @@
 use super::tool_permissions::{
-    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape, expand_user_home,
+    resolve_global_skill_creation_target, sensitive_settings_kind,
 };
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
@@ -17,7 +17,6 @@ use crate::{
     AgentTool, ToolCallEventStream, ToolInput, ToolPermissionDecision,
     authorize_with_sensitive_settings, decide_permission_for_path,
 };
-use std::path::Path;
 
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
@@ -91,14 +90,15 @@ impl AgentTool for CreateDirectoryTool {
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
+            let expanded_path = expand_user_home(&input.path);
+
             let symlink_escape_target = project.read_with(cx, |project, cx| {
                 detect_symlink_escape(project, &input.path, &canonical_roots, cx)
                     .map(|(_, target)| target)
             });
 
             let sensitive_kind =
-                sensitive_settings_kind(Path::new(&input.path), &canonical_roots, fs.as_ref())
-                    .await;
+                sensitive_settings_kind(&expanded_path, &canonical_roots, fs.as_ref()).await;
 
             let decision =
                 if matches!(decision, ToolPermissionDecision::Allow) && sensitive_kind.is_some() {
@@ -144,8 +144,24 @@ impl AgentTool for CreateDirectoryTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            // `~/.agents/skills/` lives outside every worktree, so bypass
+            // `find_project_path` and create the directory directly.
+            if let Some(skill_target) =
+                resolve_global_skill_creation_target(&expanded_path, fs.as_ref()).await
+            {
+                futures::select! {
+                    result = fs.create_dir(&skill_target).fuse() => {
+                        result.map_err(|e| format!("Creating directory {destination_path}: {e}"))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Create directory cancelled by user".to_string());
+                    }
+                }
+                return Ok(format!("Created directory {destination_path}"));
+            }
+
             let create_entry = project.update(cx, |project, cx| {
-                match project.find_project_path(&input.path, cx) {
+                match project.find_project_path(&expanded_path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
                     None => Err("Path to create was outside the project".to_string()),
                 }
@@ -442,6 +458,160 @@ mod tests {
                 Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "Deny policy should not emit symlink authorization prompt",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_global_skill_tilde_path(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.create_dir(util::paths::home_dir()).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CreateDirectoryToolInput {
+                    path: "~/.agents/skills/first-principles-explainer".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        assert!(
+            auth.tool_call
+                .fields
+                .title
+                .as_deref()
+                .is_some_and(|t| t.ends_with("(agent skills)")),
+            "got: {:?}",
+            auth.tool_call.fields.title,
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        task.await.unwrap();
+        let skill_dir = agent_skills::global_skills_dir().join("first-principles-explainer");
+        assert!(fs.is_dir(&skill_dir).await);
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_global_skill_denied_does_not_create(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.create_dir(util::paths::home_dir()).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CreateDirectoryToolInput {
+                    path: "~/.agents/skills/denied-skill".into(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+        drop(event_rx.expect_authorization().await);
+
+        assert!(task.await.is_err());
+        let skill_dir = agent_skills::global_skills_dir().join("denied-skill");
+        assert!(!fs.is_dir(&skill_dir).await);
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_outside_skills_dir_still_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.create_dir(util::paths::home_dir()).await.unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let outside_path = util::paths::home_dir().join("Documents").join("foo");
+
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: outside_path.to_string_lossy().into_owned(),
+                    }),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("outside the project")),
+            "got: {result:?}",
+        );
+        assert!(!fs.is_dir(&outside_path).await);
+    }
+
+    /// `..` segments that point *out of* the skills tree after canonicalization
+    /// must NOT slip through the carve-out, even though the raw components
+    /// look like a skills path.
+    #[gpui::test]
+    async fn test_create_directory_skills_dotdot_traversal_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "project": {} }))
+            .await;
+        fs.create_dir(&agent_skills::global_skills_dir())
+            .await
+            .unwrap();
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let traversal_path = agent_skills::global_skills_dir()
+            .join("..")
+            .join("..")
+            .join("escape");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CreateDirectoryToolInput {
+                    path: traversal_path.to_string_lossy().into_owned(),
+                }),
+                event_stream,
+                cx,
+            )
+        });
+        let auth = event_rx.expect_authorization().await;
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .unwrap();
+
+        let result = task.await;
+        assert!(
+            result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.contains("outside the project")),
+            "got: {result:?}",
         );
     }
 }

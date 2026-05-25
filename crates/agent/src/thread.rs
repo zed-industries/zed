@@ -4324,6 +4324,19 @@ impl ToolCallEventStreamReceiver {
         }
     }
 
+    /// Like `expect_authorization`, but skips intervening non-auth events
+    /// (e.g. the location `ToolCallUpdate` `EditSession::new` emits) until an
+    /// authorization prompt arrives.
+    pub async fn next_authorization(&mut self) -> ToolCallAuthorization {
+        loop {
+            match self.0.next().await {
+                Some(Ok(ThreadEvent::ToolCallAuthorization(auth))) => return auth,
+                Some(Ok(_)) => continue,
+                other => panic!("Expected ToolCallAuthorization but got: {:?}", other),
+            }
+        }
+    }
+
     pub async fn expect_update_fields(&mut self) -> acp::ToolCallUpdateFields {
         let event = self.0.next().await;
         if let Some(Ok(ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
