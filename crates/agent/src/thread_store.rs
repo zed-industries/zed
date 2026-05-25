@@ -2,7 +2,7 @@ use crate::{DbThread, DbThreadMetadata, ThreadsDatabase};
 use agent_client_protocol::schema as acp;
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, future::Shared};
-use gpui::{App, Context, Entity, Global, SharedString, Task, prelude::*};
+use gpui::{App, Context, Entity, Global, Task, prelude::*};
 use util::path_list::PathList;
 
 struct GlobalThreadStore(Entity<ThreadStore>);
@@ -71,32 +71,6 @@ impl ThreadStore {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             database.save_thread(id, thread, folder_paths).await?;
             this.update(cx, |this, cx| this.reload(cx))
-        })
-    }
-
-    pub fn update_thread_title(
-        &mut self,
-        id: acp::SessionId,
-        title: SharedString,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<bool>> {
-        let database_future = ThreadsDatabase::connect(cx);
-        cx.spawn(async move |this, cx| {
-            let database = database_future.await.map_err(|err| anyhow!(err))?;
-            let updated = database
-                .update_thread_title(id.clone(), title.clone())
-                .await?;
-            if updated {
-                this.update(cx, |this, cx| {
-                    if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
-                        thread.title = title;
-                        cx.notify();
-                    } else {
-                        this.reload(cx);
-                    }
-                })?;
-            }
-            Ok(updated)
         })
     }
 
@@ -255,40 +229,6 @@ mod tests {
         cx.run_until_parked();
 
         assert!(thread_store.read_with(cx, |store, _cx| store.is_empty()));
-    }
-
-    #[gpui::test]
-    async fn test_update_thread_title_updates_metadata_and_thread_data(cx: &mut TestAppContext) {
-        let thread_store = cx.new(|cx| ThreadStore::new(cx));
-        cx.run_until_parked();
-
-        let thread_id = session_id("thread-a");
-        let updated_at = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
-        let thread = make_thread("Old Title", updated_at);
-
-        let save_task = thread_store.update(cx, |store, cx| {
-            store.save_thread(thread_id.clone(), thread, PathList::default(), cx)
-        });
-        save_task.await.unwrap();
-
-        let update_task = thread_store.update(cx, |store, cx| {
-            store.update_thread_title(thread_id.clone(), "New Title".into(), cx)
-        });
-        assert!(update_task.await.unwrap());
-        cx.run_until_parked();
-
-        let entries: Vec<_> = thread_store.read_with(cx, |store, _cx| store.entries().collect());
-        let entry = entries
-            .iter()
-            .find(|entry| entry.id == thread_id)
-            .expect("updated thread should be present");
-        assert_eq!(entry.title.as_ref(), "New Title");
-        assert_eq!(entry.updated_at, updated_at);
-
-        let load_task = thread_store.update(cx, |store, cx| store.load_thread(thread_id, cx));
-        let loaded_thread = load_task.await.unwrap().expect("thread should load");
-        assert_eq!(loaded_thread.title.as_ref(), "New Title");
-        assert_eq!(loaded_thread.updated_at, updated_at);
     }
 
     #[gpui::test]

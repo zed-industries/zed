@@ -1211,7 +1211,7 @@ impl AgentPanel {
     pub(crate) fn new(
         workspace: &Workspace,
         prompt_store: Option<Entity<PromptStore>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let fs = workspace.app_state().fs.clone();
@@ -1270,21 +1270,12 @@ impl AgentPanel {
                 _ => {}
             });
 
-        let _thread_metadata_store_subscription = cx.subscribe_in(
+        let _thread_metadata_store_subscription = cx.subscribe(
             &ThreadMetadataStore::global(cx),
-            window,
-            |this, _store, event, window, cx| match event {
-                ThreadMetadataStoreEvent::ThreadArchived(thread_id) => {
-                    if this.retained_threads.remove(thread_id).is_some() {
-                        cx.notify();
-                    }
-                }
-                ThreadMetadataStoreEvent::ThreadTitleUpdated { thread_id, title } => {
-                    let thread_id = *thread_id;
-                    let title = title.clone();
-                    cx.defer_in(window, move |this, window, cx| {
-                        this.update_loaded_thread_title(thread_id, title, window, cx);
-                    });
+            |this, _store, event, cx| {
+                let ThreadMetadataStoreEvent::ThreadArchived(thread_id) = event;
+                if this.retained_threads.remove(thread_id).is_some() {
+                    cx.notify();
                 }
             },
         );
@@ -1645,7 +1636,7 @@ impl AgentPanel {
             None,
             Some(thread_id),
             Some(metadata.folder_paths().clone()),
-            metadata.title(),
+            metadata.title.clone(),
             initial_content,
             AgentThreadSource::AgentPanel,
             window,
@@ -2833,42 +2824,6 @@ impl AgentPanel {
                 Some(conversation_view.read(cx).thread_id)
             }
             _ => None,
-        }
-    }
-
-    fn update_loaded_thread_title(
-        &mut self,
-        thread_id: ThreadId,
-        title: SharedString,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mut updated_loaded_thread = false;
-        let conversation_views = self.conversation_views();
-        for conversation_view in conversation_views {
-            if conversation_view.read(cx).thread_id != thread_id {
-                continue;
-            }
-            let Some(thread_view) = conversation_view.read(cx).root_thread_view() else {
-                continue;
-            };
-            updated_loaded_thread = true;
-            let (title_editor, thread) = thread_view.read_with(cx, |thread_view, _| {
-                (thread_view.title_editor.clone(), thread_view.thread.clone())
-            });
-            if title_editor.read(cx).text(cx) != title {
-                title_editor.update(cx, |editor, cx| {
-                    editor.set_text(title.clone(), window, cx);
-                });
-            }
-            thread.update(cx, |thread, cx| {
-                if thread.can_set_title(cx) {
-                    thread.set_title(title.clone(), cx).detach_and_log_err(cx);
-                }
-            });
-        }
-        if updated_loaded_thread {
-            cx.notify();
         }
     }
 

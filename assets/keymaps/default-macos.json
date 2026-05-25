@@ -785,7 +785,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "menu::Confirm",
-      "shift-r": "agent::RenameSelectedThread",
     },
   },
   {
