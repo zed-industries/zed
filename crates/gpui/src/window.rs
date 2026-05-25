@@ -1252,8 +1252,6 @@ impl Window {
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<Self> {
-        "creating window";
-
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -1583,21 +1581,11 @@ impl Window {
                 async_channel::unbounded::<accesskit::ActionRequest>();
 
             platform_window.a11y_init(crate::A11yCallbacks {
-                activation: Box::new(move || {
-                    "Accessibility activated: screen reader connected";
-                    Some(initial_tree.clone())
-                }),
+                activation: Box::new(move || Some(initial_tree.clone())),
                 action: Box::new(move |request| {
-                    (
-                        "Accessibility action requested: {:?} on node {:?}",
-                        request.action,
-                        request.target_node,
-                    );
                     action_sender.send_blocking(request).log_err();
                 }),
-                deactivation: Box::new(|| {
-                    "Accessibility deactivated: screen reader disconnected";
-                }),
+                deactivation: Box::new(|| {}),
             });
 
             let mut async_cx = cx.to_async();
