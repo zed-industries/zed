@@ -19,7 +19,7 @@ use language::{
     Point, ReplicaId, Rope, TextBuffer,
 };
 use multi_buffer::PathKey;
-use project::{Project, WorktreeId, git_store::Repository};
+use project::{Project, ProjectPath, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
     collections::HashSet,
@@ -995,6 +995,10 @@ impl Item for CommitView {
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
