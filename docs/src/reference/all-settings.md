@@ -1543,7 +1543,8 @@ or
 {
   "session": {
     "restore_unsaved_buffers": true,
-    "trust_all_worktrees": false
+    "trust_all_worktrees": false,
+    "managed_tools": "ask"
   }
 }
 ```
@@ -1573,6 +1574,20 @@ If this is true, user won't be prompted whether to save/discard dirty files when
 ```
 
 When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
+
+3. Trust policy for Zed-managed tools (language servers, formatters and the bundled Node runtime):
+
+```json [settings]
+{
+  "session": {
+    "managed_tools": "ask"
+  }
+}
+```
+
+- `"ask"` (default): tools must be approved via the security modal before they run.
+- `"trust"`: auto-trust every Zed-managed tool without prompting.
+- `"block"`: never download or start Zed-managed tools, and do not surface a prompt for them.
 
 ### Drag And Drop Selection
 

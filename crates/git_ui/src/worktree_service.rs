@@ -1368,7 +1368,11 @@ mod tests {
     async fn test_linked_worktree_inherits_trust_from_main_worktree(cx: &mut TestAppContext) {
         init_test(cx);
         cx.update(|cx| {
-            project::trusted_worktrees::init(collections::HashMap::default(), cx);
+            project::trusted_worktrees::init(
+                collections::HashMap::default(),
+                collections::HashMap::default(),
+                cx,
+            );
         });
 
         let fs = FakeFs::new(cx.background_executor.clone());

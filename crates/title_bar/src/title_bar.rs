@@ -34,8 +34,10 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
-    trusted_worktrees::TrustedWorktrees,
+    Project,
+    git_store::GitStoreEvent,
+    project_settings::ProjectSettings,
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees},
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings as _;
@@ -626,13 +628,34 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let project = self.project.read(cx);
+        let remote_host = project
+            .remote_connection_options(cx)
+            .map(RemoteHostLocation::from);
         let has_restricted_worktrees =
-            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
-        if !has_restricted_worktrees {
+            TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx);
+        let has_restricted_tools = TrustedWorktrees::has_restricted_tools(remote_host, cx);
+        if !has_restricted_worktrees && !has_restricted_tools {
             return None;
         }
 
-        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
+        let (label, tooltip_title, tooltip_meta) =
+            match (has_restricted_worktrees, has_restricted_tools) {
+                (true, _) => (
+                    "Restricted Mode",
+                    "You're in Restricted Mode",
+                    "Mark this project as trusted and unlock all features",
+                ),
+                (false, true) => (
+                    "Restricted Tools",
+                    "Some tools are blocked",
+                    "Review the blocked tools and choose which to allow",
+                ),
+                // Filtered by the early return above.
+                (false, false) => unreachable!(),
+            };
+
+        let button = Button::new("restricted_mode_trigger", label)
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
@@ -641,11 +664,11 @@ impl TitleBar {
                     .size(IconSize::Small)
                     .color(Color::Warning),
             )
-            .tooltip(|_, cx| {
+            .tooltip(move |_, cx| {
                 Tooltip::with_meta(
-                    "You're in Restricted Mode",
+                    tooltip_title,
                     Some(&ToggleWorktreeSecurity),
-                    "Mark this project as trusted and unlock all features",
+                    tooltip_meta,
                     cx,
                 )
             })

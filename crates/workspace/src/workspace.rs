@@ -1466,21 +1466,27 @@ impl Workspace {
     ) -> Self {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
-                if let TrustedWorktreesEvent::Trusted(..) = e {
+                if matches!(
+                    e,
+                    TrustedWorktreesEvent::Trusted(..) | TrustedWorktreesEvent::TrustedTools(..)
+                ) {
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
                         worktrees_store.update(cx, |worktrees_store, cx| {
                             worktrees_store.schedule_serialization(
                                 cx,
-                                |new_trusted_worktrees, cx| {
+                                |new_trusted_worktrees, new_trusted_tools, cx| {
                                     let timeout =
                                         cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
                                     let db = WorkspaceDb::global(cx);
                                     cx.background_spawn(async move {
                                         timeout.await;
-                                        db.save_trusted_worktrees(new_trusted_worktrees)
-                                            .await
-                                            .log_err();
+                                        db.save_trusted_worktrees(
+                                            new_trusted_worktrees,
+                                            new_trusted_tools,
+                                        )
+                                        .await
+                                        .log_err();
                                     })
                                 },
                             )
@@ -7416,7 +7422,7 @@ impl Workspace {
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, _| {
-                            trusted_worktrees.clear_trusted_paths()
+                            trusted_worktrees.clear_all_trust()
                         });
                         let db = WorkspaceDb::global(cx);
                         cx.spawn(async move |_, cx| {
@@ -8036,16 +8042,17 @@ impl Workspace {
                 });
             }
         } else {
-            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
-                &self.project().read(cx).worktree_store(),
-                cx,
-            );
-            if has_restricted_worktrees {
-                let project = self.project().read(cx);
-                let remote_host = project
-                    .remote_connection_options(cx)
-                    .map(RemoteHostLocation::from);
-                let worktree_store = project.worktree_store().downgrade();
+            let project = self.project().read(cx);
+            let remote_host = project
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            let worktree_store = project.worktree_store();
+            let has_restricted_worktrees =
+                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx);
+            let has_restricted_tools =
+                TrustedWorktrees::has_restricted_tools(remote_host.clone(), cx);
+            if has_restricted_worktrees || has_restricted_tools {
+                let worktree_store = worktree_store.downgrade();
                 self.toggle_modal(window, cx, |_, cx| {
                     SecurityModal::new(worktree_store, remote_host, cx)
                 });

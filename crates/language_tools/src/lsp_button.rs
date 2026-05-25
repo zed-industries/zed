@@ -17,8 +17,10 @@ use gpui::{Action as _, Anchor, App, Entity, Subscription, Task, TaskExt, WeakEn
 use language::{BinaryStatus, BufferId, ServerHealth};
 use lsp::{LanguageServerId, LanguageServerName, LanguageServerSelector};
 use project::{
-    LspStore, LspStoreEvent, Worktree, lsp_store::log_store::GlobalLogStore,
-    project_settings::ProjectSettings, trusted_worktrees::TrustedWorktrees,
+    LspStore, LspStoreEvent, Worktree,
+    lsp_store::log_store::GlobalLogStore,
+    project_settings::ProjectSettings,
+    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees},
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
@@ -212,6 +214,22 @@ impl LanguageServerHealthStatus {
     }
 }
 
+fn workspace_has_restricted_trust(workspace: &Workspace, cx: &App) -> bool {
+    let (worktrees, tools) = workspace_restricted_trust(workspace, cx);
+    worktrees || tools
+}
+
+fn workspace_restricted_trust(workspace: &Workspace, cx: &App) -> (bool, bool) {
+    let project = workspace.project().read(cx);
+    let remote_host = project
+        .remote_connection_options(cx)
+        .map(RemoteHostLocation::from);
+    (
+        TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx),
+        TrustedWorktrees::has_restricted_tools(remote_host, cx),
+    )
+}
+
 impl LanguageServerState {
     fn fill_menu(&self, mut menu: ContextMenu, cx: &mut Context<Self>) -> ContextMenu {
         let lsp_logs = cx
@@ -221,16 +239,26 @@ impl LanguageServerState {
             return menu;
         };
 
-        let is_restricted = self
+        let (worktrees_restricted, tools_restricted) = self
             .workspace
             .upgrade()
-            .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
-            })
-            .unwrap_or(false);
+            .map(|workspace| workspace_restricted_trust(workspace.read(cx), cx))
+            .unwrap_or((false, false));
 
-        if is_restricted {
+        if worktrees_restricted || tools_restricted {
+            let header = if worktrees_restricted {
+                "Project is in Restricted Mode"
+            } else {
+                "Some tools are blocked"
+            };
+            let detail: SharedString = if worktrees_restricted && tools_restricted {
+                "Language Servers can't run until you trust this project and the blocked tools."
+                    .into()
+            } else if worktrees_restricted {
+                "Language Servers can't run until you trust this project.".into()
+            } else {
+                "Language Servers can't run until you allow the blocked tools.".into()
+            };
             menu = menu.custom_entry(
                 move |_window, _cx| {
                     v_flex()
@@ -242,13 +270,10 @@ impl LanguageServerState {
                                         .color(Color::Warning)
                                         .size(IconSize::XSmall),
                                 )
-                                .child(
-                                    Label::new("Project is in Restricted Mode")
-                                        .size(LabelSize::Small),
-                                ),
+                                .child(Label::new(header).size(LabelSize::Small)),
                         )
                         .child(
-                            Label::new("Language Servers can't run until you trust this project.")
+                            Label::new(detail.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
@@ -871,10 +896,7 @@ impl LspButton {
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         };
-        let is_restricted = TrustedWorktrees::has_restricted_worktrees(
-            &workspace.project().read(cx).worktree_store(),
-            cx,
-        );
+        let is_restricted = workspace_has_restricted_trust(workspace, cx);
 
         if is_restricted
             || !lsp_button
@@ -1303,16 +1325,14 @@ impl StatusItemView for LspButton {
 
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let is_restricted = self
+        let (worktrees_restricted, tools_restricted) = self
             .server_state
             .read(cx)
             .workspace
             .upgrade()
-            .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
-            })
-            .unwrap_or(false);
+            .map(|workspace| workspace_restricted_trust(workspace.read(cx), cx))
+            .unwrap_or((false, false));
+        let is_restricted = worktrees_restricted || tools_restricted;
 
         if !is_restricted
             && (self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none())
@@ -1349,7 +1369,11 @@ impl Render for LspButton {
         let (indicator, description) = if is_restricted {
             (
                 Some(Indicator::dot().color(Color::Warning)),
-                "Restricted Mode",
+                if worktrees_restricted {
+                    "Restricted Mode"
+                } else {
+                    "Restricted Tools"
+                },
             )
         } else if has_errors {
             (

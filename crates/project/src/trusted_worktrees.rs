@@ -44,6 +44,7 @@ use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
 };
+use postage::{prelude::Stream as _, watch};
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
@@ -53,11 +54,29 @@ use std::{
 };
 use util::debug_panic;
 
-use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
+use crate::{
+    project_settings::{ManagedToolsPolicy, ProjectSettings},
+    worktree_store::WorktreeStore,
+};
 
-pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
+/// Awaits a trust-status channel until it reports `true`. Returns immediately if it is already `true`.
+pub async fn wait_for_trust(mut rx: watch::Receiver<bool>, what: impl std::fmt::Display) {
+    if *rx.borrow() {
+        return;
+    }
+    log::info!("Waiting for {what} to be trusted");
+    while let Some(trusted) = rx.recv().await {
+        if trusted {
+            break;
+        }
+    }
+    log::info!("{what} is trusted");
+}
+
+pub fn init(db_trusted_paths: DbTrustedPaths, db_trusted_tools: DbTrustedTools, cx: &mut App) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
-        let trusted_worktrees = cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths));
+        let trusted_worktrees =
+            cx.new(|_| TrustedWorktreesStore::new(db_trusted_paths, db_trusted_tools));
         cx.set_global(TrustedWorktrees(trusted_worktrees))
     }
 }
@@ -75,7 +94,7 @@ pub fn track_worktree_trust(
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
                 trusted_worktrees.add_worktree_store(
                     worktree_store.clone(),
-                    remote_host,
+                    remote_host.clone(),
                     downstream_client,
                     upstream_client.clone(),
                     cx,
@@ -89,11 +108,19 @@ pub fn track_worktree_trust(
                         .flatten()
                         .map(|trusted_path| trusted_path.to_proto())
                         .collect::<Vec<_>>();
-                    if !trusted_paths.is_empty() {
+                    let trusted_tools = trusted_worktrees
+                        .trusted_tools
+                        .get(&remote_host)
+                        .into_iter()
+                        .flatten()
+                        .map(|trusted_tool| trusted_tool.to_proto())
+                        .collect::<Vec<_>>();
+                    if !trusted_paths.is_empty() || !trusted_tools.is_empty() {
                         upstream_client
                             .send(proto::TrustWorktrees {
                                 project_id: upstream_project_id.0,
                                 trusted_paths,
+                                trusted_tools,
                             })
                             .ok();
                     }
@@ -124,6 +151,12 @@ impl TrustedWorktrees {
             })
             .unwrap_or(false)
     }
+
+    pub fn has_restricted_tools(remote_host: Option<RemoteHostLocation>, cx: &App) -> bool {
+        Self::try_get_global(cx)
+            .map(|trusted| trusted.read(cx).has_restricted_tools(remote_host))
+            .unwrap_or(false)
+    }
 }
 
 /// A collection of worktrees that are considered trusted and not trusted.
@@ -135,8 +168,11 @@ impl TrustedWorktrees {
 pub struct TrustedWorktreesStore {
     worktree_stores: HashMap<WeakEntity<WorktreeStore>, StoreData>,
     db_trusted_paths: DbTrustedPaths,
+    db_trusted_tools: DbTrustedTools,
     trusted_paths: TrustedPaths,
+    trusted_tools: TrustedTools,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
+    restricted_tools: HashMap<Option<RemoteHostLocation>, HashSet<ToolTrust>>,
     worktree_trust_serialization: Task<()>,
 }
 
@@ -196,6 +232,47 @@ pub enum PathTrust {
     AbsPath(PathBuf),
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub struct ToolTrust {
+    pub namespace: SharedString,
+    pub name: SharedString,
+}
+
+impl ToolTrust {
+    pub fn new(namespace: impl Into<SharedString>, name: impl Into<SharedString>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            name: name.into(),
+        }
+    }
+
+    fn to_proto(&self) -> proto::ToolTrust {
+        proto::ToolTrust {
+            namespace: self.namespace.to_string(),
+            name: self.name.to_string(),
+        }
+    }
+
+    pub fn from_proto(proto: proto::ToolTrust) -> Option<Self> {
+        if proto.namespace.is_empty() || proto.name.is_empty() {
+            return None;
+        }
+        Some(Self::new(proto.namespace, proto.name))
+    }
+
+    pub fn language_server(name: impl Into<SharedString>) -> Self {
+        Self::new("language_server", name)
+    }
+
+    pub fn prettier() -> Self {
+        Self::new("formatter", "prettier")
+    }
+
+    pub fn node_runtime() -> Self {
+        Self::new("runtime", "node")
+    }
+}
+
 impl PathTrust {
     fn to_proto(&self) -> proto::PathTrust {
         match self {
@@ -223,24 +300,31 @@ impl PathTrust {
 }
 
 /// A change of trust on a certain host.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TrustedWorktreesEvent {
     Trusted(WeakEntity<WorktreeStore>, HashSet<PathTrust>),
     Restricted(WeakEntity<WorktreeStore>, HashSet<PathTrust>),
+    TrustedTools(Option<RemoteHostLocation>, HashSet<ToolTrust>),
+    RestrictedTools(Option<RemoteHostLocation>, HashSet<ToolTrust>),
 }
 
 impl EventEmitter<TrustedWorktreesEvent> for TrustedWorktreesStore {}
 
 type TrustedPaths = HashMap<WeakEntity<WorktreeStore>, HashSet<PathTrust>>;
+type TrustedTools = HashMap<Option<RemoteHostLocation>, HashSet<ToolTrust>>;
 pub type DbTrustedPaths = HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>;
+pub type DbTrustedTools = HashMap<Option<RemoteHostLocation>, HashSet<ToolTrust>>;
 
 impl TrustedWorktreesStore {
-    fn new(db_trusted_paths: DbTrustedPaths) -> Self {
+    fn new(db_trusted_paths: DbTrustedPaths, db_trusted_tools: DbTrustedTools) -> Self {
         Self {
+            trusted_tools: db_trusted_tools.clone(),
             db_trusted_paths,
+            db_trusted_tools,
             trusted_paths: HashMap::default(),
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
+            restricted_tools: HashMap::default(),
             worktree_trust_serialization: Task::ready(()),
         }
     }
@@ -410,6 +494,7 @@ impl TrustedWorktreesStore {
                         .send(proto::TrustWorktrees {
                             project_id: upstream_project_id.0,
                             trusted_paths,
+                            trusted_tools: Vec::new(),
                         })
                         .ok();
                 }
@@ -449,11 +534,199 @@ impl TrustedWorktreesStore {
         ));
     }
 
-    /// Erases all trust information.
+    /// Erases all trust information (both paths and tools).
     /// Requires Zed's restart to take proper effect.
-    pub fn clear_trusted_paths(&mut self) {
+    pub fn clear_all_trust(&mut self) {
         self.trusted_paths.clear();
         self.db_trusted_paths.clear();
+        self.trusted_tools.clear();
+        self.db_trusted_tools.clear();
+    }
+
+    pub fn restrict_tools(
+        &mut self,
+        remote_host: Option<RemoteHostLocation>,
+        restricted_tools: HashSet<ToolTrust>,
+        cx: &mut Context<Self>,
+    ) {
+        if restricted_tools.is_empty() {
+            return;
+        }
+
+        let mut new_restricted_tools = HashSet::default();
+        let current_restricted_tools = self
+            .restricted_tools
+            .entry(remote_host.clone())
+            .or_default();
+        for tool in restricted_tools {
+            if current_restricted_tools.insert(tool.clone()) {
+                new_restricted_tools.insert(tool);
+            }
+        }
+
+        if !new_restricted_tools.is_empty() {
+            cx.emit(TrustedWorktreesEvent::RestrictedTools(
+                remote_host,
+                new_restricted_tools,
+            ));
+        }
+    }
+
+    pub fn trust_tools(
+        &mut self,
+        remote_host: Option<RemoteHostLocation>,
+        trusted_tools: HashSet<ToolTrust>,
+        cx: &mut Context<Self>,
+    ) {
+        // In `Block` mode, the user explicitly opted out of running any managed tool. An
+        // upstream peer trying to push trust is silently ignored.
+        if ProjectSettings::get_global(cx).session.managed_tools == ManagedToolsPolicy::Block {
+            return;
+        }
+        if trusted_tools.is_empty() {
+            return;
+        }
+
+        if let Some(restricted_tools) = self.restricted_tools.get_mut(&remote_host) {
+            restricted_tools.retain(|tool| !trusted_tools.contains(tool));
+            if restricted_tools.is_empty() {
+                self.restricted_tools.remove(&remote_host);
+            }
+        }
+
+        self.trusted_tools
+            .entry(remote_host.clone())
+            .or_default()
+            .extend(trusted_tools.iter().cloned());
+
+        for store_data in self
+            .worktree_stores
+            .values()
+            .filter(|store_data| store_data.host == remote_host)
+        {
+            if let Some((upstream_client, upstream_project_id)) = &store_data.upstream_client {
+                upstream_client
+                    .send(proto::TrustWorktrees {
+                        project_id: upstream_project_id.0,
+                        trusted_paths: Vec::new(),
+                        trusted_tools: trusted_tools
+                            .iter()
+                            .map(|trusted_tool| trusted_tool.to_proto())
+                            .collect(),
+                    })
+                    .ok();
+            }
+        }
+
+        cx.emit(TrustedWorktreesEvent::TrustedTools(
+            remote_host,
+            trusted_tools,
+        ));
+    }
+
+    pub fn remote_host_for_worktree_store(
+        &self,
+        worktree_store: &Entity<WorktreeStore>,
+    ) -> Option<RemoteHostLocation> {
+        self.worktree_stores
+            .get(&worktree_store.downgrade())
+            .and_then(|store_data| store_data.host.clone())
+    }
+
+    pub fn has_restricted_tools(&self, remote_host: Option<RemoteHostLocation>) -> bool {
+        self.restricted_tools
+            .get(&remote_host)
+            .is_some_and(|restricted_tools| !restricted_tools.is_empty())
+    }
+
+    pub fn restricted_tools(&self, remote_host: Option<RemoteHostLocation>) -> HashSet<ToolTrust> {
+        self.restricted_tools
+            .get(&remote_host)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn can_trust_tool_for_worktree_store(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        tool: ToolTrust,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let weak_worktree_store = worktree_store.downgrade();
+        let remote_host = self.remote_host_for_worktree_store(worktree_store);
+        let was_restricted = self
+            .restricted_tools
+            .get(&remote_host)
+            .is_some_and(|restricted_tools| restricted_tools.contains(&tool));
+        let can_trust = self.can_trust_tool(remote_host, tool.clone(), cx);
+        if !can_trust && !was_restricted {
+            if let Some(store_data) = self.worktree_stores.get(&weak_worktree_store) {
+                if let Some((downstream_client, downstream_project_id)) =
+                    &store_data.downstream_client
+                {
+                    downstream_client
+                        .send(proto::RestrictWorktrees {
+                            project_id: downstream_project_id.0,
+                            worktree_ids: Vec::new(),
+                            restricted_tools: vec![tool.to_proto()],
+                        })
+                        .ok();
+                }
+                if let Some((upstream_client, upstream_project_id)) = &store_data.upstream_client {
+                    upstream_client
+                        .send(proto::RestrictWorktrees {
+                            project_id: upstream_project_id.0,
+                            worktree_ids: Vec::new(),
+                            restricted_tools: vec![tool.to_proto()],
+                        })
+                        .ok();
+                }
+            }
+        }
+        can_trust
+    }
+
+    pub fn can_trust_tool(
+        &mut self,
+        remote_host: Option<RemoteHostLocation>,
+        tool: ToolTrust,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let session = ProjectSettings::get_global(cx).session;
+        match session.managed_tools {
+            ManagedToolsPolicy::Trust => return true,
+            ManagedToolsPolicy::Block => {
+                // Don't add to `restricted_tools` so the trust modal never surfaces this tool.
+                log::info!("Tool {tool:?} blocked by `session.managed_tools = \"block\"`");
+                return false;
+            }
+            ManagedToolsPolicy::Ask => {}
+        }
+        if session.trust_all_worktrees {
+            return true;
+        }
+
+        if self
+            .trusted_tools
+            .get(&remote_host)
+            .is_some_and(|trusted_tools| trusted_tools.contains(&tool))
+        {
+            return true;
+        }
+
+        if self
+            .restricted_tools
+            .entry(remote_host.clone())
+            .or_default()
+            .insert(tool.clone())
+        {
+            log::info!("Tool {tool:?} is not trusted");
+            cx.emit(TrustedWorktreesEvent::RestrictedTools(
+                remote_host,
+                HashSet::from_iter([tool]),
+            ));
+        }
+        false
     }
 
     /// Checks whether a certain worktree is trusted (or on a larger trust level).
@@ -534,6 +807,7 @@ impl TrustedWorktreesStore {
                     .send(proto::RestrictWorktrees {
                         project_id: downstream_project_id.0,
                         worktree_ids: vec![worktree_id.to_proto()],
+                        restricted_tools: Vec::new(),
                     })
                     .ok();
             }
@@ -542,6 +816,7 @@ impl TrustedWorktreesStore {
                     .send(proto::RestrictWorktrees {
                         project_id: upstream_project_id.0,
                         worktree_ids: vec![worktree_id.to_proto()],
+                        restricted_tools: Vec::new(),
                     })
                     .ok();
             }
@@ -591,6 +866,10 @@ impl TrustedWorktreesStore {
     /// Switches the "trust nothing" mode to "automatically trust everything".
     /// This does not influence already persisted data, but stops adding new worktrees there.
     pub fn auto_trust_all(&mut self, cx: &mut Context<Self>) {
+        for (remote_host, tools) in std::mem::take(&mut self.restricted_tools) {
+            self.trust_tools(remote_host, tools, cx);
+        }
+
         for (worktree_store, worktrees) in std::mem::take(&mut self.restricted).into_iter().fold(
             HashMap::default(),
             |mut acc, (remote_host, worktrees)| {
@@ -608,10 +887,30 @@ impl TrustedWorktreesStore {
 
     pub fn schedule_serialization<S>(&mut self, cx: &mut Context<Self>, serialize: S)
     where
-        S: FnOnce(HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>, &App) -> Task<()>
-            + 'static,
+        S: FnOnce(DbTrustedPaths, DbTrustedTools, &App) -> Task<()> + 'static,
     {
-        self.worktree_trust_serialization = serialize(self.trusted_paths_for_serialization(cx), cx);
+        let trusted_paths = self.trusted_paths_for_serialization(cx);
+        let trusted_tools = self.trusted_tools_for_serialization();
+        self.worktree_trust_serialization = serialize(trusted_paths, trusted_tools, cx);
+    }
+
+    fn trusted_tools_for_serialization(&mut self) -> DbTrustedTools {
+        let new_trusted_tools = std::mem::take(&mut self.db_trusted_tools)
+            .into_iter()
+            .chain(
+                self.trusted_tools
+                    .iter()
+                    .map(|(host, tools)| (host.clone(), tools.clone())),
+            )
+            .fold(HashMap::default(), |mut acc, (host, tools)| {
+                acc.entry(host)
+                    .or_insert_with(HashSet::default)
+                    .extend(tools);
+                acc
+            });
+
+        self.db_trusted_tools = new_trusted_tools.clone();
+        new_trusted_tools
     }
 
     fn trusted_paths_for_serialization(

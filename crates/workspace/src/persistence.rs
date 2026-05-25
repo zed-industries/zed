@@ -24,7 +24,7 @@ use project::{
     ProjectGroupKey,
     bookmark_store::SerializedBookmark,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    trusted_worktrees::{DbTrustedPaths, RemoteHostLocation},
+    trusted_worktrees::{DbTrustedPaths, DbTrustedTools, RemoteHostLocation, ToolTrust},
 };
 
 use language::{LanguageName, Toolchain, ToolchainScope};
@@ -73,6 +73,26 @@ fn contains_wsl_path(paths: &PathList) -> bool {
             .paths()
             .iter()
             .any(|path| util::paths::WslPath::from_path(path).is_some())
+}
+
+fn bind_host(
+    statement: &mut Statement,
+    host: Option<&RemoteHostLocation>,
+    next_index: i32,
+) -> anyhow::Result<i32> {
+    let next_index = statement.bind(
+        &host.and_then(|host| Some(host.user_name.as_ref()?.as_str())),
+        next_index,
+    )?;
+    statement.bind(&host.map(|host| host.host_identifier.as_str()), next_index)
+}
+
+fn parse_host(user_name: Option<String>, host_name: Option<String>) -> Option<RemoteHostLocation> {
+    let host_identifier = SharedString::new(host_name?);
+    Some(RemoteHostLocation {
+        user_name: user_name.map(SharedString::new),
+        host_identifier,
+    })
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -1036,6 +1056,15 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE workspaces ADD COLUMN identity_paths TEXT;
             ALTER TABLE workspaces ADD COLUMN identity_paths_order TEXT;
+        ),
+        sql!(
+            CREATE TABLE IF NOT EXISTS trusted_tools (
+                trust_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tool_namespace TEXT NOT NULL,
+                tool_name TEXT NOT NULL,
+                user_name TEXT,
+                host_name TEXT
+            ) STRICT;
         ),
     ];
 
@@ -2527,11 +2556,10 @@ impl WorkspaceDb {
 
     pub(crate) async fn save_trusted_worktrees(
         &self,
-        trusted_worktrees: HashMap<Option<RemoteHostLocation>, HashSet<PathBuf>>,
+        trusted_worktrees: DbTrustedPaths,
+        trusted_tools: DbTrustedTools,
     ) -> anyhow::Result<()> {
         use anyhow::Context as _;
-        use db::sqlez::statement::Statement;
-        use itertools::Itertools as _;
 
         self.clear_trusted_worktrees()
             .await
@@ -2542,85 +2570,110 @@ impl WorkspaceDb {
             .flat_map(|(host, abs_paths)| {
                 abs_paths
                     .into_iter()
-                    .map(move |abs_path| (Some(abs_path), host.clone()))
+                    .map(move |abs_path| (abs_path, host.clone()))
             })
             .collect::<Vec<_>>();
-        let mut first_worktree;
-        let mut last_worktree = 0_usize;
-        for (count, placeholders) in std::iter::once("(?, ?, ?)")
-            .cycle()
-            .take(trusted_worktrees.len())
-            .chunks(MAX_QUERY_PLACEHOLDERS / 3)
-            .into_iter()
-            .map(|chunk| {
-                let mut count = 0;
-                let placeholders = chunk
-                    .inspect(|_| {
-                        count += 1;
-                    })
-                    .join(", ");
-                (count, placeholders)
-            })
-            .collect::<Vec<_>>()
-        {
-            first_worktree = last_worktree;
-            last_worktree = last_worktree + count;
-            let query = format!(
-                r#"INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)
-VALUES {placeholders};"#
-            );
+        self.chunked_insert(
+            "INSERT INTO trusted_worktrees(absolute_path, user_name, host_name)",
+            3,
+            trusted_worktrees,
+            |statement, (abs_path, host), next_index| {
+                let abs_path = abs_path.to_string_lossy();
+                let next_index = statement.bind(&abs_path.as_ref(), next_index)?;
+                bind_host(statement, host.as_ref(), next_index)
+            },
+        )
+        .await
+        .context("inserting new trusted state")?;
 
-            let trusted_worktrees = trusted_worktrees[first_worktree..last_worktree].to_vec();
+        let trusted_tools = trusted_tools
+            .into_iter()
+            .flat_map(|(host, tools)| tools.into_iter().map(move |tool| (tool, host.clone())))
+            .collect::<Vec<_>>();
+        self.chunked_insert(
+            "INSERT INTO trusted_tools(tool_namespace, tool_name, user_name, host_name)",
+            4,
+            trusted_tools,
+            |statement, (tool, host), next_index| {
+                let next_index = statement.bind(&tool.namespace.as_str(), next_index)?;
+                let next_index = statement.bind(&tool.name.as_str(), next_index)?;
+                bind_host(statement, host.as_ref(), next_index)
+            },
+        )
+        .await
+        .context("inserting new trusted tools state")?;
+
+        Ok(())
+    }
+
+    async fn chunked_insert<T, F>(
+        &self,
+        insert_prefix: &'static str,
+        columns: usize,
+        rows: Vec<T>,
+        bind_row: F,
+    ) -> anyhow::Result<()>
+    where
+        T: Send + 'static,
+        F: Fn(&mut Statement, T, i32) -> anyhow::Result<i32> + Send + Sync + Copy + 'static,
+    {
+        use itertools::Itertools as _;
+
+        let placeholder_row = format!("({})", std::iter::repeat("?").take(columns).join(", "));
+        let rows_per_chunk = MAX_QUERY_PLACEHOLDERS / columns;
+        let chunks = rows
+            .into_iter()
+            .chunks(rows_per_chunk)
+            .into_iter()
+            .map(|chunk| chunk.collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        for chunk in chunks {
+            let placeholders = std::iter::repeat(placeholder_row.as_str())
+                .take(chunk.len())
+                .join(", ");
+            let query = format!("{insert_prefix}\nVALUES {placeholders};");
             self.write(move |conn| {
                 let mut statement = Statement::prepare(conn, query)?;
                 let mut next_index = 1;
-                for (abs_path, host) in trusted_worktrees {
-                    let abs_path = abs_path.as_ref().map(|abs_path| abs_path.to_string_lossy());
-                    next_index = statement.bind(
-                        &abs_path.as_ref().map(|abs_path| abs_path.as_ref()),
-                        next_index,
-                    )?;
-                    next_index = statement.bind(
-                        &host
-                            .as_ref()
-                            .and_then(|host| Some(host.user_name.as_ref()?.as_str())),
-                        next_index,
-                    )?;
-                    next_index = statement.bind(
-                        &host.as_ref().map(|host| host.host_identifier.as_str()),
-                        next_index,
-                    )?;
+                for row in chunk {
+                    next_index = bind_row(&mut statement, row, next_index)?;
                 }
                 statement.exec()
             })
-            .await
-            .context("inserting new trusted state")?;
+            .await?;
         }
         Ok(())
     }
 
     pub fn fetch_trusted_worktrees(&self) -> Result<DbTrustedPaths> {
-        let trusted_worktrees = self.trusted_worktrees()?;
-        Ok(trusted_worktrees
+        Ok(self
+            .trusted_worktrees()?
             .into_iter()
             .filter_map(|(abs_path, user_name, host_name)| {
-                let db_host = match (user_name, host_name) {
-                    (None, Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: None,
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    (Some(user_name), Some(host_name)) => Some(RemoteHostLocation {
-                        user_name: Some(SharedString::new(user_name)),
-                        host_identifier: SharedString::new(host_name),
-                    }),
-                    _ => None,
-                };
-                Some((db_host, abs_path?))
+                Some((parse_host(user_name, host_name), abs_path?))
             })
             .fold(HashMap::default(), |mut acc, (remote_host, abs_path)| {
                 acc.entry(remote_host)
                     .or_insert_with(HashSet::default)
                     .insert(abs_path);
+                acc
+            }))
+    }
+
+    pub fn fetch_trusted_tools(&self) -> Result<DbTrustedTools> {
+        Ok(self
+            .trusted_tools()?
+            .into_iter()
+            .map(|(namespace, name, user_name, host_name)| {
+                (
+                    parse_host(user_name, host_name),
+                    ToolTrust::new(namespace, name),
+                )
+            })
+            .fold(HashMap::default(), |mut acc, (remote_host, tool)| {
+                acc.entry(remote_host)
+                    .or_insert_with(HashSet::default)
+                    .insert(tool);
                 acc
             }))
     }
@@ -2633,8 +2686,16 @@ VALUES {placeholders};"#
     }
 
     query! {
+        fn trusted_tools() -> Result<Vec<(String, String, Option<String>, Option<String>)>> {
+            SELECT tool_namespace, tool_name, user_name, host_name
+            FROM trusted_tools
+        }
+    }
+
+    query! {
         pub async fn clear_trusted_worktrees() -> Result<()> {
-            DELETE FROM trusted_worktrees
+            DELETE FROM trusted_worktrees;
+            DELETE FROM trusted_tools
         }
     }
 }

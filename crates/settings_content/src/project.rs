@@ -358,6 +358,26 @@ pub struct SessionSettingsContent {
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,
+    /// Trust policy for Zed-managed tools (language servers, formatters and the bundled
+    /// Node runtime).
+    ///
+    /// Default: `ask`
+    pub managed_tools: Option<ManagedToolsPolicy>,
+}
+
+#[derive(
+    Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedToolsPolicy {
+    /// Never download or start Zed-managed tools and do not surface a prompt for them.
+    /// Equivalent to permanently dismissing the trust modal for every tool.
+    Block,
+    /// Default behavior: tools must be approved via the security modal before they run.
+    #[default]
+    Ask,
+    /// Auto-trust every Zed-managed tool without prompting.
+    Trust,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]

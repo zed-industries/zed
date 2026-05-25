@@ -27,7 +27,7 @@ fn init_trust_global(
     cx: &mut TestAppContext,
 ) -> Entity<TrustedWorktreesStore> {
     cx.update(|cx| {
-        init(DbTrustedPaths::default(), cx);
+        init(DbTrustedPaths::default(), DbTrustedTools::default(), cx);
         track_worktree_trust(worktree_store, None, None, None, cx);
         TrustedWorktrees::try_get_global(cx).expect("global should be set")
     })
@@ -54,14 +54,7 @@ async fn test_single_worktree_trust(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                events.borrow_mut().push(match event {
-                    TrustedWorktreesEvent::Trusted(host, paths) => {
-                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                    }
-                    TrustedWorktreesEvent::Restricted(host, paths) => {
-                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                    }
-                });
+                events.borrow_mut().push(event.clone());
             })
         }
     })
@@ -171,14 +164,7 @@ async fn test_single_file_worktree_trust(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                events.borrow_mut().push(match event {
-                    TrustedWorktreesEvent::Trusted(host, paths) => {
-                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                    }
-                    TrustedWorktreesEvent::Restricted(host, paths) => {
-                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                    }
-                });
+                events.borrow_mut().push(event.clone());
             })
         }
     })
@@ -640,14 +626,7 @@ async fn test_auto_trust_all(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                events.borrow_mut().push(match event {
-                    TrustedWorktreesEvent::Trusted(host, paths) => {
-                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                    }
-                    TrustedWorktreesEvent::Restricted(host, paths) => {
-                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                    }
-                });
+                events.borrow_mut().push(event.clone());
             })
         }
     })
@@ -721,14 +700,7 @@ async fn test_trust_restrict_trust_cycle(cx: &mut TestAppContext) {
         let events = events.clone();
         |cx| {
             cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                events.borrow_mut().push(match event {
-                    TrustedWorktreesEvent::Trusted(host, paths) => {
-                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                    }
-                    TrustedWorktreesEvent::Restricted(host, paths) => {
-                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                    }
-                });
+                events.borrow_mut().push(event.clone());
             })
         }
     })
@@ -895,14 +867,7 @@ async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppCont
         let events = events.clone();
         |cx| {
             cx.subscribe(&trusted_worktrees, move |_, event, _| {
-                events.borrow_mut().push(match event {
-                    TrustedWorktreesEvent::Trusted(host, paths) => {
-                        TrustedWorktreesEvent::Trusted(host.clone(), paths.clone())
-                    }
-                    TrustedWorktreesEvent::Restricted(host, paths) => {
-                        TrustedWorktreesEvent::Restricted(host.clone(), paths.clone())
-                    }
-                });
+                events.borrow_mut().push(event.clone());
             })
         }
     })
@@ -954,4 +919,122 @@ async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppCont
         }),
         "only visible worktrees should be restricted"
     );
+}
+
+#[gpui::test]
+async fn test_tool_trust(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| init(DbTrustedPaths::default(), DbTrustedTools::default(), cx));
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    let tool = ToolTrust::language_server("typescript-language-server");
+
+    let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+        }
+    })
+    .detach();
+
+    let can_trust =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(false, can_trust);
+    assert_eq!(1, events.borrow().len());
+    assert_eq!(
+        true,
+        matches!(
+            &events.borrow()[0],
+            TrustedWorktreesEvent::RestrictedTools(None, tools) if tools == &HashSet::from_iter([tool.clone()])
+        )
+    );
+
+    let can_trust_again =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(false, can_trust_again);
+    assert_eq!(1, events.borrow().len());
+
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust_tools(None, HashSet::from_iter([tool.clone()]), cx);
+    });
+    assert_eq!(2, events.borrow().len());
+    assert_eq!(
+        true,
+        matches!(
+            &events.borrow()[1],
+            TrustedWorktreesEvent::TrustedTools(None, tools) if tools == &HashSet::from_iter([tool.clone()])
+        )
+    );
+
+    let can_trust_after =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(true, can_trust_after);
+    assert_eq!(2, events.borrow().len());
+}
+
+#[gpui::test]
+async fn test_managed_tools_policy(cx: &mut TestAppContext) {
+    use settings::ManagedToolsPolicy;
+
+    init_test(cx);
+    cx.update(|cx| init(DbTrustedPaths::default(), DbTrustedTools::default(), cx));
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+
+    let tool = ToolTrust::language_server("rust-analyzer");
+    let other = ToolTrust::prettier();
+
+    let events: Rc<RefCell<Vec<TrustedWorktreesEvent>>> = Rc::default();
+    cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&trusted_worktrees, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+        }
+    })
+    .detach();
+
+    // Default (`Ask`): tool is restricted and an event is emitted.
+    let can_trust_default =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(false, can_trust_default);
+    assert_eq!(1, events.borrow().len());
+
+    // `Trust`: every tool is allowed without further prompts/events.
+    set_managed_tools_policy(cx, ManagedToolsPolicy::Trust);
+    let can_trust_other = trusted_worktrees.update(cx, |store, cx| {
+        store.can_trust_tool(None, other.clone(), cx)
+    });
+    assert_eq!(true, can_trust_other);
+    assert_eq!(1, events.borrow().len());
+
+    // `Block`: every tool is denied silently; trust_tools is a no-op.
+    set_managed_tools_policy(cx, ManagedToolsPolicy::Block);
+    let can_trust_blocked =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(false, can_trust_blocked);
+    assert_eq!(1, events.borrow().len());
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust_tools(None, HashSet::from_iter([tool.clone()]), cx);
+    });
+    assert_eq!(1, events.borrow().len());
+    let still_blocked =
+        trusted_worktrees.update(cx, |store, cx| store.can_trust_tool(None, tool.clone(), cx));
+    assert_eq!(false, still_blocked);
+}
+
+fn set_managed_tools_policy(cx: &mut TestAppContext, policy: settings::ManagedToolsPolicy) {
+    cx.update(|cx| {
+        use gpui::UpdateGlobal;
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.session.get_or_insert_default().managed_tools = Some(policy);
+            });
+        });
+    });
 }

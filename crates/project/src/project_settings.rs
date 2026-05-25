@@ -96,7 +96,14 @@ pub struct SessionSettings {
     ///
     /// Default: false
     pub trust_all_worktrees: bool,
+    /// Trust policy for Zed-managed tools (language servers, formatters and the bundled
+    /// Node runtime).
+    ///
+    /// Default: [`ManagedToolsPolicy::Ask`]
+    pub managed_tools: ManagedToolsPolicy,
 }
+
+pub use settings::ManagedToolsPolicy;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
@@ -762,6 +769,7 @@ impl Settings for ProjectSettings {
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
+                managed_tools: content.session.unwrap().managed_tools.unwrap_or_default(),
             },
         }
     }
@@ -863,7 +871,9 @@ impl SettingsObserver {
                                 }
                             }
                         }
-                        TrustedWorktreesEvent::Restricted(..) => {}
+                        TrustedWorktreesEvent::Restricted(..)
+                        | TrustedWorktreesEvent::TrustedTools(..)
+                        | TrustedWorktreesEvent::RestrictedTools(..) => {}
                     },
                 )
             });
