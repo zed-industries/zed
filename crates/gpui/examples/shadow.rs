@@ -612,6 +612,91 @@ impl Render for Shadow {
                             ]),
                         ),
                     ]),
+                // Inset shadows (CSS `box-shadow: inset ...`).
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .w_full()
+                    .children(vec![
+                        example(
+                            "Inset basic",
+                            Shadow::base().shadow(vec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.5),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(12.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            }]),
+                        ),
+                        example(
+                            "Inset offset",
+                            Shadow::base().shadow(vec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.5),
+                                offset: point(px(6.), px(6.)),
+                                blur_radius: px(8.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            }]),
+                        ),
+                        example(
+                            "Inset spread",
+                            Shadow::base().shadow(vec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.5),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(4.),
+                                spread_radius: px(8.),
+                                inset: true,
+                            }]),
+                        ),
+                        example(
+                            "Inset rounded",
+                            Shadow::rounded_large().shadow(vec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.5),
+                                offset: point(px(0.), px(4.)),
+                                blur_radius: px(10.),
+                                spread_radius: px(2.),
+                                inset: true,
+                            }]),
+                        ),
+                        example(
+                            "Inset sharp",
+                            Shadow::square().shadow(vec![BoxShadow {
+                                color: hsla(0.0, 0.0, 0.0, 0.6),
+                                offset: point(px(0.), px(0.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(6.),
+                                inset: true,
+                            }]),
+                        ),
+                    ]),
+                // Combined: drop + inset shadows on the same element.
+                div()
+                    .border_b_1()
+                    .border_color(hsla(0.0, 0.0, 0.0, 1.0))
+                    .flex()
+                    .w_full()
+                    .children(vec![
+                        example(
+                            "Drop + Inset",
+                            Shadow::rounded_medium().shadow(vec![
+                                BoxShadow {
+                                    color: hsla(0.0, 0.0, 0.0, 0.25),
+                                    offset: point(px(0.), px(8.)),
+                                    blur_radius: px(12.),
+                                    spread_radius: px(0.),
+                                    inset: false,
+                                },
+                                BoxShadow {
+                                    color: hsla(0.0, 0.0, 0.0, 0.4),
+                                    offset: point(px(0.), px(2.)),
+                                    blur_radius: px(4.),
+                                    spread_radius: px(0.),
+                                    inset: true,
+                                },
+                            ]),
+                        ),
+                    ]),
             ]))
     }
 }
