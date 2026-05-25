@@ -267,23 +267,32 @@ def format_taxonomy_for_claude(area_labels):
     return "\n".join(sorted(lines))
 
 
-def detect_areas(anthropic_key, issue, taxonomy):
-    """Use Claude to detect relevant areas for the issue."""
+def detect_areas(anthropic_key, issue, area_labels):
+    """Use Claude to detect which area labels apply to the issue.
+
+    Claude may ignore the format instruction or hallucinate names, so the response
+    is validated against the canonical set of area labels.
+    """
     log("Detecting areas with Claude")
+
+    taxonomy = format_taxonomy_for_claude(area_labels)
+    valid_areas = {label["name"] for label in area_labels}
 
     system_prompt = """You analyze GitHub issues to identify which area labels apply.
 
-Given an issue and a taxonomy of areas, output ONLY a comma-separated list of matching area names.
+Respond with ONLY a comma-separated list of matching area names. No prose, no explanation,
+no markdown, no preamble — just the names.
+
 - Output at most 3 areas, ranked by relevance
 - Use exact area names from the taxonomy
-- If no areas clearly match, output: none
+- If no areas clearly match, respond with: none
 - For languages/*, tooling/*, or parity/*, use the specific sub-label (e.g., "languages/rust",
-tooling/eslint, parity/vscode)
+  tooling/eslint, parity/vscode)
 
-Example outputs:
-- "editor, parity/vim"
-- "ai, ai/agent panel"
-- "none"
+Examples of valid responses (each line is a complete response on its own):
+  editor, parity/vim
+  ai, ai/agent panel
+  none
 """
 
     user_content = f"""## Area Taxonomy
@@ -300,7 +309,14 @@ Example outputs:
 
     if response.lower() == "none":
         return []
-    return [area.strip() for area in response.split(",")]
+
+    valid, dropped = [], []
+    for area in response.split(","):
+        area = area.strip()
+        (valid if area in valid_areas else dropped).append(area)
+    if dropped:
+        log(f"  Dropped {len(dropped)} unknown area(s) from Claude response: {dropped}")
+    return valid
 
 
 def parse_duplicate_magnets():
@@ -583,12 +599,17 @@ Return empty arrays where nothing relevant is found."""
 
     response = call_claude(anthropic_key, system_prompt, user_content, max_tokens=2048)
 
+    # Claude sometimes wraps JSON in a ```json ... ``` fence despite the prompt forbidding it
+    fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
+    if fence:
+        response = fence.group(1)
+
     try:
         data = json.loads(response)
     except json.JSONDecodeError as e:
-        log(f"  Failed to parse response: {e}")
-        log(f"  Raw response: {response}")
-        return [], [], []
+        log(f"  Failed to parse Claude response as JSON: {e}")
+        log(f"  Raw response:\n{response}")
+        sys.exit(1)
 
     likely = data.get("likely_duplicates", [])
     possible = data.get("possible_duplicates", [])
@@ -625,8 +646,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # detect areas
-    taxonomy = format_taxonomy_for_claude(fetch_area_labels())
-    detected_areas = detect_areas(anthropic_key, issue, taxonomy)
+    detected_areas = detect_areas(anthropic_key, issue, fetch_area_labels())
 
     # search for potential duplicates and related closed issues
     all_magnets = parse_duplicate_magnets()
@@ -657,6 +677,8 @@ if __name__ == "__main__":
                 commented = True
             except requests.RequestException as e:
                 log(f"  Failed to post comment: {e}")
+                log(f"  Comment we were trying to post:\n{comment_body}")
+                sys.exit(1)
 
     print(json.dumps({
         "skipped": False,
