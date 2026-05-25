@@ -1595,7 +1595,7 @@ impl BufferDiff {
         let update = cx.foreground_executor().block_on(this.update_diff(
             buffer.clone(),
             &base_text,
-            true,
+            Some(Arc::from(base_text.text())),
             None,
             cx,
         ));
@@ -1692,8 +1692,8 @@ impl BufferDiff {
     pub fn update_diff(
         &self,
         buffer: text::BufferSnapshot,
-        base_text: &language::BufferSnapshot,
-        base_text_exists: bool,
+        base_text_snapshot: &language::BufferSnapshot,
+        base_text: Option<Arc<str>>,
         language: Option<Arc<Language>>,
         cx: &App,
     ) -> Task<BufferDiffUpdate> {
@@ -1703,12 +1703,13 @@ impl BufferDiff {
             cx,
         );
         let buffer_snapshot = buffer.clone();
-        let base_text = base_text.clone();
+        let base_text_snapshot = base_text_snapshot.clone();
+        let base_text_exists = base_text.is_some();
 
         cx.background_executor().spawn(async move {
-            let hunks = if base_text_exists {
+            let hunks = if let Some(base_text) = base_text {
                 compute_hunks(
-                    Some((Arc::from(base_text.text()), base_text.as_rope().clone())),
+                    Some((base_text, base_text_snapshot.as_rope().clone())),
                     &buffer,
                     diff_options,
                 )
@@ -1718,7 +1719,7 @@ impl BufferDiff {
 
             BufferDiffUpdate {
                 hunks,
-                base_text,
+                base_text: base_text_snapshot,
                 base_text_exists,
                 buffer_snapshot,
             }
@@ -1943,7 +1944,7 @@ impl BufferDiff {
                         } else {
                             vec![(
                                 0..base_text_buffer.len(),
-                                text::LineEnding::normalize_arc(base_text),
+                                text::LineEnding::normalize_arc(base_text.clone()),
                             )]
                         };
                         base_text_buffer.snapshot_with_edits(edits, cx)
@@ -1960,7 +1961,7 @@ impl BufferDiff {
                     this.update_diff(
                         buffer.clone(),
                         &base_text_snapshot,
-                        base_text_exists,
+                        base_text_exists.then(|| base_text.clone()),
                         language,
                         cx,
                     )
@@ -1994,7 +1995,7 @@ impl BufferDiff {
         let fut = self.update_diff(
             buffer.clone(),
             &base_text,
-            self.base_text_exists,
+            self.base_text_exists.then(|| Arc::from(base_text.text())),
             language,
             cx,
         );
@@ -3320,7 +3321,13 @@ mod tests {
         let base_text_snapshot = diff.read_with(cx, |diff, cx| diff.base_text(cx));
         let update = diff
             .update(cx, |diff, cx| {
-                diff.update_diff(snapshot.clone(), &base_text_snapshot, true, None, cx)
+                diff.update_diff(
+                    snapshot.clone(),
+                    &base_text_snapshot,
+                    Some(Arc::from(base_text_snapshot.text())),
+                    None,
+                    cx,
+                )
             })
             .await;
         diff.update(cx, |diff, cx| diff.set_snapshot(update, cx));

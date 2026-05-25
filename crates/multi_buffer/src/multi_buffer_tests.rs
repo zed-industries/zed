@@ -1,12 +1,13 @@
 use super::*;
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
-use gpui::{App, TestAppContext};
+use gpui::{App, Entity, TestAppContext};
 use indoc::indoc;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
 use settings::SettingsStore;
 use std::env;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use util::RandomCharIter;
 use util::rel_path::rel_path;
@@ -15,6 +16,55 @@ use util::test::sample_text;
 #[ctor::ctor]
 fn init_logger() {
     zlog::init_test();
+}
+
+async fn update_buffer_diff_base_text(
+    diff: &Entity<BufferDiff>,
+    buffer: &Entity<Buffer>,
+    base_text: &str,
+    base_text_exists: bool,
+    cx: &mut TestAppContext,
+) {
+    let base_text_buffer = diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());
+    let base_text = Arc::<str>::from(base_text);
+    let base_text_diff = base_text_buffer
+        .update(cx, |base_text_buffer, cx| {
+            base_text_buffer.diff(base_text.clone(), cx)
+        })
+        .await;
+    let edited_base_text = base_text_buffer
+        .update(cx, |base_text_buffer, cx| {
+            base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
+            let edits = if base_text_buffer.version() == base_text_diff.base_version {
+                base_text_diff.edits
+            } else {
+                vec![(
+                    0..base_text_buffer.len(),
+                    text::LineEnding::normalize_arc(base_text.clone()),
+                )]
+            };
+            base_text_buffer.snapshot_with_edits(edits, cx)
+        })
+        .await;
+    let base_text_snapshot = edited_base_text.snapshot().clone();
+    let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+    let update = diff
+        .update(cx, |diff, cx| {
+            diff.update_diff(
+                buffer_snapshot,
+                &base_text_snapshot,
+                base_text_exists.then(|| base_text.clone()),
+                None,
+                cx,
+            )
+        })
+        .await;
+    diff.update(cx, |diff, cx| {
+        base_text_buffer.update(cx, |base_text_buffer, cx| {
+            base_text_buffer.fast_forward(edited_base_text, cx)
+        });
+        diff.set_snapshot(update, cx)
+    });
 }
 
 #[gpui::test]
@@ -4747,21 +4797,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         );
     });
     cx.run_until_parked();
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(base_text.into()),
-                None,
-                None,
-                cx,
-            )
-        })
-        .await;
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-    })
-    .await;
+    update_buffer_diff_base_text(&diff, &buffer, base_text, true, cx).await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4785,21 +4821,7 @@ async fn test_singleton_with_inverted_diff(cx: &mut TestAppContext) {
         buffer.set_text("ZERO\nONE\nTWO\n", cx);
     });
     cx.run_until_parked();
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(base_text.into()),
-                None,
-                None,
-                cx,
-            )
-        })
-        .await;
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-    })
-    .await;
+    update_buffer_diff_base_text(&diff, &buffer, base_text, true, cx).await;
     cx.run_until_parked();
 
     assert_new_snapshot(
@@ -4879,21 +4901,7 @@ async fn test_inverted_diff_base_text_change(cx: &mut TestAppContext) {
         ),
     );
 
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some("ddd\n".into()),
-                Some(true),
-                None,
-                cx,
-            )
-        })
-        .await;
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-    })
-    .detach();
+    update_buffer_diff_base_text(&diff, &buffer, "ddd\n", true, cx).await;
 
     let _hunks: Vec<_> = multibuffer
         .read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx))
@@ -4925,22 +4933,7 @@ async fn test_inverted_diff_secondary_version_mismatch(cx: &mut TestAppContext) 
         buffer.edit([(0..0, "ZERO\n")], None, cx);
     });
 
-    let update = unstaged_diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.read(cx).text_snapshot(),
-                Some(index_text.into()),
-                None,
-                None,
-                cx,
-            )
-        })
-        .await;
-    unstaged_diff
-        .update(cx, |diff, cx| {
-            diff.set_snapshot(update, &buffer.read(cx).text_snapshot(), cx)
-        })
-        .await;
+    update_buffer_diff_base_text(&unstaged_diff, &buffer, index_text, true, cx).await;
 
     let base_text_buffer =
         uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer().clone());

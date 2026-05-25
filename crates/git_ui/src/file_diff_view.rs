@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
 };
-use language::{Buffer, HighlightedText, LanguageRegistry};
+use language::{Buffer, Capability, HighlightedText, LanguageRegistry};
 use project::Project;
 use settings::Settings;
 use std::{
@@ -178,15 +178,24 @@ async fn build_buffer_diff(
 ) -> Result<Entity<BufferDiff>> {
     let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
     let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let base_text = Arc::<str>::from(old_buffer_snapshot.text());
+    let base_text_buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(base_text.to_string(), cx);
+        buffer.set_capability(Capability::ReadOnly, cx);
+        buffer
+    });
+    let base_text_snapshot = base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text_buffer(&new_buffer_snapshot.text, base_text_buffer, true, cx)
+    });
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
                 new_buffer_snapshot.text.clone(),
-                Some(old_buffer_snapshot.text().into()),
-                Some(true),
+                &base_text_snapshot,
+                Some(base_text.clone()),
                 new_buffer_snapshot.language().cloned(),
                 cx,
             )
@@ -199,9 +208,8 @@ async fn build_buffer_diff(
             Some(language_registry),
             cx,
         );
-        diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-    })
-    .await;
+        diff.set_snapshot(update, cx)
+    });
 
     Ok(diff)
 }

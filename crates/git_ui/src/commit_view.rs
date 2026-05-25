@@ -879,17 +879,27 @@ async fn build_buffer_diff(
         LineEnding::normalize(old_text);
     }
 
+    let base_text = old_text.map(Arc::<str>::from);
+    let base_text_exists = base_text.is_some();
     let language = cx.update(|cx| buffer.read(cx).language().cloned());
     let buffer = cx.update(|cx| buffer.read(cx).snapshot());
+    let base_text_buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(base_text.as_deref().unwrap_or_default().to_owned(), cx);
+        buffer.set_capability(Capability::ReadOnly, cx);
+        buffer
+    });
+    let base_text_snapshot = base_text_buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
+    let diff = cx.new(|cx| {
+        BufferDiff::new_with_base_text_buffer(&buffer.text, base_text_buffer, base_text_exists, cx)
+    });
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
                 buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
+                &base_text_snapshot,
+                base_text.clone(),
                 language.clone(),
                 cx,
             )
@@ -898,9 +908,8 @@ async fn build_buffer_diff(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
-    })
-    .await;
+        diff.set_snapshot(update, cx)
+    });
 
     Ok(diff)
 }

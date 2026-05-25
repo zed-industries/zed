@@ -110,13 +110,20 @@ impl TextDiffView {
         }
 
         let workspace = workspace.weak_handle();
-        let diff_buffer = cx.new(|cx| BufferDiff::new(&source_buffer_snapshot.text, cx));
         let clipboard_buffer = build_clipboard_buffer(
             clipboard_text,
             &source_buffer,
             expanded_selection_range.clone(),
             cx,
         );
+        let diff_buffer = cx.new(|cx| {
+            BufferDiff::new_with_base_text_buffer(
+                &source_buffer_snapshot.text,
+                clipboard_buffer.clone(),
+                true,
+                cx,
+            )
+        });
 
         let task = window.spawn(cx, async move |cx| {
             update_diff_buffer(&diff_buffer, &source_buffer, &clipboard_buffer, cx).await?;
@@ -280,14 +287,14 @@ async fn update_diff_buffer(
     let language_registry = source_buffer.read_with(cx, |buffer, _| buffer.language_registry());
 
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let base_text = base_buffer_snapshot.text();
+    let base_text = Arc::<str>::from(base_buffer_snapshot.text());
 
     let update = diff
         .update(cx, |diff, cx| {
             diff.update_diff(
                 source_buffer_snapshot.text.clone(),
-                Some(Arc::from(base_text.as_str())),
-                Some(true),
+                &base_buffer_snapshot,
+                Some(base_text.clone()),
                 language.clone(),
                 cx,
             )
@@ -296,9 +303,8 @@ async fn update_diff_buffer(
 
     diff.update(cx, |diff, cx| {
         diff.language_changed(language, language_registry, cx);
-        diff.set_snapshot(update, &source_buffer_snapshot.text, cx)
-    })
-    .await;
+        diff.set_snapshot(update, cx)
+    });
     Ok(())
 }
 

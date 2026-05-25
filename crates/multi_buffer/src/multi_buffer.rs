@@ -615,6 +615,7 @@ impl DiffState {
                     changed_range,
                     base_text_changed_range: _,
                     extended_range,
+                    base_text_changed: _,
                 }) => {
                     let use_extended = this.snapshot.borrow().use_extended_diff_range;
                     let range = if use_extended {
@@ -652,6 +653,7 @@ impl DiffState {
                             changed_range: _,
                             base_text_changed_range,
                             extended_range: _,
+                            base_text_changed: _,
                         }) => {
                             this.inverted_buffer_diff_changed(
                                 diff,
