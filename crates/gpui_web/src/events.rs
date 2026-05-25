@@ -64,6 +64,9 @@ impl WebWindowInner {
             self.register_dragleave(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_paste(),
+            self.register_copy(),
+            self.register_cut(),
             self.register_composition_start(),
             self.register_composition_update(),
             self.register_composition_end(),
@@ -351,7 +354,22 @@ impl WebWindowInner {
                 return;
             }
 
-            event.prevent_default();
+            // Let the browser fire its native clipboard events for
+            // Cmd+V / Ctrl+V (paste), Cmd+C / Ctrl+C (copy), and
+            // Cmd+X / Ctrl+X (cut). The `register_paste` / `register_copy`
+            // / `register_cut` handlers below bridge them to the platform
+            // input handler.
+            let primary_modifier = if this.is_mac {
+                modifiers.platform
+            } else {
+                modifiers.control
+            };
+            let is_clipboard_shortcut =
+                primary_modifier && (key == "v" || key == "c" || key == "x");
+
+            if !is_clipboard_shortcut {
+                event.prevent_default();
+            }
 
             let is_held = event.repeat();
             let key_char = compute_key_char(&event, &key, &modifiers);
@@ -431,6 +449,65 @@ impl WebWindowInner {
         let this = Rc::clone(self);
         self.listen_input("compositionstart", move |_event: JsValue| {
             this.is_composing.set(true);
+        })
+    }
+
+    fn register_paste(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("paste", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            let Some(data) = event.clipboard_data() else {
+                return;
+            };
+            let Ok(text) = data.get_data("text/plain") else {
+                return;
+            };
+            if text.is_empty() {
+                return;
+            }
+
+            // We handle the insertion ourselves; keep the browser from
+            // also pasting the text into our hidden capture `<input>`.
+            event.prevent_default();
+
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(None, &text);
+            });
+        })
+    }
+
+    fn register_copy(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("copy", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            let Some(data) = event.clipboard_data() else {
+                return;
+            };
+            let Some(text) = this.read_selected_text() else {
+                return;
+            };
+            event.prevent_default();
+            data.set_data("text/plain", &text).ok();
+        })
+    }
+
+    fn register_cut(self: &Rc<Self>) -> Closure<dyn FnMut(JsValue)> {
+        let this = Rc::clone(self);
+        self.listen_input("cut", move |event: JsValue| {
+            let event: web_sys::ClipboardEvent = event.unchecked_into();
+            let Some(data) = event.clipboard_data() else {
+                return;
+            };
+            let Some((range, text)) = this.read_selected_range_and_text() else {
+                return;
+            };
+            event.prevent_default();
+            if data.set_data("text/plain", &text).is_err() {
+                return;
+            }
+            this.with_input_handler(|handler| {
+                handler.replace_text_in_range(Some(range), "");
+            });
         })
     }
 
