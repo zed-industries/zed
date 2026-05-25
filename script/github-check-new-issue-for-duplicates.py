@@ -165,8 +165,8 @@ def fetch_issue(issue_number: int):
 
 def should_skip(issue):
     """Check if issue should be skipped in duplicate detection process."""
-    if issue["type"] not in ["Bug", "Crash"]:
-        log(f"  Skipping: issue type '{issue['type']}' is not a bug/crash report")
+    if issue["type"] and issue["type"] not in ["Bug", "Crash"]:
+        log(f"  Skipping: issue type '{issue['type']}' is not blank and not a bug/crash report")
         return True
 
     if issue["author"] and check_team_membership(REPO_OWNER, STAFF_TEAM_SLUG, issue["author"]):
