@@ -2314,7 +2314,7 @@ impl ThreadView {
                 section.push(
                     self.render_edited_files(
                         action_log,
-                        telemetry.clone(),
+                        telemetry,
                         &changed_buffers,
                         pending_edits,
                         cx,
@@ -2343,7 +2343,7 @@ impl ThreadView {
             return None;
         }
 
-        let section_children = itertools::intersperse_with(sections.into_iter(), || {
+        let section_children = itertools::intersperse_with(sections, || {
             vec![
                 Divider::horizontal()
                     .color(DividerColor::Border)
