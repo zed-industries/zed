@@ -7,6 +7,7 @@ use agent_client_protocol::schema::{self as acp, ErrorCode};
 use agent_client_protocol::{
     Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder, SentRequest,
 };
+use agent_settings::AgentSettings;
 use anyhow::anyhow;
 use async_channel;
 use collections::{HashMap, HashSet};
@@ -33,6 +34,7 @@ use util::process::Child;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, SharedString, Task, WeakEntity};
+use settings::Settings as _;
 
 use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
@@ -3678,6 +3680,141 @@ mod tests {
             "session should be removed after final close"
         );
     }
+
+    #[test]
+    fn select_auto_permission_option_allow_prefers_allow_always() {
+        let options = vec![
+            acp::PermissionOption::new(
+                "reject-always",
+                "Reject Always",
+                acp::PermissionOptionKind::RejectAlways,
+            ),
+            acp::PermissionOption::new(
+                "allow-once",
+                "Allow Once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                "allow-always",
+                "Always Allow",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+        ];
+
+        let selected = select_auto_permission_option(&options, settings::ToolPermissionMode::Allow)
+            .expect("should auto-select an option for Allow mode");
+
+        assert_eq!(
+            selected.option_id,
+            acp::PermissionOptionId::new("allow-always")
+        );
+    }
+
+    #[test]
+    fn select_auto_permission_option_allow_falls_back_to_allow_once() {
+        let options = vec![
+            acp::PermissionOption::new(
+                "reject-always",
+                "Reject Always",
+                acp::PermissionOptionKind::RejectAlways,
+            ),
+            acp::PermissionOption::new(
+                "allow-once",
+                "Allow Once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+        ];
+
+        let selected = select_auto_permission_option(&options, settings::ToolPermissionMode::Allow)
+            .expect("should fall back to AllowOnce when AllowAlways is absent");
+
+        assert_eq!(
+            selected.option_id,
+            acp::PermissionOptionId::new("allow-once")
+        );
+    }
+
+    #[test]
+    fn select_auto_permission_option_deny_prefers_reject_always() {
+        let options = vec![
+            acp::PermissionOption::new(
+                "allow-always",
+                "Always Allow",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                "reject-once",
+                "Reject Once",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+            acp::PermissionOption::new(
+                "reject-always",
+                "Reject Always",
+                acp::PermissionOptionKind::RejectAlways,
+            ),
+        ];
+
+        let selected = select_auto_permission_option(&options, settings::ToolPermissionMode::Deny)
+            .expect("should auto-select an option for Deny mode");
+
+        assert_eq!(
+            selected.option_id,
+            acp::PermissionOptionId::new("reject-always")
+        );
+    }
+
+    #[test]
+    fn select_auto_permission_option_deny_falls_back_to_reject_once() {
+        let options = vec![
+            acp::PermissionOption::new(
+                "allow-always",
+                "Always Allow",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                "reject-once",
+                "Reject Once",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ];
+
+        let selected = select_auto_permission_option(&options, settings::ToolPermissionMode::Deny)
+            .expect("should fall back to RejectOnce when RejectAlways is absent");
+
+        assert_eq!(
+            selected.option_id,
+            acp::PermissionOptionId::new("reject-once")
+        );
+    }
+
+    #[test]
+    fn select_auto_permission_option_confirm_returns_none() {
+        let options = vec![
+            acp::PermissionOption::new(
+                "allow-once",
+                "Allow Once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                "allow-always",
+                "Always Allow",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                "reject-always",
+                "Reject Always",
+                acp::PermissionOptionKind::RejectAlways,
+            ),
+        ];
+
+        let selected =
+            select_auto_permission_option(&options, settings::ToolPermissionMode::Confirm);
+
+        assert!(
+            selected.is_none(),
+            "Confirm mode should return None so the dialog is shown"
+        );
+    }
 }
 
 fn mcp_servers_for_project(project: &Entity<Project>, cx: &App) -> Vec<acp::McpServer> {
@@ -3930,6 +4067,34 @@ fn respond_err<T: JsonRpcResponse>(responder: Responder<T>, err: acp::Error) {
     responder.respond_with_error(err).log_err();
 }
 
+/// Selects a permission option to auto-respond with based on the user's configured
+/// `tool_permissions.default` mode, without showing the dialog.
+///
+/// Returns `None` when the mode is `Confirm` (the default), meaning the dialog
+/// should be shown. This matches the documented behavior in `default.json`: "deny"
+/// and "confirm" take precedence for external agents; the external agent's
+/// permission system is only used when Zed would allow the action.
+fn select_auto_permission_option<'a>(
+    options: &'a [acp::PermissionOption],
+    mode: settings::ToolPermissionMode,
+) -> Option<&'a acp::PermissionOption> {
+    let (preferred_kind, fallback_kind) = match mode {
+        settings::ToolPermissionMode::Allow => (
+            acp::PermissionOptionKind::AllowAlways,
+            acp::PermissionOptionKind::AllowOnce,
+        ),
+        settings::ToolPermissionMode::Deny => (
+            acp::PermissionOptionKind::RejectAlways,
+            acp::PermissionOptionKind::RejectOnce,
+        ),
+        settings::ToolPermissionMode::Confirm => return None,
+    };
+    options
+        .iter()
+        .find(|opt| opt.kind == preferred_kind)
+        .or_else(|| options.iter().find(|opt| opt.kind == fallback_kind))
+}
+
 fn handle_request_permission(
     args: acp::RequestPermissionRequest,
     responder: Responder<acp::RequestPermissionResponse>,
@@ -3942,6 +4107,21 @@ fn handle_request_permission(
     };
 
     cx.spawn(async move |cx| {
+        let tool_permission_default =
+            AgentSettings::try_read_global(&cx, |settings| settings.tool_permissions.default);
+
+        if let Some(mode) = tool_permission_default {
+            if let Some(option) = select_auto_permission_option(&args.options, mode) {
+                let outcome = acp::RequestPermissionOutcome::Selected(
+                    acp::SelectedPermissionOutcome::new(option.option_id.clone()),
+                );
+                responder
+                    .respond(acp::RequestPermissionResponse::new(outcome))
+                    .log_err();
+                return;
+            }
+        }
+
         let result: Result<_, acp::Error> = async {
             let task = thread
                 .update(cx, |thread, cx| {
