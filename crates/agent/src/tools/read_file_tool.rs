@@ -251,8 +251,8 @@ impl AgentTool for ReadFileTool {
                 .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
-            // Fast path: if the model passes an absolute path that resolves
-            // under the global skills directory, read it directly via the
+            // Fast path: if the model passes a path that resolves under the
+            // global skills directory, read it directly via the
             // filesystem. Global skills live outside any worktree, so the
             // standard project-path machinery would refuse them.
             if let Some(skill_path) =

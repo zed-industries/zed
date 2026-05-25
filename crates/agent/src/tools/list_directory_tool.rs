@@ -234,7 +234,7 @@ impl AgentTool for ListDirectoryTool {
 
             // Fast path: a global skill resource lives outside any worktree, so
             // standard project-path resolution would refuse it. If the path
-            // resolves under the global skills tree, list it directly.
+            // expands and resolves under the global skills tree, list it directly.
             if let Some(skill_path) =
                 resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {
