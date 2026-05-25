@@ -926,6 +926,7 @@ pub fn split_repository_update(
     let mut updated_statuses_iter = mem::take(&mut update.updated_statuses).into_iter().fuse();
     let mut removed_statuses_iter = mem::take(&mut update.removed_statuses).into_iter().fuse();
     let branch_list = mem::take(&mut update.branch_list);
+    let branch_list_error = update.branch_list_error.take();
     std::iter::from_fn({
         let update = update.clone();
         move || {
@@ -944,6 +945,7 @@ pub fn split_repository_update(
                 updated_statuses,
                 removed_statuses,
                 branch_list: Vec::new(),
+                branch_list_error: None,
                 is_last_update: false,
                 ..update.clone()
             })
@@ -953,6 +955,7 @@ pub fn split_repository_update(
         updated_statuses: Vec::new(),
         removed_statuses: Vec::new(),
         branch_list,
+        branch_list_error,
         is_last_update: true,
         ..update
     }])
@@ -1023,6 +1026,7 @@ mod tests {
                 ref_name: "refs/heads/main".into(),
                 ..Default::default()
             }],
+            branch_list_error: Some("partial branch scan".into()),
             ..Default::default()
         };
 
@@ -1033,6 +1037,12 @@ mod tests {
         assert!(chunks[1].branch_list.is_empty());
         assert_eq!(chunks[2].branch_list.len(), 1);
         assert_eq!(chunks[2].branch_list[0].ref_name, "refs/heads/main");
+        assert_eq!(chunks[0].branch_list_error, None);
+        assert_eq!(chunks[1].branch_list_error, None);
+        assert_eq!(
+            chunks[2].branch_list_error.as_deref(),
+            Some("partial branch scan")
+        );
         assert!(!chunks[0].is_last_update);
         assert!(!chunks[1].is_last_update);
         assert!(chunks[2].is_last_update);

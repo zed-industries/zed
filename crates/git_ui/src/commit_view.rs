@@ -3,6 +3,7 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
 use editor::{Addon, Editor, EditorEvent, ExcerptRange, MultiBuffer, multibuffer_context_lines};
+use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
 use git::status::{FileStatus, StatusCode, TrackedStatus};
 use git::{
@@ -392,38 +393,58 @@ impl CommitView {
                     Some(build_buffer_diff(old_text, &buffer, &language_registry, cx).await?)
                 };
 
-                this.update(cx, |this, cx| {
-                    this.multibuffer.update(cx, |multibuffer, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let path = snapshot.file().unwrap().path().clone();
-                        let excerpt_ranges = if is_binary {
+                let (excerpt_ranges, path) = cx.update(|cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let path = PathKey::with_sort_prefix(
+                        FILE_NAMESPACE_SORT_PREFIX,
+                        snapshot.file().unwrap().path().clone(),
+                    );
+                    let ranges = if is_binary {
+                        vec![language::Point::zero()..snapshot.max_point()]
+                    } else if let Some(buffer_diff) = &buffer_diff {
+                        let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
+                        let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
+                        if hunks.peek().is_none() {
                             vec![language::Point::zero()..snapshot.max_point()]
-                        } else if let Some(buffer_diff) = &buffer_diff {
-                            let diff_snapshot = buffer_diff.read(cx).snapshot(cx);
-                            let mut hunks = diff_snapshot.hunks(&snapshot).peekable();
-                            if hunks.peek().is_none() {
-                                vec![language::Point::zero()..snapshot.max_point()]
-                            } else {
-                                hunks
-                                    .map(|hunk| hunk.buffer_range.to_point(&snapshot))
-                                    .collect::<Vec<_>>()
-                            }
                         } else {
-                            vec![language::Point::zero()..snapshot.max_point()]
-                        };
-
-                        let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::with_sort_prefix(FILE_NAMESPACE_SORT_PREFIX, path),
-                            buffer,
-                            excerpt_ranges,
-                            multibuffer_context_lines(cx),
-                            cx,
-                        );
-                        if let Some(buffer_diff) = buffer_diff {
-                            multibuffer.add_diff(buffer_diff, cx);
+                            hunks
+                                .map(|hunk| hunk.buffer_range.to_point(&snapshot))
+                                .collect::<Vec<_>>()
                         }
-                    });
-                })?;
+                    } else {
+                        vec![language::Point::zero()..snapshot.max_point()]
+                    };
+                    (ranges, path)
+                });
+
+                // Batch the insertion of excerpts and yield between batches, to avoid blocking the main thread when a single file has many hunks.
+                const EXCERPT_BATCH_SIZE: usize = 10;
+                let total = excerpt_ranges.len();
+                let mut batch_end = 0;
+                while batch_end < total {
+                    let is_first_batch = batch_end == 0;
+                    batch_end = (batch_end + EXCERPT_BATCH_SIZE).min(total);
+                    let ranges = excerpt_ranges[..batch_end].to_vec();
+                    this.update(cx, |this, cx| {
+                        this.multibuffer.update(cx, |multibuffer, cx| {
+                            multibuffer.set_excerpts_for_path(
+                                path.clone(),
+                                buffer.clone(),
+                                ranges,
+                                multibuffer_context_lines(cx),
+                                cx,
+                            );
+                            if is_first_batch {
+                                if let Some(buffer_diff) = buffer_diff.clone() {
+                                    multibuffer.add_diff(buffer_diff, cx);
+                                }
+                            }
+                        });
+                    })?;
+                    if batch_end < total {
+                        yield_now().await;
+                    }
+                }
             }
 
             this.update(cx, |this, cx| {
