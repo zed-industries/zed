@@ -2784,7 +2784,7 @@ impl Window {
         if a11y_active_start_of_frame {
             // clear the builder state regardless
             let tree_update = self.a11y.end_frame();
-            
+
             if should_send_a11y_update {
                 log::debug!(
                     "Sending a11y tree update: {} nodes",

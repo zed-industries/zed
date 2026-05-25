@@ -1771,8 +1771,6 @@ impl PlatformWindow for MacWindow {
     fn a11y_update_window_bounds(&self) {
         // macOS handles window bounds tracking automatically via NSAccessibility.
     }
-
-
 }
 
 struct A11yActivationHandler {

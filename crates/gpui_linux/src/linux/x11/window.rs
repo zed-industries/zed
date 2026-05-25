@@ -29,13 +29,7 @@ use x11rb::{
 };
 
 use std::{
-    cell::RefCell,
-    ffi::c_void,
-    fmt::Display,
-    num::NonZeroU32,
-    ptr::NonNull,
-    rc::Rc,
-    sync::Arc,
+    cell::RefCell, ffi::c_void, fmt::Display, num::NonZeroU32, ptr::NonNull, rc::Rc, sync::Arc,
 };
 
 use super::{X11Display, XINPUT_ALL_DEVICE_GROUPS, XINPUT_ALL_DEVICES};
@@ -1923,8 +1917,6 @@ impl PlatformWindow for X11Window {
     fn a11y_update_window_bounds(&self) {
         // X11 could report window bounds, but for now it's a no-op
     }
-
-
 }
 
 struct TrivialActivationHandler {

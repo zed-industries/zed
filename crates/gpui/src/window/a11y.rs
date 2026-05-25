@@ -1,7 +1,7 @@
 //! Accessibility support, provided by [AccessKit][accesskit].
-//! 
+//!
 //! ## Architecture
-//! 
+//!
 //! ```text
 //!                              ┌────────────────────────────────┐   ┌─────────────────────┐
 //!                           ┌─▶│ AccessKit Adapter (MacOS)      │◀─▶│ MacOS System APIs   │
@@ -15,7 +15,7 @@
 //!                           └─▶│ AccessKit Adapter (Linux)      │◀─▶│ dbus                │
 //!                              └────────────────────────────────┘   └─────────────────────┘
 //! ```
-//! 
+//!
 //! In order for GPUI apps to be usable for people using assistive technology,
 //! we must do a few things:
 //! - Inform the system when the UI changes meaningfully. This includes:
@@ -32,48 +32,48 @@
 //!   [`gpui::Action`] trait.
 //! - Activate and deactivate accessibility features when requested by the
 //!   system.
-//! 
+//!
 //! Activating and deactivating at the right time is trivial, so I won't go into
 //! detail here. The other two are almost orthogonal in implementation.
-//! 
+//!
 //! The state for both lives in the [`A11y`] struct in this module.
-//! 
+//!
 //! ### Reporting UI changes
-//! 
+//!
 //! Every frame, we build a [`TreeUpdate`] and send it to the platform-specific
 //! adapter. A [`TreeUpdate`] is a representation of a subset of the UI tree.
 //! When the adapter receives the update, it diffs it against the previous
 //! update, and calls platform-specific APIs to inform screen readers about the
 //! changes. Nodes may have been created, destroyed, or updated.
-//! 
+//!
 //! Each node has an ID, and this ID *should* be stable across frames. If a
 //! node's ID changes, then, from AccessKit's point of view, it is a different
 //! node.
-//! 
+//!
 //! We derive the node ID from the [`GlobalElementId`] in
 //! [`GlobalElementId::accesskit_node_id`]. Nodes without [`GlobalElementId`]s
 //! cannot produce an AccessKit [`NodeId`], and so are not included in the
 //! accessibility tree. We try to warn when using accessibility APIs on
 //! [`div()`] without setting an ID.
-//! 
+//!
 //! This all happens in [`Drawable::prepaint`]. The [`A11y`] struct maintains a
 //! stack of nodes during prepainting, which we can use to calculate the
 //! [`NodeId`]s, and record parent-child relationships. Once all [`Element`]s in
 //! a frame have been prepainted, we send the resulting [`TreeUpdate`] object to
 //! the adapter and the screen reader can announce the changes.
-//! 
+//!
 //! ### Responding to actions
 //!  
 //! On adapter creation, we provide a callback to the adapter, which can be used
 //! to dispatch actions. This callback forwards to [`A11y::action_listeners`], a
 //! mapping from [`NodeId`]s to action handlers (basically just `Box<dyn
 //! Fn()>`).
-//! 
+//!
 //! This is populated in:
 //! - [`Window::on_a11y_action`], which is called by:
 //! - [`Interactivity::paint`], which is called by:
 //! - [`InteractiveElement::on_a11y_action`], which is a public-facing API
-//! 
+//!
 //! These are cleared at the start of a frame, and re-populated during painting.
 //!
 //! [`Element`]: crate::Element
@@ -89,11 +89,11 @@
 use crate::{App, Bounds, FocusId, Pixels, Window};
 use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use smallvec::SmallVec;
 
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
 pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
@@ -128,28 +128,27 @@ pub(crate) type A11yActionListener =
 /// Manages the AccessKit tree that is built each frame and the mappings
 /// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
-    /// Whether a11y features have been requested by the system. 
-    /// 
+    /// Whether a11y features have been requested by the system.
+    ///
     /// Updated by AccessKit using callbacks provided to the adapter. Can change
     /// halfway through a frame.
     active_flag: Arc<AtomicBool>,
     /// Whether a11y features are active for *this specific frame*.
-    /// 
+    ///
     /// At the start of each frame, we load [`Self::active_flag`] (using
     /// [`Self::snapshot_active_flag`]) and use this to determine whether we
     /// should construct a [`TreeUpdate`] for this frame. It's important that
     /// this value is stable within a frame, because the builder API exposed by
     /// this type maintains a stack of nodes and each must be pushed and popped
-    /// exactly once. 
-    /// 
+    /// exactly once.
+    ///
     /// At the end of the frame, we re-call [`Self::snapshot_active_flag`] to
     /// determine whether we should actually send the finished [`TreeUpdate`].
     active_this_frame: bool,
     pub(crate) nodes: A11yNodeBuilder,
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
-    pub(crate) action_listeners:
-        FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
 }
 
 impl A11y {
@@ -165,7 +164,7 @@ impl A11y {
     }
 
     /// Ensures that [`Self::is_active`] returns up to date information.
-    /// 
+    ///
     /// See the docs for [`Self::active_flag`] and [`Self::active_this_frame`]
     /// for more commentary.
     pub(crate) fn sync_active_flag(&mut self) {

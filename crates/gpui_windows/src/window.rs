@@ -1017,8 +1017,6 @@ impl PlatformWindow for WindowsWindow {
     fn a11y_update_window_bounds(&self) {
         // Windows UIA handles window bounds tracking automatically.
     }
-
-
 }
 
 pub(crate) struct A11yState {
