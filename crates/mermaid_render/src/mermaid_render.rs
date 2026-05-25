@@ -109,8 +109,6 @@ pub struct MermaidTheme {
 impl Default for MermaidTheme {
     fn default() -> Self {
         use gpui::{hsla, rgb};
-        // Values mirror the previous `mermaid_rs_renderer::Theme::modern()` defaults so existing
-        // tests and call sites that relied on those colors continue to work.
         let git_branch_colors: [Hsla; 8] = [
             hsla(240.0 / 360.0, 1.0, 0.462_745_1, 1.0),
             hsla(60.0 / 360.0, 1.0, 0.435_294_12, 1.0),
