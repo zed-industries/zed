@@ -5,6 +5,7 @@ use serde::{
     de::{self, Visitor},
 };
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -711,50 +712,42 @@ impl Display for ColorSpace {
     }
 }
 
-/// A background color, which can be either a solid color or a linear gradient.
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct Background {
-    pub(crate) tag: BackgroundTag,
-    pub(crate) color_space: ColorSpace,
-    pub(crate) solid: Hsla,
-    pub(crate) gradient_angle_or_pattern_height: f32,
-    // todo! make background an enum and use Rc<[LinearColorStop]>
-    pub(crate) colors: Vec<LinearColorStop>,
-}
-
-impl std::fmt::Debug for Background {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self.tag {
-            BackgroundTag::Solid => write!(f, "Solid({:?})", self.solid),
-            BackgroundTag::LinearGradient => write!(
-                f,
-                "LinearGradient({}, {:?})",
-                self.gradient_angle_or_pattern_height, self.colors,
-            ),
-            BackgroundTag::PatternSlash => write!(
-                f,
-                "PatternSlash({:?}, {})",
-                self.solid, self.gradient_angle_or_pattern_height
-            ),
-            BackgroundTag::Checkerboard => write!(
-                f,
-                "Checkerboard({:?}, {})",
-                self.solid, self.gradient_angle_or_pattern_height
-            ),
-        }
-    }
+/// A background color, which can be either a solid color, a pattern, or a linear gradient.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub enum Background {
+    /// A solid color fill.
+    Solid(Hsla),
+    /// A diagonal slash pattern.
+    PatternSlash {
+        /// The color of the slashes.
+        color: Hsla,
+        /// Encoded width and interval of the slash pattern.
+        height: f32,
+    },
+    /// A checkerboard pattern.
+    Checkerboard {
+        /// The color of the checkerboard squares.
+        color: Hsla,
+        /// The size of each checkerboard square.
+        size: f32,
+    },
+    /// A linear gradient between two or more color stops.
+    LinearGradient {
+        /// The angle of the gradient line, in degrees. `0.` is equivalent to top;
+        /// increasing values rotate clockwise from there.
+        angle: f32,
+        /// The color space in which colors are interpolated between stops.
+        color_space: ColorSpace,
+        /// The color stops along the gradient.
+        stops: Arc<[LinearColorStop]>,
+    },
 }
 
 impl Eq for Background {}
+
 impl Default for Background {
     fn default() -> Self {
-        Self {
-            tag: BackgroundTag::Solid,
-            solid: Hsla::default(),
-            color_space: ColorSpace::default(),
-            gradient_angle_or_pattern_height: 0.0,
-            colors: Vec::new(),
-        }
+        Background::Solid(Hsla::default())
     }
 }
 
@@ -764,30 +757,23 @@ pub fn pattern_slash(color: impl Into<Hsla>, width: f32, interval: f32) -> Backg
     let interval_scaled = (interval * 255.0) as u32;
     let height = ((width_scaled * 0xFFFF) + interval_scaled) as f32;
 
-    Background {
-        tag: BackgroundTag::PatternSlash,
-        solid: color.into(),
-        gradient_angle_or_pattern_height: height,
-        ..Default::default()
+    Background::PatternSlash {
+        color: color.into(),
+        height,
     }
 }
 
 /// Creates a checkerboard pattern background
 pub fn checkerboard(color: impl Into<Hsla>, size: f32) -> Background {
-    Background {
-        tag: BackgroundTag::Checkerboard,
-        solid: color.into(),
-        gradient_angle_or_pattern_height: size,
-        ..Default::default()
+    Background::Checkerboard {
+        color: color.into(),
+        size,
     }
 }
 
 /// Creates a solid background color.
 pub fn solid_background(color: impl Into<Hsla>) -> Background {
-    Background {
-        solid: color.into(),
-        ..Default::default()
-    }
+    Background::Solid(color.into())
 }
 
 /// Creates a LinearGradient background color with two color stops.
@@ -804,11 +790,10 @@ pub fn linear_gradient(
     from: impl Into<LinearColorStop>,
     to: impl Into<LinearColorStop>,
 ) -> Background {
-    Background {
-        tag: BackgroundTag::LinearGradient,
-        gradient_angle_or_pattern_height: angle,
-        colors: vec![from.into(), to.into()],
-        ..Default::default()
+    Background::LinearGradient {
+        angle,
+        color_space: ColorSpace::default(),
+        stops: Arc::from([from.into(), to.into()]),
     }
 }
 
@@ -831,25 +816,20 @@ pub fn linear_gradient_stops(
     angle: f32,
     stops: impl IntoIterator<Item = LinearColorStop>,
 ) -> Background {
-    let colors: Vec<LinearColorStop> = stops.into_iter().collect();
+    let stops: Vec<LinearColorStop> = stops.into_iter().collect();
     debug_assert!(
-        colors.len() >= 2,
+        stops.len() >= 2,
         "linear_gradient_stops requires at least 2 stops, got {}",
-        colors.len(),
+        stops.len(),
     );
-    if colors.len() < 2 {
-        let fallback = colors.first().map(|stop| stop.color).unwrap_or_default();
-        return Background {
-            tag: BackgroundTag::Solid,
-            solid: fallback,
-            ..Default::default()
-        };
+    if stops.len() < 2 {
+        let fallback = stops.first().map(|stop| stop.color).unwrap_or_default();
+        return Background::Solid(fallback);
     }
-    Background {
-        tag: BackgroundTag::LinearGradient,
-        gradient_angle_or_pattern_height: angle,
-        colors,
-        ..Default::default()
+    Background::LinearGradient {
+        angle,
+        color_space: ColorSpace::default(),
+        stops: Arc::from(stops),
     }
 }
 
@@ -961,66 +941,78 @@ pub(crate) struct Gradient {
 impl Background {
     /// Returns the solid color if this is a solid background, None otherwise.
     pub fn as_solid(&self) -> Option<Hsla> {
-        if self.tag == BackgroundTag::Solid {
-            Some(self.solid)
-        } else {
-            None
+        match self {
+            Background::Solid(color) => Some(*color),
+            _ => None,
         }
     }
 
-    /// Returns the gradient color stops for a [`BackgroundTag::LinearGradient`],
+    /// Returns the gradient color stops for a [`Background::LinearGradient`],
     /// or an empty slice for non-gradient backgrounds.
     pub fn stops(&self) -> &[LinearColorStop] {
-        match self.tag {
-            BackgroundTag::LinearGradient => &self.colors,
+        match self {
+            Background::LinearGradient { stops, .. } => stops,
             _ => &[],
         }
     }
 
     /// Use specified color space for color interpolation.
     ///
+    /// Has no effect on non-gradient backgrounds.
+    ///
     /// <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
-    pub fn color_space(mut self, color_space: ColorSpace) -> Self {
-        self.color_space = color_space;
-        self
-    }
-
-    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
-    pub fn opacity(mut self, factor: f32) -> Self {
-        self.solid = self.solid.opacity(factor);
-        for stop in self.colors.iter_mut() {
-            *stop = stop.opacity(factor);
+    pub fn color_space(mut self, new_color_space: ColorSpace) -> Self {
+        if let Background::LinearGradient { color_space, .. } = &mut self {
+            *color_space = new_color_space;
         }
         self
     }
 
+    /// Returns a new background color with the same hue, saturation, and lightness, but with a modified alpha value.
+    pub fn opacity(self, factor: f32) -> Self {
+        match self {
+            Background::Solid(color) => Background::Solid(color.opacity(factor)),
+            Background::PatternSlash { color, height } => Background::PatternSlash {
+                color: color.opacity(factor),
+                height,
+            },
+            Background::Checkerboard { color, size } => Background::Checkerboard {
+                color: color.opacity(factor),
+                size,
+            },
+            Background::LinearGradient {
+                angle,
+                color_space,
+                stops,
+            } => Background::LinearGradient {
+                angle,
+                color_space,
+                stops: stops.iter().map(|stop| stop.opacity(factor)).collect(),
+            },
+        }
+    }
+
     /// Returns whether the background color is transparent.
     pub fn is_transparent(&self) -> bool {
-        match self.tag {
-            BackgroundTag::Solid => self.solid.is_transparent(),
-            BackgroundTag::LinearGradient => self.colors.iter().all(|c| c.color.is_transparent()),
-            BackgroundTag::PatternSlash => self.solid.is_transparent(),
-            BackgroundTag::Checkerboard => self.solid.is_transparent(),
+        match self {
+            Background::Solid(color) => color.is_transparent(),
+            Background::PatternSlash { color, .. } => color.is_transparent(),
+            Background::Checkerboard { color, .. } => color.is_transparent(),
+            Background::LinearGradient { stops, .. } => {
+                stops.iter().all(|s| s.color.is_transparent())
+            }
         }
     }
 }
 
 impl From<Hsla> for Background {
     fn from(value: Hsla) -> Self {
-        Background {
-            tag: BackgroundTag::Solid,
-            solid: value,
-            ..Default::default()
-        }
+        Background::Solid(value)
     }
 }
 impl From<Rgba> for Background {
     fn from(value: Rgba) -> Self {
-        Background {
-            tag: BackgroundTag::Solid,
-            solid: Hsla::from(value),
-            ..Default::default()
-        }
+        Background::Solid(Hsla::from(value))
     }
 }
 
@@ -1075,14 +1067,17 @@ mod tests {
     #[test]
     fn test_background_solid() {
         let color = Hsla::from(rgba(0xff0099ff));
-        let mut background = Background::from(color);
-        assert_eq!(background.tag, BackgroundTag::Solid);
-        assert_eq!(background.solid, color);
+        let background = Background::from(color);
+        assert!(matches!(background, Background::Solid(c) if c == color));
 
-        assert_eq!(background.clone().opacity(0.5).solid, color.opacity(0.5));
+        assert_eq!(
+            background.clone().opacity(0.5).as_solid(),
+            Some(color.opacity(0.5))
+        );
         assert!(!background.is_transparent());
-        background.solid = hsla(0.0, 0.0, 0.0, 0.0);
-        assert!(background.is_transparent());
+
+        let transparent = Background::Solid(hsla(0.0, 0.0, 0.0, 0.0));
+        assert!(transparent.is_transparent());
     }
 
     #[test]
@@ -1090,12 +1085,12 @@ mod tests {
         let from = linear_color_stop(rgba(0xff0099ff), 0.0);
         let to = linear_color_stop(rgba(0x00ff99ff), 1.0);
         let background = linear_gradient(90.0, from, to);
-        assert_eq!(background.tag, BackgroundTag::LinearGradient);
-        assert_eq!(background.colors.as_slice(), &[from, to]);
+        assert!(matches!(background, Background::LinearGradient { .. }));
+        assert_eq!(background.stops(), &[from, to]);
 
         let dimmed = background.clone().opacity(0.5);
-        assert_eq!(dimmed.colors[0], from.opacity(0.5));
-        assert_eq!(dimmed.colors[1], to.opacity(0.5));
+        assert_eq!(dimmed.stops()[0], from.opacity(0.5));
+        assert_eq!(dimmed.stops()[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
     }
@@ -1106,20 +1101,20 @@ mod tests {
         let s1 = linear_color_stop(rgba(0x00ff00ff), 0.5);
         let s2 = linear_color_stop(rgba(0x0000ffff), 1.0);
         let background = linear_gradient_stops(45.0, [s0, s1, s2]);
-        assert_eq!(background.tag, BackgroundTag::LinearGradient);
-        assert_eq!(background.colors.len(), 3);
-        assert_eq!(background.colors.as_slice(), &[s0, s1, s2]);
+        assert!(matches!(background, Background::LinearGradient { .. }));
+        assert_eq!(background.stops().len(), 3);
+        assert_eq!(background.stops(), &[s0, s1, s2]);
 
         // opacity must apply uniformly to every stop.
         let half = background.clone().opacity(0.5);
         assert_eq!(
-            half.colors.as_slice(),
+            half.stops(),
             &[s0.opacity(0.5), s1.opacity(0.5), s2.opacity(0.5)]
         );
 
         // .opacity() should compose multiplicatively.
         let quarter = background.clone().opacity(0.5).opacity(0.5);
-        for (composed, original) in quarter.colors.iter().zip(background.colors.iter()) {
+        for (composed, original) in quarter.stops().iter().zip(background.stops().iter()) {
             assert!((composed.color.a - original.color.a * 0.25).abs() < 1e-5);
         }
     }

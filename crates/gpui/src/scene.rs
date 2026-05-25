@@ -60,32 +60,44 @@ impl Scene {
     /// Converts a user-facing [`Background`] into its GPU representation,
     /// interning any gradient stops into [`Scene::gradient_stops`].
     pub fn intern_background(&mut self, background: &Background) -> BackgroundGpu {
-        let fill = match background.tag {
-            BackgroundTag::Solid | BackgroundTag::PatternSlash | BackgroundTag::Checkerboard => {
-                BackgroundFill {
-                    solid: background.solid,
-                }
-            }
-            BackgroundTag::LinearGradient => {
-                let stops = background.stops();
+        match background {
+            Background::Solid(color) => BackgroundGpu {
+                tag: BackgroundTag::Solid,
+                fill: BackgroundFill { solid: *color },
+                gradient_angle_or_pattern_height: 0.0,
+            },
+            Background::PatternSlash { color, height } => BackgroundGpu {
+                tag: BackgroundTag::PatternSlash,
+                fill: BackgroundFill { solid: *color },
+                gradient_angle_or_pattern_height: *height,
+            },
+            Background::Checkerboard { color, size } => BackgroundGpu {
+                tag: BackgroundTag::Checkerboard,
+                fill: BackgroundFill { solid: *color },
+                gradient_angle_or_pattern_height: *size,
+            },
+            Background::LinearGradient {
+                angle,
+                color_space,
+                stops,
+            } => {
                 let stop_offset = self.gradient_stops.len() as u32;
                 let stop_count = stops.len() as u32;
                 self.gradient_stops
                     .extend(stops.iter().copied().map(LinearColorStopGpu::new));
-                BackgroundFill {
-                    gradient: Gradient {
-                        stop_offset,
-                        stop_count,
-                        color_space: background.color_space,
-                        _pad: 0,
+                BackgroundGpu {
+                    tag: BackgroundTag::LinearGradient,
+                    fill: BackgroundFill {
+                        gradient: Gradient {
+                            stop_offset,
+                            stop_count,
+                            color_space: *color_space,
+                            _pad: 0,
+                        },
                     },
+                    gradient_angle_or_pattern_height: *angle,
                 }
             }
-        };
-        BackgroundGpu {
-            tag: background.tag,
-            fill,
-            gradient_angle_or_pattern_height: background.gradient_angle_or_pattern_height,
         }
     }
 

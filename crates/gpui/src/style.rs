@@ -5,9 +5,9 @@ use std::{
 };
 
 use crate::{
-    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
+    AbsoluteLength, App, Background, BorderStyle, Bounds, ContentMask, Corners, CornersRefinement,
+    CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font, FontFallbacks,
+    FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, quad, rems, size,
 };
@@ -670,15 +670,12 @@ impl Style {
         let background = self.background.as_ref().and_then(Fill::color);
         if background.is_some_and(|bg| !bg.is_transparent()) {
             let mut border_color = match background {
-                Some(bg) => match bg.tag {
-                    BackgroundTag::Solid
-                    | BackgroundTag::PatternSlash
-                    | BackgroundTag::Checkerboard => bg.solid,
-
-                    BackgroundTag::LinearGradient => {
-                        bg.colors.first().map(|stop| stop.color).unwrap_or_default()
-                    }
-                },
+                Some(Background::Solid(color))
+                | Some(Background::PatternSlash { color, .. })
+                | Some(Background::Checkerboard { color, .. }) => *color,
+                Some(Background::LinearGradient { stops, .. }) => {
+                    stops.first().map(|stop| stop.color).unwrap_or_default()
+                }
                 None => Hsla::default(),
             };
             border_color.a = 0.;
