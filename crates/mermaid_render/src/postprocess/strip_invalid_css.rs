@@ -73,27 +73,6 @@ fn strip_unsupported_css(css: &str) -> String {
             continue;
         }
 
-        if remaining.starts_with(":not(") {
-            for (_, c) in chars.by_ref() {
-                if c == '(' {
-                    break;
-                }
-            }
-            let mut depth = 1u32;
-            while let Some((_, c)) = chars.next() {
-                if c == '(' {
-                    depth += 1;
-                }
-                if c == ')' {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-
         let (_, ch) = chars.next().expect("peeked successfully above");
         result.push(ch);
     }
@@ -160,14 +139,6 @@ mod tests {
         let result = strip_unsupported_css(input);
         assert!(!result.contains(":root"), "got: {result}");
         assert!(result.contains(".foo"), "got: {result}");
-    }
-
-    #[test]
-    fn strips_not_pseudo_selectors() {
-        let input = ".node:not(.mindmap-node) rect { fill: red; }";
-        let result = strip_unsupported_css(input);
-        assert!(!result.contains(":not"), "got: {result}");
-        assert!(result.contains(".node rect"), "got: {result}");
     }
 
     #[test]
