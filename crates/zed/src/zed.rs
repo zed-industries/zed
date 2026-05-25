@@ -71,6 +71,7 @@ use settings::{
     update_settings_file,
 };
 use sidebar::Sidebar;
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{
     borrow::Cow,
@@ -150,6 +151,15 @@ actions!(
     [
         /// Opens a prompt to enter a URL to open.
         OpenUrlPrompt,
+    ]
+);
+
+#[cfg(debug_assertions)]
+actions!(
+    dev,
+    [
+        /// Show an error on the workspace level.
+        ShowWorkspaceError
     ]
 );
 
@@ -1289,6 +1299,47 @@ fn register_actions(
     }
 
     workspace.register_action(sidebar::dump_workspace_info);
+
+    #[cfg(debug_assertions)]
+    workspace.register_action(|workspace, _: &ShowWorkspaceError, _, cx| {
+        struct DebugError;
+        struct SecondDebugError;
+
+        impl WorkspaceError for DebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("Debug action")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Error
+            }
+
+            fn primary_action(&self) -> Option<ErrorAction> {
+                Some(ErrorAction::new("Dismiss", |_, cx| {
+                    cx.emit(DismissEvent);
+                }))
+            }
+        }
+
+        impl WorkspaceError for SecondDebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("Second debug action")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Error
+            }
+
+            fn primary_action(&self) -> Option<ErrorAction> {
+                Some(ErrorAction::new("Dismiss", |_, cx| {
+                    cx.emit(DismissEvent);
+                }))
+            }
+        }
+
+        workspace.show_error(DebugError, cx);
+        workspace.show_error(SecondDebugError, cx);
+    });
 }
 
 fn initialize_pane(
