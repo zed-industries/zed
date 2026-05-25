@@ -596,6 +596,68 @@ impl ThreadsDatabase {
             .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
     }
 
+    pub fn update_thread_title(
+        &self,
+        id: acp::SessionId,
+        title: SharedString,
+    ) -> Task<Result<bool>> {
+        let connection = self.connection.clone();
+
+        self.executor
+            .spawn(async move { Self::update_thread_title_sync(&connection, id, title) })
+    }
+
+    fn update_thread_title_sync(
+        connection: &Arc<Mutex<Connection>>,
+        id: acp::SessionId,
+        title: SharedString,
+    ) -> Result<bool> {
+        const COMPRESSION_LEVEL: i32 = 3;
+
+        #[derive(Serialize)]
+        struct SerializedThread {
+            #[serde(flatten)]
+            thread: DbThread,
+            version: &'static str,
+        }
+
+        let connection = connection.lock();
+        let mut select = connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
+            SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
+        "})?;
+
+        let Some((data_type, data)) = select(id.0.clone())?.into_iter().next() else {
+            return Ok(false);
+        };
+
+        let json_data = match data_type {
+            DataType::Zstd => {
+                let decompressed = zstd::decode_all(&data[..])?;
+                String::from_utf8(decompressed)?
+            }
+            DataType::Json => String::from_utf8(data)?,
+        };
+        let mut thread = DbThread::from_json(json_data.as_bytes())?;
+        thread.title = title.clone();
+
+        let json_data = serde_json::to_string(&SerializedThread {
+            thread,
+            version: DbThread::VERSION,
+        })?;
+        let compressed = zstd::encode_all(json_data.as_bytes(), COMPRESSION_LEVEL)?;
+        let data_type = DataType::Zstd;
+        let data = compressed;
+        let title = title.to_string();
+
+        let mut update =
+            connection.exec_bound::<(String, DataType, Vec<u8>, Arc<str>)>(indoc! {"
+            UPDATE threads SET summary = ?1, data_type = ?2, data = ?3 WHERE id = ?4
+        "})?;
+
+        update((title, data_type, data, id.0))?;
+        Ok(true)
+    }
+
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
