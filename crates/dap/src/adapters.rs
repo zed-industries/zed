@@ -47,6 +47,10 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
     fn is_headless(&self) -> bool;
+
+    /// Call right before a debug adapter binary would be downloaded; blocks
+    /// until downloads are permitted. Default allows immediately.
+    async fn await_binary_downloads_allowed(&self, _tool: &str) {}
 }
 
 #[derive(
@@ -284,6 +288,10 @@ pub async fn download_adapter_from_github(
     if version_path.exists() {
         return Ok(version_path);
     }
+
+    delegate
+        .await_binary_downloads_allowed(adapter_name.as_ref())
+        .await;
 
     if !adapter_path.exists() {
         fs.create_dir(adapter_path.as_path())

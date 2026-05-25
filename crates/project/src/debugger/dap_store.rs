@@ -8,6 +8,7 @@ use remote::Interactive;
 
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    binary_downloads::DownloadGate,
     debugger::session::SessionQuirks,
     project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
@@ -603,6 +604,8 @@ impl DapStore {
             unimplemented!("Starting session on remote side");
         };
 
+        let binary_downloads = DownloadGate::new(Some(worktree.read(cx).id()), cx);
+
         Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).snapshot(),
@@ -614,6 +617,7 @@ impl DapStore {
                 .environment
                 .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
+            binary_downloads,
         ))
     }
 
@@ -945,6 +949,7 @@ pub struct DapAdapterDelegate {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     is_headless: bool,
+    binary_downloads: Option<DownloadGate>,
 }
 
 impl DapAdapterDelegate {
@@ -957,6 +962,7 @@ impl DapAdapterDelegate {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
         is_headless: bool,
+        binary_downloads: Option<DownloadGate>,
     ) -> Self {
         Self {
             fs,
@@ -967,6 +973,7 @@ impl DapAdapterDelegate {
             toolchain_store,
             load_shell_env_task,
             is_headless,
+            binary_downloads,
         }
     }
 }
@@ -1015,6 +1022,12 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     async fn shell_env(&self) -> HashMap<String, String> {
         let task = self.load_shell_env_task.clone();
         task.await.unwrap_or_default()
+    }
+
+    async fn await_binary_downloads_allowed(&self, tool: &str) {
+        if let Some(gate) = &self.binary_downloads {
+            gate.permit(tool).await;
+        }
     }
 
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
