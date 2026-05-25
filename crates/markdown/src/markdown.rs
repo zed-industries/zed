@@ -508,7 +508,6 @@ impl Markdown {
         } else {
             None
         };
-
         let mut this = Self {
             source,
             selection: Selection::default(),

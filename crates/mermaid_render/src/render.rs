@@ -113,6 +113,7 @@ fn to_merman_config(theme: &MermaidTheme) -> merman::MermaidConfig {
     merman::MermaidConfig::from_value(serde_json::json!({
         "theme": "base",
         "darkMode": theme.dark_mode,
+        "fontFamily": theme.font_family,
         "flowchart": {
             "padding": 16,
         },

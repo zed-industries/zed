@@ -224,7 +224,8 @@ fn should_scope_css_line(trimmed: &str) -> bool {
         && (trimmed.starts_with('.')
             || trimmed.starts_with("foreignObject")
             || trimmed.starts_with("g.")
-            || trimmed.starts_with("text.")
+            || trimmed.starts_with("text")
+            || trimmed.starts_with("tspan")
             || trimmed.starts_with("rect.")
             || trimmed.starts_with("path.")
             || trimmed.starts_with("defs")
@@ -314,7 +315,8 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
 
     let raw_css = format!(
         r#"
-        foreignObject div, foreignObject span, foreignObject p {{ font-family: {font}; font-size: 16px; color: {text}; }}
+        text, tspan, foreignObject div, foreignObject span, foreignObject p {{ font-family: {font} !important; }}
+        foreignObject div, foreignObject span, foreignObject p {{ font-size: 16px; color: {text}; }}
         foreignObject p {{ margin: 0; }}
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}

@@ -18,6 +18,9 @@
 //! <!-- after  --> <text fill="#cdd6f4">Hello</text>
 //! ```
 
+use std::borrow::Cow;
+use std::fmt::Write as _;
+
 use anyhow::Result;
 use quick_xml::events::{BytesStart, Event};
 
@@ -27,6 +30,7 @@ struct ElementFixup<I> {
     inner: I,
     background_css: String,
     text_color_css: String,
+    font_family_css: String,
     svg_seen: bool,
     skip_rect_depth: usize,
 }
@@ -80,10 +84,84 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
     Ok(false)
 }
 
+fn push_font_style(style: &mut String, font_family: &str) {
+    write!(style, "font-family: {font_family};").expect("write to String cannot fail");
+}
+
+fn font_style(font_family: &str) -> String {
+    let mut style = String::with_capacity(font_family.len() + "font-family: ;".len());
+    push_font_style(&mut style, font_family);
+    style
+}
+
+fn rewrite_background_style<'a>(style: &'a str, background_css: &str) -> Cow<'a, str> {
+    const WHITE_BACKGROUND_STYLE: &str = "background-color: white";
+
+    let Some(background_start) = style.find(WHITE_BACKGROUND_STYLE) else {
+        return Cow::Borrowed(style);
+    };
+
+    let mut rewritten = String::with_capacity(
+        style
+            .len()
+            .saturating_sub(WHITE_BACKGROUND_STYLE.len())
+            .saturating_add("background-color: ".len())
+            .saturating_add(background_css.len()),
+    );
+    rewritten.push_str(&style[..background_start]);
+    write!(rewritten, "background-color: {background_css}").expect("write to String cannot fail");
+    rewritten.push_str(&style[background_start + WHITE_BACKGROUND_STYLE.len()..]);
+    Cow::Owned(rewritten)
+}
+
+fn font_family_declaration_value(declaration: &str) -> Option<&str> {
+    let (property, value) = declaration.split_once(':')?;
+    property
+        .trim()
+        .eq_ignore_ascii_case("font-family")
+        .then(|| value.trim())
+}
+
+fn rewrite_font_style<'a>(style: &'a str, font_family: &str) -> Cow<'a, str> {
+    let mut font_family_declaration_count = 0;
+    let mut has_target_font_family = false;
+    for declaration in style
+        .split(';')
+        .map(str::trim)
+        .filter(|declaration| !declaration.is_empty())
+    {
+        if let Some(value) = font_family_declaration_value(declaration) {
+            font_family_declaration_count += 1;
+            has_target_font_family = value == font_family;
+        }
+    }
+
+    if font_family_declaration_count == 1 && has_target_font_family {
+        return Cow::Borrowed(style);
+    }
+
+    let mut rewritten =
+        String::with_capacity(style.len() + font_family.len() + " font-family: ;".len());
+    for declaration in style.split(';') {
+        let declaration = declaration.trim();
+        if declaration.is_empty() || font_family_declaration_value(declaration).is_some() {
+            continue;
+        }
+        if !rewritten.is_empty() {
+            rewritten.push(' ');
+        }
+        rewritten.push_str(declaration);
+        rewritten.push(';');
+    }
+    if !rewritten.is_empty() {
+        rewritten.push(' ');
+    }
+    push_font_style(&mut rewritten, font_family);
+    Cow::Owned(rewritten)
+}
+
 impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
     fn rewrite_svg_style(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
-        const WHITE_BACKGROUND_STYLE: &str = "background-color: white";
-
         let Some(style) = e
             .try_get_attribute("style")?
             .map(|a| a.unescape_value())
@@ -91,28 +169,55 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
         else {
             return Ok(None);
         };
-        if !style.contains(WHITE_BACKGROUND_STYLE) {
+        let new_style = rewrite_background_style(&style, &self.background_css);
+        if matches!(new_style, Cow::Borrowed(_)) {
             return Ok(None);
         }
 
-        let new_style = style.replace(
-            WHITE_BACKGROUND_STYLE,
-            &format!("background-color: {}", self.background_css),
-        );
         Ok(Some(rewrite_attr(e, b"style", &new_style)?))
     }
 
-    fn fix_text_fill(&self, e: &BytesStart<'_>) -> Result<Option<BytesStart<'a>>> {
-        let needs_fix = if let Some(fill_attr) = e.try_get_attribute("fill")? {
-            let val = fill_attr.unescape_value()?;
-            val.as_ref() == "#333" || val.is_empty()
-        } else {
-            false
-        };
-        if !needs_fix {
-            return Ok(None);
+    fn rewrite_text_element(&self, e: &BytesStart<'_>, fix_fill: bool) -> Result<BytesStart<'a>> {
+        let name = e.name();
+        let tag = std::str::from_utf8(name.as_ref())?;
+        let mut new_elem = BytesStart::new(tag.to_owned());
+        let mut has_font_family = false;
+        let mut has_style = false;
+
+        for attr in e.attributes() {
+            let attr = attr?;
+            match attr.key.local_name().as_ref() {
+                b"fill" if fix_fill => {
+                    let val = attr.unescape_value()?;
+                    if val.as_ref() == "#333" || val.is_empty() {
+                        new_elem.push_attribute(("fill", self.text_color_css.as_str()));
+                    } else {
+                        new_elem.push_attribute(attr);
+                    }
+                }
+                b"font-family" => {
+                    has_font_family = true;
+                    new_elem.push_attribute(("font-family", self.font_family_css.as_str()));
+                }
+                b"style" => {
+                    has_style = true;
+                    let style = attr.unescape_value()?;
+                    let style = rewrite_font_style(&style, &self.font_family_css);
+                    new_elem.push_attribute(("style", style.as_ref()));
+                }
+                _ => new_elem.push_attribute(attr),
+            }
         }
-        Ok(Some(rewrite_attr(e, b"fill", &self.text_color_css)?))
+
+        if !has_font_family {
+            new_elem.push_attribute(("font-family", self.font_family_css.as_str()));
+        }
+        if !has_style {
+            let style = font_style(&self.font_family_css);
+            new_elem.push_attribute(("style", style.as_str()));
+        }
+
+        Ok(new_elem)
     }
 
     fn process_event(&mut self, event: Event<'a>) -> Result<Option<Event<'a>>> {
@@ -138,11 +243,11 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
             }
 
             Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"text" => {
-                if let Some(new_elem) = self.fix_text_fill(e)? {
-                    Ok(Some(rewrap(&event, new_elem)))
-                } else {
-                    Ok(Some(event))
-                }
+                Ok(Some(rewrap(&event, self.rewrite_text_element(e, true)?)))
+            }
+
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"tspan" => {
+                Ok(Some(rewrap(&event, self.rewrite_text_element(e, false)?)))
             }
 
             _ => Ok(Some(event)),
@@ -186,6 +291,7 @@ pub(super) fn process<'a>(
         inner: events,
         background_css: crate::css_color(theme.background),
         text_color_css: crate::css_color(theme.text_color),
+        font_family_css: theme.font_family.clone(),
         svg_seen: false,
         skip_rect_depth: 0,
     }
