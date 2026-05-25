@@ -14,8 +14,8 @@ use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
 use project::git_store::RepositoryEvent;
 use ui::{
-    Button, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem, ListItemSpacing, Tooltip,
-    prelude::*,
+    Button, CommonAnimationExt as _, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem,
+    ListItemSpacing, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use util::paths::PathExt;
@@ -116,6 +116,7 @@ impl WorktreePicker {
             show_footer,
             modifiers: Modifiers::default(),
             hovered_delete_index: None,
+            deleting_worktree_paths: HashSet::default(),
         };
 
         let picker = cx.new(|cx| {
@@ -289,6 +290,7 @@ struct WorktreePickerDelegate {
     show_footer: bool,
     modifiers: Modifiers,
     hovered_delete_index: Option<usize>,
+    deleting_worktree_paths: HashSet<PathBuf>,
 }
 
 fn remove_worktree_command(path: &Path, force: bool) -> String {
@@ -439,7 +441,7 @@ impl WorktreePickerDelegate {
     }
 
     fn delete_worktree(
-        &self,
+        &mut self,
         ix: usize,
         force: bool,
         window: &mut Window,
@@ -451,7 +453,9 @@ impl WorktreePickerDelegate {
         let WorktreeEntry::Worktree { worktree, .. } = entry else {
             return;
         };
-        if !self.can_delete_worktree(worktree) {
+        if !self.can_delete_worktree(worktree)
+            || self.deleting_worktree_paths.contains(&worktree.path)
+        {
             return;
         }
 
@@ -468,10 +472,27 @@ impl WorktreePickerDelegate {
         );
         let workspace = self.workspace.clone();
 
+        self.deleting_worktree_paths.insert(path.clone());
+        if self.hovered_delete_index == Some(ix) {
+            self.hovered_delete_index = None;
+        }
+        cx.notify();
+
         cx.spawn_in(window, async move |picker, cx| {
-            let initial_result = repo
+            let initial_result = match repo
                 .update(cx, |repo, _| repo.remove_worktree(path.clone(), force))
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    picker.update_in(cx, |picker, _window, cx| {
+                        if picker.delegate.deleting_worktree_paths.remove(&path) {
+                            cx.notify();
+                        }
+                    })?;
+                    return Err(error.into());
+                }
+            };
 
             let (result, attempted_force) = match initial_result {
                 Ok(()) => (Ok(()), force),
@@ -485,6 +506,12 @@ impl WorktreePickerDelegate {
                         .flatten();
 
                     if let Some(prompt_message) = force_delete_prompt {
+                        picker.update_in(cx, |picker, _window, cx| {
+                            if picker.delegate.deleting_worktree_paths.remove(&path) {
+                                cx.notify();
+                            }
+                        })?;
+
                         let answer = cx.update(|window, cx| {
                             window.prompt(
                                 PromptLevel::Warning,
@@ -499,9 +526,39 @@ impl WorktreePickerDelegate {
                             return Ok(());
                         }
 
-                        let retry = repo
+                        let should_retry = picker.update_in(cx, |picker, _window, cx| {
+                            let worktree_still_exists = picker
+                                .delegate
+                                .all_worktrees
+                                .iter()
+                                .any(|worktree| worktree.path == path);
+                            if !worktree_still_exists
+                                || !picker.delegate.deleting_worktree_paths.insert(path.clone())
+                            {
+                                return false;
+                            }
+                            cx.notify();
+                            true
+                        })?;
+
+                        if !should_retry {
+                            return Ok(());
+                        }
+
+                        let retry = match repo
                             .update(cx, |repo, _| repo.remove_worktree(path.clone(), true))
-                            .await?;
+                            .await
+                        {
+                            Ok(result) => result,
+                            Err(error) => {
+                                picker.update_in(cx, |picker, _window, cx| {
+                                    if picker.delegate.deleting_worktree_paths.remove(&path) {
+                                        cx.notify();
+                                    }
+                                })?;
+                                return Err(error.into());
+                            }
+                        };
 
                         if let Err(error) = &retry {
                             log::error!("Failed to force remove worktree: {error}");
@@ -515,6 +572,12 @@ impl WorktreePickerDelegate {
             };
 
             if let Err(error) = result {
+                picker.update_in(cx, |picker, _window, cx| {
+                    if picker.delegate.deleting_worktree_paths.remove(&path) {
+                        cx.notify();
+                    }
+                })?;
+
                 if let Some(workspace) = workspace.upgrade() {
                     cx.update(|_window, cx| {
                         show_error_toast(
@@ -530,6 +593,7 @@ impl WorktreePickerDelegate {
             }
 
             picker.update_in(cx, |picker, _window, cx| {
+                picker.delegate.deleting_worktree_paths.remove(&path);
                 picker.delegate.matches.retain(|e| {
                     !matches!(e, WorktreeEntry::Worktree { worktree, .. } if worktree.path == path)
                 });
@@ -793,6 +857,10 @@ impl PickerDelegate for WorktreePickerDelegate {
                 }
             }
             WorktreeEntry::Worktree { worktree, .. } => {
+                if self.deleting_worktree_paths.contains(&worktree.path) {
+                    return;
+                }
+
                 let is_current = self.project_worktree_paths.contains(&worktree.path);
 
                 if !is_current {
@@ -935,6 +1003,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let sha = worktree.sha.chars().take(7).collect::<String>();
 
                 let is_current = self.project_worktree_paths.contains(&worktree.path);
+                let is_deleting = self.deleting_worktree_paths.contains(&worktree.path);
                 let can_delete = self.can_delete_worktree(worktree);
 
                 let entry_icon = if is_current {
@@ -1014,7 +1083,24 @@ impl PickerDelegate for WorktreePickerDelegate {
                                         ),
                                 ),
                         )
-                        .when(!is_current, |this| {
+                        .when(is_deleting, |this| {
+                            this.end_slot(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::LoadCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .with_rotate_animation(2),
+                                    )
+                                    .child(
+                                        Label::new("Deleting…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        })
+                        .when(!is_deleting && !is_current, |this| {
                             let open_in_new_window_button =
                                 IconButton::new(("open-new-window", ix), IconName::ArrowUpRight)
                                     .icon_size(IconSize::Small)
@@ -1024,6 +1110,13 @@ impl PickerDelegate for WorktreePickerDelegate {
                                             return;
                                         };
                                         if let WorktreeEntry::Worktree { worktree, .. } = entry {
+                                            if picker
+                                                .delegate
+                                                .deleting_worktree_paths
+                                                .contains(&worktree.path)
+                                            {
+                                                return;
+                                            }
                                             window.dispatch_action(
                                                 Box::new(OpenWorktreeInNewWindow {
                                                     path: worktree.path.clone(),
@@ -1062,12 +1155,8 @@ impl PickerDelegate for WorktreePickerDelegate {
                                             .into()
                                         })
                                         .on_click(cx.listener(move |picker, _, window, cx| {
-                                            picker.delegate.delete_worktree(
-                                                ix,
-                                                picker.delegate.modifiers.alt,
-                                                window,
-                                                cx,
-                                            );
+                                            let force = picker.delegate.modifiers.alt;
+                                            picker.delegate.delete_worktree(ix, force, window, cx);
                                         })),
                                 );
 
@@ -1136,6 +1225,10 @@ impl PickerDelegate for WorktreePickerDelegate {
             matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.project_worktree_paths.contains(&worktree.path))
         });
 
+        let is_deleting = selected_entry.is_some_and(|e| {
+            matches!(e, WorktreeEntry::Worktree { worktree, .. } if self.deleting_worktree_paths.contains(&worktree.path))
+        });
+
         let footer = h_flex()
             .w_full()
             .p_1p5()
@@ -1162,7 +1255,14 @@ impl PickerDelegate for WorktreePickerDelegate {
         } else if is_existing_worktree {
             Some(
                 footer
-                    .when(can_delete, |this| {
+                    .when(is_deleting, |this| {
+                        this.child(
+                            Button::new("delete-worktree", "Deleting…")
+                                .loading(true)
+                                .disabled(true),
+                        )
+                    })
+                    .when(!is_deleting && can_delete, |this| {
                         let focus_handle = focus_handle.clone();
                         this.child(
                             Button::new("delete-worktree", "Delete")
@@ -1175,7 +1275,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                                 }),
                         )
                     })
-                    .when(!is_current, |this| {
+                    .when(!is_deleting && !is_current, |this| {
                         let focus_handle = focus_handle.clone();
                         this.child(
                             Button::new("open-in-new-window", "Open in New Window")
@@ -1192,16 +1292,18 @@ impl PickerDelegate for WorktreePickerDelegate {
                                 }),
                         )
                     })
-                    .child(
-                        Button::new("open-worktree", "Open")
-                            .key_binding(
-                                KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                            }),
-                    )
+                    .when(!is_deleting, |this| {
+                        this.child(
+                            Button::new("open-worktree", "Open")
+                                .key_binding(
+                                    KeyBinding::for_action_in(&menu::Confirm, &focus_handle, cx)
+                                        .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        )
+                    })
                     .into_any(),
             )
         } else {
@@ -1456,6 +1558,33 @@ mod tests {
         })
     }
 
+    fn picker_contains_worktree(
+        worktree_picker: &Entity<WorktreePicker>,
+        worktree_path: &Path,
+        cx: &mut VisualTestContext,
+    ) -> bool {
+        worktree_picker.update(cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.all_worktrees.iter().any(|worktree| {
+                    worktree.path == *worktree_path
+                }) && picker.delegate.matches.iter().any(|entry| {
+                    matches!(entry, WorktreeEntry::Worktree { worktree, .. } if worktree.path == *worktree_path)
+                })
+            })
+        })
+    }
+
+    fn deleting_worktree_paths(
+        worktree_picker: &Entity<WorktreePicker>,
+        cx: &mut VisualTestContext,
+    ) -> HashSet<PathBuf> {
+        worktree_picker.update(cx, |worktree_picker, cx| {
+            worktree_picker.picker.update(cx, |picker, _| {
+                picker.delegate.deleting_worktree_paths.clone()
+            })
+        })
+    }
+
     async fn repo_contains_worktree(
         repository: &Entity<project::git_store::Repository>,
         worktree_path: &Path,
@@ -1469,6 +1598,54 @@ mod tests {
         worktrees
             .iter()
             .any(|worktree| worktree.path == *worktree_path)
+    }
+
+    #[gpui::test]
+    async fn test_delete_worktree_marks_row_pending_immediately(cx: &mut TestAppContext) {
+        let (_, worktree_picker, _repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+
+        let pending_paths = deleting_worktree_paths(&worktree_picker, &mut cx);
+        assert_eq!(pending_paths.len(), 1);
+        assert!(pending_paths.contains(&worktree_path));
+
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn test_delete_worktree_clears_pending_and_removes_row_on_success(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, worktree_picker, repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path));
+
+        cx.run_until_parked();
+
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(!picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
+        assert!(
+            !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
+            "worktree should be removed after successful delete"
+        );
     }
 
     #[gpui::test]
@@ -1489,17 +1666,94 @@ mod tests {
                 picker.delegate.delete_worktree(index, false, window, cx);
             })
         });
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path));
+
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
+        assert!(
+            !deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path),
+            "pending delete state should clear while waiting for force-delete confirmation"
+        );
 
         cx.simulate_prompt_answer("Force Delete");
         cx.run_until_parked();
 
         assert!(!cx.has_pending_prompt());
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(!picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
         assert!(
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed after confirming force delete"
         );
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_delete_worktree_is_ignored_while_pending(cx: &mut TestAppContext) {
+        let (fs, worktree_picker, _repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        fs.with_git_state(path!("/root/project/.git").as_ref(), true, |state| {
+            state
+                .worktrees_requiring_force_delete
+                .insert(worktree_path.clone());
+        })
+        .expect("failed to mark test worktree as requiring force delete");
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.delete_worktree(index, false, window, cx);
+                picker.delegate.delete_worktree(index, false, window, cx);
+            })
+        });
+
+        let pending_paths = deleting_worktree_paths(&worktree_picker, &mut cx);
+        assert_eq!(pending_paths.len(), 1);
+        assert!(pending_paths.contains(&worktree_path));
+
+        cx.run_until_parked();
+        assert!(cx.has_pending_prompt());
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert!(!cx.has_pending_prompt());
+        assert!(picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
+    }
+
+    #[gpui::test]
+    async fn test_selected_deleting_worktree_cannot_be_opened(cx: &mut TestAppContext) {
+        let (_, worktree_picker, _repository, worktree_path, mut cx) =
+            init_worktree_picker_test(cx).await;
+
+        let subscription = cx.update(|_, cx| {
+            cx.subscribe(&worktree_picker, |_, _: &DismissEvent, _| {
+                panic!("DismissEvent should not be emitted for a deleting worktree");
+            })
+        });
+
+        let index = worktree_index(&worktree_picker, &worktree_path, &mut cx);
+        worktree_picker.update_in(&mut cx, |worktree_picker, window, cx| {
+            worktree_picker.picker.update(cx, |picker, cx| {
+                picker.delegate.selected_index = index;
+                picker.delegate.delete_worktree(index, false, window, cx);
+                picker.delegate.confirm(false, window, cx);
+            })
+        });
+
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path));
+
+        drop(subscription);
+        cx.run_until_parked();
     }
 
     #[gpui::test]
@@ -1521,9 +1775,17 @@ mod tests {
                 picker.delegate.delete_worktree(index, true, window, cx);
             })
         });
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).contains(&worktree_path));
+
         cx.run_until_parked();
 
         assert!(!cx.has_pending_prompt());
+        assert!(deleting_worktree_paths(&worktree_picker, &mut cx).is_empty());
+        assert!(!picker_contains_worktree(
+            &worktree_picker,
+            &worktree_path,
+            &mut cx
+        ));
         assert!(
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed by explicit force delete"
