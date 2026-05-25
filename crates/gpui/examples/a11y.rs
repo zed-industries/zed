@@ -69,6 +69,8 @@ impl Render for A11yDemo {
                     .child(
                         div()
                             .id("increment")
+                            .focusable()
+                            .tab_stop(true)
                             .role(Role::Button)
                             .aria_label(SharedString::from(format!(
                                 "Count is {}. Click to increment.",
@@ -89,6 +91,8 @@ impl Render for A11yDemo {
                     .child(
                         div()
                             .id("reset")
+                            .focusable()
+                            .tab_stop(true)
                             .role(Role::Button)
                             .aria_label("Reset counter")
                             .px_3()
@@ -112,6 +116,8 @@ impl Render for A11yDemo {
                     .child(
                         div()
                             .id("toggle")
+                            .focusable()
+                            .tab_stop(true)
                             .role(Role::Switch)
                             .aria_label("Enable feature")
                             .aria_toggled(if self.enabled {
@@ -197,6 +203,12 @@ fn run_example() {
 
 #[cfg(not(target_family = "wasm"))]
 fn main() {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Debug)
+        .filter_module("wgpu", log::LevelFilter::Warn)
+        .filter_module("naga", log::LevelFilter::Warn)
+        .filter_module("blade", log::LevelFilter::Warn)
+        .init();
     run_example();
 }
 
