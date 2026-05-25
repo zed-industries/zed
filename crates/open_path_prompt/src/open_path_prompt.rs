@@ -44,6 +44,7 @@ pub struct OpenPathDelegate {
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
     hidden_entries: bool,
     sort_mode: ProjectPanelSortMode,
+    relative_to: PathBuf,
 }
 
 impl OpenPathDelegate {
@@ -51,6 +52,7 @@ impl OpenPathDelegate {
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         lister: DirectoryLister,
         creating_path: bool,
+        relative_to: PathBuf,
         cx: &App,
     ) -> Self {
         let path_style = lister.path_style(cx);
@@ -76,6 +78,7 @@ impl OpenPathDelegate {
             render_footer: Arc::new(|_, _| None),
             hidden_entries: false,
             sort_mode,
+            relative_to,
         }
     }
 
@@ -156,6 +159,26 @@ impl OpenPathDelegate {
         }
     }
 
+    fn resolve_path(&self, path: &str) -> String {
+        if path.starts_with("./") || path.starts_with(".\\") {
+            let stripped = &path[2..];
+            let resolved = self.relative_to.join(stripped);
+            resolved.to_string_lossy().into_owned()
+        } else if path.starts_with("../") || path.starts_with("..\\") {
+            let stripped = &path[3..];
+            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
+            let resolved = parent.join(stripped);
+            resolved.to_string_lossy().into_owned()
+        } else if path == "." {
+            self.relative_to.to_string_lossy().into_owned()
+        } else if path == ".." {
+            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
+            parent.to_string_lossy().into_owned()
+        } else {
+            path.to_string()
+        }
+    }
+
     fn current_dir(&self) -> &'static str {
         match self.path_style {
             PathStyle::Posix => "./",
@@ -230,9 +253,30 @@ impl OpenPathPrompt {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let relative_to = if creating_path {
+            workspace
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+        } else {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .and_then(|project_path| {
+                    workspace
+                        .project()
+                        .read(cx)
+                        .absolute_path(&project_path, cx)
+                })
+                .and_then(|path| path.parent().map(|p| p.to_path_buf()))
+        };
+        let relative_to = relative_to
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, cx).show_hidden();
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to, cx)
+                    .show_hidden();
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let mut query = lister.default_query(cx);
             if let Some(suggested_name) = suggested_name {
@@ -289,13 +333,13 @@ impl PickerDelegate for OpenPathDelegate {
         let lister = &self.lister;
         let input_is_empty = query.is_empty();
         let (dir, suffix) = get_dir_and_suffix(query, self.path_style);
-
+        let resolved_dir = self.resolve_path(&dir);
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
                     None
                 } else {
-                    Some(lister.list_directory(dir.clone(), cx))
+                    Some(lister.list_directory(resolved_dir, cx))
                 }
             }
             DirectoryState::Create {
@@ -308,10 +352,10 @@ impl PickerDelegate for OpenPathDelegate {
                 {
                     None
                 } else {
-                    Some(lister.list_directory(dir.clone(), cx))
+                    Some(lister.list_directory(resolved_dir, cx))
                 }
             }
-            DirectoryState::None { .. } => Some(lister.list_directory(dir.clone(), cx)),
+            DirectoryState::None { .. } => Some(lister.list_directory(resolved_dir, cx)),
         };
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -624,11 +668,12 @@ impl PickerDelegate for OpenPathDelegate {
         match &self.directory_state {
             DirectoryState::None { .. } => return,
             DirectoryState::List { parent_path, .. } => {
+                let resolved_parent = self.resolve_path(parent_path);
                 let confirmed_path =
                     if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
                         PathBuf::from(&self.prompt_root)
                     } else {
-                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
+                        Path::new(self.lister.resolve_tilde(&resolved_parent, cx).as_ref())
                             .join(&candidate.path.string)
                     };
                 if let Some(tx) = self.tx.take() {
@@ -645,11 +690,12 @@ impl PickerDelegate for OpenPathDelegate {
                     if user_input.is_dir {
                         return;
                     }
+                    let resolved_parent = self.resolve_path(parent_path);
                     let prompted_path =
                         if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
                             PathBuf::from(&self.prompt_root)
                         } else {
-                            Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
+                            Path::new(self.lister.resolve_tilde(&resolved_parent, cx).as_ref())
                                 .join(&user_input.file.string)
                         };
                     if user_input.exists {
