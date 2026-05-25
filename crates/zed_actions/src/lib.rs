@@ -67,6 +67,8 @@ actions!(
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
+        /// Opens the Zed status page.
+        OpenStatusPage,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -75,8 +77,6 @@ actions!(
         OpenOnboarding,
         /// Shows the auto-update notification for testing.
         ShowUpdateNotification,
-        /// Visits the Zed status page.
-        VisitStatusPage
     ]
 );
 
