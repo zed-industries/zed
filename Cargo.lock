@@ -2117,6 +2117,7 @@ dependencies = [
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
  "futures 0.3.32",
+ "http_client",
  "schemars 1.0.4",
  "serde",
  "serde_json",
