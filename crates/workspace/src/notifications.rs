@@ -119,19 +119,8 @@ impl Workspace {
 
                 if is_prompt_without_actions {
                     if let Some(dismiss_duration_ms) = dismiss_timeout_ms.filter(|&ms| ms > 0) {
-                        let task = cx.spawn({
-                            let id = id.clone();
-                            async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(dismiss_duration_ms))
-                                    .await;
-                                let _ = this.update(cx, |workspace, cx| {
-                                    workspace.dismiss_notification(&id, cx);
-                                });
-                            }
-                        });
-                        prompt.update(cx, |prompt, _| {
-                            prompt.dismiss_task = Some(task);
+                        prompt.update(cx, |prompt, cx| {
+                            prompt.schedule_dismiss(Duration::from_millis(dismiss_duration_ms), cx);
                         });
                     }
                 }
@@ -161,7 +150,7 @@ impl Workspace {
     }
 
     pub fn show_error<E: WorkspaceError + 'static>(&mut self, err: E, cx: &mut Context<Self>) {
-        self.show_notification(workspace_error_notification_id(), cx, |cx| {
+        self.show_notification(NotificationId::unique::<E>(), cx, |cx| {
             cx.new(|cx| {
                 simple_message_notification::MessageNotification::from_workspace_error(err, cx)
             })
@@ -250,7 +239,7 @@ pub struct LanguageServerPrompt {
     request: Option<project::LanguageServerPromptRequest>,
     scroll_handle: ScrollHandle,
     markdown: Entity<Markdown>,
-    dismiss_task: Option<Task<()>>,
+    auto_dismiss: Option<LanguageServerPromptAutoDismiss>,
 }
 
 impl Focusable for LanguageServerPrompt {
@@ -270,7 +259,7 @@ impl LanguageServerPrompt {
             request: Some(request),
             scroll_handle: ScrollHandle::new(),
             markdown,
-            dismiss_task: None,
+            auto_dismiss: None,
         }
     }
 
@@ -295,9 +284,99 @@ impl LanguageServerPrompt {
         .log_err();
     }
 
+    fn schedule_dismiss(&mut self, duration: Duration, cx: &mut Context<Self>) {
+        let mut auto_dismiss = LanguageServerPromptAutoDismiss::new(duration);
+        auto_dismiss.schedule(cx);
+        self.auto_dismiss = Some(auto_dismiss);
+    }
+
+    fn on_hover_changed(&mut self, hovering: bool, cx: &mut Context<Self>) {
+        let Some(auto_dismiss) = self.auto_dismiss.as_mut() else {
+            return;
+        };
+
+        if hovering {
+            auto_dismiss.pause();
+        } else {
+            auto_dismiss.resume(cx);
+        }
+    }
+
     fn dismiss_notification(&mut self, cx: &mut Context<Self>) {
-        self.dismiss_task = None;
+        self.auto_dismiss = None;
         cx.emit(DismissEvent);
+    }
+}
+
+struct LanguageServerPromptAutoDismiss {
+    remaining: Duration,
+    timer_started: Option<std::time::Instant>,
+    hovered: bool,
+    task: Option<Task<()>>,
+}
+
+impl LanguageServerPromptAutoDismiss {
+    fn new(duration: Duration) -> Self {
+        Self {
+            remaining: duration,
+            timer_started: None,
+            hovered: false,
+            task: None,
+        }
+    }
+
+    fn schedule(&mut self, cx: &mut Context<LanguageServerPrompt>) {
+        if self.task.is_some() || self.hovered {
+            return;
+        }
+
+        let duration = self.remaining;
+        self.timer_started = Some(std::time::Instant::now());
+        self.task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(duration).await;
+            this.update(cx, |this, cx| {
+                let should_dismiss = this
+                    .auto_dismiss
+                    .as_mut()
+                    .is_some_and(|auto_dismiss| auto_dismiss.finish_timer());
+                if should_dismiss {
+                    this.dismiss_notification(cx);
+                }
+            })
+            .log_err();
+        }));
+    }
+
+    fn pause(&mut self) {
+        if self.hovered {
+            return;
+        }
+
+        self.hovered = true;
+        self.remaining = self.remaining();
+        self.timer_started = None;
+        self.task.take();
+    }
+
+    fn resume(&mut self, cx: &mut Context<LanguageServerPrompt>) {
+        if !self.hovered {
+            return;
+        }
+
+        self.hovered = false;
+        self.schedule(cx);
+    }
+
+    fn finish_timer(&mut self) -> bool {
+        self.task.take();
+        self.timer_started = None;
+        !self.hovered
+    }
+
+    fn remaining(&self) -> Duration {
+        self.timer_started.map_or(self.remaining, |timer_started| {
+            self.remaining.saturating_sub(timer_started.elapsed())
+        })
     }
 }
 
@@ -323,6 +402,11 @@ impl Render for LanguageServerPrompt {
         div()
             .id("language_server_prompt_notification")
             .group("language_server_prompt_notification")
+            .when(self.auto_dismiss.is_some(), |el| {
+                el.on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                    this.on_hover_changed(*hovered, cx);
+                }))
+            })
             .occlude()
             .w_full()
             .max_h(vh(0.8, window))
@@ -457,7 +541,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 }
 
 const FADE_OUT_DURATION: Duration = Duration::from_secs(2);
-const MINIMUM_RESUME_DURATION: Duration = Duration::from_millis(800);
+const FADE_TO_FULL_OPACITY_DURATION: Duration = Duration::from_millis(200);
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct NotificationFrame {
@@ -465,6 +549,7 @@ pub struct NotificationFrame {
     show_suppress_button: bool,
     show_close_button: bool,
     close: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
+    hover: Option<Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>>,
     contents: Option<AnyElement>,
     suffix: Option<AnyElement>,
 }
@@ -478,6 +563,7 @@ impl NotificationFrame {
             show_suppress_button: true,
             show_close_button: true,
             close: None,
+            hover: None,
         }
     }
 
@@ -512,6 +598,13 @@ impl NotificationFrame {
         }
     }
 
+    pub fn on_hover(self, on_hover: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self {
+        Self {
+            hover: Some(Box::new(on_hover)),
+            ..self
+        }
+    }
+
     pub fn with_suffix(mut self, suffix: impl IntoElement) -> Self {
         self.suffix = Some(suffix.into_any_element());
         self
@@ -529,8 +622,14 @@ impl RenderOnce for NotificationFrame {
             ("close", IconName::Close)
         };
 
+        let hover = self.hover.take();
+
         v_flex()
+            .id(("notification-frame", entity))
             .occlude()
+            .when_some(hover, |this, hover| {
+                this.on_hover(move |hovered, window, cx| hover(hovered, window, cx))
+            })
             .p_3()
             .gap_2()
             .elevation_3(cx)
@@ -589,7 +688,7 @@ impl Component for NotificationFrame {}
 
 pub mod simple_message_notification {
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use gpui::{
         AnyElement, DismissEvent, EventEmitter, FocusHandle, Focusable, ParentElement, Render,
@@ -600,41 +699,159 @@ pub mod simple_message_notification {
     use crate::notifications::NotificationFrame;
     use crate::workspace_error::{ErrorSeverity, WorkspaceError};
 
-    use super::{FADE_OUT_DURATION, MINIMUM_RESUME_DURATION, Notification, SuppressEvent};
+    use super::{FADE_OUT_DURATION, FADE_TO_FULL_OPACITY_DURATION, Notification, SuppressEvent};
 
-    enum AutoDismissState {
-        WaitingToDismiss {
-            timer_started: std::time::Instant,
-            duration: Duration,
-            _task: Task<()>,
-        },
-        Paused {
-            remaining: Duration,
-        },
+    struct AutoHideState {
+        remaining_dismiss_duration: Duration,
+        timer_started: Option<Instant>,
+        hovered: bool,
+        fade: Option<AutoHideFade>,
+        task: Option<Task<()>>,
+    }
+
+    enum AutoHideFade {
         FadingOut {
-            fade_started: std::time::Instant,
+            started_at: Instant,
+        },
+        FadingIn {
+            started_at: Instant,
+            start_opacity: f32,
         },
     }
 
-    impl AutoDismissState {
-        fn is_fading(&self) -> bool {
-            matches!(self, Self::FadingOut { .. })
+    impl AutoHideState {
+        fn new(duration: Duration, cx: &mut Context<MessageNotification>) -> Self {
+            let mut this = Self {
+                remaining_dismiss_duration: duration,
+                timer_started: None,
+                hovered: false,
+                fade: None,
+                task: None,
+            };
+            this.schedule(cx);
+            this
         }
 
-        fn opacity(&self) -> f32 {
-            match self {
-                Self::FadingOut { fade_started } => {
-                    let elapsed = fade_started.elapsed();
-                    let progress =
-                        (elapsed.as_secs_f32() / FADE_OUT_DURATION.as_secs_f32()).min(1.0);
-                    1.0 - progress
+        fn schedule(&mut self, cx: &mut Context<MessageNotification>) {
+            if self.task.is_some() || self.hovered {
+                return;
+            }
+
+            if self.remaining_dismiss_duration.is_zero() {
+                self.start_fading_out();
+                cx.notify();
+                return;
+            }
+
+            let duration = self.remaining_dismiss_duration;
+            self.timer_started = Some(Instant::now());
+            self.task = Some(cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(duration).await;
+                if let Err(error) = this.update(cx, |this, cx| {
+                    if let Some(auto_hide) = this.auto_hide.as_mut() {
+                        auto_hide.finish_timer();
+                        if !auto_hide.hovered {
+                            auto_hide.start_fading_out();
+                            cx.notify();
+                        }
+                    }
+                }) {
+                    log::error!("failed to update auto-hiding notification: {error:?}");
                 }
-                _ => 1.0,
+            }));
+        }
+
+        fn set_hovered(&mut self, hovered: bool, cx: &mut Context<MessageNotification>) {
+            if self.hovered == hovered {
+                return;
+            }
+
+            self.hovered = hovered;
+            if hovered {
+                self.remaining_dismiss_duration = self.remaining_dismiss_duration();
+                self.timer_started = None;
+                self.task.take();
+
+                if matches!(self.fade, Some(AutoHideFade::FadingOut { .. })) {
+                    let start_opacity = self.opacity();
+                    self.fade = Some(AutoHideFade::FadingIn {
+                        started_at: Instant::now(),
+                        start_opacity,
+                    });
+                }
+            } else {
+                if matches!(self.fade, Some(AutoHideFade::FadingIn { .. })) {
+                    self.fade = None;
+                }
+                self.schedule(cx);
+            }
+            cx.notify();
+        }
+
+        fn refresh_animation(&mut self) -> bool {
+            match self.fade {
+                Some(AutoHideFade::FadingOut { started_at })
+                    if started_at.elapsed() >= FADE_OUT_DURATION =>
+                {
+                    true
+                }
+                Some(AutoHideFade::FadingIn { started_at, .. })
+                    if started_at.elapsed() >= FADE_TO_FULL_OPACITY_DURATION =>
+                {
+                    self.fade = None;
+                    false
+                }
+                _ => false,
             }
         }
 
-        fn fade_complete(&self) -> bool {
-            matches!(self, Self::FadingOut { fade_started } if fade_started.elapsed() >= FADE_OUT_DURATION)
+        fn needs_animation_frame(&self) -> bool {
+            self.fade.is_some()
+        }
+
+        fn opacity(&self) -> f32 {
+            match self.fade {
+                Some(AutoHideFade::FadingOut { started_at }) => {
+                    1.0 - duration_progress(started_at.elapsed(), FADE_OUT_DURATION)
+                }
+                Some(AutoHideFade::FadingIn {
+                    started_at,
+                    start_opacity,
+                }) => {
+                    let progress =
+                        duration_progress(started_at.elapsed(), FADE_TO_FULL_OPACITY_DURATION);
+                    start_opacity + (1.0 - start_opacity) * progress
+                }
+                None => 1.0,
+            }
+        }
+
+        fn finish_timer(&mut self) {
+            self.task.take();
+            self.timer_started = None;
+            self.remaining_dismiss_duration = Duration::ZERO;
+        }
+
+        fn start_fading_out(&mut self) {
+            self.fade = Some(AutoHideFade::FadingOut {
+                started_at: Instant::now(),
+            });
+        }
+
+        fn remaining_dismiss_duration(&self) -> Duration {
+            self.timer_started
+                .map_or(self.remaining_dismiss_duration, |timer_started| {
+                    self.remaining_dismiss_duration
+                        .saturating_sub(timer_started.elapsed())
+                })
+        }
+    }
+
+    fn duration_progress(elapsed: Duration, duration: Duration) -> f32 {
+        if duration.is_zero() {
+            1.0
+        } else {
+            (elapsed.as_secs_f32() / duration.as_secs_f32()).min(1.0)
         }
     }
 
@@ -659,9 +876,7 @@ pub mod simple_message_notification {
         show_suppress_button: bool,
         title: Option<SharedString>,
         scroll_handle: ScrollHandle,
-        dismiss_delay: Option<Duration>,
-        hovered: bool,
-        auto_dismiss: Option<AutoDismissState>,
+        auto_hide: Option<AutoHideState>,
     }
 
     impl Focusable for MessageNotification {
@@ -713,9 +928,7 @@ pub mod simple_message_notification {
                 title: None,
                 focus_handle: cx.focus_handle(),
                 scroll_handle: ScrollHandle::new(),
-                dismiss_delay: None,
-                hovered: false,
-                auto_dismiss: None,
+                auto_hide: None,
             }
         }
 
@@ -845,8 +1058,7 @@ pub mod simple_message_notification {
 
         fn auto_dismiss(mut self, severity: ErrorSeverity, cx: &mut Context<Self>) -> Self {
             if let Some(delay) = severity.auto_dismiss_delay() {
-                self.dismiss_delay = Some(delay);
-                self.start_dismiss_timer(delay, cx);
+                self.auto_hide = Some(AutoHideState::new(delay, cx));
             }
             self
         }
@@ -880,87 +1092,31 @@ pub mod simple_message_notification {
                 .auto_dismiss(severity, cx)
         }
 
-        fn start_dismiss_timer(&mut self, duration: Duration, cx: &mut Context<Self>) {
-            let task = cx.spawn(async move |this, cx| {
-                cx.background_executor().timer(duration).await;
-                this.update(cx, |this, cx| {
-                    this.auto_dismiss = Some(AutoDismissState::FadingOut {
-                        fade_started: std::time::Instant::now(),
-                    });
-                    cx.notify();
-                })
-                .ok();
-            });
-
-            self.auto_dismiss = Some(AutoDismissState::WaitingToDismiss {
-                timer_started: std::time::Instant::now(),
-                duration,
-                _task: task,
-            });
-        }
-
         fn on_hover_changed(&mut self, hovering: bool, cx: &mut Context<Self>) {
-            let Some(state) = self.auto_dismiss.take() else {
-                return;
-            };
-
-            self.hovered = hovering;
-
-            if hovering {
-                self.auto_dismiss = Some(match state {
-                    AutoDismissState::WaitingToDismiss {
-                        timer_started,
-                        duration,
-                        ..
-                    } => {
-                        let elapsed = timer_started.elapsed();
-                        let remaining = duration
-                            .saturating_sub(elapsed)
-                            .max(MINIMUM_RESUME_DURATION);
-                        AutoDismissState::Paused { remaining }
-                    }
-                    AutoDismissState::FadingOut { .. } => {
-                        if let Some(delay) = self.dismiss_delay {
-                            self.start_dismiss_timer(delay, cx);
-                            return;
-                        }
-                        AutoDismissState::Paused {
-                            remaining: MINIMUM_RESUME_DURATION,
-                        }
-                    }
-                    other => other,
-                });
-            } else {
-                match state {
-                    AutoDismissState::Paused { remaining } => {
-                        self.start_dismiss_timer(remaining, cx);
-                    }
-                    _ => {
-                        self.auto_dismiss = Some(state);
-                    }
-                }
+            if let Some(auto_hide) = self.auto_hide.as_mut() {
+                auto_hide.set_hovered(hovering, cx);
             }
         }
 
         fn opacity(&self) -> f32 {
-            self.auto_dismiss
+            self.auto_hide
                 .as_ref()
-                .map_or(1.0, |state| state.opacity())
+                .map_or(1.0, |auto_hide| auto_hide.opacity())
         }
 
         fn needs_animation_frame(&self) -> bool {
-            self.auto_dismiss
+            self.auto_hide
                 .as_ref()
-                .is_some_and(|state| state.is_fading())
+                .is_some_and(|auto_hide| auto_hide.needs_animation_frame())
         }
     }
 
     impl Render for MessageNotification {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             if self
-                .auto_dismiss
-                .as_ref()
-                .is_some_and(|state| state.fade_complete())
+                .auto_hide
+                .as_mut()
+                .is_some_and(|auto_hide| auto_hide.refresh_animation())
             {
                 cx.emit(DismissEvent);
             }
@@ -970,18 +1126,18 @@ pub mod simple_message_notification {
             }
 
             let opacity = self.opacity();
-            let has_auto_dismiss = self.auto_dismiss.is_some();
+            let has_auto_hide = self.auto_hide.is_some();
 
             div()
                 .id("message-notification-wrapper")
                 .opacity(opacity)
-                .when(has_auto_dismiss, |el| {
-                    el.on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                        this.on_hover_changed(*hovered, cx);
-                    }))
-                })
                 .child(
                     NotificationFrame::new()
+                        .when(has_auto_hide, |frame| {
+                            frame.on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                                this.on_hover_changed(*hovered, cx);
+                            }))
+                        })
                         .with_title(self.title.clone())
                         .with_content({
                             let main_content = (self.build_content)(window, cx);

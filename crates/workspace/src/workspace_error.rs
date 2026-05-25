@@ -1,8 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{App, SharedString, Window};
-use ui::IconName;
+use gpui::{SharedString, Window};
+use ui::{Context, IconName};
+
+use crate::notifications::simple_message_notification::MessageNotification;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorSeverity {
@@ -25,13 +27,13 @@ pub struct ErrorAction {
     pub label: SharedString,
     pub icon: Option<IconName>,
     pub tooltip: Option<SharedString>,
-    pub handler: Arc<dyn Fn(&mut Window, &mut App) + 'static>,
+    pub handler: Arc<dyn Fn(&mut Window, &mut Context<'_, MessageNotification>) + 'static>,
 }
 
 impl ErrorAction {
     pub fn new(
         label: impl Into<SharedString>,
-        handler: impl Fn(&mut Window, &mut App) + 'static,
+        handler: impl Fn(&mut Window, &mut Context<'_, MessageNotification>) + 'static,
     ) -> Self {
         Self {
             label: label.into(),
