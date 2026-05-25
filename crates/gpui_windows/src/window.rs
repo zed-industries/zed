@@ -979,7 +979,6 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
-        let active = Arc::new(AtomicBool::new(false));
         let action_handler = A11yActionHandler(callbacks.action);
         let is_focused = unsafe { GetForegroundWindow() } == self.0.hwnd;
 
@@ -991,13 +990,11 @@ impl PlatformWindow for WindowsWindow {
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
-            active: active.clone(),
         };
 
         *self.state.a11y.borrow_mut() = Some(A11yState {
             adapter,
             activation_handler,
-            active,
         });
     }
 
@@ -1021,29 +1018,20 @@ impl PlatformWindow for WindowsWindow {
         // Windows UIA handles window bounds tracking automatically.
     }
 
-    fn is_a11y_active(&self) -> bool {
-        self.state
-            .a11y
-            .borrow()
-            .as_ref()
-            .is_some_and(|a11y| a11y.active.load(Ordering::SeqCst))
-    }
+
 }
 
 pub(crate) struct A11yState {
     pub(crate) adapter: accesskit_windows::Adapter,
     pub(crate) activation_handler: A11yActivationHandler,
-    pub(crate) active: Arc<AtomicBool>,
 }
 
 pub(crate) struct A11yActivationHandler {
     callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-    active: Arc<AtomicBool>,
 }
 
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        self.active.store(true, Ordering::SeqCst);
         (self.callback)()
     }
 }

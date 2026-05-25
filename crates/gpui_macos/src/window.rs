@@ -504,7 +504,6 @@ struct MacWindowState {
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
     closed: Arc<AtomicBool>,
-    a11y_active: Arc<AtomicBool>,
     accesskit_adapter: Option<accesskit_macos::SubclassingAdapter>,
     // The parent window if this window is a sheet (Dialog kind)
     sheet_parent: Option<id>,
@@ -836,7 +835,6 @@ impl MacWindow {
                 activated_least_once: false,
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
-                a11y_active: Arc::new(AtomicBool::new(false)),
                 sheet_parent: None,
             })));
 
@@ -1741,11 +1739,9 @@ impl PlatformWindow for MacWindow {
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
         let mut lock = self.0.lock();
-        let a11y_active = lock.a11y_active.clone();
 
         let activation_handler = A11yActivationHandler {
             callback: callbacks.activation,
-            a11y_active,
         };
         let action_handler = A11yActionHandler(callbacks.action);
 
@@ -1776,19 +1772,15 @@ impl PlatformWindow for MacWindow {
         // macOS handles window bounds tracking automatically via NSAccessibility.
     }
 
-    fn is_a11y_active(&self) -> bool {
-        self.0.lock().a11y_active.load(Ordering::SeqCst)
-    }
+
 }
 
 struct A11yActivationHandler {
     callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-    a11y_active: Arc<AtomicBool>,
 }
 
 impl accesskit::ActivationHandler for A11yActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        self.a11y_active.store(true, Ordering::SeqCst);
         (self.callback)()
     }
 }

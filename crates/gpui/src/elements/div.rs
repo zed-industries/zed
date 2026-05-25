@@ -1999,7 +1999,7 @@ impl Interactivity {
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
 
-            if window.a11y.active {
+            if window.a11y.is_active() {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
                     window.a11y.focus_ids.insert(node_id, focus_handle.id);
@@ -2233,7 +2233,7 @@ impl Interactivity {
 
                                         self.paint_keyboard_listeners(window, cx);
 
-                                        if window.a11y.active {
+                                        if window.a11y.is_active() {
                                             if let Some(global_id) = global_id {
                                                 if !self.a11y_action_listeners.is_empty() {
                                                     let node_id = global_id.accesskit_node_id();
@@ -3101,59 +3101,13 @@ impl Interactivity {
         if !self.click_listeners.is_empty() {
             node.add_action(accesskit::Action::Click);
         }
-        let inherently_focusable = self.override_role.map_or(false, is_inherently_focusable);
-        if self.tracked_focus_handle.is_some()
-            || self.focusable
-            || inherently_focusable
-            || !self.click_listeners.is_empty()
-        {
+        if self.tracked_focus_handle.is_some() || self.focusable {
             node.add_action(accesskit::Action::Focus);
         }
         for (action, _) in &self.a11y_action_listeners {
             node.add_action(*action);
         }
     }
-}
-
-/// Whether an AccessKit role represents a widget that is inherently focusable
-/// per the ARIA specification (i.e. users should not need to manually add
-/// `.focusable(true)` for these roles).
-fn is_inherently_focusable(role: accesskit::Role) -> bool {
-    use accesskit::Role;
-    matches!(
-        role,
-        Role::Button
-            | Role::DefaultButton
-            | Role::CheckBox
-            | Role::RadioButton
-            | Role::Switch
-            | Role::Link
-            | Role::Tab
-            | Role::MenuItem
-            | Role::MenuItemCheckBox
-            | Role::MenuItemRadio
-            | Role::ListBoxOption
-            | Role::MenuListOption
-            | Role::TreeItem
-            | Role::TextInput
-            | Role::MultilineTextInput
-            | Role::SearchInput
-            | Role::DateInput
-            | Role::DateTimeInput
-            | Role::WeekInput
-            | Role::MonthInput
-            | Role::TimeInput
-            | Role::EmailInput
-            | Role::NumberInput
-            | Role::PasswordInput
-            | Role::PhoneNumberInput
-            | Role::UrlInput
-            | Role::ComboBox
-            | Role::EditableComboBox
-            | Role::Slider
-            | Role::SpinButton
-            | Role::DisclosureTriangle
-    )
 }
 
 /// The per-frame state of an interactive element. Used for tracking stateful interactions like clicks

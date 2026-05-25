@@ -719,10 +719,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     /// Inform the adapter of updated window bounds.
     fn a11y_update_window_bounds(&self) {}
 
-    /// Whether the accessibility adapter is currently active.
-    fn is_a11y_active(&self) -> bool {
-        false
-    }
+
 
     #[cfg(any(test, feature = "test-support"))]
     fn as_test(&mut self) -> Option<&mut TestWindow> {

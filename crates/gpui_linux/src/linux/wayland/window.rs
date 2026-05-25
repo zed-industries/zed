@@ -3,10 +3,7 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
 };
 
 use collections::{FxHashSet, HashMap};
@@ -126,7 +123,6 @@ pub struct WaylandWindowState {
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
     client_inset: Option<Pixels>,
-    a11y_active: Arc<AtomicBool>,
     accesskit_adapter: Option<accesskit_unix::Adapter>,
 }
 
@@ -403,7 +399,6 @@ impl WaylandWindowState {
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
-            a11y_active: Arc::new(AtomicBool::new(false)),
             accesskit_adapter: None,
         })
     }
@@ -1531,16 +1526,12 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
-        let a11y_active = self.borrow().a11y_active.clone();
-
         let activation_handler = TrivialActivationHandler {
             callback: callbacks.activation,
-            a11y_active: Arc::clone(&a11y_active),
         };
         let action_handler = TrivialActionHandler(callbacks.action);
         let deactivation_handler = TrivialDeactivationHandler {
             callback: callbacks.deactivation,
-            a11y_active,
         };
 
         let adapter =
@@ -1559,20 +1550,14 @@ impl PlatformWindow for WaylandWindow {
     fn a11y_update_window_bounds(&self) {
         // Wayland doesn't expose window position, so this is a no-op
     }
-
-    fn is_a11y_active(&self) -> bool {
-        self.borrow().a11y_active.load(Ordering::SeqCst)
-    }
 }
 
 struct TrivialActivationHandler {
     callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
-    a11y_active: Arc<AtomicBool>,
 }
 
 impl accesskit::ActivationHandler for TrivialActivationHandler {
     fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
-        self.a11y_active.store(true, Ordering::SeqCst);
         (self.callback)()
     }
 }
@@ -1587,12 +1572,10 @@ impl accesskit::ActionHandler for TrivialActionHandler {
 
 struct TrivialDeactivationHandler {
     callback: Box<dyn Fn() + Send + 'static>,
-    a11y_active: Arc<AtomicBool>,
 }
 
 impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     fn deactivate_accessibility(&mut self) {
-        self.a11y_active.store(false, Ordering::SeqCst);
         (self.callback)();
     }
 }

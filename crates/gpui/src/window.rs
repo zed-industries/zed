@@ -52,7 +52,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -1570,6 +1570,8 @@ impl Window {
             })
         });
 
+        let a11y_active_flag = Arc::new(AtomicBool::new(false));
+
         {
             let initial_tree = accesskit::TreeUpdate {
                 nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
@@ -1578,29 +1580,53 @@ impl Window {
                 focus: ROOT_NODE_ID,
             };
             let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
+            let (deactivation_sender, deactivation_receiver) = async_channel::unbounded::<()>();
             let (action_sender, action_receiver) =
                 async_channel::unbounded::<accesskit::ActionRequest>();
 
             platform_window.a11y_init(crate::A11yCallbacks {
-                activation: Box::new(move || {
-                    activation_sender.send_blocking(()).log_err();
-                    Some(initial_tree.clone())
-                }),
+                activation: {
+                    let active_flag = a11y_active_flag.clone();
+                    Box::new(move || {
+                        log::info!("Accessibility activated");
+                        active_flag.store(true, SeqCst);
+                        activation_sender.send_blocking(()).log_err();
+                        Some(initial_tree.clone())
+                    })
+                },
                 action: Box::new(move |request| {
                     action_sender.send_blocking(request).log_err();
                 }),
-                deactivation: Box::new(|| {}),
+                deactivation: {
+                    let active_flag = a11y_active_flag.clone();
+                    Box::new(move || {
+                        log::info!("Accessibility deactivated");
+                        active_flag.store(false, SeqCst);
+                        deactivation_sender.send_blocking(()).log_err();
+                    })
+                },
             });
 
             // A11y can be activated at any time, and so we cannot compute a
             // correct `TreeUpdate` on-demand. When this happens, we return a
             // default empty `TreeUpdate`.
-            // 
+            //
             // So we force a new frame, which will then send a correct `TreeUpdate`.
             let mut async_cx = cx.to_async();
             cx.foreground_executor()
                 .spawn(async move {
                     while activation_receiver.recv().await.is_ok() {
+                        handle
+                            .update(&mut async_cx, |_, window, _| window.refresh())
+                            .log_err();
+                    }
+                })
+                .detach();
+
+            let mut async_cx = cx.to_async();
+            cx.foreground_executor()
+                .spawn(async move {
+                    while deactivation_receiver.recv().await.is_ok() {
                         handle
                             .update(&mut async_cx, |_, window, _| window.refresh())
                             .log_err();
@@ -1688,7 +1714,7 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            a11y: A11y::new(),
+            a11y: A11y::new(a11y_active_flag),
         })
     }
 
@@ -2676,8 +2702,8 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
-        self.a11y.active = self.platform_window.is_a11y_active();
-        if self.a11y.active {
+        self.a11y.sync_active_flag();
+        if self.a11y.is_active() {
             self.a11y.begin_frame();
         }
 
@@ -2748,13 +2774,24 @@ impl Window {
         #[cfg(any(feature = "inspector", debug_assertions))]
         self.paint_inspector_hitbox(cx);
 
-        if self.a11y.active {
+        // a11y may have been activated/deactivated halfway through the frame
+        let a11y_active_start_of_frame = self.a11y.is_active();
+        self.a11y.sync_active_flag();
+        let a11y_active_end_of_frame = self.a11y.is_active();
+
+        let should_send_a11y_update = a11y_active_start_of_frame && a11y_active_end_of_frame;
+
+        if a11y_active_start_of_frame {
+            // clear the builder state regardless
             let tree_update = self.a11y.end_frame();
-            log::debug!(
-                "Sending a11y tree update: {} nodes",
-                tree_update.nodes.len()
-            );
-            self.platform_window.a11y_tree_update(tree_update);
+            
+            if should_send_a11y_update {
+                log::debug!(
+                    "Sending a11y tree update: {} nodes",
+                    tree_update.nodes.len()
+                );
+                self.platform_window.a11y_tree_update(tree_update);
+            }
         }
     }
 
