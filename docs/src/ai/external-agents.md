@@ -118,7 +118,7 @@ Zed-configured [MCP servers](./mcp.md) may be forwarded to external agents over 
 
 If an MCP tool does not appear in an external agent, check both Zed's MCP server configuration and the agent's native MCP configuration.
 
-## Debugging {#debugging}
+## Debugging {#debugging-agents}
 
 Use {#action dev::OpenAcpLogs} from the Command Palette to inspect messages between Zed and an external agent.
 
