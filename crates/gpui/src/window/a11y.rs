@@ -111,6 +111,7 @@ pub struct A11yActionRequest {
 }
 
 impl A11yActionRequest {
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn from_accesskit(request: &accesskit::ActionRequest) -> Self {
         Self {
             action: request.action,

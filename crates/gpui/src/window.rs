@@ -8,7 +8,7 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
-    MouseButton, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
     RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
@@ -61,7 +61,9 @@ use uuid::Uuid;
 pub(crate) mod a11y;
 mod prompts;
 
-use self::a11y::{A11y, ROOT_NODE_ID};
+use self::a11y::A11y;
+#[cfg(not(target_family = "wasm"))]
+use self::a11y::ROOT_NODE_ID;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
@@ -5364,6 +5366,7 @@ impl Window {
             .push((action, Box::new(listener)));
     }
 
+    #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
@@ -5389,7 +5392,7 @@ impl Window {
             accesskit::Action::Click => {
                 if let Some(bounds) = self.a11y.node_bounds.get(&request.target_node).copied() {
                     let center = bounds.center();
-                    let mouse_down = PlatformInput::MouseDown(MouseDownEvent {
+                    let mouse_down = PlatformInput::MouseDown(crate::MouseDownEvent {
                         button: MouseButton::Left,
                         position: center,
                         modifiers: Modifiers::default(),
