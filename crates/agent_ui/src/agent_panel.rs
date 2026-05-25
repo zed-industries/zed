@@ -79,8 +79,8 @@ use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
 use ui::{
-    Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProjectEmptyState, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    Button, ContextMenu, ContextMenuEntry, GradientFade, IconButton, PopoverMenu,
+    PopoverMenuHandle, Tab, Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -1486,10 +1486,6 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_with_workspace(None, window, cx);
     }
 
@@ -1513,10 +1509,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
 
         // If the user is viewing a *parked* draft and the ephemeral
@@ -1595,10 +1587,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let active_matching = match &self.base_view {
             BaseView::AgentThread { conversation_view }
                 if conversation_view.read(cx).thread_id == thread_id =>
@@ -1652,10 +1640,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.selected_agent = action.agent.clone().into();
         self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
     }
@@ -1701,8 +1685,7 @@ impl AgentPanel {
     }
 
     pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
-        self.last_created_entry_kind == AgentPanelEntryKind::Terminal
-            && self.project.read(cx).supports_terminal(cx)
+        self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
     }
 
     fn set_last_created_entry_kind_from_user_action(
@@ -2540,10 +2523,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
@@ -3032,10 +3011,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if resume_thread_id.is_none() && !self.has_open_project(cx) {
-            return;
-        }
-
         let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
         let thread = self.create_agent_thread_with_server(
             agent,
@@ -3149,10 +3124,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_menu_handle.toggle(window, cx);
     }
 
@@ -4589,11 +4560,15 @@ impl AgentPanel {
     }
 
     fn should_show_title_edit(&self, window: &Window, cx: &Context<Self>) -> bool {
-        matches!(
-            self.visible_surface(),
-            VisibleSurface::AgentThread(_) | VisibleSurface::Terminal(_)
-        ) && self.has_open_project(cx)
-            && !self.is_title_editor_focused(window, cx)
+        if self.is_title_editor_focused(window, cx) {
+            return false;
+        }
+
+        match self.visible_surface() {
+            VisibleSurface::AgentThread(_) => true,
+            VisibleSurface::Terminal(_) => self.has_open_project(cx),
+            VisibleSurface::Uninitialized | VisibleSurface::Configuration(_) => false,
+        }
     }
 
     fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
@@ -5000,30 +4975,11 @@ impl AgentPanel {
             })
     }
 
-    fn render_no_project_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-
-        ProjectEmptyState::new(
-            "Agent Panel",
-            focus_handle.clone(),
-            KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
-        )
-        .on_open_project(|_, window, cx| {
-            telemetry::event!("Agent Panel Add Project Clicked");
-            window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
-        })
-        .on_clone_repo(|_, window, cx| {
-            telemetry::event!("Agent Panel Clone Repo Clicked");
-            window.dispatch_action(git::Clone.boxed_clone(), cx);
-        })
-    }
-
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
 
-        let can_create_entries = self.has_open_project(cx);
         let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
@@ -5359,7 +5315,7 @@ impl AgentPanel {
             .flex_none()
             .justify_between();
 
-        let toolbar_content = if can_create_entries && matches!(mode, ToolbarMode::EmptyThread) {
+        let toolbar_content = if matches!(mode, ToolbarMode::EmptyThread) {
             let (chevron_icon, icon_color, label_color) =
                 if self.new_thread_menu_handle.is_deployed() {
                     (IconName::ChevronUp, Color::Accent, Color::Accent)
@@ -5470,7 +5426,7 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
-                        .when(can_create_entries, |this| this.child(new_thread_menu))
+                        .child(new_thread_menu)
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -5820,9 +5776,6 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
-                VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
-                    parent.child(self.render_no_project_state(cx))
-                }
                 VisibleSurface::Uninitialized => parent,
                 VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
@@ -7881,7 +7834,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_workspace_does_not_create_agent_entries(cx: &mut TestAppContext) {
+    async fn test_empty_workspace_can_create_agent_thread_but_not_terminal(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -7889,6 +7844,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -7914,33 +7870,43 @@ mod tests {
                 crate::agent_connection_store::AgentConnectionStatus::Disconnected,
                 "empty workspaces should not start the native agent connection"
             );
+            assert!(
+                !panel.supports_terminal(cx),
+                "empty workspaces should not support agent panel terminals"
+            );
         });
 
         panel.update_in(cx, |panel, window, cx| {
             panel.new_thread(&NewThread, window, cx);
-            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
-            panel.new_external_agent_thread(
-                &NewExternalAgentThread {
-                    agent: AgentId::new("external-agent"),
-                },
-                window,
-                cx,
-            );
         });
         cx.run_until_parked();
 
         panel.read_with(cx, |panel, cx| {
             assert!(
-                panel.active_conversation_view().is_none(),
-                "empty workspaces should not create agent threads"
+                panel.active_conversation_view().is_some(),
+                "empty workspaces should create agent threads"
             );
             assert!(
-                panel.draft_thread.is_none(),
-                "empty workspaces should not create draft threads"
+                panel.active_agent_thread(cx).is_some(),
+                "empty workspaces should connect agent threads"
+            );
+            assert!(
+                panel.draft_thread.is_some(),
+                "empty workspaces should create draft threads"
             );
             assert!(
                 panel.terminals(cx).is_empty(),
                 "empty workspaces should not create agent panel terminals"
+            );
+        });
+
+        panel.update(cx, |panel, _cx| {
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+        });
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                !panel.should_create_terminal_for_new_entry(cx),
+                "empty workspaces should not reuse terminal as the next entry kind"
             );
         });
 
@@ -7957,13 +7923,9 @@ mod tests {
                 panel.terminals(cx).is_empty(),
                 "empty workspaces should not create terminals after the terminal feature is enabled"
             );
-            assert_eq!(
-                panel
-                    .connection_store()
-                    .read(cx)
-                    .connection_status(&Agent::NativeAgent, cx),
-                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
-                "empty workspace actions should not start the native agent connection"
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "attempting to create a terminal should leave the empty-workspace chat intact"
             );
         });
     }
