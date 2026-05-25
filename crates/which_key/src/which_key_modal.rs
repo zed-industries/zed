@@ -6,7 +6,7 @@ use gpui::{
     ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use theme_settings::ThemeSettings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
@@ -65,9 +65,33 @@ impl WhichKeyModal {
             cx.emit(DismissEvent);
             return;
         };
-        let bindings = window.possible_bindings_for_input(pending_keys);
+        let bindings =
+            Self::collect_filtered_bindings(window, pending_keys, Some(&self.focus_handle), true);
+        let binding_data = bindings
+            .into_iter()
+            .map(|(keystrokes, action_name)| {
+                // Map to remaining keystrokes and action name
+                let remaining = keystrokes[pending_keys.len()..].to_vec();
+                (remaining, action_name)
+            })
+            .collect();
+        let title = text_for_keystrokes(&pending_keys, cx).into();
+        self.sort_and_finalize_bindings(binding_data, title, cx);
+    }
 
-        let mut binding_data = bindings
+    fn collect_filtered_bindings(
+        window: &Window,
+        input: &[Keystroke],
+        focus_handle: Option<&gpui::FocusHandle>,
+        dedup_by_action: bool,
+    ) -> Vec<(Vec<Keystroke>, SharedString)> {
+        let mut seen = HashSet::new();
+        let bindings = if let Some(focus) = focus_handle {
+            window.possible_bindings_for_input_in(input, focus)
+        } else {
+            window.possible_bindings_for_input(input)
+        };
+        bindings
             .iter()
             .map(|binding| {
                 // Map to keystrokes
@@ -88,19 +112,33 @@ impl WhichKeyModal {
                 })
             })
             .map(|(keystrokes, action)| {
-                // Map to remaining keystrokes and action name
-                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
                 let action_name: SharedString =
                     command_palette::humanize_action_name(action.name()).into();
-                (remaining_keystrokes, action_name)
+                (keystrokes, action_name)
+            })
+            .filter(|(_, action_name)| !dedup_by_action || seen.insert(action_name.clone()))
+            .collect()
+    }
+
+    fn sort_and_finalize_bindings(
+        &mut self,
+        binding_data: Vec<(Vec<Keystroke>, SharedString)>,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let binding_data = group_bindings(binding_data);
+
+        let mut entries: Vec<_> = binding_data
+            .into_iter()
+            .map(|(keystrokes, action)| {
+                let text: SharedString = text_for_keystrokes(&keystrokes, cx).into();
+                (keystrokes.len(), text, action)
             })
             .collect();
 
-        binding_data = group_bindings(binding_data);
-
         // Sort bindings from shortest to longest, with groups last
         // Using stable sort to preserve relative order of equal elements
-        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
+        entries.sort_by(|(len_a, text_a, action_a), (len_b, text_b, action_b)| {
             // Groups (actions starting with "+") should go last
             let is_group_a = action_a.starts_with('+');
             let is_group_b = action_b.starts_with('+');
@@ -112,25 +150,30 @@ impl WhichKeyModal {
             }
 
             // Then sort by keystroke count
-            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
+            let keystroke_cmp = len_a.cmp(len_b);
             if keystroke_cmp != std::cmp::Ordering::Equal {
                 return keystroke_cmp;
             }
 
             // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
             let text_len_cmp = text_a.len().cmp(&text_b.len());
             if text_len_cmp != std::cmp::Ordering::Equal {
                 return text_len_cmp;
             }
-            text_a.cmp(&text_b)
+            let text_cmp = text_a.cmp(text_b);
+            if text_cmp != std::cmp::Ordering::Equal {
+                return text_cmp;
+            }
+            action_a.cmp(action_b)
         });
-        binding_data.dedup();
-        self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
-        self.bindings = binding_data
+        entries.dedup();
+
+        self.pending_keys = title;
+        let mut seen = HashSet::new();
+        self.bindings = entries
             .into_iter()
-            .map(|(keystrokes, action)| (text_for_keystrokes(&keystrokes, cx).into(), action))
+            .map(|(_len, text, action)| (text, action))
+            .filter(|entry| seen.insert(entry.clone()))
             .collect();
     }
 }
