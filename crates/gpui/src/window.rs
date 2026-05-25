@@ -1572,6 +1572,7 @@ impl Window {
 
         let a11y_active_flag = Arc::new(AtomicBool::new(false));
 
+        #[cfg(not(target_family = "wasm"))]
         {
             let initial_tree = accesskit::TreeUpdate {
                 nodes: vec![(ROOT_NODE_ID, accesskit::Node::new(accesskit::Role::Window))],
