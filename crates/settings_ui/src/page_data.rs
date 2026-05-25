@@ -279,7 +279,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
         ]
     }
-    fn security_section() -> [SettingsPageItem; 2] {
+    fn security_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Security"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -299,6 +299,36 @@ fn general_page(cx: &App) -> SettingsPage {
                             .session
                             .get_or_insert_default()
                             .trust_all_worktrees = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Binary Downloads",
+                description: "Whether Zed may download tool binaries and package-based tools such as language servers, formatters, debug adapters, MCP servers, and the managed Node runtime. Can be overridden per-project.",
+                field: Box::new(SettingField {
+                    json_path: Some("allow_binary_downloads"),
+                    pick: |settings_content| {
+                        settings_content.project.allow_binary_downloads.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.allow_binary_downloads = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Prompt To Install Binaries",
+                description: "When binary downloads are disabled and a tool needed by the project cannot be found locally, whether to prompt to install just that tool instead of silently blocking the download.",
+                field: Box::new(SettingField {
+                    json_path: Some("prompt_to_install_binaries"),
+                    pick: |settings_content| {
+                        settings_content.project.prompt_to_install_binaries.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.prompt_to_install_binaries = value;
                     },
                 }),
                 metadata: None,

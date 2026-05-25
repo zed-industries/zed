@@ -26,7 +26,10 @@ use ui::{
 };
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
-use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
+use workspace::{
+    StatusItemView, ToggleWorktreeSecurity, Workspace,
+    binary_downloads_modal::project_blocks_binary_downloads,
+};
 
 use crate::lsp_log_view;
 
@@ -221,14 +224,18 @@ impl LanguageServerState {
             return menu;
         };
 
-        let is_restricted = self
+        let (is_restricted, downloads_disabled) = self
             .workspace
             .upgrade()
             .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+                let project = workspace.read(cx).project();
+                let project_ref = project.read(cx);
+                let restricted =
+                    TrustedWorktrees::has_restricted_worktrees(&project_ref.worktree_store(), cx);
+                let downloads_disabled = project_blocks_binary_downloads(project_ref, cx);
+                (restricted, downloads_disabled)
             })
-            .unwrap_or(false);
+            .unwrap_or((false, false));
 
         if is_restricted {
             menu = menu.custom_entry(
@@ -251,6 +258,35 @@ impl LanguageServerState {
                             Label::new("Language Servers can't run until you trust this project.")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
+                        )
+                        .into_any_element()
+                },
+                move |window, cx| {
+                    window.dispatch_action(ToggleWorktreeSecurity.boxed_clone(), cx);
+                },
+            );
+        } else if downloads_disabled {
+            menu = menu.custom_entry(
+                move |_window, _cx| {
+                    v_flex()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::CloudDownload)
+                                        .color(Color::Warning)
+                                        .size(IconSize::XSmall),
+                                )
+                                .child(
+                                    Label::new("Binary Downloads Disabled").size(LabelSize::Small),
+                                ),
+                        )
+                        .child(
+                            Label::new(
+                                "Language Servers waiting for `allow_binary_downloads` approval.",
+                            )
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                         )
                         .into_any_element()
                 },
@@ -343,6 +379,7 @@ impl LanguageServerState {
                     BinaryStatus::Stopping | BinaryStatus::Stopped => {
                         Some((Color::Disabled, "Stopped"))
                     }
+                    BinaryStatus::Disabled { .. } => Some((Color::Warning, "Disabled")),
                     BinaryStatus::Failed { .. } => Some((Color::Error, "Error")),
                 })
                 .or_else(|| {
@@ -685,7 +722,7 @@ impl LanguageServers {
         let binary_status_message = message.map(SharedString::new);
         if matches!(
             binary_status,
-            BinaryStatus::Stopped | BinaryStatus::Failed { .. }
+            BinaryStatus::Stopped | BinaryStatus::Disabled { .. } | BinaryStatus::Failed { .. }
         ) {
             self.health_statuses.retain(|_, server| server.name != name);
         }
@@ -837,6 +874,7 @@ impl LspButton {
                 } else if lsp_button.lsp_menu.take().is_some() {
                     cx.notify();
                 }
+                cx.notify();
             });
 
         let lsp_store = workspace.project().read(cx).lsp_store();
@@ -872,12 +910,13 @@ impl LspButton {
             lsp_menu_refresh: Task::ready(()),
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
         };
-        let is_restricted = TrustedWorktrees::has_restricted_worktrees(
-            &workspace.project().read(cx).worktree_store(),
-            cx,
-        );
+        let project = workspace.project().read(cx);
+        let is_restricted =
+            TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx);
+        let downloads_disabled = project_blocks_binary_downloads(project, cx);
 
         if is_restricted
+            || downloads_disabled
             || !lsp_button
                 .server_state
                 .read(cx)
@@ -925,6 +964,12 @@ impl LspButton {
                             proto::ServerBinaryStatus::Starting => BinaryStatus::Starting,
                             proto::ServerBinaryStatus::Stopping => BinaryStatus::Stopping,
                             proto::ServerBinaryStatus::Stopped => BinaryStatus::Stopped,
+                            proto::ServerBinaryStatus::Disabled => {
+                                let Some(reason) = status_update.message.clone() else {
+                                    return;
+                                };
+                                BinaryStatus::Disabled { reason }
+                            }
                             proto::ServerBinaryStatus::Failed => {
                                 let Some(error) = status_update.message.clone() else {
                                     return;
@@ -1130,6 +1175,7 @@ impl LspButton {
                         can_stop_all = false;
                     }
                     BinaryStatus::Stopped => {}
+                    BinaryStatus::Disabled { .. } => {}
                     BinaryStatus::Failed { .. } => {}
                 }
 
@@ -1304,18 +1350,23 @@ impl StatusItemView for LspButton {
 
 impl Render for LspButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let is_restricted = self
+        let (is_restricted, downloads_disabled) = self
             .server_state
             .read(cx)
             .workspace
             .upgrade()
             .map(|workspace| {
-                let worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx)
+                let project = workspace.read(cx).project();
+                let project_ref = project.read(cx);
+                let restricted =
+                    TrustedWorktrees::has_restricted_worktrees(&project_ref.worktree_store(), cx);
+                let downloads_disabled = project_blocks_binary_downloads(project_ref, cx);
+                (restricted, downloads_disabled)
             })
-            .unwrap_or(false);
+            .unwrap_or((false, false));
 
         if !is_restricted
+            && !downloads_disabled
             && (self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none())
         {
             return div().hidden();
@@ -1333,6 +1384,7 @@ impl Render for LspButton {
         let mut has_other_notifications = false;
         for binary_status in state.language_servers.binary_statuses.values() {
             has_errors |= matches!(binary_status.status, BinaryStatus::Failed { .. });
+            has_warnings |= matches!(binary_status.status, BinaryStatus::Disabled { .. });
             has_other_notifications |= binary_status.message.is_some();
         }
 
@@ -1351,6 +1403,11 @@ impl Render for LspButton {
             (
                 Some(Indicator::dot().color(Color::Warning)),
                 "Restricted Mode",
+            )
+        } else if downloads_disabled {
+            (
+                Some(Indicator::dot().color(Color::Warning)),
+                "Binary Downloads Disabled",
             )
         } else if has_errors {
             (
@@ -1397,7 +1454,9 @@ impl Render for LspButton {
                     IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
-                        .when(is_restricted, |s| s.icon_color(Color::Warning))
+                        .when(is_restricted || downloads_disabled, |s| {
+                            s.icon_color(Color::Warning)
+                        })
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
                     move |_window, cx| {
                         Tooltip::with_meta("Language Servers", Some(&ToggleMenu), description, cx)

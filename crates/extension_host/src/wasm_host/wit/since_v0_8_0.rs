@@ -1065,6 +1065,22 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
+        let extension_id = self.manifest.id.clone();
+        let tool = format!("download from `{url}` (extension `{extension_id}`)");
+        let wait = self
+            .on_main_thread({
+                let tool = tool.clone();
+                move |cx| {
+                    async move {
+                        cx.update(|cx| {
+                            project::binary_downloads::request_tool_install(None, tool, cx)
+                        })
+                    }
+                    .boxed_local()
+                }
+            })
+            .await;
+        project::binary_downloads::await_downloads_allowed(wait, &tool).await;
         maybe!(async {
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;

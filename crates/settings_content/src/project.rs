@@ -81,6 +81,20 @@ pub struct ProjectSettingsContent {
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
+    /// Whether Zed may download tool binaries and package-based tools such as
+    /// language servers, formatters, and the managed Node runtime.
+    ///
+    /// Default: true
+    pub allow_binary_downloads: Option<bool>,
+
+    /// When `allow_binary_downloads` is disabled and a tool needed by the
+    /// project cannot be found locally, whether to prompt to install just
+    /// that tool instead of silently blocking the download. Global-only: a
+    /// per-project `.zed/settings.json` value is ignored.
+    ///
+    /// Default: true
+    pub prompt_to_install_binaries: Option<bool>,
+
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false
@@ -382,8 +396,8 @@ pub struct SessionSettingsContent {
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
     /// Whether or not to skip worktree trust checks.
-    /// When trusted, project settings are synchronized automatically,
-    /// language and MCP servers are downloaded and started automatically.
+    /// When trusted, project settings are synchronized automatically, and language
+    /// and MCP servers are started automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,

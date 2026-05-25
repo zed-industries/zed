@@ -521,6 +521,8 @@ impl VsCodeSettings {
             context_server_timeout: None,
             load_direnv: None,
             git_hosting_providers: None,
+            allow_binary_downloads: None,
+            prompt_to_install_binaries: None,
             disable_ai: None,
         }
     }

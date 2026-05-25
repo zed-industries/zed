@@ -40,5 +40,6 @@ pub enum BinaryStatus {
     Starting,
     Stopping,
     Stopped,
+    Disabled { reason: String },
     Failed { error: String },
 }

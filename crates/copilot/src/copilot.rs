@@ -1411,11 +1411,12 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
     const SERVER_PATH: &str =
         "node_modules/@github/copilot-language-server/dist/language-server.js";
 
+    let binary_path = copilot_lsp_native_binary_path()?;
+
     let latest_version = node_runtime
         .npm_package_latest_version(PACKAGE_NAME)
         .await?;
     let server_path = paths::copilot_dir().join(SERVER_PATH);
-    let binary_path = copilot_lsp_native_binary_path()?;
 
     fs.create_dir(paths::copilot_dir()).await?;
 

@@ -53,6 +53,7 @@ use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
     MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    binary_downloads_modal::project_blocks_binary_downloads,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -306,6 +307,7 @@ impl Render for TitleBar {
                             },
                         )
                         .children(self.render_restricted_mode(cx))
+                        .children(self.render_binary_downloads_disabled(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -725,6 +727,50 @@ impl TitleBar {
 
         if ui::utils::MACOS_SDK_26_OR_LATER {
             // Make up for Tahoe's traffic light buttons having less spacing around them
+            Some(div().child(button).ml_0p5().into_any_element())
+        } else {
+            Some(button.into_any_element())
+        }
+    }
+
+    /// Compact indicator shown next to the title bar when the project has
+    /// `allow_binary_downloads` effectively disabled. Restricted Mode takes
+    /// precedence: this indicator is only shown when Restricted Mode isn't.
+    pub fn render_binary_downloads_disabled(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let project = self.project.read(cx);
+        if TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx) {
+            return None;
+        }
+        if !project_blocks_binary_downloads(project, cx) {
+            return None;
+        }
+
+        let button = Button::new("binary_downloads_disabled_trigger", "Downloads Off")
+            .style(ButtonStyle::Tinted(TintColor::Warning))
+            .label_size(LabelSize::Small)
+            .color(Color::Warning)
+            .start_icon(
+                Icon::new(IconName::CloudDownload)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .tooltip(|_, cx| {
+                Tooltip::with_meta(
+                    "Tool downloads disabled",
+                    Some(&ToggleWorktreeSecurity),
+                    "Zed won't install new language servers, MCP servers, debug adapters, or npm packages",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(true, window, cx)
+                    })
+                    .log_err();
+            }));
+
+        if cfg!(macos_sdk_26) {
             Some(div().child(button).ml_0p5().into_any_element())
         } else {
             Some(button.into_any_element())

@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::BoxFuture, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::Version;
@@ -28,9 +28,13 @@ const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
-    pub allow_binary_download: bool,
+    pub allow_binary_downloads: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
+
+/// Awaited (by package name) before each npm package install. Set via
+/// [`NodeRuntime::set_install_gate`].
+pub type NpmInstallGate = Arc<dyn Fn(String) -> BoxFuture<'static, ()> + Send + Sync>;
 
 /// Use this when you need to launch npm as a long-lived process (for example, an agent server),
 /// so the invocation and environment stay consistent with the Node runtime's proxy and CA setup.
@@ -57,6 +61,7 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
+    install_gate: Option<NpmInstallGate>,
 }
 
 impl NodeRuntime {
@@ -71,7 +76,12 @@ impl NodeRuntime {
             last_options: None,
             options,
             shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            install_gate: None,
         })))
+    }
+
+    pub async fn set_install_gate(&self, gate: NpmInstallGate) {
+        self.0.lock().await.install_gate = Some(gate);
     }
 
     pub fn unavailable() -> Self {
@@ -81,6 +91,7 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
+            install_gate: None,
         })))
     }
 
@@ -147,7 +158,7 @@ impl NodeRuntime {
             None
         };
 
-        let instance = if options.allow_binary_download {
+        let instance = if options.allow_binary_downloads {
             let (log_level, why_using_managed) = match system_node_error {
                 Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
                 Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),
@@ -184,21 +195,15 @@ impl NodeRuntime {
             }
         } else if let Some(system_node_error) = system_node_error {
             // failure case not cached, since it's cheap to check again
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             return Box::new(UnavailableNodeRuntime {
                 error_message: format!(
-                    "failure while checking system Node.js from PATH: {}",
+                    "failure while checking system Node.js from PATH, and binary downloads are disabled: {}",
                     system_node_error
                 )
                 .into(),
             });
         } else {
             // failure case is cached because it will always happen with these options
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             Box::new(UnavailableNodeRuntime {
                 error_message: "`node` settings do not allow any way to use Node.js"
                     .to_string()
@@ -294,6 +299,12 @@ impl NodeRuntime {
     ) -> Result<()> {
         if packages.is_empty() {
             return Ok(());
+        }
+
+        if let Some(gate) = self.0.lock().await.install_gate.clone() {
+            for (name, _) in packages {
+                gate(name.to_string()).await;
+            }
         }
 
         log::debug!(

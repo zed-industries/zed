@@ -74,6 +74,13 @@ pub struct ProjectSettings {
     /// Configuration for Node-related features
     pub node: NodeBinarySettings,
 
+    /// Whether Zed may download tool binaries and package-based tools.
+    pub allow_binary_downloads: bool,
+
+    /// When `allow_binary_downloads` is disabled and a tool cannot be found
+    /// locally, whether to prompt to install just that tool.
+    pub prompt_to_install_binaries: bool,
+
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: DirenvSettings,
 
@@ -91,8 +98,8 @@ pub struct SessionSettings {
     /// Default: true
     pub restore_unsaved_buffers: bool,
     /// Whether or not to skip worktree trust checks.
-    /// When trusted, project settings are synchronized automatically,
-    /// language and MCP servers are downloaded and started automatically.
+    /// When trusted, project settings are synchronized automatically, and language
+    /// and MCP servers are started automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: bool,
@@ -758,6 +765,8 @@ impl Settings for ProjectSettings {
             },
             git: git_settings,
             node: content.node.clone().unwrap().into(),
+            allow_binary_downloads: project.allow_binary_downloads.unwrap(),
+            prompt_to_install_binaries: project.prompt_to_install_binaries.unwrap(),
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
