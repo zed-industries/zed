@@ -140,7 +140,7 @@ pub enum RunnableCapture {
     /// `@run` — marks the node that identifies the runnable (e.g. the test
     /// function name, the subtest string literal).
     Run,
-    /// `@_run_item` — marks one candidate runnable inside a larger grammar
+    /// `@run_item` — marks one candidate runnable inside a larger grammar
     /// match. Used by the per-match dispatch pipeline so a single tree-sitter
     /// match can produce multiple runnables (e.g. Go table-test rows).
     RunItem,
@@ -396,7 +396,7 @@ impl Grammar {
             .iter()
             .map(|&name| match name {
                 "run" => RunnableCapture::Run,
-                "_run_item" => RunnableCapture::RunItem,
+                "run_item" => RunnableCapture::RunItem,
                 name => RunnableCapture::Named(name.to_string().into()),
             })
             .collect();

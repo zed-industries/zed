@@ -531,7 +531,7 @@ mod tests {
           body: (block
             ((expression_statement
                (call_expression
-                 function: (identifier) @run @_call)) @_run_item)+))
+                 function: (identifier) @run @_call)) @run_item)+))
     "#};
 
     const GROUPED_SOURCE: &str = indoc! {r#"
@@ -591,7 +591,7 @@ mod tests {
 
     #[gpui::test]
     fn test_grouped_match_without_resolver_emits_nothing(cx: &mut TestAppContext) {
-        // `@_run_item` is present but no resolver is registered on the language.
+        // `@run_item` is present but no resolver is registered on the language.
         let runnables = collect_runnables(cx, GROUPED_SOURCE, GROUPED_QUERY, None);
         assert!(
             runnables.is_empty(),

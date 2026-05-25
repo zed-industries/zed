@@ -37,7 +37,7 @@ pub trait ContextProvider: Send + Sync {
         None
     }
 
-    /// A resolver for runnable queries that group captures with `@_run_item`.
+    /// A resolver for runnable queries that group captures with `@run_item`.
     /// For each group, the resolver picks which `@run` range and extra captures
     /// to surface. Without a resolver, grouped matches emit no runnables.
     fn runnable_resolver(&self) -> Option<Arc<dyn RunnableResolver>> {
