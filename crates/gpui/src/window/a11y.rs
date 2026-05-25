@@ -1,15 +1,86 @@
-//! Accessibility support, provided by AccessKit
-//!
-//! todo! expand these docs
-//!
-//! The rough data flow is as follows:
-//! - An [`Element`] can optionally provide [`a11y_role()`] and
-//!   [`write_a11y_info()`] implementations.
-//! - When rendering, we maintain a stack of nodes, and use this to derive the [`NodeId`]
-//!
-//! in [`Drawable::prepaint`], we maintain a stack of nodes
+//! Accessibility support, provided by [AccessKit][accesskit].
+//! 
+//! ## Architecture
+//! 
+//! ```text
+//!                              ┌────────────────────────────────┐   ┌─────────────────────┐
+//!                           ┌─▶│ AccessKit Adapter (MacOS)      │◀─▶│ MacOS System APIs   │
+//!                           │  └────────────────────────────────┘   └─────────────────────┘
+//!                           │
+//! ┌──────┐   ┌───────────┐  │  ┌────────────────────────────────┐   ┌─────────────────────┐
+//! │ GPUI │◀─▶│ AccessKit │◀─┼─▶│ AccessKit Adapter (Windows)    │◀─▶│ Windows System APIs │
+//! └──────┘   └───────────┘  │  └────────────────────────────────┘   └─────────────────────┘
+//!                           │
+//!                           │  ┌────────────────────────────────┐   ┌─────────────────────┐
+//!                           └─▶│ AccessKit Adapter (Linux)      │◀─▶│ dbus                │
+//!                              └────────────────────────────────┘   └─────────────────────┘
+//! ```
+//! 
+//! In order for GPUI apps to be usable for people using assistive technology,
+//! we must do a few things:
+//! - Inform the system when the UI changes meaningfully. This includes:
+//!   - Reporting new/removed/changed UI elements
+//!   - *Not* reporting irrelevant UI changes, e.g. an invisible `div()` being
+//!     added.
+//!   - Reporting the appearance and capabilities of each UI element. For example:
+//!     - What does this piece of text say?
+//!     - How far along is this progress bar?
+//!     - Can this node be focused?
+//!     - Can this node have a value directly assinged? (e.g. a slider)
+//! - Allowing the system to interact with the UI by dispatching actions to
+//!   nodes. Note that AccessKit has its own [`Action`] type, which is not the
+//!   [`gpui::Action`] trait.
+//! - Activate and deactivate accessibility features when requested by the
+//!   system.
+//! 
+//! Activating and deactivating at the right time is trivial, so I won't go into
+//! detail here. The other two are almost orthogonal in implementation.
+//! 
+//! The state for both lives in the [`A11y`] struct in this module.
+//! 
+//! ### Reporting UI changes
+//! 
+//! Every frame, we build a [`TreeUpdate`] and send it to the platform-specific
+//! adapter. A [`TreeUpdate`] is a representation of a subset of the UI tree.
+//! When the adapter receives the update, it diffs it against the previous
+//! update, and calls platform-specific APIs to inform screen readers about the
+//! changes. Nodes may have been created, destroyed, or updated.
+//! 
+//! Each node has an ID, and this ID *should* be stable across frames. If a
+//! node's ID changes, then, from AccessKit's point of view, it is a different
+//! node.
+//! 
+//! We derive the node ID from the [`GlobalElementId`] in
+//! [`GlobalElementId::accesskit_node_id`]. Nodes without [`GlobalElementId`]s
+//! cannot produce an AccessKit [`NodeId`], and so are not included in the
+//! accessibility tree. We try to warn when using accessibility APIs on
+//! [`div()`] without setting an ID.
+//! 
+//! This all happens in [`Drawable::prepaint`]. The [`A11y`] struct maintains a
+//! stack of nodes during prepainting, which we can use to calculate the
+//! [`NodeId`]s, and record parent-child relationships. Once all [`Element`]s in
+//! a frame have been prepainted, we send the resulting [`TreeUpdate`] object to
+//! the adapter and the screen reader can announce the changes.
+//! 
+//! ### Responding to actions
+//!  
+//! On adapter creation, we provide a callback to the adapter, which can be used
+//! to dispatch actions. This callback forwards to [`A11y::action_listeners`], a
+//! mapping from [`NodeId`]s to action handlers (basically just `Box<dyn
+//! Fn()>`).
+//! 
+//! This is populated in:
+//! - [`Window::on_a11y_action`], which is called by:
+//! - [`Interactivity::paint`], which is called by:
+//! - [`InteractiveElement::on_a11y_action`], which is a public-facing API
+//! 
+//! These are cleared at the start of a frame, and re-populated during painting.
 //!
 //! [`Element`]: crate::Element
+//! [`GlobalElementId`]: crate::GlobalElementId
+//! [`div()`]: crate::div
+//! [`Interactivity::paint`]: crate::Interactivity::paint
+//! [`InteractiveElement::on_a11y_action`]: crate::InteractiveElement::on_a11y_action
 //! [`a11y_role()`]: crate::Element::a11y_role
 //! [`write_a11y_info()`]: crate::Element::write_a11y_info
 //! [`NodeId`]: accesskit::NodeId
