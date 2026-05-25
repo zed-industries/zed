@@ -399,7 +399,7 @@ impl LspInstaller for TyLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -420,7 +420,7 @@ impl LspInstaller for TyLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -744,7 +744,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -755,7 +755,7 @@ impl LspInstaller for PyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -1905,7 +1905,7 @@ impl LspInstaller for PyLspAdapter {
     type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -1954,7 +1954,7 @@ impl LspInstaller for PyLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
@@ -2204,7 +2204,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        _: &dyn LspAdapterDelegate,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
@@ -2215,7 +2215,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
 
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2538,7 +2538,7 @@ impl LspInstaller for RuffLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
@@ -2568,7 +2568,7 @@ impl LspInstaller for RuffLspAdapter {
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
