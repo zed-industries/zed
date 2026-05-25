@@ -602,6 +602,7 @@ mod tests {
         // Probe with the exact fds returned by `create_pipe` (no dup), since
         // duping with `F_DUPFD` would lose CLOEXEC and `F_DUPFD_CLOEXEC` would
         // unconditionally set it, either of which would defeat the test.
+        #[allow(clippy::disallowed_methods)]
         let output = std::process::Command::new("/bin/sh")
             .arg("-c")
             .arg(format!(
