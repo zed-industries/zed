@@ -12,6 +12,7 @@ pub enum AiSettingItemStatus {
     AuthRequired,
     ClientSecretRequired,
     Authenticating,
+    InsufficientScope,
 }
 
 impl AiSettingItemStatus {
@@ -23,6 +24,7 @@ impl AiSettingItemStatus {
             Self::Error => "Server has an error.",
             Self::AuthRequired => "Authentication required.",
             Self::ClientSecretRequired => "Client secret required.",
+            Self::InsufficientScope => "Scopes required.",
             Self::Authenticating => "Waiting for authorization…",
         }
     }
@@ -33,7 +35,9 @@ impl AiSettingItemStatus {
             Self::Starting | Self::Authenticating => Some(Color::Muted),
             Self::Running => Some(Color::Success),
             Self::Error => Some(Color::Error),
-            Self::AuthRequired | Self::ClientSecretRequired => Some(Color::Warning),
+            Self::AuthRequired | Self::ClientSecretRequired | Self::InsufficientScope => {
+                Some(Color::Warning)
+            }
         }
     }
 

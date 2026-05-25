@@ -64,6 +64,8 @@ pub enum ContextServerStatus {
     /// The OAuth browser flow is in progress — the user has been redirected
     /// to the authorization server and we're waiting for the callback.
     Authenticating,
+    /// The server returned 403 and new scope permissions are needed.
+    InsufficientScope,
 }
 
 impl ContextServerStatus {
@@ -80,6 +82,7 @@ impl ContextServerStatus {
                 }
             }
             ContextServerState::Authenticating { .. } => ContextServerStatus::Authenticating,
+            ContextServerState::InsufficientScope { .. } => ContextServerStatus::InsufficientScope,
         }
     }
 }
@@ -125,6 +128,13 @@ enum ContextServerState {
         configuration: Arc<ContextServerConfiguration>,
         _task: Task<()>,
     },
+    /// The server requires new scopes to accomplish a given task.
+    InsufficientScope {
+        server: Arc<ContextServer>,
+        configuration: Arc<ContextServerConfiguration>,
+        _discovery: Arc<OAuthDiscovery>,
+        _required_scopes: Vec<String>,
+    },
 }
 
 impl ContextServerState {
@@ -136,7 +146,8 @@ impl ContextServerState {
             | ContextServerState::Error { server, .. }
             | ContextServerState::AuthRequired { server, .. }
             | ContextServerState::ClientSecretRequired { server, .. }
-            | ContextServerState::Authenticating { server, .. } => server.clone(),
+            | ContextServerState::Authenticating { server, .. }
+            | ContextServerState::InsufficientScope { server, .. } => server.clone(),
         }
     }
 
@@ -148,7 +159,8 @@ impl ContextServerState {
             | ContextServerState::Error { configuration, .. }
             | ContextServerState::AuthRequired { configuration, .. }
             | ContextServerState::ClientSecretRequired { configuration, .. }
-            | ContextServerState::Authenticating { configuration, .. } => configuration.clone(),
+            | ContextServerState::Authenticating { configuration, .. }
+            | ContextServerState::InsufficientScope { configuration, .. } => configuration.clone(),
         }
     }
 }
@@ -1660,16 +1672,31 @@ async fn resolve_start_failure(
 ) -> ContextServerState {
     let www_authenticate = err.downcast_ref::<TransportError>().map(|e| match e {
         TransportError::AuthRequired { www_authenticate } => www_authenticate.clone(),
+        TransportError::InsufficientScope { www_authenticate } => www_authenticate.clone(),
+    });
+
+    let is_insufficient_scope = err.downcast_ref::<TransportError>().map_or(false, |e| {
+        matches!(e, TransportError::InsufficientScope { .. })
     });
 
     if www_authenticate.is_some() && configuration.has_static_auth_header() {
-        log::warn!("{id} received 401 with a static Authorization header configured");
-        return ContextServerState::Error {
-            configuration,
-            server,
-            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
-                .into(),
-        };
+        if is_insufficient_scope {
+            log::warn!("{id} received 403 Forbidden with a static Authorization header configured");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error: "Server returned 403 Forbidden. Your configured static Authorization header lacks the required scopes for this server.".into(),
+            };
+        } else {
+            log::warn!("{id} received 401 with a static Authorization header configured");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error:
+                    "Server returned 401 Unauthorized. Check your configured Authorization header."
+                        .into(),
+            };
+        }
     }
 
     let server_url = match configuration.as_ref() {
@@ -1677,7 +1704,9 @@ async fn resolve_start_failure(
             url.clone()
         }
         _ => {
-            if www_authenticate.is_some() {
+            if is_insufficient_scope {
+                log::error!("{id} got OAuth 403 on a non-HTTP transport or with static auth");
+            } else if www_authenticate.is_some() {
                 log::error!("{id} got OAuth 401 on a non-HTTP transport or with static auth");
             } else {
                 log::error!("{id} context server failed to start: {err}");
@@ -1755,14 +1784,28 @@ async fn resolve_start_failure(
                 };
             }
 
-            log::info!(
-                "{id} requires OAuth authorization (auth server: {})",
-                discovery.auth_server_metadata.issuer,
-            );
-            ContextServerState::AuthRequired {
-                server,
-                configuration,
-                discovery: Arc::new(discovery),
+            if is_insufficient_scope {
+                let required_scopes = www_authenticate.scope.clone().unwrap_or_default();
+                log::info!(
+                    "{id} requires token scope upgrade. Missing permissions: {:?}",
+                    required_scopes
+                );
+                ContextServerState::InsufficientScope {
+                    server,
+                    configuration,
+                    _discovery: Arc::new(discovery),
+                    _required_scopes: required_scopes,
+                }
+            } else {
+                log::info!(
+                    "{id} requires OAuth authorization (auth server: {})",
+                    discovery.auth_server_metadata.issuer,
+                );
+                ContextServerState::AuthRequired {
+                    server,
+                    configuration,
+                    discovery: Arc::new(discovery),
+                }
             }
         }
         Err(discovery_err) => {
@@ -1771,6 +1814,198 @@ async fn resolve_start_failure(
                 configuration,
                 server,
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context_server_store::{
+        ContextServerConfiguration, ContextServerId, ContextServerState, resolve_start_failure,
+    };
+    use context_server::ContextServer;
+    use context_server::oauth;
+    use context_server::transport::TransportError;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    #[gpui::test]
+    async fn test_resolve_start_failure_insufficient_scope_with_static_auth(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let id = ContextServerId("mcp-test".into());
+
+        let server = Arc::new(ContextServer::new(
+            id.clone(),
+            Arc::new(context_server::test::create_fake_transport(
+                id.0.to_string(),
+                cx.executor(),
+            )),
+        ));
+
+        let mut headers = HashMap::default();
+        headers.insert(
+            "Authorization".to_string(),
+            "Bearer static-token".to_string(),
+        );
+
+        let configuration = Arc::new(ContextServerConfiguration::Http {
+            url: url::Url::parse("http://localhost/").unwrap(),
+            headers,
+            timeout: None,
+            oauth: None,
+        });
+
+        let www_authenticate = oauth::WwwAuthenticate {
+            resource_metadata: Some(
+                url::Url::parse("https://mcp.example.com/.well-known/oauth-protected-resource")
+                    .unwrap(),
+            ),
+            scope: Some(vec!["files:read".to_string(), "files:write".to_string()]),
+            error: Some(oauth::BearerError::InsufficientScope),
+            error_description: Some("Additional file write permission required".to_string()),
+        };
+
+        let err = TransportError::InsufficientScope {
+            www_authenticate: www_authenticate.clone(),
+        };
+
+        let state = resolve_start_failure(
+            &id,
+            anyhow::Error::from(err),
+            server.clone(),
+            configuration.clone(),
+            &cx.to_async(),
+        )
+        .await;
+
+        match state {
+            ContextServerState::Error { error, .. } => {
+                assert!(
+                    error.to_string().contains("403 Forbidden")
+                        || error.to_string().contains("lacks the required scopes")
+                );
+            }
+            _ => panic!("expected Error state for static auth + insufficient scope"),
+        }
+    }
+
+    #[gpui::test]
+    async fn test_resolve_start_failure_discover_with_insufficient_scope(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let id = ContextServerId("mcp-test".into());
+
+        let server = Arc::new(ContextServer::new(
+            id.clone(),
+            Arc::new(context_server::test::create_fake_transport(
+                id.0.to_string(),
+                cx.executor(),
+            )),
+        ));
+
+        let headers = HashMap::default();
+
+        let configuration = Arc::new(ContextServerConfiguration::Http {
+            url: url::Url::parse("http://localhost/").unwrap(),
+            headers,
+            timeout: None,
+            oauth: None,
+        });
+
+        let www_authenticate = oauth::WwwAuthenticate {
+            resource_metadata: None,
+            scope: Some(vec![
+                "files:read".to_string(),
+                "files:write".to_string(),
+                "user:profile".to_string(),
+            ]),
+            error: Some(oauth::BearerError::InsufficientScope),
+            error_description: Some("Additional file write permission required".to_string()),
+        };
+
+        let client = http_client::FakeHttpClient::create(move |req| {
+            let uri = req.uri().to_string();
+            Box::pin(async move {
+                use http_client::AsyncBody;
+                if uri.contains(".well-known/oauth-protected-resource") {
+                    let body = serde_json::to_string(&serde_json::json!({
+                        "resource": "http://localhost/",
+                        "authorization_servers": ["http://localhost"],
+                        "scopes_supported": ["files:read", "files:write", "user:profile"]
+                    }))
+                    .unwrap();
+
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(body.into_bytes()))
+                        .unwrap())
+                } else if uri.contains(".well-known/oauth-authorization-server")
+                    || uri.contains(".well-known/openid-configuration")
+                {
+                    let body = serde_json::to_string(&serde_json::json!({
+                        "issuer": "http://localhost",
+                        "authorization_endpoint": "http://localhost/authorize",
+                        "token_endpoint": "http://localhost/token",
+                        "code_challenge_methods_supported": ["S256"],
+                        "client_id_metadata_document_supported": true
+                    }))
+                    .unwrap();
+
+                    Ok(http_client::Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(body.into_bytes()))
+                        .unwrap())
+                } else {
+                    Ok(http_client::Response::builder()
+                        .status(404)
+                        .body(AsyncBody::default())
+                        .unwrap())
+                }
+            })
+        });
+
+        cx.update(|cx| cx.set_http_client(client));
+
+        let err = TransportError::InsufficientScope {
+            www_authenticate: www_authenticate.clone(),
+        };
+
+        let state = resolve_start_failure(
+            &id,
+            anyhow::Error::from(err),
+            server.clone(),
+            configuration.clone(),
+            &cx.to_async(),
+        )
+        .await;
+
+        match &state {
+            ContextServerState::InsufficientScope {
+                _required_scopes, ..
+            } => {
+                assert_eq!(
+                    _required_scopes,
+                    &vec![
+                        "files:read".to_string(),
+                        "files:write".to_string(),
+                        "user:profile".to_string()
+                    ]
+                );
+            }
+            ContextServerState::Error { error, .. } => {
+                panic!(
+                    "expected InsufficientScope state from discovery path, got Error: {}",
+                    error
+                )
+            }
+            ContextServerState::AuthRequired { .. } => {
+                panic!("expected InsufficientScope state from discovery path, got AuthRequired")
+            }
+            _ => {
+                panic!("expected InsufficientScope state from discovery path, got different state")
             }
         }
     }

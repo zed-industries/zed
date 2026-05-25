@@ -262,7 +262,8 @@ impl ContextServerRegistry {
             ContextServerStatus::Stopped
             | ContextServerStatus::Error(_)
             | ContextServerStatus::AuthRequired
-            | ContextServerStatus::ClientSecretRequired { .. } => {
+            | ContextServerStatus::ClientSecretRequired { .. }
+            | ContextServerStatus::InsufficientScope => {
                 if let Some(registered_server) = self.registered_servers.remove(server_id) {
                     if !registered_server.tools.is_empty() {
                         cx.emit(ContextServerRegistryEvent::ToolsChanged);
