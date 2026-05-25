@@ -824,8 +824,10 @@ fn build_open_path_prompt(
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
     let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
     (
-        workspace.update_in(cx, |_, window, cx| {
-            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path, cx);
+        workspace.update_in(cx, |workspace, window, cx| {
+            let relative_to = OpenPathPrompt::relative_to(workspace, creating_path, cx);
+            let delegate =
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, relative_to, cx);
             let delegate = if show_hidden {
                 delegate.show_hidden()
             } else {
@@ -912,4 +914,57 @@ fn open_path_prompt(
         );
     });
     cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_open_path_prompt_relative_to(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "file_in_root": "Content",
+                "subdir": {
+                    "file_in_subdir": "Content",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (tx, _) = futures::channel::oneshot::channel();
+    let lister = project::DirectoryLister::Project(project.clone());
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let relative_to = std::path::PathBuf::from(path!("/root/subdir"));
+
+    let picker = workspace.update_in(cx, |_, window, cx| {
+        let delegate = OpenPathDelegate::new(tx, lister.clone(), false, relative_to, cx);
+        cx.new(|cx| {
+            let picker = Picker::uniform_list(delegate, window, cx).embedded();
+            picker
+        })
+    });
+
+    #[cfg(not(windows))]
+    let expected_separator = "./";
+    #[cfg(windows)]
+    let expected_separator = ".\\";
+
+    insert_query("./", &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "file_in_subdir"]
+    );
+
+    insert_query("../", &picker, cx).await;
+    assert_eq!(
+        collect_match_candidates(&picker, cx),
+        vec![expected_separator, "subdir", "file_in_root"]
+    );
 }

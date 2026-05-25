@@ -45,6 +45,7 @@ pub struct OpenPathDelegate {
         Arc<dyn Fn(&mut Window, &mut Context<Picker<Self>>) -> Option<AnyElement> + 'static>,
     hidden_entries: bool,
     sort_mode: ProjectPanelSortMode,
+    relative_to: PathBuf,
 }
 
 impl OpenPathDelegate {
@@ -52,6 +53,7 @@ impl OpenPathDelegate {
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         lister: DirectoryLister,
         creating_path: bool,
+        relative_to: PathBuf,
         cx: &App,
     ) -> Self {
         Self::with_confirmation(
@@ -61,6 +63,7 @@ impl OpenPathDelegate {
             lister,
             creating_path,
             OpenPathPromptMode::SelectPath,
+            relative_to,
             cx,
         )
     }
@@ -146,6 +149,7 @@ impl OpenPathDelegate {
         tx: oneshot::Sender<Option<OpenPathPromptResult>>,
         lister: DirectoryLister,
         mode: OpenPathPromptMode,
+        relative_to: PathBuf,
         cx: &App,
     ) -> Self {
         let delegate = Self::with_confirmation(
@@ -155,6 +159,7 @@ impl OpenPathDelegate {
             lister,
             false,
             mode,
+            relative_to,
             cx,
         );
         if mode == OpenPathPromptMode::SelectPath {
@@ -198,6 +203,7 @@ impl OpenPathDelegate {
         lister: DirectoryLister,
         creating_path: bool,
         mode: OpenPathPromptMode,
+        relative_to: PathBuf,
         cx: &App,
     ) -> Self {
         let path_style = lister.path_style(cx);
@@ -225,6 +231,27 @@ impl OpenPathDelegate {
             render_footer: Arc::new(|_, _| None),
             hidden_entries: false,
             sort_mode,
+            relative_to,
+        }
+    }
+
+    fn resolve_path(&self, path: &str) -> String {
+        if path.starts_with("./") || path.starts_with(".\\") {
+            let stripped = &path[2..];
+            let resolved = self.relative_to.join(stripped);
+            resolved.to_string_lossy().into_owned()
+        } else if path.starts_with("../") || path.starts_with("..\\") {
+            let stripped = &path[3..];
+            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
+            let resolved = parent.join(stripped);
+            resolved.to_string_lossy().into_owned()
+        } else if path == "." {
+            self.relative_to.to_string_lossy().into_owned()
+        } else if path == ".." {
+            let parent = self.relative_to.parent().unwrap_or(&self.relative_to);
+            parent.to_string_lossy().into_owned()
+        } else {
+            path.to_string()
         }
     }
 
@@ -274,10 +301,34 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, mode, window, cx| {
             let (tx, rx) = oneshot::channel();
-            let delegate = OpenPathDelegate::for_open(tx, lister, mode, cx);
+            let relative_to = Self::relative_to(workspace, false, cx);
+            let delegate = OpenPathDelegate::for_open(tx, lister, mode, relative_to, cx);
             Self::prompt_for_path(workspace, delegate, None, window, cx);
             rx
         }));
+    }
+
+    /// Directory that `./` and `../` queries resolve against: the active file's directory
+    /// when opening, otherwise the first project root, falling back to the process cwd.
+    fn relative_to(workspace: &Workspace, creating_path: bool, cx: &App) -> PathBuf {
+        let project_root = workspace
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf());
+        let active_file_directory = (!creating_path)
+            .then(|| workspace.active_item(cx))
+            .flatten()
+            .and_then(|item| item.project_path(cx))
+            .and_then(|project_path| {
+                workspace
+                    .project()
+                    .read(cx)
+                    .absolute_path(&project_path, cx)
+            })
+            .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+        active_file_directory
+            .or(project_root)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 
     pub fn register_new_path(
@@ -288,7 +339,8 @@ impl OpenPathPrompt {
         workspace.set_prompt_for_new_path(Box::new(
             |workspace, lister, suggested_name, window, cx| {
                 let (tx, rx) = oneshot::channel();
-                let delegate = OpenPathDelegate::new(tx, lister, true, cx);
+                let relative_to = Self::relative_to(workspace, true, cx);
+                let delegate = OpenPathDelegate::new(tx, lister, true, relative_to, cx);
                 Self::prompt_for_path(workspace, delegate, suggested_name, window, cx);
                 rx
             },
@@ -352,13 +404,13 @@ impl PickerDelegate for OpenPathDelegate {
         let lister = &self.lister;
         let input_is_empty = query.is_empty();
         let (dir, suffix) = get_dir_and_suffix(query, self.path_style);
-
+        let resolved_dir = self.resolve_path(&dir);
         let query = match &self.directory_state {
             DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
                     None
                 } else {
-                    Some(lister.list_directory(dir.clone(), cx))
+                    Some(lister.list_directory(resolved_dir, cx))
                 }
             }
             DirectoryState::Create {
@@ -371,10 +423,10 @@ impl PickerDelegate for OpenPathDelegate {
                 {
                     None
                 } else {
-                    Some(lister.list_directory(dir.clone(), cx))
+                    Some(lister.list_directory(resolved_dir, cx))
                 }
             }
-            DirectoryState::None { .. } => Some(lister.list_directory(dir.clone(), cx)),
+            DirectoryState::None { .. } => Some(lister.list_directory(resolved_dir, cx)),
         };
         self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
@@ -730,12 +782,13 @@ impl PickerDelegate for OpenPathDelegate {
         match &self.directory_state {
             DirectoryState::None { .. } => return,
             DirectoryState::List { parent_path, .. } => {
+                let resolved_parent = self.resolve_path(parent_path);
                 let confirmed_path =
                     if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
                         PathBuf::from(&self.prompt_root)
                     } else {
                         self.path_style.normalize_separators(self.path_style.join(
-                            Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
+                            Path::new(self.lister.resolve_tilde(&resolved_parent, cx).as_ref()),
                             &candidate.path.string,
                         ))
                     };
@@ -756,11 +809,12 @@ impl PickerDelegate for OpenPathDelegate {
                     if user_input.is_dir {
                         return;
                     }
+                    let resolved_parent = self.resolve_path(parent_path);
                     let prompted_path =
                         if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
                             PathBuf::from(&self.prompt_root)
                         } else {
-                            let parent_path = self.lister.resolve_tilde(parent_path, cx);
+                            let parent_path = self.lister.resolve_tilde(&resolved_parent, cx);
                             PathBuf::from(format!("{parent_path}{}", user_input.file.string))
                         };
                     if user_input.exists {
@@ -1063,7 +1117,8 @@ fn get_dir_and_suffix(query: String, path_style: PathStyle) -> (String, String) 
             } else {
                 (query, String::new())
             };
-            if dir.len() < 3 {
+            let is_relative = dir == "./" || dir == ".\\";
+            if dir.len() < 3 && !is_relative {
                 dir = "C:\\".to_string();
             }
             (dir, suffix)
@@ -1076,6 +1131,25 @@ mod tests {
     use util::paths::PathStyle;
 
     use super::get_dir_and_suffix;
+
+    #[test]
+    fn test_get_dir_and_suffix_with_windows_style_relative_prefix() {
+        let (dir, suffix) = get_dir_and_suffix("./".into(), PathStyle::Windows);
+        assert_eq!(dir, "./");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix(".\\".into(), PathStyle::Windows);
+        assert_eq!(dir, ".\\");
+        assert_eq!(suffix, "");
+
+        let (dir, suffix) = get_dir_and_suffix("./foo".into(), PathStyle::Windows);
+        assert_eq!(dir, "./");
+        assert_eq!(suffix, "foo");
+
+        let (dir, suffix) = get_dir_and_suffix("../".into(), PathStyle::Windows);
+        assert_eq!(dir, "../");
+        assert_eq!(suffix, "");
+    }
 
     #[test]
     fn test_get_dir_and_suffix_with_windows_style() {
