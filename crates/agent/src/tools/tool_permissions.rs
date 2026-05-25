@@ -191,7 +191,7 @@ fn normalize_absolute_path(path: &Path) -> Option<PathBuf> {
 /// [`resolve_global_skill_path`], the target path does not need to exist yet.
 /// Returns `None` for any other path, including siblings of the global skills
 /// tree or paths that would escape it with `..` or symlinks.
-pub async fn resolve_creatable_global_skill_directory(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     let expanded_path = expand_home_prefix(path)?;
     let normalized_path = normalize_absolute_path(&expanded_path)?;
     let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
@@ -202,6 +202,10 @@ pub async fn resolve_creatable_global_skill_directory(path: &Path, fs: &dyn Fs) 
     } else {
         None
     }
+}
+
+pub async fn resolve_creatable_global_skill_directory(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
+    resolve_creatable_global_skill_path(path, fs).await
 }
 
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:

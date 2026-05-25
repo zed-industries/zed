@@ -2,6 +2,7 @@ mod reindent;
 mod streaming_fuzzy_matcher;
 mod streaming_parser;
 
+use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
@@ -352,6 +353,24 @@ pub(crate) struct EditSession {
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
 }
 
+enum EditSessionTarget {
+    Project {
+        project_path: ProjectPath,
+        abs_path: PathBuf,
+    },
+    GlobalSkill {
+        abs_path: PathBuf,
+    },
+}
+
+impl EditSessionTarget {
+    fn abs_path(&self) -> &PathBuf {
+        match self {
+            Self::Project { abs_path, .. } | Self::GlobalSkill { abs_path } => abs_path,
+        }
+    }
+}
+
 enum Pipeline {
     Write(WritePipeline),
     Edit(EditPipeline),
@@ -639,16 +658,28 @@ impl EditSession {
         event_stream: &ToolCallEventStream,
         cx: &mut AsyncApp,
     ) -> Result<Self, String> {
-        let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
+        let target = if let Some(abs_path) =
+            resolve_global_skill_path_for_edit_session(mode, &path, &context, cx).await?
+        {
+            EditSessionTarget::GlobalSkill { abs_path }
+        } else {
+            let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
 
-        let Some(abs_path) =
-            cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
-        else {
-            return Err(format!(
-                "Worktree at '{}' does not exist",
-                path.to_string_lossy()
-            ));
+            let Some(abs_path) =
+                cx.update(|cx| context.project.read(cx).absolute_path(&project_path, cx))
+            else {
+                return Err(format!(
+                    "Worktree at '{}' does not exist",
+                    path.to_string_lossy()
+                ));
+            };
+
+            EditSessionTarget::Project {
+                project_path,
+                abs_path,
+            }
         };
+        let abs_path = target.abs_path().clone();
 
         event_stream.update_fields(
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
@@ -658,11 +689,18 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let buffer = context
-            .project
-            .update(cx, |project, cx| project.open_buffer(project_path, cx))
-            .await
-            .map_err(|e| e.to_string())?;
+        let buffer = match target {
+            EditSessionTarget::Project { project_path, .. } => context
+                .project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await
+                .map_err(|e| e.to_string())?,
+            EditSessionTarget::GlobalSkill { abs_path } => context
+                .project
+                .update(cx, |project, cx| project.open_local_buffer(abs_path, cx))
+                .await
+                .map_err(|e| e.to_string())?,
+        };
 
         let file_changed_since_last_read =
             ensure_buffer_saved(&buffer, &abs_path, mode, &context, event_stream, cx).await?;
@@ -1053,6 +1091,60 @@ async fn resolve_dirty_buffer(
         }
     }
     Ok(())
+}
+
+async fn resolve_global_skill_path_for_edit_session(
+    mode: EditSessionMode,
+    path: &PathBuf,
+    context: &EditSessionContext,
+    cx: &mut AsyncApp,
+) -> Result<Option<PathBuf>, String> {
+    let fs = context
+        .project
+        .read_with(cx, |project, _cx| project.fs().clone());
+    let Some(abs_path) = resolve_creatable_global_skill_path(path, fs.as_ref()).await else {
+        return Ok(None);
+    };
+
+    match mode {
+        EditSessionMode::Edit => {
+            let metadata = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't edit file: {e}"))?
+                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+            if metadata.is_dir {
+                return Err("Can't edit file: path is a directory".to_string());
+            }
+        }
+        EditSessionMode::Write => {
+            if let Some(metadata) = fs
+                .metadata(&abs_path)
+                .await
+                .map_err(|e| format!("Can't write to file: {e}"))?
+            {
+                if metadata.is_dir {
+                    return Err("Can't write to file: path is a directory".to_string());
+                }
+            } else {
+                let parent_path = abs_path
+                    .parent()
+                    .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+                let parent_metadata = fs
+                    .metadata(parent_path)
+                    .await
+                    .map_err(|e| format!("Can't create file: {e}"))?
+                    .ok_or_else(|| {
+                        "Can't create file: parent directory doesn't exist".to_string()
+                    })?;
+                if !parent_metadata.is_dir {
+                    return Err("Can't create file: parent is not a directory".to_string());
+                }
+            }
+        }
+    }
+
+    Ok(Some(abs_path))
 }
 
 fn resolve_path(
