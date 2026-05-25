@@ -1,5 +1,7 @@
 //! Accessibility support, provided by AccessKit
 //!
+//! todo! expand these docs
+//!
 //! The rough data flow is as follows:
 //! - An [`Element`] can optionally provide [`a11y_role()`] and
 //!   [`write_a11y_info()`] implementations.

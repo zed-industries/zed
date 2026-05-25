@@ -1577,16 +1577,36 @@ impl Window {
                 tree_id: accesskit::TreeId::ROOT,
                 focus: ROOT_NODE_ID,
             };
+            let (activation_sender, activation_receiver) = async_channel::unbounded::<()>();
             let (action_sender, action_receiver) =
                 async_channel::unbounded::<accesskit::ActionRequest>();
 
             platform_window.a11y_init(crate::A11yCallbacks {
-                activation: Box::new(move || Some(initial_tree.clone())),
+                activation: Box::new(move || {
+                    activation_sender.send_blocking(()).log_err();
+                    Some(initial_tree.clone())
+                }),
                 action: Box::new(move |request| {
                     action_sender.send_blocking(request).log_err();
                 }),
                 deactivation: Box::new(|| {}),
             });
+
+            // A11y can be activated at any time, and so we cannot compute a
+            // correct `TreeUpdate` on-demand. When this happens, we return a
+            // default empty `TreeUpdate`.
+            // 
+            // So we force a new frame, which will then send a correct `TreeUpdate`.
+            let mut async_cx = cx.to_async();
+            cx.foreground_executor()
+                .spawn(async move {
+                    while activation_receiver.recv().await.is_ok() {
+                        handle
+                            .update(&mut async_cx, |_, window, _| window.refresh())
+                            .log_err();
+                    }
+                })
+                .detach();
 
             let mut async_cx = cx.to_async();
             cx.foreground_executor()

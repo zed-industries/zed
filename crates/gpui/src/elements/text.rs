@@ -33,8 +33,6 @@ use std::{
 /// the accessibility tree, which allows the text to be visible to screen
 /// readers and other assistive technologies.
 ///
-/// IDs must be unique. todo! GPUI ID uniqueness
-///
 /// This ID is stable across frames. If the same text, with the same ID, is
 /// present in two consecutive frames, no updates are reported to the screen
 /// reader. If the text changes, but the ID stays the same, then the screen
@@ -1004,7 +1002,7 @@ impl Element for InteractiveText {
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
-        node.set_label(self.text.text.to_string());
+        node.set_value(self.text.text.to_string());
     }
 
     fn request_layout(
