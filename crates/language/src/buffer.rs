@@ -3281,7 +3281,7 @@ impl Buffer {
             .copied()
             .take_while(|node_id| *node_id != lowest_common_ancestor)
             .collect::<Vec<_>>();
-        for node_id in redo_nodes.iter().rev().copied() {
+        for node_id in redo_nodes.into_iter().rev() {
             if let Some(transaction_id) = nodes_by_id
                 .get(&node_id)
                 .and_then(|node| node.transaction_id)
@@ -3293,9 +3293,9 @@ impl Buffer {
         transaction_ids
     }
 
-    fn undo_tree_path_to_root<'a>(
+    fn undo_tree_path_to_root(
         node_id: text::UndoNodeId,
-        nodes_by_id: &HashMap<text::UndoNodeId, &'a text::UndoTreeNodeSnapshot>,
+        nodes_by_id: &HashMap<text::UndoNodeId, &text::UndoTreeNodeSnapshot>,
     ) -> Option<Vec<text::UndoNodeId>> {
         let mut path = Vec::new();
         let mut node_id = node_id;

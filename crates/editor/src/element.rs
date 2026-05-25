@@ -7759,7 +7759,7 @@ impl EditorElement {
         let margin = px(12.);
         let available_width = (hitbox.bounds.size.width - margin - margin)
             .max(px(180.))
-            .min(px(320.));
+            .min(px(420.));
         let size = element.layout_as_root(
             size(
                 AvailableSpace::Definite(available_width),

@@ -522,16 +522,32 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
             let state = editor.undo_tree_visualizer_state(cx);
 
             assert!(state.available);
-            assert_eq!(state.current, state.selected);
-            assert!(state.can_switch_branch);
+            // Root -> A, with A branching into B and C.
+            assert_eq!(state.nodes.len(), 4);
+            // The current node is the one `show_undo_tree` selected.
+            let current = state
+                .nodes
+                .iter()
+                .find(|node| node.kind == crate::undo_tree::UndoTreeNodeKind::Current)
+                .expect("visualizer should include the current node");
+            assert!(current.selected);
             assert_eq!(
-                state.nodes.iter().filter(|node| node.branch_head).count(),
-                2
+                state
+                    .nodes
+                    .iter()
+                    .filter(|node| node.kind == crate::undo_tree::UndoTreeNodeKind::Current)
+                    .count(),
+                1
             );
-            assert_eq!(state.nodes.iter().filter(|node| node.current).count(), 1);
-            assert!(state.nodes.iter().any(|node| node.branch_point));
-            assert!(state.nodes.iter().any(|node| node.active_branch));
-            assert!(!state.nodes.iter().any(|node| node.latest_saved));
+            // A branches into two children, so at least one parent has 2 edges.
+            assert!(branches_into_two(&state.edges));
+            assert!(state.edges.iter().any(|edge| edge.active));
+            assert!(
+                !state
+                    .nodes
+                    .iter()
+                    .any(|node| node.kind == crate::undo_tree::UndoTreeNodeKind::Saved)
+            );
         })
         .expect("editor should update");
 
@@ -540,17 +556,33 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
     });
 
     editor
-        .update(cx, |editor, _, cx| {
+        .update(cx, |editor, window, cx| {
+            // Move the cursor off the saved node so it renders as saved, not current.
+            now += Duration::from_secs(1);
+            editor.start_transaction_at(now, window, cx);
+            editor.insert("D", window, cx);
+            editor.end_transaction_at(now, cx);
+
             let state = editor.undo_tree_visualizer_state(cx);
-            let current = state
-                .nodes
-                .iter()
-                .find(|node| node.current)
-                .expect("visualizer should include the current node");
-            assert!(current.saved);
-            assert!(current.latest_saved);
+            assert!(
+                state
+                    .nodes
+                    .iter()
+                    .any(|node| node.kind == crate::undo_tree::UndoTreeNodeKind::Saved)
+            );
         })
         .expect("editor should update");
+}
+
+/// Returns true if any node in `edges` is the parent of at least two children.
+fn branches_into_two(edges: &[crate::undo_tree::UndoTreeVisualizerEdge]) -> bool {
+    edges.iter().any(|edge| {
+        edges
+            .iter()
+            .filter(|other| other.from_row == edge.from_row && other.from_column == edge.from_column)
+            .count()
+            > 1
+    })
 }
 
 #[gpui::test]
@@ -588,9 +620,8 @@ fn test_undo_tree_visualizer_is_disabled_for_multibuffers(cx: &mut TestAppContex
 
             let state = editor.undo_tree_visualizer_state(cx);
             assert!(!state.available);
-            assert_eq!(state.current, None);
-            assert_eq!(state.selected, None);
             assert!(state.nodes.is_empty());
+            assert!(state.edges.is_empty());
 
             editor.undo_tree_select_next(&UndoTreeSelectNext, window, cx);
             editor.undo_tree_switch_branch_next(&UndoTreeSwitchBranchNext, window, cx);

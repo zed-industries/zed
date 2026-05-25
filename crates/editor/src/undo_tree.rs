@@ -1,54 +1,70 @@
 use super::*;
-use gpui::{InteractiveElement as _, StatefulInteractiveElement as _};
+use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, canvas, fill};
 use std::time::SystemTime;
 use text::{UndoNodeId, UndoTreeSnapshot};
+
+/// Horizontal distance between adjacent node columns in the graph.
+const UNDO_TREE_COLUMN_WIDTH: Pixels = px(22.);
+/// Vertical distance between depth levels in the graph.
+const UNDO_TREE_ROW_HEIGHT: Pixels = px(28.);
+/// Side length of the (square) clickable box drawn for each node glyph.
+const UNDO_TREE_NODE_SIZE: Pixels = px(16.);
+/// Padding around the graph so edge nodes aren't clipped against the viewport.
+const UNDO_TREE_GRAPH_PADDING: Pixels = px(10.);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndoTreeNodeKind {
+    Normal,
+    Saved,
+    Current,
+}
+
+impl UndoTreeNodeKind {
+    fn glyph(self) -> &'static str {
+        match self {
+            UndoTreeNodeKind::Current => "x",
+            UndoTreeNodeKind::Saved => "s",
+            UndoTreeNodeKind::Normal => "o",
+        }
+    }
+
+    fn color(self) -> Color {
+        match self {
+            UndoTreeNodeKind::Current => Color::Accent,
+            UndoTreeNodeKind::Saved => Color::Success,
+            UndoTreeNodeKind::Normal => Color::Muted,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct UndoTreeVisualizerState {
     pub(crate) available: bool,
-    pub(crate) current: Option<UndoNodeId>,
-    pub(crate) selected: Option<UndoNodeId>,
-    pub(crate) can_switch_branch: bool,
     pub(crate) nodes: Vec<UndoTreeVisualizerNode>,
+    pub(crate) edges: Vec<UndoTreeVisualizerEdge>,
+    pub(crate) row_timestamps: Vec<Option<SharedString>>,
+    pub(crate) columns: usize,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct UndoTreeVisualizerNode {
     pub(crate) id: UndoNodeId,
-    pub(crate) depth: usize,
-    pub(crate) ordinal: usize,
-    pub(crate) label: SharedString,
-    pub(crate) timestamp: Option<SharedString>,
-    pub(crate) current: bool,
+    /// Fractional column so that a parent can sit centered between its children.
+    pub(crate) column: f32,
+    pub(crate) row: usize,
+    pub(crate) kind: UndoTreeNodeKind,
     pub(crate) selected: bool,
-    pub(crate) active_branch: bool,
-    pub(crate) branch_head: bool,
-    pub(crate) saved: bool,
-    pub(crate) latest_saved: bool,
-    pub(crate) branch_point: bool,
 }
 
-impl UndoTreeVisualizerNode {
-    fn badges(&self) -> Vec<(&'static str, Color)> {
-        let mut badges = Vec::new();
-        if self.current {
-            badges.push(("current", Color::Accent));
-        }
-        if self.latest_saved {
-            badges.push(("latest", Color::Success));
-        } else if self.saved {
-            badges.push(("saved", Color::Success));
-        }
-        if self.branch_point {
-            badges.push(("branch", Color::Info));
-        } else if self.branch_head {
-            badges.push(("head", Color::Muted));
-        }
-        if self.active_branch {
-            badges.push(("active", Color::Modified));
-        }
-        badges
-    }
+/// A parent → child link, with the column/row of each endpoint and whether the
+/// link lies on the currently active branch (used for line coloring).
+#[derive(Clone, Debug)]
+pub(crate) struct UndoTreeVisualizerEdge {
+    pub(crate) from_column: f32,
+    pub(crate) from_row: usize,
+    pub(crate) to_column: f32,
+    pub(crate) to_row: usize,
+    pub(crate) active: bool,
 }
 
 impl Editor {
@@ -422,10 +438,10 @@ impl Editor {
         let Some(snapshot) = self.undo_tree_snapshot(cx) else {
             return UndoTreeVisualizerState {
                 available: false,
-                current: None,
-                selected: None,
-                can_switch_branch: false,
                 nodes: Vec::new(),
+                edges: Vec::new(),
+                row_timestamps: Vec::new(),
+                columns: 0,
             };
         };
 
@@ -438,24 +454,37 @@ impl Editor {
             .iter()
             .map(|node| (node.id, node))
             .collect::<HashMap<_, _>>();
-        let mut nodes = Vec::new();
-        let mut visited = HashSet::default();
-        Self::push_undo_tree_visualizer_node(
-            snapshot.root,
-            0,
-            snapshot.current,
+
+        let mut layout = UndoTreeLayout {
+            current: snapshot.current,
             selected,
-            &nodes_by_id,
-            &mut visited,
-            &mut nodes,
-        );
+            nodes_by_id: &nodes_by_id,
+            visited: HashSet::default(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            row_edit_times: Vec::new(),
+            next_leaf_column: 0.,
+        };
+        layout.place(snapshot.root, 0, true);
+
+        let row_timestamps = layout
+            .row_edit_times
+            .iter()
+            .map(|time| time.map(Self::format_undo_tree_timestamp))
+            .collect::<Vec<_>>();
+        let columns = layout
+            .nodes
+            .iter()
+            .map(|node| node.column.ceil() as usize + 1)
+            .max()
+            .unwrap_or(1);
 
         UndoTreeVisualizerState {
             available: true,
-            current: Some(snapshot.current),
-            selected: Some(selected),
-            can_switch_branch: snapshot.nodes.iter().any(|node| node.children.len() > 1),
-            nodes,
+            nodes: layout.nodes,
+            edges: layout.edges,
+            row_timestamps,
+            columns,
         }
     }
 
@@ -470,13 +499,11 @@ impl Editor {
         let state = self.undo_tree_visualizer_state(cx);
         let read_only = self.read_only(cx);
         let can_jump = state.available && !read_only;
-        let can_switch_branch = state.can_switch_branch && !read_only;
-        let latest_saved_enabled = state.nodes.iter().any(|node| node.latest_saved) && !read_only;
 
         Some(
             WithRemSize::new(ThemeSettings::get_global(cx).ui_font_size(cx))
                 .w_full()
-                .max_w(px(320.))
+                .max_w(px(420.))
                 .max_h(px(420.))
                 .flex()
                 .flex_col()
@@ -515,68 +542,6 @@ impl Editor {
                             h_flex()
                                 .gap_0p5()
                                 .child(
-                                    IconButton::new(
-                                        "undo-tree-branch-previous",
-                                        IconName::ChevronLeft,
-                                    )
-                                    .shape(IconButtonShape::Square)
-                                    .size(ButtonSize::Compact)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .disabled(!can_switch_branch)
-                                    .tooltip(|_, cx| {
-                                        cx.new(|_| Tooltip::new("Previous Branch")).into()
-                                    })
-                                    .on_click(cx.listener(
-                                        |editor, _, window, cx| {
-                                            editor.undo_tree_switch_branch_previous(
-                                                &UndoTreeSwitchBranchPrevious,
-                                                window,
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    IconButton::new(
-                                        "undo-tree-branch-next",
-                                        IconName::ChevronRight,
-                                    )
-                                    .shape(IconButtonShape::Square)
-                                    .size(ButtonSize::Compact)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .disabled(!can_switch_branch)
-                                    .tooltip(|_, cx| cx.new(|_| Tooltip::new("Next Branch")).into())
-                                    .on_click(cx.listener(
-                                        |editor, _, window, cx| {
-                                            editor.undo_tree_switch_branch_next(
-                                                &UndoTreeSwitchBranchNext,
-                                                window,
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    IconButton::new("undo-tree-latest-saved", IconName::Check)
-                                        .shape(IconButtonShape::Square)
-                                        .size(ButtonSize::Compact)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .disabled(!latest_saved_enabled)
-                                        .tooltip(|_, cx| {
-                                            cx.new(|_| Tooltip::new("Jump to Latest Saved")).into()
-                                        })
-                                        .on_click(cx.listener(|editor, _, window, cx| {
-                                            editor.undo_tree_jump_to_latest_saved(
-                                                &UndoTreeJumpToLatestSaved,
-                                                window,
-                                                cx,
-                                            );
-                                        })),
-                                )
-                                .child(
                                     IconButton::new("undo-tree-latest", IconName::FastForward)
                                         .shape(IconButtonShape::Square)
                                         .size(ButtonSize::Compact)
@@ -612,7 +577,8 @@ impl Editor {
                 .child(
                     div()
                         .id("undo-tree-body")
-                        .max_h(px(388.))
+                        .flex_1()
+                        .min_h_0()
                         .overflow_y_scroll()
                         .when(!state.available, |this| {
                             this.p_3().child(
@@ -628,176 +594,162 @@ impl Editor {
                                     .color(Color::Muted),
                             )
                         })
-                        .when(state.available, |this| {
-                            this.children(
-                                state
-                                    .nodes
-                                    .into_iter()
-                                    .map(|node| {
-                                        Self::render_undo_tree_visualizer_node(node, read_only, cx)
-                                    })
-                                    .collect::<Vec<_>>(),
-                            )
+                        .when(state.available && !state.nodes.is_empty(), |this| {
+                            this.child(self.render_undo_tree_graph(state, cx))
                         }),
                 )
                 .into_any_element(),
         )
     }
 
-    fn render_undo_tree_visualizer_node(
-        node: UndoTreeVisualizerNode,
-        read_only: bool,
+    fn render_undo_tree_graph(
+        &self,
+        state: UndoTreeVisualizerState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let node_id = node.id;
-        let indent = px(8. + node.depth as f32 * 14.);
-        let marker = if node.current {
-            ">"
-        } else if node.selected {
-            "*"
-        } else if node.branch_head {
-            "o"
-        } else {
-            "-"
-        };
+        let rows = state.row_timestamps.len();
+        let graph_width =
+            UNDO_TREE_GRAPH_PADDING * 2. + UNDO_TREE_COLUMN_WIDTH * state.columns as f32;
+        let graph_height = UNDO_TREE_GRAPH_PADDING * 2. + UNDO_TREE_ROW_HEIGHT * rows as f32;
 
+        let column_center = |column: f32| {
+            UNDO_TREE_GRAPH_PADDING + UNDO_TREE_COLUMN_WIDTH * (column + 0.5)
+        };
+        let row_center =
+            |row: usize| UNDO_TREE_GRAPH_PADDING + UNDO_TREE_ROW_HEIGHT * (row as f32 + 0.5);
+
+        let active_edge_color = cx.theme().colors().text_muted;
+        let inactive_edge_color = cx.theme().colors().border_variant;
+        let edges = state
+            .edges
+            .iter()
+            .map(|edge| {
+                let from = point(column_center(edge.from_column), row_center(edge.from_row));
+                let to = point(column_center(edge.to_column), row_center(edge.to_row));
+                (from, to, edge.active)
+            })
+            .collect::<Vec<_>>();
+
+        let connectors = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _cx| {
+                let half = px(1.) / 2.;
+                let origin = bounds.origin;
+                let mut line = |left: Pixels, top: Pixels, right: Pixels, bottom: Pixels, color| {
+                    window.paint_quad(fill(
+                        Bounds::from_corners(
+                            point(origin.x + left, origin.y + top),
+                            point(origin.x + right, origin.y + bottom),
+                        ),
+                        color,
+                    ));
+                };
+                for (from, to, active) in &edges {
+                    let color = if *active {
+                        active_edge_color
+                    } else {
+                        inactive_edge_color
+                    };
+                    let mid_y = from.y + (to.y - from.y) / 2.;
+                    let (left_x, right_x) = if from.x <= to.x {
+                        (from.x, to.x)
+                    } else {
+                        (to.x, from.x)
+                    };
+                    // Vertical out of the parent, horizontal across, vertical into the child.
+                    line(from.x - half, from.y, from.x + half, mid_y, color);
+                    line(left_x, mid_y - half, right_x, mid_y + half, color);
+                    line(to.x - half, mid_y, to.x + half, to.y, color);
+                }
+            },
+        )
+        .absolute()
+        .size_full();
+
+        let nodes = state
+            .nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| {
+                let node_id = node.id;
+                let center =
+                    point(column_center(node.column), row_center(node.row));
+                let kind = node.kind;
+                div()
+                    .id(("undo-tree-node", index))
+                    .absolute()
+                    .left(center.x - UNDO_TREE_NODE_SIZE / 2.)
+                    .top(center.y - UNDO_TREE_NODE_SIZE / 2.)
+                    .size(UNDO_TREE_NODE_SIZE)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(node.selected, |this| {
+                        this.bg(cx.theme().colors().element_selected)
+                    })
+                    .hover(|style| style.bg(cx.theme().colors().element_hover))
+                    .child(
+                        Label::new(kind.glyph())
+                            .size(LabelSize::Small)
+                            .color(kind.color())
+                            .line_height_style(LineHeightStyle::UiLabel),
+                    )
+                    .on_click(cx.listener(move |editor, _, window, cx| {
+                        editor.selected_undo_node = Some(node_id);
+                        editor.jump_to_undo_node(node_id, window, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let timestamp_gutter = v_flex()
+            .flex_none()
+            .w(px(56.))
+            .h(graph_height)
+            .pt(UNDO_TREE_GRAPH_PADDING)
+            .pr_2()
+            .border_l_1()
+            .border_color(cx.theme().colors().border_variant)
+            .children(state.row_timestamps.into_iter().map(|timestamp| {
+                h_flex()
+                    .h(UNDO_TREE_ROW_HEIGHT)
+                    .w_full()
+                    .items_center()
+                    .justify_end()
+                    .when_some(timestamp, |this, timestamp| {
+                        this.child(
+                            Label::new(timestamp)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .single_line(),
+                        )
+                    })
+            }));
+
+        // The outer body scrolls vertically, carrying both the graph and the
+        // timestamp gutter together; only the graph itself scrolls horizontally,
+        // so the gutter stays pinned to the right edge.
         h_flex()
-            .id(("undo-tree-node", node.ordinal))
-            .h_7()
-            .min_w_0()
-            .gap_1()
-            .px_2()
-            .cursor_pointer()
-            .overflow_hidden()
-            .when(node.selected, |this| {
-                this.bg(cx.theme().colors().element_selected)
-            })
-            .when(!node.selected && node.current, |this| {
-                this.bg(cx.theme().colors().element_hover)
-            })
-            .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .on_click(cx.listener(move |editor, _, window, cx| {
-                editor.selected_undo_node = Some(node_id);
-                editor.jump_to_undo_node(node_id, window, cx);
-            }))
-            .child(div().w(indent).flex_none())
+            .w_full()
+            .items_start()
             .child(
-                Label::new(marker)
-                    .size(LabelSize::XSmall)
-                    .color(if node.current {
-                        Color::Accent
-                    } else {
-                        Color::Muted
-                    })
-                    .line_height_style(LineHeightStyle::UiLabel)
-                    .flex_none(),
+                div()
+                    .id("undo-tree-graph")
+                    .flex_1()
+                    .overflow_x_scroll()
+                    .child(
+                        div()
+                            .relative()
+                            .w(graph_width)
+                            .h(graph_height)
+                            .child(connectors)
+                            .children(nodes),
+                    ),
             )
-            .child(
-                Label::new(node.label.clone())
-                    .size(LabelSize::Small)
-                    .color(if read_only {
-                        Color::Disabled
-                    } else {
-                        Color::Default
-                    })
-                    .single_line()
-                    .truncate()
-                    .flex_1(),
-            )
-            .children(
-                node.badges()
-                    .into_iter()
-                    .map(|(label, color)| Self::render_undo_tree_badge(label, color, cx))
-                    .collect::<Vec<_>>(),
-            )
-            .when_some(node.timestamp, |this, timestamp| {
-                this.child(
-                    Label::new(timestamp)
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted)
-                        .single_line()
-                        .flex_none(),
-                )
-            })
+            .child(timestamp_gutter)
             .into_any_element()
-    }
-
-    fn render_undo_tree_badge(label: &'static str, color: Color, cx: &App) -> AnyElement {
-        div()
-            .px_1()
-            .py_0p5()
-            .rounded_sm()
-            .bg(color.color(cx).opacity(0.12))
-            .child(
-                Label::new(label)
-                    .size(LabelSize::XSmall)
-                    .line_height_style(LineHeightStyle::UiLabel)
-                    .color(color),
-            )
-            .into_any_element()
-    }
-
-    fn push_undo_tree_visualizer_node(
-        node_id: UndoNodeId,
-        depth: usize,
-        current: UndoNodeId,
-        selected: UndoNodeId,
-        nodes_by_id: &HashMap<UndoNodeId, &text::UndoTreeNodeSnapshot>,
-        visited: &mut HashSet<UndoNodeId>,
-        visualizer_nodes: &mut Vec<UndoTreeVisualizerNode>,
-    ) {
-        if !visited.insert(node_id) {
-            return;
-        }
-
-        let Some(node) = nodes_by_id.get(&node_id) else {
-            return;
-        };
-        let active_branch = node
-            .parent
-            .and_then(|parent_id| nodes_by_id.get(&parent_id))
-            .and_then(|parent| {
-                parent
-                    .active_child
-                    .and_then(|active_child| parent.children.get(active_child))
-                    .copied()
-            })
-            .is_some_and(|active_child| active_child == node_id);
-        let label = node
-            .transaction_id
-            .map(|transaction_id| SharedString::from(format!("#{}", transaction_id.value)))
-            .unwrap_or_else(|| SharedString::from("Root"));
-        let timestamp = node
-            .last_edit_at
-            .or(node.first_edit_at)
-            .map(Self::format_undo_tree_timestamp);
-
-        visualizer_nodes.push(UndoTreeVisualizerNode {
-            id: node_id,
-            depth,
-            ordinal: visualizer_nodes.len(),
-            label,
-            timestamp,
-            current: node_id == current,
-            selected: node_id == selected,
-            active_branch,
-            branch_head: node.transaction_id.is_some() && node.children.is_empty(),
-            saved: node.saved,
-            latest_saved: node.latest_saved,
-            branch_point: node.children.len() > 1,
-        });
-
-        for child in &node.children {
-            Self::push_undo_tree_visualizer_node(
-                *child,
-                depth + 1,
-                current,
-                selected,
-                nodes_by_id,
-                visited,
-                visualizer_nodes,
-            );
-        }
     }
 
     fn format_undo_tree_timestamp(timestamp: SystemTime) -> SharedString {
@@ -815,5 +767,87 @@ impl Editor {
         } else {
             format!("{}d", elapsed.as_secs() / 60 / 60 / 24).into()
         }
+    }
+}
+
+/// Assigns each undo-tree node a (column, row) position for the visualizer.
+///
+/// Rows correspond to tree depth. Columns are assigned bottom-up: leaves take
+/// successive columns, and every parent is centered between its first and last
+/// child, so sibling subtrees fan out horizontally without overlapping. This
+/// mirrors the layered layout emacs' `undo-tree` draws, but produces fractional
+/// columns so a parent can sit exactly between an even number of children.
+struct UndoTreeLayout<'a> {
+    current: UndoNodeId,
+    selected: UndoNodeId,
+    nodes_by_id: &'a HashMap<UndoNodeId, &'a text::UndoTreeNodeSnapshot>,
+    visited: HashSet<UndoNodeId>,
+    nodes: Vec<UndoTreeVisualizerNode>,
+    edges: Vec<UndoTreeVisualizerEdge>,
+    row_edit_times: Vec<Option<SystemTime>>,
+    next_leaf_column: f32,
+}
+
+impl UndoTreeLayout<'_> {
+    /// Places the subtree rooted at `node_id` and returns the node's column.
+    fn place(&mut self, node_id: UndoNodeId, row: usize, on_active_branch: bool) -> f32 {
+        if !self.visited.insert(node_id) {
+            return 0.;
+        }
+        let Some(node) = self.nodes_by_id.get(&node_id).copied() else {
+            return 0.;
+        };
+
+        let active_child = node.active_child.unwrap_or(0);
+        let mut child_columns = Vec::with_capacity(node.children.len());
+        for (index, child_id) in node.children.iter().enumerate() {
+            let child_active = on_active_branch && index == active_child;
+            let child_column = self.place(*child_id, row + 1, child_active);
+            child_columns.push((child_column, child_active));
+        }
+
+        let column = match (child_columns.first(), child_columns.last()) {
+            (Some(first), Some(last)) => (first.0 + last.0) / 2.,
+            _ => {
+                let column = self.next_leaf_column;
+                self.next_leaf_column += 1.;
+                column
+            }
+        };
+
+        for (child_column, child_active) in &child_columns {
+            self.edges.push(UndoTreeVisualizerEdge {
+                from_column: column,
+                from_row: row,
+                to_column: *child_column,
+                to_row: row + 1,
+                active: *child_active,
+            });
+        }
+
+        let kind = if node_id == self.current {
+            UndoTreeNodeKind::Current
+        } else if node.saved || node.latest_saved {
+            UndoTreeNodeKind::Saved
+        } else {
+            UndoTreeNodeKind::Normal
+        };
+        self.nodes.push(UndoTreeVisualizerNode {
+            id: node_id,
+            column,
+            row,
+            kind,
+            selected: node_id == self.selected,
+        });
+
+        if self.row_edit_times.len() <= row {
+            self.row_edit_times.resize(row + 1, None);
+        }
+        if let Some(edit_time) = node.last_edit_at.or(node.first_edit_at) {
+            let slot = &mut self.row_edit_times[row];
+            *slot = Some(slot.map_or(edit_time, |current| current.max(edit_time)));
+        }
+
+        column
     }
 }
