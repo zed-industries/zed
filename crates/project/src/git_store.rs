@@ -6529,18 +6529,20 @@ impl Repository {
                         // TODO would be nice to not have to do this manually
                         if result.is_ok() {
                             let branches_scan = backend.branches().await?;
-                            let branch = branches_scan
-                                .branches
-                                .into_iter()
-                                .find(|branch| branch.is_head);
+                            let branch_list_error = branches_scan.error;
+                            let branch_list: Arc<[Branch]> = branches_scan.branches.into();
+                            let branch = branch_list.iter().find(|branch| branch.is_head).cloned();
                             log::info!("head branch after scan is {branch:?}");
                             let snapshot = this.update(&mut cx, |this, cx| {
+                                let branch_list_changed =
+                                    *branch_list != *this.snapshot.branch_list;
                                 let branch_list_error_changed =
-                                    this.snapshot.branch_list_error != branches_scan.error;
+                                    this.snapshot.branch_list_error != branch_list_error;
                                 this.snapshot.branch = branch;
-                                this.snapshot.branch_list_error = branches_scan.error;
+                                this.snapshot.branch_list = branch_list;
+                                this.snapshot.branch_list_error = branch_list_error;
                                 cx.emit(RepositoryEvent::HeadChanged);
-                                if branch_list_error_changed {
+                                if branch_list_changed || branch_list_error_changed {
                                     cx.emit(RepositoryEvent::BranchListChanged);
                                 }
                                 this.snapshot.clone()

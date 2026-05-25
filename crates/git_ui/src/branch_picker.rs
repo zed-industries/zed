@@ -420,7 +420,6 @@ impl Focusable for BranchList {
 
 impl Render for BranchList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let branch_list_error = self.picker.read(cx).delegate.branch_list_error.clone();
         v_flex()
             .key_context("GitBranchSelector")
             .w(self.width)
@@ -428,23 +427,6 @@ impl Render for BranchList {
             .on_action(cx.listener(Self::handle_delete))
             .on_action(cx.listener(Self::handle_force_delete))
             .on_action(cx.listener(Self::handle_filter))
-            .when_some(branch_list_error, |this, error| {
-                let message = format!("Some branches could not be loaded: {error}");
-                this.child(
-                    div()
-                        .id("branch-list-error")
-                        .p_1p5()
-                        .child(
-                            Banner::new().severity(Severity::Warning).child(
-                                Label::new(message.clone())
-                                    .size(LabelSize::Small)
-                                    .single_line()
-                                    .truncate(),
-                            ),
-                        )
-                        .tooltip(Tooltip::text(message)),
-                )
-            })
             .child(self.picker.clone())
             .when(!self.embedded, |this| {
                 this.on_mouse_down_out({
@@ -1076,6 +1058,23 @@ impl PickerDelegate for BranchListDelegate {
                 self.editor_position() == PickerEditorPosition::End,
                 |this| this.child(Divider::horizontal()),
             )
+            .when_some(self.branch_list_error.clone(), |this, error| {
+                let message = format!("Some branches could not be loaded: {error}");
+                this.child(
+                    div()
+                        .id("branch-list-error")
+                        .p_1p5()
+                        .child(
+                            Banner::new().severity(Severity::Warning).child(
+                                Label::new(message.clone())
+                                    .size(LabelSize::Small)
+                                    .single_line()
+                                    .truncate(),
+                            ),
+                        )
+                        .tooltip(Tooltip::text(message)),
+                )
+            })
             .child(
                 h_flex()
                     .overflow_hidden()
