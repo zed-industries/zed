@@ -4175,7 +4175,7 @@ mod tests {
         let (editor_1, buffer) = workspace.update_in(cx, |_, window, cx| {
             pane_1.update(cx, |pane_1, cx| {
                 let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-                assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                assert_eq!(editor.read(cx).active_project_path(cx), Some(file1.clone()));
                 let buffer = editor.update(cx, |editor, cx| {
                     editor.insert("dirt", window, cx);
                     editor.buffer().downgrade()
@@ -4731,7 +4731,7 @@ mod tests {
                     let scroll_position = editor_ref.scroll_position(cx);
 
                     (
-                        editor_ref.project_path(cx).unwrap(),
+                        editor_ref.active_project_path(cx).unwrap(),
                         selections[0].start,
                         scroll_position.y,
                     )

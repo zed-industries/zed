@@ -566,6 +566,10 @@ impl Item for AgentDiffPane {
             .for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -2253,7 +2257,7 @@ mod tests {
         });
 
         let editor2_path = editor2
-            .read_with(cx, |editor, cx| editor.project_path(cx))
+            .read_with(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(editor2_path, buffer_path2);
 

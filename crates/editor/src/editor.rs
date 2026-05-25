@@ -2650,16 +2650,6 @@ impl Editor {
         })
     }
 
-    /// Returns the project path for the editor's buffer, if any buffer is
-    /// opened in the editor.
-    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read(cx).project_path(cx)
-        } else {
-            None
-        }
-    }
-
     pub fn selection_menu_enabled(&self, cx: &App) -> bool {
         self.show_selection_menu
             .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
