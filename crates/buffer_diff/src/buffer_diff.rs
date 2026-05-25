@@ -248,6 +248,10 @@ impl BufferDiffSnapshot {
         self.buffer_snapshot.remote_id()
     }
 
+    pub fn buffer_snapshot(&self) -> &text::BufferSnapshot {
+        &self.buffer_snapshot
+    }
+
     pub fn is_empty(&self) -> bool {
         self.hunks.is_empty()
     }
@@ -1939,15 +1943,8 @@ impl BufferDiff {
                 .update(cx, |this, cx| {
                     this.base_text_buffer.update(cx, |base_text_buffer, cx| {
                         base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-                        let edits = if base_text_buffer.version() == base_text_diff.base_version {
-                            base_text_diff.edits
-                        } else {
-                            vec![(
-                                0..base_text_buffer.len(),
-                                text::LineEnding::normalize_arc(base_text.clone()),
-                            )]
-                        };
-                        base_text_buffer.snapshot_with_edits(edits, cx)
+                        assert!(base_text_buffer.version() == base_text_diff.base_version);
+                        base_text_buffer.snapshot_with_edits(base_text_diff.edits, cx)
                     })
                 })
                 .log_err()
