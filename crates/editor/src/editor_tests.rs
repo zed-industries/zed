@@ -14546,6 +14546,124 @@ async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
     }
 }
 
+// Regression test for the motivating issue (zed#17455 / zed#15097): formatting on
+// save used to clear the redo stack. With the undo tree, formatting while parked
+// on an older node must add a *new branch* and leave the existing redo branch
+// reachable instead of destroying it.
+#[gpui::test]
+async fn test_undo_tree_format_on_save_preserves_redo_branch(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    // Build two stacked transactions, finalizing between them so they don't group
+    // into a single node, then undo back to the first one.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("a", window, cx);
+        editor.finalize_last_transaction(cx);
+    });
+    let node_a = editor
+        .update(cx, |editor, cx| editor.undo_tree_snapshot(cx))
+        .expect("singleton buffer has an undo tree")
+        .current;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("b", window, cx);
+        editor.finalize_last_transaction(cx);
+    });
+    let node_b = editor
+        .update(cx, |editor, cx| editor.undo_tree_snapshot(cx))
+        .expect("singleton buffer has an undo tree")
+        .current;
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "a");
+
+    // Format on save while parked on `node_a`. The formatter appends "!" so it
+    // produces a real change, which becomes a new child of `node_a`.
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 1), lsp::Position::new(0, 1)),
+                "!".to_string(),
+            )]))
+        },
+    );
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "a!");
+
+    // The formatting result is a new branch; the old "b" branch must survive.
+    let snapshot = editor
+        .update(cx, |editor, cx| editor.undo_tree_snapshot(cx))
+        .expect("singleton buffer has an undo tree");
+    let node_a_snapshot = snapshot
+        .nodes
+        .iter()
+        .find(|node| node.id == node_a)
+        .expect("the node we branched from is still present");
+    assert_eq!(
+        node_a_snapshot.children.len(),
+        2,
+        "formatting should add a sibling branch, not replace the redo branch"
+    );
+    assert!(
+        node_a_snapshot.children.contains(&node_b),
+        "the original redo branch must still hang off the node we formatted from"
+    );
+
+    // The preserved branch is still reachable, reconstructing the pre-format text.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.jump_to_undo_node(node_b, window, cx);
+    });
+    assert_eq!(editor.read_with(cx, |editor, cx| editor.text(cx)), "ab");
+}
+
 #[gpui::test]
 async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
