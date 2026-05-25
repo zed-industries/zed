@@ -3,7 +3,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Keystroke,
-    ScrollHandle, Subscription, WeakEntity, Window,
+    Modifiers, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::{HashMap, HashSet};
@@ -316,12 +316,14 @@ impl ModalView for WhichKeyModal {
 fn group_bindings(
     binding_data: Vec<(Vec<Keystroke>, SharedString)>,
 ) -> Vec<(Vec<Keystroke>, SharedString)> {
-    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
-        HashMap::new();
+    // Group bindings by the visible identity of their first keystroke
+    type GroupKey = Option<(Modifiers, String)>;
+    let mut groups: HashMap<GroupKey, Vec<(Vec<Keystroke>, SharedString)>> = HashMap::new();
 
-    // Group bindings by their first keystroke
     for (remaining_keystrokes, action_name) in binding_data {
-        let first_key = remaining_keystrokes.first().cloned();
+        let first_key = remaining_keystrokes
+            .first()
+            .map(|k| (k.modifiers, k.key.clone()));
         groups
             .entry(first_key)
             .or_default()
@@ -331,16 +333,35 @@ fn group_bindings(
     let mut result = Vec::new();
 
     for (first_key, mut group_bindings) in groups {
-        // Remove duplicates within each group
-        group_bindings.dedup_by_key(|(keystrokes, _)| keystrokes.clone());
+        // Remove duplicates within each group (HashMap order is arbitrary,
+        // so dedup_by_key which only removes adjacent duplicates is insufficient)
+        let mut seen_keystrokes = HashSet::new();
+        group_bindings.retain(|(keystrokes, _)| seen_keystrokes.insert(keystrokes.clone()));
 
-        if let Some(first_key) = first_key
+        if first_key.is_some()
             && group_bindings.len() > 1
         {
-            // This is a group - create a single entry with just the first keystroke
-            let first_keystroke = vec![first_key];
-            let count = group_bindings.len();
-            result.push((first_keystroke, format!("+{} keybinds", count).into()));
+            // Separate direct (single-key) bindings from chord (multi-key) bindings
+            let (direct, chords): (Vec<_>, Vec<_>) = group_bindings
+                .into_iter()
+                .partition(|(keystrokes, _)| keystrokes.len() <= 1);
+
+            // Direct bindings are shown individually (dedup by action name for key_char variants)
+            let mut seen_actions = HashSet::new();
+            result.extend(
+                direct
+                    .into_iter()
+                    .filter(|(_, action)| seen_actions.insert(action.clone())),
+            );
+
+            // Chord bindings are collapsed into a group
+            if chords.len() > 1 {
+                let first_keystroke = vec![chords[0].0[0].clone()];
+                let count = chords.len();
+                result.push((first_keystroke, format!("+{} keybinds", count).into()));
+            } else {
+                result.extend(chords);
+            }
         } else {
             // Not a group or empty keystrokes - add all bindings as-is
             result.append(&mut group_bindings);
