@@ -883,6 +883,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
+    title_generation_error: Option<SharedString>,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
@@ -1004,6 +1005,7 @@ impl Thread {
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: None,
             messages: Vec::new(),
@@ -1224,6 +1226,7 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
+            title_generation_error: None,
             pending_summary_generation: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
@@ -2447,6 +2450,14 @@ impl Thread {
         self.title.clone().unwrap_or("New Thread".into())
     }
 
+    pub fn title_generation_error(&self) -> Option<&SharedString> {
+        self.title_generation_error.as_ref()
+    }
+
+    pub fn has_failed_title_generation(&self) -> bool {
+        self.title_generation_error.is_some()
+    }
+
     pub fn is_generating_summary(&self) -> bool {
         self.pending_summary_generation.is_some()
     }
@@ -2524,6 +2535,9 @@ impl Thread {
             "Generating title with model: {:?}",
             self.summarization_model.as_ref().map(|model| model.name())
         );
+        self.title_generation_error = None;
+        cx.notify();
+
         let mut request = LanguageModelRequest {
             intent: Some(CompletionIntent::ThreadSummarization),
             temperature: AgentSettings::temperature_for_model(&model, cx),
@@ -2563,21 +2577,24 @@ impl Thread {
                 anyhow::Ok(())
             };
 
-            if generate
-                .await
-                .context("failed to generate thread title")
-                .log_err()
-                .is_some()
-            {
-                _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
-            } else {
-                // Emit TitleUpdated even on failure so that the propagation
-                // chain (agent::Thread → NativeAgent → AcpThread) fires and
-                // clears any provisional title that was set before the turn.
-                _ = this.update(cx, |_, cx| {
-                    cx.emit(TitleUpdated);
-                    cx.notify();
-                });
+            match generate.await {
+                Ok(()) => {
+                    _ = this.update(cx, |this, cx| this.set_title(title.into(), cx));
+                }
+                Err(error) => {
+                    let error_message = SharedString::from(format!("{error:#}"));
+                    log::error!("{:#}", error.context("failed to generate thread title"));
+
+                    // Emit TitleUpdated even on failure so that the propagation
+                    // chain (agent::Thread → NativeAgent → AcpThread) fires and
+                    // clears any provisional title that was set before the turn.
+                    _ = this.update(cx, |this, cx| {
+                        this.title_generation_error = Some(error_message);
+                        this.pending_title_generation = None;
+                        cx.emit(TitleUpdated);
+                        cx.notify();
+                    });
+                }
             }
             _ = this.update(cx, |this, _| this.pending_title_generation = None);
         }));
@@ -2585,9 +2602,12 @@ impl Thread {
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
         self.pending_title_generation = None;
+        let had_title_generation_error = self.title_generation_error.take().is_some();
         if Some(&title) != self.title.as_ref() {
             self.title = Some(title);
             cx.emit(TitleUpdated);
+            cx.notify();
+        } else if had_title_generation_error {
             cx.notify();
         }
     }

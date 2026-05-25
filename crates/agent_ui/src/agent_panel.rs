@@ -3267,7 +3267,11 @@ impl AgentPanel {
         let content = match &self.active_view {
             ActiveView::AgentThread { server_view } => {
                 let server_view_ref = server_view.read(cx);
-                let is_generating_title = server_view_ref.as_native_thread(cx).is_some()
+                let native_thread = server_view_ref.as_native_thread(cx);
+                let title_generation_error = native_thread
+                    .as_ref()
+                    .and_then(|thread| thread.read(cx).title_generation_error().cloned());
+                let is_generating_title = native_thread.is_some()
                     && server_view_ref.parent_thread(cx).map_or(false, |tv| {
                         tv.read(cx).thread.read(cx).has_provisional_title()
                     });
@@ -3289,7 +3293,7 @@ impl AgentPanel {
                             )
                             .into_any_element()
                     } else {
-                        div()
+                        let title_editor = div()
                             .w_full()
                             .on_action({
                                 let thread_view = server_view.downgrade();
@@ -3308,7 +3312,38 @@ impl AgentPanel {
                                 }
                             })
                             .child(title_editor)
-                            .into_any_element()
+                            .into_any_element();
+
+                        if let Some(error) = title_generation_error {
+                            let tooltip = if error.is_empty() {
+                                "Title generation failed. Retry".to_string()
+                            } else {
+                                format!("Title generation failed: {error}. Click to retry.")
+                            };
+                            h_flex()
+                                .w_full()
+                                .child(title_editor)
+                                .child(
+                                    IconButton::new("retry-title-generation", IconName::XCircle)
+                                        .icon_size(IconSize::Small)
+                                        .icon_color(Color::Error)
+                                        .on_click({
+                                            let thread_view = server_view.clone();
+                                            move |_, _window, cx| {
+                                                Self::handle_regenerate_thread_title(
+                                                    thread_view.clone(),
+                                                    cx,
+                                                );
+                                            }
+                                        })
+                                        .tooltip(move |_window, cx| {
+                                            cx.new(|_| Tooltip::new(tooltip.clone())).into()
+                                        }),
+                                )
+                                .into_any_element()
+                        } else {
+                            title_editor
+                        }
                     }
                 } else {
                     Label::new(server_view.read(cx).title(cx))

@@ -18,7 +18,8 @@ use futures::{
         mpsc::{self, UnboundedReceiver},
         oneshot,
     },
-    future::{Fuse, Shared},
+    future::{BoxFuture, Fuse, Shared},
+    stream::BoxStream,
 };
 use gpui::{
     App, AppContext, AsyncApp, Entity, Task, TestAppContext, UpdateGlobal,
@@ -27,10 +28,10 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelProviderName, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
-    fake_provider::FakeLanguageModel,
+    LanguageModelName, LanguageModelProviderId, LanguageModelProviderName, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
+    Role, StopReason, TokenUsage, fake_provider::FakeLanguageModel,
 };
 use pretty_assertions::assert_eq;
 use project::{
@@ -3075,6 +3076,83 @@ async fn test_title_generation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_title_generation_error_is_stored(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let summary_model = Arc::new(FailingTitleLanguageModel);
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    thread.update(cx, |thread, cx| thread.generate_title(cx));
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(thread.has_failed_title_generation());
+        assert_eq!(
+            thread.title_generation_error().map(|error| error.as_ref()),
+            Some("prompt is too long")
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_successful_title_generation_clears_error(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    thread.update(cx, |thread, cx| thread.generate_title(cx));
+    cx.run_until_parked();
+
+    summary_model.send_last_completion_stream_text_chunk("Generated title");
+    summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
+        assert_eq!(thread.title(), "Generated title");
+    });
+}
+
+#[gpui::test]
+async fn test_title_generation_retry_clears_error_before_completion(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let summary_model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_summarization_model(Some(summary_model.clone()), cx)
+    });
+
+    thread.update(cx, |thread, cx| thread.generate_title(cx));
+    cx.run_until_parked();
+    summary_model.send_last_completion_stream_error(anyhow::anyhow!("prompt is too long"));
+    summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(thread.has_failed_title_generation())
+    });
+
+    thread.update(cx, |thread, cx| thread.generate_title(cx));
+    thread.read_with(cx, |thread, _| {
+        assert!(!thread.has_failed_title_generation());
+        assert_eq!(thread.title_generation_error(), None);
+    });
+
+    cx.run_until_parked();
+    summary_model.send_last_completion_stream_text_chunk("Recovered title");
+    summary_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.title(), "Recovered title");
+        assert_eq!(thread.title_generation_error(), None);
+    });
+}
+
+#[gpui::test]
 async fn test_building_request_with_pending_tools(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -3726,6 +3804,67 @@ struct ThreadTest {
 enum TestModel {
     Sonnet4,
     Fake,
+}
+
+struct FailingTitleLanguageModel;
+
+impl LanguageModel for FailingTitleLanguageModel {
+    fn id(&self) -> LanguageModelId {
+        LanguageModelId::from("failing-title".to_string())
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from("Failing Title".to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        LanguageModelProviderId::from("failing-title".to_string())
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        LanguageModelProviderName::from("Failing Title".to_string())
+    }
+
+    fn telemetry_id(&self) -> String {
+        "failing-title".to_string()
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
+    fn supports_tools(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
+    fn max_token_count(&self) -> u64 {
+        1_000_000
+    }
+
+    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<u64>> {
+        futures::future::ready(Ok(0)).boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        _: LanguageModelRequest,
+        _: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
+            "prompt is too long"
+        ))))
+        .boxed()
+    }
 }
 
 impl TestModel {
