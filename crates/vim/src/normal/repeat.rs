@@ -165,6 +165,10 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
+                // replay_insert_event calls handle_input directly, which does not emit
+                // InputHandled, so observe_insertion is never triggered via the subscription.
+                // We call it explicitly here so dot recording captures the insertion text.
+                Vim::globals(cx).observe_insertion(&text, utf16_range_to_replace.clone());
                 let Some(workspace) = Workspace::for_window(window, cx) else {
                     return;
                 };
@@ -457,6 +461,19 @@ mod test {
         cx.run_until_parked();
         cx.simulate_shared_keystrokes(".").await;
         cx.shared_state().await.assert_eq("THE QUICK ˇbrown fox");
+
+        // "q l" (note after macro should be used last change made by macro)
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("q l shift-o h e l l o space w o r l d escape q")
+            .await;
+        cx.simulate_shared_keystrokes("@ l").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello worlˇd\nhello world\n");
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state()
+            .await
+            .assert_eq("hello worlˇd\nhello world\nhello world\n");
     }
 
     #[gpui::test]
