@@ -3449,8 +3449,11 @@ impl Window {
         result
     }
 
-    /// Paint one or more box shadows (drop or inset) into the scene for the next frame at the
-    /// current z-index. Mirrors CSS `box-shadow`, including the `inset` keyword.
+    /// Paint the **drop** (non-inset) box shadows from `shadows` into the scene at the current
+    /// z-index. Inset shadows in the list are ignored here; call [`Self::paint_inset_shadows`]
+    /// after the background quad is painted so they appear *on top of* the background, matching
+    /// CSS paint order:
+    ///   1. drop shadows -> 2. background -> 3. inset shadows -> 4. border -> 5. content.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
     pub fn paint_shadows(
@@ -3458,6 +3461,28 @@ impl Window {
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         shadows: &[BoxShadow],
+    ) {
+        self.paint_shadows_filtered(bounds, corner_radii, shadows, false);
+    }
+
+    /// Paint the **inset** box shadows from `shadows`. Should be called after the background
+    /// quad so that the inset shadow ends up painted on top of the fill. Drop shadows in the
+    /// list are ignored.
+    pub fn paint_inset_shadows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+    ) {
+        self.paint_shadows_filtered(bounds, corner_radii, shadows, true);
+    }
+
+    fn paint_shadows_filtered(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+        want_inset: bool,
     ) {
         self.invalidator.debug_assert_paint();
 
@@ -3467,6 +3492,9 @@ impl Window {
         let element_bounds = self.cover_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
+            if shadow.inset != want_inset {
+                continue;
+            }
             if shadow.inset {
                 // CSS inset shadow: the visible shadow is the blurred *complement* of a "hole"
                 // rect, masked to the element. The hole is the element offset by `offset` and

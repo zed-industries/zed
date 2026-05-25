@@ -696,6 +696,8 @@ impl Style {
             ));
         }
 
+        window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
+
         continuation(window, cx);
 
         if self.is_border_visible() {
