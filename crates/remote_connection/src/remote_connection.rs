@@ -245,6 +245,8 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Mock(options) => {
                 (format!("mock-{}", options.id), None, false, false)
             }
+            #[allow(unreachable_patterns)]
+            _ => unreachable!(),
         };
         Self {
             prompt: cx.new(|cx| {
