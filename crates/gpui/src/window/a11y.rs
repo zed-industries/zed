@@ -26,7 +26,7 @@
 //!     - What does this piece of text say?
 //!     - How far along is this progress bar?
 //!     - Can this node be focused?
-//!     - Can this node have a value directly assinged? (e.g. a slider)
+//!     - Can this node have a value directly assigned? (e.g. a slider)
 //! - Allowing the system to interact with the UI by dispatching actions to
 //!   nodes. Note that AccessKit has its own [`Action`] type, which is not the
 //!   [`gpui::Action`] trait.
