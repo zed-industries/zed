@@ -351,6 +351,8 @@ pub struct BoxShadow {
     pub blur_radius: Pixels,
     /// How much should the shadow spread?
     pub spread_radius: Pixels,
+    /// Whether this is an inset shadow (drawn inside the element's bounds).
+    pub inset: bool,
 }
 
 /// How to handle whitespace in text

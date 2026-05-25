@@ -10637,6 +10637,7 @@ pub fn client_side_decorations(
                                 },
                                 blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
                                 spread_radius: px(0.),
+                                inset: false,
                                 offset: point(px(0.0), px(0.0)),
                             }])
                         }),

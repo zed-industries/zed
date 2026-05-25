@@ -7703,6 +7703,7 @@ impl Editor {
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)
@@ -7837,7 +7838,11 @@ impl Editor {
         h_flex()
             .px_0p5()
             .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
+            .font(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            )
             .text_size(TextSize::XSmall.rems(cx))
             .child(h_flex().children(ui::render_modifiers(
                 &accept_keystroke.modifiers,
@@ -8149,7 +8154,11 @@ impl Editor {
                             .px_2()
                             .child(
                                 h_flex()
-                                    .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
+                                    .font(
+                                        theme_settings::ThemeSettings::get_global(cx)
+                                            .buffer_font
+                                            .clone(),
+                                    )
                                     .when(is_platform_style_mac, |parent| parent.gap_1())
                                     .child(h_flex().children(ui::render_modifiers(
                                         &accept_keystroke.modifiers,
@@ -8258,7 +8267,11 @@ impl Editor {
                         .gap_2()
                         .pr_1()
                         .overflow_x_hidden()
-                        .font(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone())
+                        .font(
+                            theme_settings::ThemeSettings::get_global(cx)
+                                .buffer_font
+                                .clone(),
+                        )
                         .child(left)
                         .child(preview),
                 )
