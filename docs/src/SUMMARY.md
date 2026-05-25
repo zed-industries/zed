@@ -8,36 +8,6 @@
   - [Uninstall](./uninstall.md)
 - [Troubleshooting](./troubleshooting.md)
 
-# AI
-
-- [Overview](./ai/overview.md)
-- [AI Quick Start](./ai/quick-start.md)
-- [AI by Company](./ai/by-company.md)
-- [Set Up AI](./ai/set-up-ai.md)
-- [Agents](./ai/agents.md)
-  - [Zed Agent](./ai/zed-agent.md)
-  - [External Agents](./ai/external-agents.md)
-  - [Terminal Threads](./ai/terminal-threads.md)
-- [Agent Panel](./ai/agent-panel.md)
-  - [Agent Settings](./ai/agent-settings.md)
-  - [Agent Profiles](./ai/agent-profiles.md)
-- [Parallel Agents](./ai/parallel-agents.md)
-- [Inline Assistant](./ai/inline-assistant.md)
-- [LLM Providers](./ai/llm-providers.md)
-  - [Use Zed-Hosted Models](./account/zed-hosted-models.md)
-  - [Use API Access](./ai/use-api-access.md)
-  - [Use an Existing Subscription](./ai/use-an-existing-subscription.md)
-  - [Use a Gateway](./ai/use-a-gateway.md)
-  - [Use a Local Model](./ai/use-a-local-model.md)
-- [Tools](./ai/tools.md)
-- [Tool Permissions](./ai/tool-permissions.md)
-- [Skills](./ai/skills.md)
-- [Instructions](./ai/instructions.md)
-- [Model Context Protocol](./ai/mcp.md)
-- [Edit Prediction](./ai/edit-prediction.md)
-- [Privacy & Security](./ai/privacy-and-security.md)
-- [AI Improvement](./ai/ai-improvement.md)
-
 # Working with Code
 
 - [Windows & Projects](./windows-and-projects.md)
@@ -70,6 +40,36 @@
 - [Overview](./remote-development.md)
 - [Environment Variables](./environment.md)
 - [Dev Containers](./dev-containers.md)
+
+# AI
+
+- [Overview](./ai/overview.md)
+- [AI Quick Start](./ai/quick-start.md)
+- [AI by Company](./ai/by-company.md)
+- [Set Up AI](./ai/set-up-ai.md)
+- [Agents](./ai/agents.md)
+  - [Zed Agent](./ai/zed-agent.md)
+  - [External Agents](./ai/external-agents.md)
+  - [Terminal Threads](./ai/terminal-threads.md)
+- [Agent Panel](./ai/agent-panel.md)
+  - [Agent Settings](./ai/agent-settings.md)
+  - [Agent Profiles](./ai/agent-profiles.md)
+- [Parallel Agents](./ai/parallel-agents.md)
+- [Inline Assistant](./ai/inline-assistant.md)
+- [LLM Providers](./ai/llm-providers.md)
+  - [Use Zed-Hosted Models](./account/zed-hosted-models.md)
+  - [Use API Access](./ai/use-api-access.md)
+  - [Use an Existing Subscription](./ai/use-an-existing-subscription.md)
+  - [Use a Gateway](./ai/use-a-gateway.md)
+  - [Use a Local Model](./ai/use-a-local-model.md)
+- [Tools](./ai/tools.md)
+- [Tool Permissions](./ai/tool-permissions.md)
+- [Skills](./ai/skills.md)
+- [Instructions](./ai/instructions.md)
+- [Model Context Protocol](./ai/mcp.md)
+- [Edit Prediction](./ai/edit-prediction.md)
+- [Privacy & Security](./ai/privacy-and-security.md)
+- [AI Improvement](./ai/ai-improvement.md)
 
 # Account & Billing
 
