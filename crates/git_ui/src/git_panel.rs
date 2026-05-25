@@ -82,6 +82,7 @@ use ui::{
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
+use workspace::notifications::NotificationId;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},

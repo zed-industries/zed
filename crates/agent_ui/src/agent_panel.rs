@@ -1738,7 +1738,7 @@ impl AgentPanel {
                 Err(error) => {
                     log::error!("failed to spawn agent panel terminal: {error:#}");
                     workspace
-                        .update(cx, |workspace, cx| workspace.show_error(&error, cx))
+                        .update(cx, |workspace, cx| workspace.show_error(error, cx))
                         .log_err();
                     this.update(cx, |this, cx| {
                         if this.pending_terminal_spawn == Some(terminal_id) {
