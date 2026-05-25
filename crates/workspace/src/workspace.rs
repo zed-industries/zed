@@ -13,6 +13,7 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod binary_downloads_modal;
 pub mod path_link;
 mod persistence;
 pub mod searchable;
@@ -162,14 +163,15 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
-use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
+    binary_downloads_modal::BinaryDownloadsModal,
     persistence::{
         SerializedAxis,
         model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
+use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 pub const MAX_RECENT_SELECTIONS: usize = 20;
@@ -350,8 +352,11 @@ actions!(
         ZoomIn,
         /// Zooms out of the active pane.
         ZoomOut,
-        /// If any worktrees are in restricted mode, shows a modal with possible actions.
-        /// If the modal is shown already, closes it without trusting any worktree.
+        /// Shows the active restriction modal: worktree-trust if any worktrees
+        /// are in restricted mode, otherwise binary-downloads if downloads are
+        /// disabled. Closes whichever modal is already open. The name reads
+        /// odd for the downloads case but is kept singular on purpose so users
+        /// don't have to learn two shortcuts.
         ToggleWorktreeSecurity,
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
@@ -1904,7 +1909,6 @@ impl Workspace {
                 }
             }),
         ];
-
         cx.defer_in(window, move |this, window, cx| {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
@@ -8800,21 +8804,45 @@ impl Workspace {
                     security_modal.refresh_restricted_paths(cx);
                 });
             }
-        } else {
-            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
-                &self.project().read(cx).worktree_store(),
-                cx,
-            );
-            if has_restricted_worktrees {
-                let project = self.project().read(cx);
-                let remote_host = project
-                    .remote_connection_options(cx)
-                    .map(RemoteHostLocation::from);
-                let worktree_store = project.worktree_store().downgrade();
-                self.toggle_modal(window, cx, |window, cx| {
-                    SecurityModal::new(worktree_store, remote_host, window, cx)
-                });
+            return;
+        }
+        if let Some(existing) = self.active_modal::<BinaryDownloadsModal>(cx) {
+            if toggle {
+                existing.update(cx, |modal, cx| modal.acknowledge_and_dismiss(cx));
             }
+            return;
+        }
+        let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+            &self.project().read(cx).worktree_store(),
+            cx,
+        );
+        if has_restricted_worktrees {
+            let project = self.project().read(cx);
+            let remote_host = project
+                .remote_connection_options(cx)
+                .map(RemoteHostLocation::from);
+            let worktree_store = project.worktree_store().downgrade();
+            self.toggle_modal(window, cx, |window, cx| {
+                SecurityModal::new(worktree_store, remote_host, window, cx)
+            });
+            return;
+        }
+        if !toggle {
+            return;
+        }
+        if !crate::binary_downloads_modal::project_blocks_binary_downloads(
+            self.project().read(cx),
+            cx,
+        ) {
+            return;
+        }
+        if let Some(scope) =
+            crate::binary_downloads_modal::scope_for_project(self.project().read(cx), cx)
+        {
+            let project = self.project().clone();
+            self.toggle_modal(window, cx, |_, cx| {
+                BinaryDownloadsModal::new(&project, scope, cx)
+            });
         }
     }
 }
@@ -12092,6 +12120,7 @@ mod tests {
         DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext, px,
     };
+    use project::binary_downloads::BinaryDownloads;
     use project::{Project, ProjectEntryId, WorktreeId};
     use serde_json::json;
     use settings::SettingsStore;
@@ -18357,6 +18386,54 @@ mod tests {
             cx.set_global(settings_store);
             cx.set_global(db::AppDatabase::test_new());
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_no_notification_popover_for_blocked_tool_installs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| project::binary_downloads::init(cx));
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/proj"), json!({ "a.rs": "" })).await;
+        let project = Project::test(fs, [path!("/proj").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.update(|_, cx| {
+            let store = BinaryDownloads::try_get_global(cx).unwrap();
+            store.update(cx, |store, cx| {
+                store.request_tool_install(Some(worktree_id), "rust-analyzer", cx);
+                store.request_tool_install(Some(worktree_id), "prettier", cx);
+            });
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, _| {
+            assert_eq!(
+                workspace.notification_ids(),
+                Vec::new(),
+                "blocked tool installs must never raise notification popovers"
+            );
+        });
+        cx.update(|_, cx| {
+            let store = BinaryDownloads::try_get_global(cx).unwrap();
+            let pending = store.read(cx).pending_tool_installs();
+            assert_eq!(
+                pending.len(),
+                2,
+                "blocked tools are registered for the downloads indicator and modal instead"
+            );
         });
     }
 

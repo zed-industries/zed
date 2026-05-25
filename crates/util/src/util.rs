@@ -57,6 +57,16 @@ pub const fn is_utf8_char_boundary(u8: u8) -> bool {
     (u8 as i8) >= -0x40
 }
 
+pub fn downloads_disabled_error(tool: impl std::fmt::Display) -> String {
+    format!(
+        "binary downloads are disabled; approve installing {tool} via the \"Downloads Off\" indicator in the title bar, or enable `allow_binary_downloads`"
+    )
+}
+
+pub fn downloads_disabled_error_with_retry(tool: impl std::fmt::Display, retry: &str) -> String {
+    format!("{}; then {retry}", downloads_disabled_error(tool))
+}
+
 pub fn truncate(s: &str, max_chars: usize) -> &str {
     match s.char_indices().nth(max_chars) {
         None => s,

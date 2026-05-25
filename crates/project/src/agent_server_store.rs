@@ -28,6 +28,7 @@ use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
 use crate::agent_registry_store::{AgentRegistryStore, RegistryAgent, RegistryTargetConfig};
+use crate::binary_downloads;
 
 use crate::worktree_store::WorktreeStore;
 
@@ -400,6 +401,7 @@ impl AgentServerStore {
                                         http_client: http_client.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
+                                        name: agent_name.0.clone(),
                                         installation_dir: paths::external_agents_dir()
                                             .join("registry")
                                             .join(sanitize_path_component(name)),
@@ -424,7 +426,11 @@ impl AgentServerStore {
                                         fs: fs.clone(),
                                         node_runtime: node_runtime.clone(),
                                         project_environment: project_environment.clone(),
-                                        registry_id: Arc::from(name.as_str()),
+                                        name: agent_name.0.clone(),
+                                        installation_dir: paths::external_agents_dir()
+                                            .join("registry")
+                                            .join("npx")
+                                            .join(sanitize_path_component(name)),
                                         version: agent.metadata.version.clone(),
                                         package: agent.package.clone(),
                                         args: agent.args.clone(),
@@ -1114,11 +1120,26 @@ async fn remove_stale_versioned_archive_cache_dirs(
     Ok(())
 }
 
+/// Agent servers are not worktree-scoped, so the install request uses the
+/// global scope.
+fn require_tool_install_approval(tool: &SharedString, cx: &mut AsyncApp) -> Result<()> {
+    let blocked = cx
+        .update(|cx| binary_downloads::request_tool_install(None, tool.clone(), cx))
+        .is_some();
+    anyhow::ensure!(
+        !blocked,
+        "{}",
+        util::downloads_disabled_error_with_retry(tool, "relaunch the agent")
+    );
+    Ok(())
+}
+
 struct LocalRegistryArchiveAgent {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
+    name: SharedString,
     installation_dir: PathBuf,
     version: SharedString,
     targets: HashMap<String, RegistryTargetConfig>,
@@ -1158,6 +1179,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
         let http_client = self.http_client.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
+        let name = self.name.clone();
         let installation_dir = self.installation_dir.clone();
         let targets = self.targets.clone();
         let settings_env = self.env.clone();
@@ -1219,6 +1241,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             );
 
             if !fs.is_dir(&version_dir).await {
+                require_tool_install_approval(&name, cx)?;
                 let mut loading_status_tx = loading_status_tx;
                 if let Some(tx) = loading_status_tx.as_mut() {
                     tx.send(Some(format!("Installing {}…", version.as_ref())))
@@ -1339,7 +1362,8 @@ struct LocalRegistryNpxAgent {
     fs: Arc<dyn Fs>,
     node_runtime: NodeRuntime,
     project_environment: Entity<ProjectEnvironment>,
-    registry_id: Arc<str>,
+    name: SharedString,
+    installation_dir: PathBuf,
     version: SharedString,
     package: SharedString,
     args: Vec<String>,
@@ -1370,7 +1394,8 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let fs = self.fs.clone();
         let node_runtime = self.node_runtime.clone();
         let project_environment = self.project_environment.downgrade();
-        let registry_id = self.registry_id.clone();
+        let name = self.name.clone();
+        let installation_dir = self.installation_dir.clone();
         let package = self.package.clone();
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
@@ -1384,25 +1409,50 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .await
                 .unwrap_or_default();
 
-            let install_dir = paths::external_agents_dir()
-                .join("registry")
-                .join("npx")
-                .join(sanitize_path_component(&registry_id));
-            fs.create_dir(&install_dir).await?;
+            fs.create_dir(&installation_dir).await?;
 
             let (package_name, package_spec) = bounded_npm_package_spec(&package);
-            node_runtime
-                .run_npm_subcommand(
-                    Some(&install_dir),
-                    "install",
-                    &[package_spec.as_str(), "--save-exact"],
+            let node_modules_dir = installation_dir.join("node_modules");
+
+            let mut executable = None;
+            // Reuse only an exact match of the range ceiling: an older install
+            // may be upgradable within the range, so re-run the gated install
+            // rather than freezing on it.
+            if let Some(pinned_version) = pinned_npm_package_version(&package) {
+                let installed_version = node_runtime::read_package_installed_version(
+                    node_modules_dir.clone(),
+                    package_name,
                 )
-                .await?;
-            let executable = node_runtime::read_package_executable(
-                install_dir.join("node_modules"),
-                package_name,
-            )
-            .await?;
+                .await
+                .log_err()
+                .flatten();
+                if installed_version == Some(pinned_version)
+                    && let Some(path) = node_runtime::read_package_executable(
+                        node_modules_dir.clone(),
+                        package_name,
+                    )
+                    .await
+                    .log_err()
+                    && fs.is_file(&path).await
+                {
+                    executable = Some(path);
+                }
+            }
+
+            let executable = match executable {
+                Some(executable) => executable,
+                None => {
+                    require_tool_install_approval(&name, cx)?;
+                    node_runtime
+                        .run_npm_subcommand(
+                            Some(&installation_dir),
+                            "install",
+                            &[package_spec.as_str(), "--save-exact"],
+                        )
+                        .await?;
+                    node_runtime::read_package_executable(node_modules_dir, package_name).await?
+                }
+            };
 
             let node_binary = node_runtime.binary_path().await?;
             env.extend(node_runtime::npm_command_env(&node_binary));
@@ -1465,6 +1515,14 @@ fn bounded_npm_package_spec(package_spec: &str) -> (&str, String) {
     }
 
     (package_name, format!("{package_name}@0.0.0 - {version}"))
+}
+
+fn pinned_npm_package_version(package_spec: &str) -> Option<Version> {
+    let (package_name, version) = package_spec.rsplit_once('@')?;
+    if package_name.is_empty() {
+        return None;
+    }
+    Version::parse(version).ok()
 }
 
 struct LocalCustomAgent {
@@ -1680,12 +1738,18 @@ impl settings::Settings for AllAgentServersSettings {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::agent_registry_store::{
         AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
     };
+    use crate::binary_downloads::{BinaryDownloads, BinaryDownloadsEvent};
     use crate::worktree_store::{WorktreeIdCounter, WorktreeStore};
-    use gpui::TestAppContext;
+    use futures::FutureExt as _;
+    use gpui::{TestAppContext, UpdateGlobal as _};
     #[cfg(feature = "test-support")]
     use http_client::{AsyncBody, FakeHttpClient, Response};
     use node_runtime::NodeRuntime;
@@ -1745,6 +1809,7 @@ mod tests {
                 http_client,
                 node_runtime: NodeRuntime::unavailable(),
                 project_environment,
+                name: "test-agent".into(),
                 installation_dir,
                 version: "1.0.0".into(),
                 targets,
@@ -1831,6 +1896,94 @@ mod tests {
                     cx,
                 )
             })
+        })
+    }
+
+    fn disable_binary_downloads(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.allow_binary_downloads = Some(false);
+                });
+            });
+        });
+    }
+
+    fn handle_install_requests(
+        cx: &mut TestAppContext,
+        approve: bool,
+        downloads: Arc<AtomicUsize>,
+    ) -> Rc<RefCell<Vec<(String, usize)>>> {
+        let requests = Rc::<RefCell<Vec<(String, usize)>>>::default();
+        cx.update({
+            let requests = requests.clone();
+            |cx| {
+                let store = BinaryDownloads::try_get_global(cx)
+                    .expect("binary downloads global should be initialized");
+                cx.subscribe(&store, move |store, event, cx| {
+                    if let BinaryDownloadsEvent::InstallRequested(request) = event {
+                        requests
+                            .borrow_mut()
+                            .push((request.tool.to_string(), downloads.load(Ordering::SeqCst)));
+                        if approve {
+                            let worktree_id = request.worktree_id;
+                            let tool = request.tool.clone();
+                            store.update(cx, |store, cx| {
+                                store.approve_tool_install(worktree_id, tool, cx);
+                            });
+                        }
+                    }
+                })
+                .detach();
+            }
+        });
+        requests
+    }
+
+    #[cfg(feature = "test-support")]
+    fn counting_http_client(body: Vec<u8>) -> (Arc<dyn HttpClient>, Arc<AtomicUsize>) {
+        let downloads = Arc::new(AtomicUsize::new(0));
+        let client = FakeHttpClient::create({
+            let downloads = downloads.clone();
+            move |_| {
+                downloads.fetch_add(1, Ordering::SeqCst);
+                let body = body.clone();
+                async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .body(AsyncBody::from(body))?)
+                }
+            }
+        });
+        (client, downloads)
+    }
+
+    fn make_local_npx_agent(
+        cx: &mut TestAppContext,
+        installation_dir: PathBuf,
+        package: &str,
+    ) -> LocalRegistryNpxAgent {
+        let fs: Arc<dyn Fs> = Arc::new(fs::RealFs::new(None, cx.executor()));
+        cx.update(|cx| {
+            let worktree_store =
+                cx.new(|cx| WorktreeStore::local(false, fs.clone(), WorktreeIdCounter::get(cx)));
+            let project_environment = cx.new(|cx| {
+                crate::ProjectEnvironment::new(None, worktree_store.downgrade(), None, false, cx)
+            });
+
+            LocalRegistryNpxAgent {
+                fs,
+                node_runtime: NodeRuntime::unavailable(),
+                project_environment,
+                name: "npx-agent".into(),
+                installation_dir,
+                version: "1.2.3".into(),
+                package: SharedString::from(package.to_string()),
+                args: Vec::new(),
+                distribution_env: HashMap::default(),
+                settings_env: HashMap::default(),
+                new_version_available_tx: None,
+            }
         })
     }
 
@@ -2336,5 +2489,165 @@ mod tests {
                 "agent-b tx should have been transferred"
             );
         });
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn archive_agent_with_local_copy_skips_download_and_prompt(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| binary_downloads::init(cx));
+        disable_binary_downloads(cx);
+        let (http_client, downloads) = counting_http_client(b"remote agent".to_vec());
+        let requests = handle_install_requests(cx, false, downloads.clone());
+
+        let temp_dir = tempfile::tempdir().expect("creating a temp dir");
+        let installation_dir = temp_dir.path().join("agent");
+        let version_dir =
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None);
+        std::fs::create_dir_all(&version_dir).expect("creating the version dir");
+        std::fs::write(version_dir.join("agent"), b"local agent")
+            .expect("writing the local binary");
+
+        let mut agent = make_registry_archive_agent(cx, installation_dir, http_client, None);
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+        let command = get_command.await.expect("the local copy should be reused");
+        cx.run_until_parked();
+
+        assert_eq!(command.path, version_dir.join("agent"));
+        assert_eq!(downloads.load(Ordering::SeqCst), 0);
+        assert_eq!(requests.borrow().clone(), Vec::<(String, usize)>::new());
+    }
+
+    #[cfg(feature = "test-support")]
+    #[gpui::test]
+    async fn archive_agent_download_fails_fast_and_succeeds_after_approval(
+        cx: &mut TestAppContext,
+    ) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| binary_downloads::init(cx));
+        disable_binary_downloads(cx);
+        let contents = b"gated agent";
+        let (http_client, downloads) = counting_http_client(contents.to_vec());
+        let requests = handle_install_requests(cx, true, downloads.clone());
+
+        let temp_dir = tempfile::tempdir().expect("creating a temp dir");
+        let installation_dir = temp_dir.path().join("agent");
+        let mut agent =
+            make_registry_archive_agent(cx, installation_dir.clone(), http_client, None);
+        let blocked = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .expect_err("the first launch must fail fast while downloads are blocked");
+        assert_eq!(
+            blocked.to_string().contains("Downloads Off"),
+            true,
+            "the error must point at the downloads indicator, got: {blocked}"
+        );
+        assert_eq!(
+            downloads.load(Ordering::SeqCst),
+            0,
+            "nothing may download before approval"
+        );
+        cx.run_until_parked();
+
+        let get_command =
+            cx.update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()));
+        let command = get_command
+            .await
+            .expect("the download should proceed once approved");
+        cx.run_until_parked();
+
+        assert_eq!(
+            requests.borrow().clone(),
+            vec![("test-agent".to_string(), 0)],
+            "the install request should be registered before any download"
+        );
+        assert_eq!(downloads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            command.path,
+            versioned_archive_cache_dir(&installation_dir, Some("1.0.0"), TEST_ARCHIVE_URL, None)
+                .join("agent")
+        );
+        assert_eq!(
+            std::fs::read(command.path).expect("reading the downloaded binary"),
+            contents
+        );
+    }
+
+    #[gpui::test]
+    async fn npx_agent_with_matching_local_copy_skips_install_and_prompt(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| binary_downloads::init(cx));
+        disable_binary_downloads(cx);
+        let requests = handle_install_requests(cx, false, Arc::new(AtomicUsize::new(0)));
+
+        let temp_dir = tempfile::tempdir().expect("creating a temp dir");
+        let installation_dir = temp_dir.path().join("npx-agent");
+        let package_dir = installation_dir.join("node_modules").join("test-package");
+        std::fs::create_dir_all(&package_dir).expect("creating the package dir");
+        std::fs::write(
+            package_dir.join("package.json"),
+            r#"{ "version": "1.2.3", "bin": "cli.js" }"#,
+        )
+        .expect("writing package.json");
+        std::fs::write(package_dir.join("cli.js"), b"").expect("writing the executable");
+
+        let mut agent = make_local_npx_agent(cx, installation_dir, "test-package@1.2.3");
+        let mut get_command = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .fuse();
+        let mut timeout = cx.executor().timer(Duration::from_secs(5)).fuse();
+        futures::select! {
+            result = get_command => {
+                result.expect_err("the unavailable node runtime should fail after the reuse");
+            }
+            _ = timeout => {
+                panic!("get_command should not wait for approval when a local copy exists")
+            }
+        }
+        assert_eq!(requests.borrow().clone(), Vec::<(String, usize)>::new());
+    }
+
+    #[gpui::test]
+    async fn npx_agent_install_fails_fast_and_proceeds_after_approval(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| binary_downloads::init(cx));
+        disable_binary_downloads(cx);
+        let requests = handle_install_requests(cx, true, Arc::new(AtomicUsize::new(0)));
+
+        let temp_dir = tempfile::tempdir().expect("creating a temp dir");
+        let mut agent =
+            make_local_npx_agent(cx, temp_dir.path().join("npx-agent"), "test-package@1.2.3");
+        let blocked = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .expect_err("the first launch must fail fast while downloads are blocked");
+        assert_eq!(
+            blocked.to_string().contains("Downloads Off"),
+            true,
+            "the error must point at the downloads indicator, got: {blocked}"
+        );
+        cx.run_until_parked();
+
+        let after_approval = cx
+            .update(|cx| agent.get_command(Vec::new(), HashMap::default(), &mut cx.to_async()))
+            .await
+            .expect_err("the unavailable node runtime should fail to install after approval");
+        assert_eq!(
+            after_approval.to_string().contains("Downloads Off"),
+            false,
+            "after approval the gate must open; the remaining failure is the node runtime, got: {after_approval}"
+        );
+
+        assert_eq!(
+            requests.borrow().clone(),
+            vec![("npx-agent".to_string(), 0)],
+            "the install request should be registered before any npm install"
+        );
     }
 }

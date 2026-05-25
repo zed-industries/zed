@@ -10,6 +10,7 @@ use super::dap_command::{
     TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
+use crate::binary_downloads::{BinaryDownloads, await_downloads_allowed, request_tool_install};
 use crate::debugger::breakpoint_store::BreakpointSessionState;
 use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
 use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
@@ -3193,6 +3194,7 @@ async fn spawn_companion(
 
 async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Result<PathBuf> {
     const PACKAGE_NAME: &str = "@zed-industries/js-debug-companion-cli";
+    const TOOL_NAME: &str = "js-debug-companion";
 
     async fn install_latest_version(dir: PathBuf, node: NodeRuntime) -> Result<PathBuf> {
         let temp_dir = tempfile::tempdir().context("creating temporary directory")?;
@@ -3212,10 +3214,9 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
     }
 
     let dir = paths::debug_adapters_dir().join("js-debug-companion");
-    let (latest_installed_version, latest_version) = cx
+    let latest_installed_version = cx
         .background_spawn({
             let dir = dir.clone();
-            let node = node.clone();
             async move {
                 smol::fs::create_dir_all(&dir)
                     .await
@@ -3228,34 +3229,60 @@ async fn get_or_install_companion(node: NodeRuntime, cx: &mut AsyncApp) -> Resul
                     .await
                     .context("reading companion installation directory entries")?;
 
-                let latest_installed_version = children
-                    .iter()
-                    .filter_map(|child| {
-                        Some((
-                            child.path(),
-                            semver::Version::parse(child.file_name().to_str()?).ok()?,
-                        ))
-                    })
-                    .max_by_key(|(_, version)| version.clone());
-
-                let latest_version = node
-                    .npm_package_latest_version(PACKAGE_NAME)
-                    .await
-                    .log_err();
-                anyhow::Ok((latest_installed_version, latest_version))
+                anyhow::Ok(
+                    children
+                        .iter()
+                        .filter_map(|child| {
+                            Some((
+                                child.path(),
+                                semver::Version::parse(child.file_name().to_str()?).ok()?,
+                            ))
+                        })
+                        .max_by_key(|(_, version)| version.clone()),
+                )
             }
         })
         .await?;
 
     let path = if let Some((installed_path, installed_version)) = latest_installed_version {
-        if let Some(latest_version) = latest_version
-            && latest_version != installed_version
-        {
-            cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
-                .detach();
-        }
+        cx.spawn({
+            let dir = dir.clone();
+            let node = node.clone();
+            async move |cx| {
+                let wait = cx.update(|cx| {
+                    BinaryDownloads::try_get_global(cx).and_then(|store| {
+                        store.update(cx, |store, cx| {
+                            store.wait_until_tool_allowed(None, TOOL_NAME, cx)
+                        })
+                    })
+                });
+                if !await_downloads_allowed(wait, TOOL_NAME).await {
+                    return;
+                }
+                cx.background_spawn(async move {
+                    if let Some(latest_version) = node
+                        .npm_package_latest_version(PACKAGE_NAME)
+                        .await
+                        .log_err()
+                        && latest_version != installed_version
+                    {
+                        install_latest_version(dir, node).await.log_err();
+                    }
+                })
+                .await;
+            }
+        })
+        .detach();
         Ok(installed_path)
     } else {
+        let blocked = cx
+            .update(|cx| request_tool_install(None, TOOL_NAME, cx))
+            .is_some();
+        anyhow::ensure!(
+            !blocked,
+            "{}",
+            util::downloads_disabled_error_with_retry(TOOL_NAME, "start the debug session again")
+        );
         cx.background_spawn(install_latest_version(dir.clone(), node.clone()))
             .await
     };

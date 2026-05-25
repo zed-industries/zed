@@ -3000,9 +3000,16 @@ impl GitStore {
         event: &TrustedWorktreesEvent,
         cx: &mut Context<Self>,
     ) {
-        if !matches!(self.state, GitStoreState::Local { .. }) {
+        let GitStoreState::Local {
+            project_environment,
+            fs,
+            ..
+        } = &self.state
+        else {
             return;
-        }
+        };
+        let project_environment = project_environment.downgrade();
+        let fs = fs.clone();
 
         let (is_trusted, event_paths) = match event {
             TrustedWorktreesEvent::Trusted(_, trusted_paths) => (true, trusted_paths),
@@ -3015,13 +3022,24 @@ impl GitStore {
                 .any(|worktree_id| event_paths.contains(&PathTrust::Worktree(*worktree_id)))
             {
                 if let Some(repo) = self.repositories.get(repo_id) {
-                    let repository_state = repo.read(cx).repository_state.clone();
-                    cx.background_spawn(async move {
-                        if let Ok(RepositoryState::Local(state)) = repository_state.await {
-                            state.backend.set_trusted(is_trusted);
-                        }
-                    })
-                    .detach();
+                    if is_trusted {
+                        repo.update(cx, |repo, cx| {
+                            repo.respawn_local_worker(
+                                project_environment.clone(),
+                                fs.clone(),
+                                true,
+                                cx,
+                            );
+                        });
+                    } else {
+                        let repository_state = repo.read(cx).repository_state.clone();
+                        cx.background_spawn(async move {
+                            if let Ok(RepositoryState::Local(state)) = repository_state.await {
+                                state.backend.set_trusted(false);
+                            }
+                        })
+                        .detach();
+                    }
                 }
             }
         }
@@ -6500,6 +6518,15 @@ impl Repository {
                 Ok(RepositoryState::Local(state))
             })
             .shared();
+        // `is_trusted` peeks this wrapper `Shared`, which the git worker never
+        // polls (it polls the inner state), so poll it eagerly.
+        cx.spawn({
+            let repository_state = self.repository_state.clone();
+            async move |_, _| {
+                repository_state.await.ok();
+            }
+        })
+        .detach();
     }
 
     fn reinitialize_local_backend(

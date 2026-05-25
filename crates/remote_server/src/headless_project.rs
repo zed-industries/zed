@@ -120,6 +120,38 @@ impl HeadlessProject {
                 cx,
             );
         }
+        project::binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
+        if let Some(binary_downloads) =
+            project::binary_downloads::BinaryDownloads::try_get_global(cx)
+        {
+            let downstream_session = session.clone();
+            let mut last_sent_installs =
+                HashSet::<project::binary_downloads::ToolInstall>::default();
+            cx.observe(&binary_downloads, move |_, binary_downloads, cx| {
+                let pending = binary_downloads
+                    .read(cx)
+                    .pending_tool_installs()
+                    .into_iter()
+                    .collect::<HashSet<_>>();
+                if pending == last_sent_installs {
+                    return;
+                }
+                last_sent_installs = pending.clone();
+                downstream_session
+                    .send(proto::UpdatePendingToolInstalls {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        pending_installs: pending
+                            .into_iter()
+                            .map(|install| proto::PendingToolInstall {
+                                worktree_id: install.worktree_id.map(|id| id.to_proto()),
+                                tool: install.tool.to_string(),
+                            })
+                            .collect(),
+                    })
+                    .log_err();
+            })
+            .detach();
+        }
 
         let environment =
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
@@ -308,6 +340,8 @@ impl HeadlessProject {
         session.add_entity_request_handler(Self::handle_open_image_by_path);
         session.add_entity_request_handler(Self::handle_trust_worktrees);
         session.add_entity_request_handler(Self::handle_restrict_worktrees);
+        session.add_entity_request_handler(Self::handle_approve_tool_install);
+        session.add_entity_request_handler(Self::handle_get_pending_tool_installs);
         session.add_entity_request_handler(Self::handle_download_file_by_path);
 
         session.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
@@ -716,6 +750,45 @@ impl HeadlessProject {
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_approve_tool_install(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ApproveToolInstall>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let binary_downloads = cx
+            .update(|cx| project::binary_downloads::BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads store")?;
+        binary_downloads.update(&mut cx, |binary_downloads, cx| {
+            binary_downloads.approve_tool_install(
+                envelope.payload.worktree_id.map(WorktreeId::from_proto),
+                envelope.payload.tool,
+                cx,
+            );
+        });
+        Ok(proto::Ack {})
+    }
+
+    pub async fn handle_get_pending_tool_installs(
+        _this: Entity<Self>,
+        _: TypedEnvelope<proto::GetPendingToolInstalls>,
+        cx: AsyncApp,
+    ) -> Result<proto::GetPendingToolInstallsResponse> {
+        let binary_downloads = cx
+            .update(|cx| project::binary_downloads::BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads store")?;
+        let pending_installs = binary_downloads.read_with(&cx, |binary_downloads, _| {
+            binary_downloads
+                .pending_tool_installs()
+                .into_iter()
+                .map(|install| proto::PendingToolInstall {
+                    worktree_id: install.worktree_id.map(|id| id.to_proto()),
+                    tool: install.tool.to_string(),
+                })
+                .collect()
+        });
+        Ok(proto::GetPendingToolInstallsResponse { pending_installs })
     }
 
     pub async fn handle_download_file_by_path(

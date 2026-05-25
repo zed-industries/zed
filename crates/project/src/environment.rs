@@ -10,7 +10,7 @@ use worktree::Worktree;
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task, WeakEntity};
-use settings::Settings as _;
+use settings::{Settings as _, WorktreeId};
 
 use crate::{
     project_settings::{DirenvSettings, ProjectSettings},
@@ -120,6 +120,7 @@ impl ProjectEnvironment {
             abs_path = parent.into();
         }
 
+        let worktree_id = worktree.id();
         let remote_client = self.remote_client.as_ref().and_then(|it| it.upgrade());
         match remote_client {
             Some(remote_client) => remote_client.clone().read(cx).shell().map(|shell| {
@@ -130,6 +131,7 @@ impl ProjectEnvironment {
                     cx,
                 )
             }),
+            None if !self.worktree_trusted(worktree_id, cx) => Some(self.process_environment()),
             None if self.is_remote_project => {
                 Some(self.local_directory_environment(&Shell::System, abs_path, cx))
             }
@@ -198,6 +200,13 @@ impl ProjectEnvironment {
         abs_path: Arc<Path>,
         cx: &mut App,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
+        if !self.directory_trusted(&abs_path, cx) {
+            log::debug!(
+                "directory {abs_path:?} belongs to an untrusted worktree, using the process environment"
+            );
+            return self.process_environment();
+        }
+
         if let Some(cli_environment) = self.get_cli_environment() {
             log::debug!("using project environment variables from CLI");
             return Task::ready(Some(cli_environment)).shared();
@@ -288,6 +297,46 @@ impl ProjectEnvironment {
     pub fn pop_environment_error(&mut self) -> Option<String> {
         self.environment_error_messages.pop_front()
     }
+
+    /// Git repositories may sit above the opened worktree; a directory
+    /// containing any untrusted worktree must not trigger a shell load.
+    fn directory_trusted(&self, abs_path: &Path, cx: &mut App) -> bool {
+        let Some(worktree_store) = self.worktree_store.upgrade() else {
+            return true;
+        };
+        let worktree_ids = {
+            let worktree_store = worktree_store.read(cx);
+            match worktree_store.find_worktree(abs_path, cx) {
+                Some((worktree, _)) => vec![worktree.read(cx).id()],
+                None => worktree_store
+                    .worktrees()
+                    .filter(|worktree| worktree.read(cx).abs_path().starts_with(abs_path))
+                    .map(|worktree| worktree.read(cx).id())
+                    .collect::<Vec<_>>(),
+            }
+        };
+        worktree_ids
+            .into_iter()
+            .all(|worktree_id| self.worktree_trusted(worktree_id, cx))
+    }
+
+    fn worktree_trusted(&self, worktree_id: WorktreeId, cx: &mut App) -> bool {
+        let Some(worktree_store) = self.worktree_store.upgrade() else {
+            return true;
+        };
+        crate::trusted_worktrees::worktree_trusted(&worktree_store, worktree_id, cx)
+    }
+
+    /// The degraded env is intentionally not cached: after the worktree gets
+    /// trusted, the next request takes the normal full-load path.
+    fn process_environment(&self) -> Shared<Task<Option<HashMap<String, String>>>> {
+        let mut env = self
+            .cli_environment
+            .clone()
+            .unwrap_or_else(|| std::env::vars().collect());
+        set_origin_marker(&mut env, EnvironmentOrigin::Process);
+        Task::ready(Some(env)).shared()
+    }
 }
 
 fn set_origin_marker(env: &mut HashMap<String, String>, origin: EnvironmentOrigin) {
@@ -299,6 +348,7 @@ const ZED_ENVIRONMENT_ORIGIN_MARKER: &str = "ZED_ENVIRONMENT";
 enum EnvironmentOrigin {
     Cli,
     WorktreeShell,
+    Process,
 }
 
 impl From<EnvironmentOrigin> for String {
@@ -306,6 +356,7 @@ impl From<EnvironmentOrigin> for String {
         match val {
             EnvironmentOrigin::Cli => "cli".into(),
             EnvironmentOrigin::WorktreeShell => "worktree-shell".into(),
+            EnvironmentOrigin::Process => "process".into(),
         }
     }
 }

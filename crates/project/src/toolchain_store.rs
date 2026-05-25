@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 
 use async_trait::async_trait;
 use collections::{BTreeMap, IndexSet};
@@ -502,6 +502,13 @@ impl LocalToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Option<(ToolchainList, Arc<RelPath>)>> {
+        if !worktree_can_be_trusted(&self.worktree_store, path.worktree_id, cx) {
+            log::debug!(
+                "not listing toolchains for untrusted worktree {:?}",
+                path.worktree_id
+            );
+            return Task::ready(None);
+        }
         let registry = self.languages.clone();
 
         let manifest_tree = self.manifest_tree.downgrade();
@@ -583,6 +590,14 @@ impl LocalToolchainStore {
         language_name: LanguageName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Toolchain>> {
+        if let Some((worktree, _)) = self.worktree_store.read(cx).find_worktree(&path, cx) {
+            let worktree_id = worktree.read(cx).id();
+            if !worktree_can_be_trusted(&self.worktree_store, worktree_id, cx) {
+                return Task::ready(Err(anyhow!(
+                    "cannot resolve toolchain for {path:?}: its worktree is not trusted"
+                )));
+            }
+        }
         let registry = self.languages.clone();
         let environment = self.project_environment.clone();
         cx.spawn(async move |_, cx| {
@@ -776,4 +791,12 @@ impl RemoteToolchainStore {
             }
         })
     }
+}
+
+fn worktree_can_be_trusted(
+    worktree_store: &Entity<WorktreeStore>,
+    worktree_id: WorktreeId,
+    cx: &mut App,
+) -> bool {
+    crate::trusted_worktrees::worktree_trusted(worktree_store, worktree_id, cx)
 }

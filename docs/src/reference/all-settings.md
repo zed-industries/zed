@@ -1677,7 +1677,7 @@ If this is true, user won't be prompted whether to save/discard dirty files when
 }
 ```
 
-When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
+When trusted, project settings are synchronized automatically, and language and MCP servers are started automatically.
 
 ### Drag And Drop Selection
 
@@ -3350,6 +3350,143 @@ Positive `integer` values or `null` for unlimited tabs
   "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
+
+## Binary Downloads
+
+- Description: Whether Zed may download tool binaries and package-based tools such as language servers, formatters, debug adapters, MCP servers, the managed Node runtime, and npm packages installed by extensions or Copilot. This can be overridden in project settings.
+- Setting: `allow_binary_downloads`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### What `allow_binary_downloads: false` blocks
+
+When set to `false`, Zed refuses to fetch new binaries from the network:
+
+- Language server installs (built-in and from extensions)
+- Default Prettier instance install
+- Debug adapter binaries (CodeLLDB, Delve -- both `dlv` and `delve-shim-dap` --
+  `js-debug` plus its `js-debug-companion` browser helper, and `debugpy`)
+- External agent servers (archive- and npm-based)
+- The GitHub Copilot language server
+- `npm install` of packages requested by any of the above
+- Managed Node.js download
+- All downloads made by extensions: their version checks, GitHub release
+  lookups, file downloads, and npm installs (this covers extension-provided
+  language servers, MCP servers, and debug adapters)
+
+Zed stays local-first: anything already installed on disk runs with zero
+network access. Tools resolved via explicit `node.path` /
+`user_installed_path` / `lsp.<server>.binary.path` settings keep working
+because Zed does not need to download them. Background update checks for
+cached tools are deferred until downloads are allowed again, and then happen
+silently without prompting.
+
+### Installing individual tools
+
+With downloads disabled, Zed never shows popup prompts. Each blocked tool is
+instead registered as a pending install, and the title bar shows a
+"Downloads Off (N)" button, where N counts the blocked tools relevant to that
+window: tools scoped to the project's worktrees plus app-global tools (such as
+Copilot or extension downloads). Clicking it opens the binary-downloads modal,
+which lists those pending tools. There you can tick individual tools and
+confirm to install them once -- nothing is ticked by default, and confirming
+does not change `allow_binary_downloads`.
+
+A one-off approval lasts for the current app session, but because the
+downloaded binary is then cached on disk, the tool keeps starting on
+subsequent restarts without asking again.
+
+Language servers wait in the `Disabled` state (shown in the activity indicator
+and the language-server button) and start automatically once approved or once
+`allow_binary_downloads` is enabled. Everything else -- debug adapters,
+Prettier, agent servers, Copilot, npm installs, extension downloads -- fails
+fast with the shared error:
+
+```
+binary downloads are disabled; approve installing <tool> via the "Downloads Off" indicator in the title bar, or enable `allow_binary_downloads`
+```
+
+Retrying the action after approval succeeds. Extensions appear in the modal as
+a single entry per extension (``extension `<id>` ``); approving it covers all
+of that extension's downloads.
+
+### Managed Node.js and npm
+
+The managed Node.js runtime is downloaded only when `allow_binary_downloads`
+is enabled in at least one scope (globally or in any open worktree) -- one-off
+tool approvals do not enable it. As a consequence, an npm-based tool approved
+from the modal still needs either a system `node` on `PATH` (or `node.path`)
+or the setting enabled somewhere.
+
+npm installs performed by Zed always run with `--ignore-scripts`, so packages
+that rely on `postinstall` scripts to finish setting up will not fully work.
+
+### Project-scoped overrides
+
+`allow_binary_downloads` may be placed in either `~/.config/zed/settings.json`
+(global) or `.zed/settings.json` (per-project). The per-project value wins for
+tools resolved against that project's worktrees (language servers, formatters,
+debug adapters, Prettier) and only affects those worktrees. Tools that are not
+worktree-scoped (the managed Node.js download, Copilot, extension downloads)
+follow the global value, except that enabling downloads in any open worktree
+also permits the managed Node.js download.
+
+Letting a project enable its own downloads stays relatively safe: a worktree's
+local `.zed/settings.json` only takes effect once the worktree is trusted.
+Until you trust it (Restricted Mode), Zed ignores the project's settings
+entirely, so a freshly cloned repository cannot turn its own downloads on
+behind your back.
+
+Example: keep downloads off everywhere by default but trust one project to
+download its language servers:
+
+```json [global settings]
+{
+  "allow_binary_downloads": false
+}
+```
+
+```json [.zed/settings.json]
+{
+  "allow_binary_downloads": true
+}
+```
+
+### Out of scope
+
+This setting does not affect Zed's self-update, installing or updating
+extensions from the extension store, or downloading the remote-server binary
+for SSH projects.
+
+### Remote (SSH) projects
+
+Your user settings, including `allow_binary_downloads`, sync to the remote
+host, so disabling downloads locally also disables them for tools installed on
+the host. Tools blocked on the host are listed in your local "Downloads Off"
+modal just like local ones, and approving them there unblocks the download on
+the host.
+
+### Interaction with Restricted Mode
+
+Restricted Mode (`session.trust_all_worktrees` / the worktree trust modal) is
+strictly stricter than `allow_binary_downloads: false`:
+
+- Restricted Mode prevents project settings from being applied at all and
+  stops language servers, MCP servers, formatters, and debug adapters from
+  starting -- even if they are already installed.
+- `allow_binary_downloads: false` only blocks downloads. Anything already on
+  disk (cached LSPs, Node from PATH, user-installed adapter paths, etc.) keeps
+  working.
+
+The title bar reflects this: when a project is in Restricted Mode you see the
+"Restricted Mode" badge; otherwise, when downloads are disabled for the
+project, the "Downloads Off" button is shown instead. Clicking it opens a
+modal that explains where the setting is taking effect (global, project, or
+both), lists pending tool installs, and shows how to override the setting for
+the current project only.
 
 ## Node
 

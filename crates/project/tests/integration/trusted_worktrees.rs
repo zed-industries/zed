@@ -1,14 +1,34 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
 
 use collections::HashSet;
-use gpui::{Entity, TestAppContext};
+use dap::{
+    adapters::{DebugAdapterName, DebugTaskDefinition},
+    client::SessionId,
+};
+use gpui::{Entity, TestAppContext, UpdateGlobal as _};
+use language::{
+    LanguageName,
+    language_settings::{Formatter, FormatterList},
+};
 use serde_json::json;
-use settings::SettingsStore;
-use util::path;
+use settings::{PrettierSettingsContent, SettingsStore};
+use task::TaskContext;
+use util::{path, rel_path::rel_path};
 
-use crate::{FakeFs, Project};
+use crate::{FakeFs, Project, ProjectPath, TaskContexts, WorktreeId, python_lang, typescript_lang};
 
-use project::{trusted_worktrees::*, worktree_store::WorktreeStore};
+use project::{
+    lsp_store::{FormatTrigger, LspFormatTarget},
+    task_inventory::Inventory,
+    task_store::TaskStore,
+    trusted_worktrees::*,
+    worktree_store::WorktreeStore,
+};
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -954,4 +974,447 @@ async fn test_invisible_worktree_stores_do_not_affect_trust(cx: &mut TestAppCont
         }),
         "only visible worktrees should be restricted"
     );
+}
+
+#[gpui::test]
+async fn test_local_tasks_and_debug_scenarios_wait_for_trust(cx: &mut TestAppContext) {
+    init_test(cx);
+    TaskStore::init(None);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".zed": {
+                "tasks.json": r#"[{"label": "local task", "command": "echo"}]"#,
+                "debug.json": r#"[{"label": "local scenario", "adapter": "fake-adapter", "request": "launch", "program": "wowzer"}]"#,
+            },
+            "main.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    cx.update(|cx| init(DbTrustedPaths::default(), cx));
+    let project = Project::test_with_worktree_trust(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .next()
+            .expect("worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let inventory = project.read_with(cx, |project, cx| {
+        project
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .cloned()
+            .expect("local task store should have an inventory")
+    });
+    let mut task_contexts = TaskContexts::default();
+    task_contexts.active_worktree_context = Some((worktree_id, TaskContext::default()));
+
+    assert_eq!(
+        list_worktree_tasks(&inventory, worktree_id, cx).await,
+        Vec::<String>::new(),
+        "local tasks should be withheld before the worktree is trusted"
+    );
+    assert_eq!(
+        list_worktree_scenarios(&inventory, &task_contexts, cx).await,
+        Vec::<String>::new(),
+        "local debug scenarios should be withheld before the worktree is trusted"
+    );
+
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        list_worktree_tasks(&inventory, worktree_id, cx).await,
+        vec!["local task".to_string()],
+        "local tasks should be applied after the worktree is trusted"
+    );
+    assert_eq!(
+        list_worktree_scenarios(&inventory, &task_contexts, cx).await,
+        vec!["local scenario".to_string()],
+        "local debug scenarios should be applied after the worktree is trusted"
+    );
+}
+
+#[gpui::test]
+async fn test_debug_adapter_launch_requires_trust(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    cx.update(|cx| init(DbTrustedPaths::default(), cx));
+    let project = Project::test_with_worktree_trust(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree = worktree_store.read_with(cx, |store, _| {
+        store.worktrees().next().expect("worktree should exist")
+    });
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let worktree_path = worktree.read_with(cx, |worktree, _| worktree.abs_path());
+    let dap_store = project.read_with(cx, |project, _| project.dap_store());
+
+    let definition = DebugTaskDefinition {
+        label: "debug".into(),
+        adapter: DebugAdapterName("fake-adapter".into()),
+        config: json!({}),
+        tcp_connection: None,
+    };
+
+    let (console_tx, _console_rx) = futures::channel::mpsc::unbounded();
+    let launch = dap_store.update(cx, |dap_store, cx| {
+        dap_store.get_debug_adapter_binary(
+            definition.clone(),
+            SessionId(0),
+            &worktree,
+            console_tx,
+            cx,
+        )
+    });
+    let error = launch.await.expect_err("launch should fail before trust");
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "Cannot start a debug session: worktree {worktree_path:?} is in restricted mode and not trusted"
+        )
+    );
+
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+
+    let (console_tx, _console_rx) = futures::channel::mpsc::unbounded();
+    let launch = dap_store.update(cx, |dap_store, cx| {
+        dap_store.get_debug_adapter_binary(definition, SessionId(0), &worktree, console_tx, cx)
+    });
+    let error = launch
+        .await
+        .expect_err("launch should pass the trust gate and fail on the missing adapter");
+    assert_eq!(error.to_string(), "Failed to find a debug adapter");
+}
+
+#[gpui::test]
+async fn test_untrusted_worktree_gets_process_environment(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    cx.update(|cx| init(DbTrustedPaths::default(), cx));
+    let project = Project::test_with_worktree_trust(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .next()
+            .expect("worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let environment = project.read_with(cx, |project, _| project.environment().clone());
+    let abs_path = Arc::<Path>::from(Path::new(path!("/root")));
+
+    let env = environment
+        .update(cx, |environment, cx| {
+            environment.directory_environment(abs_path.clone(), cx)
+        })
+        .await
+        .expect("untrusted worktree should still produce an environment");
+    assert_eq!(
+        env.get("ZED_ENVIRONMENT").map(String::as_str),
+        Some("process"),
+        "untrusted worktree should get the plain process environment without a shell load"
+    );
+
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+
+    let env = environment
+        .update(cx, |environment, cx| {
+            environment.directory_environment(abs_path, cx)
+        })
+        .await
+        .expect("trusted worktree should produce an environment");
+    assert_eq!(
+        env.get("ZED_ENVIRONMENT"),
+        None,
+        "after trust, the full load path should run (represented in tests by the CLI environment stub)"
+    );
+}
+
+#[gpui::test]
+async fn test_untrusted_worktree_lists_no_toolchains(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "pyproject.toml": "",
+            "main.py": "print('hello')",
+            ".venv": { "pyvenv.cfg": "" },
+        }),
+    )
+    .await;
+
+    cx.update(|cx| init(DbTrustedPaths::default(), cx));
+    let project =
+        Project::test_with_worktree_trust(fs.clone(), [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(python_lang(fs));
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .next()
+            .expect("worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let project_path = ProjectPath {
+        worktree_id,
+        path: rel_path("main.py").into_arc(),
+    };
+
+    let toolchains = project
+        .update(cx, |project, cx| {
+            project.available_toolchains(project_path.clone(), LanguageName::new("Python"), cx)
+        })
+        .await;
+    assert!(
+        toolchains.is_none(),
+        "toolchain discovery should not run for an untrusted worktree"
+    );
+
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+
+    let toolchains = project
+        .update(cx, |project, cx| {
+            project.available_toolchains(project_path, LanguageName::new("Python"), cx)
+        })
+        .await
+        .expect("trusted worktree should list toolchains");
+    assert_eq!(
+        toolchains.toolchains.toolchains.len(),
+        1,
+        "trusted worktree should discover the venv toolchain"
+    );
+}
+
+#[gpui::test]
+async fn test_untrusted_worktree_blocks_prettier_formatting(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let buffer_text = "one\ntwo\nthree\n";
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.ts": buffer_text }))
+        .await;
+
+    cx.update(|cx| init(DbTrustedPaths::default(), cx));
+    let project = Project::test_with_worktree_trust(fs, [path!("/root").as_ref()], cx).await;
+    cx.executor().run_until_parked();
+
+    let languages = project.read_with(cx, |project, _| project.languages().clone());
+    languages.add(typescript_lang());
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter =
+                    Some(FormatterList::Single(Formatter::Prettier));
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
+                });
+            });
+        });
+    });
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store
+            .worktrees()
+            .next()
+            .expect("worktree should exist")
+            .read(cx)
+            .id()
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/file.ts"), cx)
+        })
+        .await
+        .expect("buffer should open");
+    cx.executor().run_until_parked();
+
+    let format_result = project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                LspFormatTarget::Buffers,
+                false,
+                FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await;
+    assert!(
+        format_result.is_err(),
+        "prettier formatting should fail fast for an untrusted worktree"
+    );
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        buffer_text,
+        "the buffer should stay unformatted before trust"
+    );
+
+    let trusted_worktrees =
+        cx.update(|cx| TrustedWorktrees::try_get_global(cx).expect("global should be set"));
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                LspFormatTarget::Buffers,
+                false,
+                FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .expect("prettier formatting should succeed after trust");
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        buffer_text.to_string() + project::TEST_PRETTIER_FORMAT_SUFFIX,
+        "the test prettier should format the buffer after trust"
+    );
+}
+
+#[gpui::test]
+async fn test_wait_until_trusted_fires_on_trust_and_skips_when_trusted(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+    let worktree_id = worktree_store.read_with(cx, |store, cx| {
+        store.worktrees().next().unwrap().read(cx).id()
+    });
+    let trusted_worktrees = init_trust_global(worktree_store.clone(), cx);
+
+    let receiver = trusted_worktrees
+        .update(cx, |store, cx| {
+            store.wait_until_trusted(&worktree_store, worktree_id, cx)
+        })
+        .expect("an untrusted worktree returns a trust waiter");
+    assert_eq!(*receiver.borrow(), false);
+
+    trusted_worktrees.update(cx, |store, cx| {
+        store.trust(
+            &worktree_store,
+            HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+            cx,
+        );
+    });
+    assert_eq!(
+        *receiver.borrow(),
+        true,
+        "trusting the worktree wakes the waiter"
+    );
+
+    let after_trust = trusted_worktrees.update(cx, |store, cx| {
+        store.wait_until_trusted(&worktree_store, worktree_id, cx)
+    });
+    assert_eq!(
+        after_trust.is_none(),
+        true,
+        "an already-trusted worktree needs no waiter"
+    );
+}
+
+async fn list_worktree_tasks(
+    inventory: &Entity<Inventory>,
+    worktree_id: WorktreeId,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_tasks(None, None, Some(worktree_id), cx)
+        })
+        .await
+        .into_iter()
+        .map(|(_, task)| task.label)
+        .collect()
+}
+
+async fn list_worktree_scenarios(
+    inventory: &Entity<Inventory>,
+    task_contexts: &TaskContexts,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    inventory
+        .update(cx, |inventory, cx| {
+            inventory.list_debug_scenarios(task_contexts, Vec::new(), Vec::new(), false, cx)
+        })
+        .await
+        .1
+        .into_iter()
+        .map(|(_, scenario)| scenario.label.to_string())
+        .collect()
 }

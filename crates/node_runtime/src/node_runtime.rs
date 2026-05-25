@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use chrono::{DateTime, Utc};
-use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::BoxFuture, future::Shared};
 use http_client::{Host, HttpClient, Url};
 use log::Level;
 use semver::{Version, VersionReq};
@@ -28,9 +28,13 @@ const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
-    pub allow_binary_download: bool,
+    pub allow_binary_downloads: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
+
+/// Awaited (by package name) before each npm package install. Set via
+/// [`NodeRuntime::set_install_gate`].
+pub type NpmInstallGate = Arc<dyn Fn(String) -> BoxFuture<'static, bool> + Send + Sync>;
 
 /// Use this when you need to launch npm as a long-lived process (for example, an agent server),
 /// so the invocation and environment stay consistent with the Node runtime's proxy and CA setup.
@@ -57,6 +61,7 @@ struct NodeRuntimeState {
     last_options: Option<NodeBinaryOptions>,
     options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
+    install_gate: Option<NpmInstallGate>,
 }
 
 impl NodeRuntime {
@@ -64,6 +69,7 @@ impl NodeRuntime {
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: watch::Receiver<Option<NodeBinaryOptions>>,
+        install_gate: Option<NpmInstallGate>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
@@ -71,6 +77,7 @@ impl NodeRuntime {
             last_options: None,
             options,
             shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
+            install_gate,
         })))
     }
 
@@ -81,6 +88,7 @@ impl NodeRuntime {
             last_options: None,
             options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
+            install_gate: None,
         })))
     }
 
@@ -147,7 +155,7 @@ impl NodeRuntime {
             None
         };
 
-        let instance = if options.allow_binary_download {
+        let instance = if options.allow_binary_downloads {
             let (log_level, why_using_managed) = match system_node_error {
                 Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
                 Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),
@@ -184,21 +192,15 @@ impl NodeRuntime {
             }
         } else if let Some(system_node_error) = system_node_error {
             // failure case not cached, since it's cheap to check again
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             return Box::new(UnavailableNodeRuntime {
                 error_message: format!(
-                    "failure while checking system Node.js from PATH: {}",
+                    "failure while checking system Node.js from PATH, and binary downloads are disabled: {}",
                     system_node_error
                 )
                 .into(),
             });
         } else {
             // failure case is cached because it will always happen with these options
-            //
-            // TODO: When support is added for setting `options.allow_binary_download`, update this
-            // error message.
             Box::new(UnavailableNodeRuntime {
                 error_message: "`node` settings do not allow any way to use Node.js"
                     .to_string()
@@ -311,29 +313,23 @@ impl NodeRuntime {
             return Ok(());
         }
 
+        if let Some(gate) = self.0.lock().await.install_gate.clone() {
+            for (name, _) in packages {
+                anyhow::ensure!(
+                    gate(name.to_string()).await,
+                    "{}",
+                    util::downloads_disabled_error(format_args!("npm package {name}"))
+                );
+            }
+        }
+
         log::debug!(
             "installing npm packages directory={} packages={packages:?}",
             directory.display()
         );
 
-        let packages: Vec<_> = packages
-            .iter()
-            .map(|(name, version)| format!("{name}@{version}"))
-            .collect();
-
-        let arguments: Vec<_> = packages
-            .iter()
-            .map(|p| p.as_str())
-            .chain([
-                "--save-exact",
-                "--fetch-retry-mintimeout",
-                "2000",
-                "--fetch-retry-maxtimeout",
-                "5000",
-                "--fetch-timeout",
-                "5000",
-            ])
-            .collect();
+        let arguments = build_npm_install_args(packages);
+        let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
 
         // This is also wrong because the directory is wrong.
         self.run_npm_subcommand(Some(directory), "install", &arguments)
@@ -1121,6 +1117,27 @@ fn proxy_argument(proxy: Option<&Url>) -> Option<String> {
     Some(proxy.as_str().to_string())
 }
 
+fn build_npm_install_args(packages: &[(&str, &str)]) -> Vec<String> {
+    packages
+        .iter()
+        .map(|(name, version)| format!("{name}@{version}"))
+        .chain(
+            [
+                "--save-exact",
+                "--ignore-scripts",
+                "--fetch-retry-mintimeout",
+                "2000",
+                "--fetch-retry-maxtimeout",
+                "5000",
+                "--fetch-timeout",
+                "5000",
+            ]
+            .into_iter()
+            .map(String::from),
+        )
+        .collect()
+}
+
 fn build_npm_command_args(
     entrypoint: Option<&Path>,
     prefix_dir: Option<&Path>,
@@ -1190,13 +1207,19 @@ pub fn npm_command_env(node_binary: &Path) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use anyhow::{Result, bail};
+    use futures::FutureExt as _;
     use http_client::Url;
     use semver::{Version, VersionReq};
 
     use super::{
-        NpmInfo, VersionStrategy, build_npm_command_args, deserialize_npm_info_from_response,
+        NodeBinaryOptions, NodeRuntime, NpmInfo, NpmInstallGate, VersionStrategy,
+        build_npm_command_args, build_npm_install_args, deserialize_npm_info_from_response,
         proxy_argument, select_npm_package_version, should_install_npm_package_version,
     };
 
@@ -1656,5 +1679,83 @@ mod tests {
             ]
         );
         Ok(())
+    }
+
+    #[test]
+    fn test_npm_install_packages_blocked_by_install_gate_mentions_downloads_off() {
+        let gate_calls = Arc::new(AtomicUsize::new(0));
+        let gate: NpmInstallGate = Arc::new({
+            let gate_calls = gate_calls.clone();
+            move |_package| {
+                gate_calls.fetch_add(1, Ordering::SeqCst);
+                futures::future::ready(false).boxed()
+            }
+        });
+        let runtime = gated_node_runtime(Some(gate));
+
+        let error = smol::block_on(
+            runtime.npm_install_packages(Path::new("/tmp"), &[("left-pad", "1.0.0")]),
+        )
+        .expect_err("a closed gate must block the install");
+
+        assert_eq!(
+            error.to_string().contains("Downloads Off"),
+            true,
+            "the error must point at the downloads indicator, got: {error}"
+        );
+        assert_eq!(gate_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_npm_install_packages_proceeds_past_open_install_gate() {
+        let gate_calls = Arc::new(AtomicUsize::new(0));
+        let gate: NpmInstallGate = Arc::new({
+            let gate_calls = gate_calls.clone();
+            move |_package| {
+                gate_calls.fetch_add(1, Ordering::SeqCst);
+                futures::future::ready(true).boxed()
+            }
+        });
+        let runtime = gated_node_runtime(Some(gate));
+
+        let error = smol::block_on(
+            runtime.npm_install_packages(Path::new("/tmp"), &[("left-pad", "1.0.0")]),
+        )
+        .expect_err("no node instance is available with default options");
+
+        assert_eq!(
+            error.to_string().contains("Downloads Off"),
+            false,
+            "an open gate must not block the install, got: {error}"
+        );
+        assert_eq!(
+            error
+                .to_string()
+                .contains("do not allow any way to use Node.js"),
+            true,
+            "the failure must come from the node instance lookup, got: {error}"
+        );
+        assert_eq!(gate_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_npm_install_args_disable_lifecycle_scripts_and_pin_versions() {
+        let args = build_npm_install_args(&[("prettier", "3.0.0"), ("typescript", "5.4.2")]);
+        assert_eq!(args[0], "prettier@3.0.0");
+        assert_eq!(args[1], "typescript@5.4.2");
+        assert_eq!(
+            args.iter().filter(|arg| *arg == "--ignore-scripts").count(),
+            1
+        );
+        assert_eq!(args.iter().filter(|arg| *arg == "--save-exact").count(), 1);
+    }
+
+    fn gated_node_runtime(install_gate: Option<NpmInstallGate>) -> NodeRuntime {
+        NodeRuntime::new(
+            Arc::new(http_client::BlockedHttpClient),
+            None,
+            watch::channel(Some(NodeBinaryOptions::default())).1,
+            install_gate,
+        )
     }
 }

@@ -42,6 +42,7 @@ use node_runtime::NodeRuntime;
 use project::{
     ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    binary_downloads::{self, BinaryDownloads, ToolInstall},
     image_store,
     search::{SearchQuery, SearchResult},
 };
@@ -4690,6 +4691,190 @@ async fn test_remote_project_creation_notifies_new_entity_observers(
         "creating a remote project should notify new-entity observers with a connected remote client exactly once"
     );
     assert!(project.read_with(cx, |project, _| project.is_remote()));
+}
+
+#[gpui::test]
+async fn test_remote_binary_download_one_off_approvals(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    cx.update(|cx| binary_downloads::init(cx));
+    server_cx.update(|cx| binary_downloads::init(cx));
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let server_store = server_cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+    let client_store = cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+
+    let worktree_wait = server_store
+        .update(server_cx, |store, cx| {
+            store.request_tool_install(Some(worktree_id), "rust-analyzer", cx)
+        })
+        .expect("a worktree-scoped install request must be blocked while downloads are disabled");
+    let global_wait = server_store
+        .update(server_cx, |store, cx| {
+            store.request_tool_install(None, "copilot", cx)
+        })
+        .expect("a global install request must be blocked while downloads are disabled");
+    cx.run_until_parked();
+
+    let mut pending = client_store.read_with(cx, |store, _| store.pending_tool_installs());
+    pending.sort_by(|a, b| a.tool.cmp(&b.tool));
+    assert_eq!(
+        pending,
+        vec![
+            ToolInstall {
+                worktree_id: None,
+                tool: "copilot".into(),
+            },
+            ToolInstall {
+                worktree_id: Some(worktree_id),
+                tool: "rust-analyzer".into(),
+            },
+        ],
+        "host-side pending installs should be mirrored on the client"
+    );
+    assert_eq!(*worktree_wait.borrow(), false);
+    assert_eq!(*global_wait.borrow(), false);
+
+    client_store.update(cx, |store, cx| {
+        store.approve_tool_install(Some(worktree_id), "rust-analyzer", cx);
+        store.approve_tool_install(None, "copilot", cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        *worktree_wait.borrow(),
+        true,
+        "a client approval should fire the host-side waiter"
+    );
+    assert_eq!(
+        *global_wait.borrow(),
+        true,
+        "a client approval should fire the host-side global waiter"
+    );
+    assert_eq!(
+        server_store.read_with(server_cx, |store, _| store.pending_tool_installs()),
+        Vec::new(),
+        "approvals should resolve the host-side pending installs"
+    );
+    assert_eq!(
+        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        Vec::new(),
+        "resolved installs should clear the client-side mirror"
+    );
+}
+
+#[gpui::test]
+async fn test_remote_pending_tool_installs_survive_reconnect(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    cx.update(|cx| binary_downloads::init(cx));
+    server_cx.update(|cx| binary_downloads::init(cx));
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    let server_store = server_cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+    let client_store = cx.update(|cx| BinaryDownloads::try_get_global(cx).unwrap());
+
+    server_store.update(server_cx, |store, cx| {
+        store.request_tool_install(None, "tool-before-disconnect", cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        vec![ToolInstall {
+            worktree_id: None,
+            tool: "tool-before-disconnect".into(),
+        }],
+    );
+
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store().downgrade());
+    client_store.update(cx, |store, cx| {
+        store.set_remote_pending_installs(worktree_store, Vec::new(), cx);
+    });
+    assert_eq!(
+        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        Vec::new(),
+        "the client mirror is out of sync with the host before reconnecting"
+    );
+
+    let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
+    client
+        .update(cx, |client, cx| client.simulate_disconnect(cx))
+        .detach();
+    cx.run_until_parked();
+
+    assert_eq!(
+        client_store.read_with(cx, |store, _| store.pending_tool_installs()),
+        vec![ToolInstall {
+            worktree_id: None,
+            tool: "tool-before-disconnect".into(),
+        }],
+        "reconnecting should pull the host-side pending installs back into the client mirror"
+    );
 }
 
 pub async fn init_test(

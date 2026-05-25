@@ -36,6 +36,7 @@ lsp.workspace = true
 moka.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
+postage.workspace = true
 project.workspace = true
 remote.workspace = true
 release_channel.workspace = true

@@ -81,6 +81,12 @@ pub struct ProjectSettingsContent {
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
+    /// Whether Zed may download tool binaries and package-based tools such as
+    /// language servers, formatters, and the managed Node runtime.
+    ///
+    /// Default: true
+    pub allow_binary_downloads: Option<bool>,
+
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false
@@ -90,7 +96,8 @@ pub struct ProjectSettingsContent {
 crate::fallible_options::flattened_deserialize!(ProjectSettingsContent {
     sections: { all_languages, worktree },
     options: {
-        terminal, context_server_timeout, load_direnv, git_hosting_providers, disable_ai,
+        terminal, context_server_timeout, load_direnv, git_hosting_providers,
+        allow_binary_downloads, disable_ai,
     },
     defaults: { lsp, dap, context_servers },
 });
@@ -415,8 +422,8 @@ pub struct SessionSettingsContent {
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
     /// Whether or not to skip worktree trust checks.
-    /// When trusted, project settings are synchronized automatically,
-    /// language and MCP servers are downloaded and started automatically.
+    /// When trusted, project settings are synchronized automatically, and language
+    /// and MCP servers are started automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,

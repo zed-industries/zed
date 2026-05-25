@@ -166,6 +166,13 @@ impl ActivityIndicator {
                                             proto::ServerBinaryStatus::Stopped => {
                                                 BinaryStatus::Stopped
                                             }
+                                            proto::ServerBinaryStatus::DownloadBlocked => {
+                                                let Some(reason) = status_update.message.clone()
+                                                else {
+                                                    return;
+                                                };
+                                                BinaryStatus::DownloadBlocked { reason }
+                                            }
                                             proto::ServerBinaryStatus::Failed => {
                                                 let Some(error) = status_update.message.clone()
                                                 else {
@@ -500,6 +507,7 @@ impl ActivityIndicator {
         let mut downloading = SmallVec::<[_; 3]>::new();
         let mut checking_for_update = SmallVec::<[_; 3]>::new();
         let mut failed = SmallVec::<[_; 3]>::new();
+        let mut disabled = SmallVec::<[_; 3]>::new();
         let mut health_messages = SmallVec::<[_; 3]>::new();
         let mut servers_to_clear_statuses = HashSet::<LanguageServerName>::default();
         for status in &self.statuses {
@@ -518,6 +526,9 @@ impl ActivityIndicator {
                 }
                 LanguageServerStatusUpdate::Binary(BinaryStatus::Failed { .. }) => {
                     failed.push(status.name.clone());
+                }
+                LanguageServerStatusUpdate::Binary(BinaryStatus::DownloadBlocked { .. }) => {
+                    disabled.push(status.name.clone());
                 }
                 LanguageServerStatusUpdate::Binary(BinaryStatus::None) => {}
                 LanguageServerStatusUpdate::Health(health, server_status) => match server_status {
@@ -607,6 +618,29 @@ impl ActivityIndicator {
                 ),
                 on_click: Some(Arc::new(|this, window, cx| {
                     this.show_error_message(&ShowErrorMessage, window, cx)
+                })),
+                tooltip_message: None,
+            });
+        }
+
+        if !disabled.is_empty() {
+            return Some(Content {
+                icon: ActivityIcon::Icon(IconName::Warning),
+                message: format!(
+                    "{} blocked from downloading. Click to review.",
+                    disabled
+                        .iter()
+                        .map(|name| name.as_ref())
+                        .fold(String::new(), |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        })
+                ),
+                on_click: Some(Arc::new(|_, window, cx| {
+                    window.dispatch_action(Box::new(workspace::ToggleWorktreeSecurity), cx);
                 })),
                 tooltip_message: None,
             });

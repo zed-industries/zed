@@ -113,6 +113,7 @@ pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
     QueryFileContents, QueryFiles,
 };
+
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
 pub use syntax_map::{
@@ -837,9 +838,12 @@ where
                 return (Ok(cached_binary.clone()), None);
             }
 
-            if !binary_options.allow_binary_download {
+            if !binary_options.fetch_when_missing {
                 return (
-                    Err(anyhow::anyhow!("downloading language servers disabled")),
+                    Err(anyhow::anyhow!(
+                        "not downloading language server {}: downloads were not requested by the caller",
+                        self.name().0
+                    )),
                     None,
                 );
             }

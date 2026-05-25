@@ -121,6 +121,12 @@ impl PythonDebugAdapter {
         std::fs::create_dir_all(&download_dir)?;
         let venv_python = self.base_venv_path(toolchain, delegate).await?;
 
+        anyhow::ensure!(
+            delegate.request_binary_download_approval("debugpy").await,
+            "{}",
+            util::downloads_disabled_error_with_retry("debugpy", "start the debug session again")
+        );
+
         let installation_succeeded = util::command::new_command(venv_python.as_ref())
             .args([
                 "-m",
@@ -229,22 +235,26 @@ impl PythonDebugAdapter {
                     .join("debugpy")
                     .join("adapter");
 
-                if let Err(error) = self.maybe_fetch_new_wheel(toolchain, delegate).await {
-                    if delegate
-                        .fs()
-                        .metadata(&adapter_path)
-                        .await
-                        .is_ok_and(|m| m.is_some())
-                    {
-                        log::warn!(
-                            "Failed to fetch latest debugpy, using cached version: {error:#}"
-                        );
-                    } else {
-                        return Err(format!("{error}"));
-                    }
-                }
-
-                Ok(Arc::from(adapter_path.as_ref()))
+                adapters::get_or_download_adapter(
+                    "debugpy",
+                    delegate,
+                    async {
+                        delegate
+                            .fs()
+                            .metadata(&adapter_path)
+                            .await
+                            .is_ok_and(|metadata| metadata.is_some())
+                            .then(|| adapter_path.clone())
+                    },
+                    async {
+                        self.maybe_fetch_new_wheel(toolchain, delegate).await?;
+                        Ok(adapter_path.clone())
+                    },
+                    None,
+                )
+                .await
+                .map(Arc::from)
+                .map_err(|error| format!("{error}"))
             })
             .await
             .clone()

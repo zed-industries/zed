@@ -755,6 +755,33 @@ async fn convert_response(
     Ok(extension_response)
 }
 
+fn extension_downloads_key(state: &WasmState) -> String {
+    format!("extension `{}`", state.manifest.id)
+}
+
+/// Fails fast instead of blocking so extensions fall back to their cached
+/// binary, exactly as when offline; blocking here would deadlock extensions
+/// whose local copy is fine. One approval per extension covers its version
+/// checks, file downloads, and npm installs.
+async fn ensure_extension_downloads_allowed(state: &mut WasmState) -> Result<()> {
+    let tool = extension_downloads_key(state);
+    let blocked = state
+        .on_main_thread({
+            let tool = tool.clone();
+            move |cx| {
+                async move {
+                    cx.update(|cx| {
+                        project::binary_downloads::request_tool_install(None, tool, cx).is_some()
+                    })
+                }
+                .boxed_local()
+            }
+        })
+        .await;
+    anyhow::ensure!(!blocked, "{}", util::downloads_disabled_error(&tool));
+    Ok(())
+}
+
 impl nodejs::Host for WasmState {
     async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
         self.host
@@ -769,12 +796,17 @@ impl nodejs::Host for WasmState {
         &mut self,
         package_name: String,
     ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .map(|v| v.to_string())
-            .to_wasmtime_result()
+        maybe!(async {
+            ensure_extension_downloads_allowed(self).await?;
+            let version = self
+                .host
+                .node_runtime
+                .npm_package_latest_version(&package_name)
+                .await?;
+            Ok(version.to_string())
+        })
+        .await
+        .to_wasmtime_result()
     }
 
     async fn npm_package_installed_version(
@@ -798,11 +830,15 @@ impl nodejs::Host for WasmState {
             .grant_npm_install_package(&package_name)
             .into_wasmtime_result()?;
 
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
+        maybe!(async {
+            ensure_extension_downloads_allowed(self).await?;
+            self.host
+                .node_runtime
+                .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
+                .await
+        })
+        .await
+        .to_wasmtime_result()
     }
 }
 
@@ -835,6 +871,7 @@ impl github::Host for WasmState {
         options: github::GithubReleaseOptions,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
+            ensure_extension_downloads_allowed(self).await?;
             let release = ::http_client::github::latest_github_release(
                 &repo,
                 options.require_assets,
@@ -854,6 +891,7 @@ impl github::Host for WasmState {
         tag: String,
     ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
         maybe!(async {
+            ensure_extension_downloads_allowed(self).await?;
             let release = ::http_client::github::get_release_by_tag_name(
                 &repo,
                 &tag,
@@ -1078,6 +1116,7 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         maybe!(async {
+            ensure_extension_downloads_allowed(self).await?;
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;
 

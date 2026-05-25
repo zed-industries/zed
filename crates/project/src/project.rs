@@ -1,5 +1,6 @@
 pub mod agent_registry_store;
 pub mod agent_server_store;
+pub mod binary_downloads;
 pub mod bookmark_store;
 pub mod buffer_store;
 pub mod color_extractor;
@@ -1230,6 +1231,7 @@ impl Project {
                     cx,
                 );
             }
+            binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -1455,6 +1457,14 @@ impl Project {
                     cx,
                 );
             }
+            // Remote projects only mirror the host's pending one-off installs
+            // and forward approvals upstream; full tracking stays host-side,
+            // wired up in `HeadlessProject::new`.
+            binary_downloads::track_remote_binary_downloads(
+                worktree_store.clone(),
+                (remote_proto.clone(), ProjectId(REMOTE_SERVER_PROJECT_ID)),
+                cx,
+            );
 
             let weak_self = cx.weak_entity();
 
@@ -1674,6 +1684,7 @@ impl Project {
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
             remote_proto.add_entity_request_handler(Self::handle_trust_worktrees);
             remote_proto.add_entity_request_handler(Self::handle_restrict_worktrees);
+            remote_proto.add_entity_request_handler(Self::handle_update_pending_tool_installs);
             remote_proto.add_entity_request_handler(Self::handle_find_search_candidates_chunk);
 
             remote_proto.add_entity_message_handler(Self::handle_find_search_candidates_cancel);
@@ -3865,8 +3876,46 @@ impl Project {
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
-            &remote::RemoteClientEvent::Reconnected => {}
+            &remote::RemoteClientEvent::Reconnected => {
+                self.refresh_remote_pending_tool_installs(cx);
+            }
         }
+    }
+
+    fn refresh_remote_pending_tool_installs(&self, cx: &mut Context<Self>) {
+        let Some(remote_client) = self.remote_client.as_ref() else {
+            return;
+        };
+        let request =
+            remote_client
+                .read(cx)
+                .proto_client()
+                .request(proto::GetPendingToolInstalls {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                });
+        let worktree_store = self.worktree_store.downgrade();
+        cx.spawn(async move |_, cx| {
+            let response = request.await?;
+            cx.update(|cx| {
+                if let Some(binary_downloads) =
+                    binary_downloads::BinaryDownloads::try_get_global(cx)
+                {
+                    binary_downloads.update(cx, |binary_downloads, cx| {
+                        let pending = response
+                            .pending_installs
+                            .into_iter()
+                            .map(|install| binary_downloads::ToolInstall {
+                                worktree_id: install.worktree_id.map(WorktreeId::from_proto),
+                                tool: SharedString::from(install.tool),
+                            })
+                            .collect::<Vec<_>>();
+                        binary_downloads.set_remote_pending_installs(worktree_store, pending, cx);
+                    });
+                }
+            });
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn on_settings_observer_event(
@@ -5691,6 +5740,34 @@ impl Project {
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
             trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
+        });
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_update_pending_tool_installs(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdatePendingToolInstalls>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        if this.read_with(&cx, |project, _| project.is_via_collab()) {
+            return Ok(proto::Ack {});
+        }
+
+        let binary_downloads = cx
+            .update(|cx| binary_downloads::BinaryDownloads::try_get_global(cx))
+            .context("missing binary downloads store")?;
+        binary_downloads.update(&mut cx, |binary_downloads, cx| {
+            let worktree_store = this.read(cx).worktree_store().downgrade();
+            let pending = envelope
+                .payload
+                .pending_installs
+                .into_iter()
+                .map(|install| binary_downloads::ToolInstall {
+                    worktree_id: install.worktree_id.map(WorktreeId::from_proto),
+                    tool: SharedString::from(install.tool),
+                })
+                .collect::<Vec<_>>();
+            binary_downloads.set_remote_pending_installs(worktree_store, pending, cx);
         });
         Ok(proto::Ack {})
     }

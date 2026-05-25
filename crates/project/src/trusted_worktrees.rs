@@ -44,6 +44,7 @@ use collections::{HashMap, HashSet};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, SharedString, Task, WeakEntity,
 };
+use postage::{sink::Sink as _, watch};
 use remote::RemoteConnectionOptions;
 use rpc::{AnyProtoClient, proto};
 use settings::{Settings as _, WorktreeId};
@@ -54,6 +55,19 @@ use std::{
 use util::debug_panic;
 
 use crate::{project_settings::ProjectSettings, worktree_store::WorktreeStore};
+
+pub fn worktree_trusted(
+    worktree_store: &Entity<WorktreeStore>,
+    worktree_id: WorktreeId,
+    cx: &mut App,
+) -> bool {
+    let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
+        return true;
+    };
+    trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+        trusted_worktrees.can_trust(worktree_store, worktree_id, cx)
+    })
+}
 
 pub fn init(db_trusted_paths: DbTrustedPaths, cx: &mut App) {
     if TrustedWorktrees::try_get_global(cx).is_none() {
@@ -137,6 +151,7 @@ pub struct TrustedWorktreesStore {
     db_trusted_paths: DbTrustedPaths,
     trusted_paths: TrustedPaths,
     restricted: HashMap<WeakEntity<WorktreeStore>, HashSet<WorktreeId>>,
+    trust_waiters: HashMap<WorktreeId, watch::Sender<bool>>,
     worktree_trust_serialization: Task<()>,
 }
 
@@ -241,8 +256,30 @@ impl TrustedWorktreesStore {
             trusted_paths: HashMap::default(),
             worktree_stores: HashMap::default(),
             restricted: HashMap::default(),
+            trust_waiters: HashMap::default(),
             worktree_trust_serialization: Task::ready(()),
         }
+    }
+
+    /// Returns a watch channel yielding `true` once the worktree becomes
+    /// trusted, or `None` when it is trusted already. Like
+    /// [`TrustedWorktreesStore::can_trust`], marks the worktree restricted
+    /// (emitting [`TrustedWorktreesEvent::Restricted`] on the first check).
+    pub fn wait_until_trusted(
+        &mut self,
+        worktree_store: &Entity<WorktreeStore>,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) -> Option<watch::Receiver<bool>> {
+        if self.can_trust(worktree_store, worktree_id, cx) {
+            self.trust_waiters.remove(&worktree_id);
+            return None;
+        }
+        let sender = self
+            .trust_waiters
+            .entry(worktree_id)
+            .or_insert_with(|| watch::channel::<bool>().0);
+        Some(sender.subscribe())
     }
 
     /// Whether a particular worktree store has associated worktrees that are restricted, or an associated host is restricted.
@@ -413,6 +450,13 @@ impl TrustedWorktreesStore {
                         })
                         .ok();
                 }
+            }
+        }
+        for trusted_path in &trusted_paths {
+            if let PathTrust::Worktree(worktree_id) = trusted_path
+                && let Some(mut sender) = self.trust_waiters.remove(worktree_id)
+            {
+                sender.blocking_send(true).ok();
             }
         }
         cx.emit(TrustedWorktreesEvent::Trusted(
