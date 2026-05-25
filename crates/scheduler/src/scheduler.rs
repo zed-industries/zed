@@ -108,13 +108,6 @@ pub trait Scheduler: Send + Sync {
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
 
-    /// Allocate a fresh `SessionId` that's distinct from every other session
-    /// previously handed out by this scheduler. Used to mint sessions for
-    /// `spawn_dedicated_thread` and any other call site that needs a
-    /// session-pinned executor without going through one of the concrete
-    /// scheduler types.
-    fn allocate_session_id(&self) -> SessionId;
-
     fn as_test(&self) -> Option<&TestScheduler> {
         None
     }

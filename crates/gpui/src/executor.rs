@@ -278,17 +278,21 @@ impl ForegroundExecutor {
                 )
             } else {
                 let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-                let session_id = platform_scheduler.allocate_session_id();
-                (platform_scheduler, session_id)
+                let inner = platform_scheduler.foreground_executor();
+                return Self {
+                    inner,
+                    dispatcher,
+                    not_send: PhantomData,
+                };
             };
 
         #[cfg(not(any(test, feature = "test-support")))]
-        let (scheduler, session_id): (Arc<dyn Scheduler>, _) = {
+        let inner = {
             let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-            let session_id = platform_scheduler.allocate_session_id();
-            (platform_scheduler, session_id)
+            platform_scheduler.foreground_executor()
         };
 
+        #[cfg(any(test, feature = "test-support"))]
         let inner = {
             let scheduler_for_dispatch = scheduler.clone();
             scheduler::LocalExecutor::new(session_id, scheduler, move |runnable| {

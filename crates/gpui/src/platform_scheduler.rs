@@ -38,6 +38,18 @@ impl PlatformScheduler {
         }
     }
 
+    pub fn foreground_executor(self: &Arc<Self>) -> LocalExecutor {
+        let session_id = self.next_session_id();
+        let scheduler = self.clone();
+        LocalExecutor::new(session_id, self.clone(), move |runnable| {
+            scheduler.schedule_local(session_id, runnable);
+        })
+    }
+
+    fn next_session_id(&self) -> SessionId {
+        SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
+    }
+
     /// Spawn work on a fresh OS thread that's exclusive to the returned
     /// task and anything spawned on the executor it provides. Blocking
     /// syscalls inside that work don't disturb any other executor in the
@@ -55,7 +67,7 @@ impl PlatformScheduler {
         Fut: Future + 'static,
         Fut::Output: Send + 'static,
     {
-        spawn_dedicated_thread(self.allocate_session_id(), self.clone(), f)
+        spawn_dedicated_thread(self.next_session_id(), self.clone(), f)
     }
 }
 
@@ -150,10 +162,6 @@ impl Scheduler for PlatformScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
-    }
-
-    fn allocate_session_id(&self) -> SessionId {
-        SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {
