@@ -7749,22 +7749,19 @@ impl EditorElement {
     }
 
     fn layout_undo_tree_visualizer(&mut self, hitbox: &Hitbox, window: &mut Window, cx: &mut App) {
-        let Some(mut element) = self
-            .editor
-            .update(cx, |editor, cx| editor.render_undo_tree_visualizer(cx))
-        else {
+        let margin = px(12.);
+        let max_size = size(
+            (hitbox.bounds.size.width - margin - margin).max(px(180.)),
+            (hitbox.bounds.size.height - margin - margin).max(px(160.)),
+        );
+        let Some(mut element) = self.editor.update(cx, |editor, cx| {
+            editor.render_undo_tree_visualizer(max_size, cx)
+        }) else {
             return;
         };
 
-        let margin = px(12.);
-        let available_width = (hitbox.bounds.size.width - margin - margin)
-            .max(px(180.))
-            .min(px(420.));
         let size = element.layout_as_root(
-            size(
-                AvailableSpace::Definite(available_width),
-                AvailableSpace::MinContent,
-            ),
+            size(AvailableSpace::MinContent, AvailableSpace::MinContent),
             window,
             cx,
         );

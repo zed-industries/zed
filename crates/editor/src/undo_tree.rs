@@ -1,7 +1,39 @@
 use super::*;
-use gpui::{InteractiveElement as _, StatefulInteractiveElement as _, canvas, fill};
+use gpui::{
+    DragMoveEvent, Empty, InteractiveElement as _, StatefulInteractiveElement as _, canvas, fill,
+};
 use std::time::SystemTime;
 use text::{UndoNodeId, UndoTreeSnapshot};
+
+/// Default width of the visualizer popover before the user resizes it.
+const UNDO_TREE_DEFAULT_WIDTH: Pixels = px(420.);
+/// Height cap applied to the (content-driven) popover until the user resizes it.
+const UNDO_TREE_DEFAULT_MAX_HEIGHT: Pixels = px(420.);
+const UNDO_TREE_MIN_WIDTH: Pixels = px(240.);
+const UNDO_TREE_MIN_HEIGHT: Pixels = px(160.);
+/// Thickness of the draggable resize affordances along the popover edges.
+const UNDO_TREE_RESIZE_HANDLE: Pixels = px(6.);
+
+/// Which edge/corner of the popover a resize drag is acting on. The popover is
+/// anchored to its top-right corner, so only the left edge, bottom edge, and
+/// bottom-left corner are draggable.
+#[derive(Clone, Copy, Debug)]
+enum UndoTreeResizeEdge {
+    Left,
+    Bottom,
+    BottomLeft,
+}
+
+#[derive(Clone)]
+struct UndoTreeResizeDrag {
+    edge: UndoTreeResizeEdge,
+}
+
+impl Render for UndoTreeResizeDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
 
 /// Horizontal distance between adjacent node columns in the graph.
 const UNDO_TREE_COLUMN_WIDTH: Pixels = px(22.);
@@ -490,6 +522,7 @@ impl Editor {
 
     pub(crate) fn render_undo_tree_visualizer(
         &mut self,
+        max_size: Size<Pixels>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         if !self.show_undo_tree {
@@ -500,106 +533,208 @@ impl Editor {
         let read_only = self.read_only(cx);
         let can_jump = state.available && !read_only;
 
+        let width = self
+            .undo_tree_width
+            .unwrap_or(UNDO_TREE_DEFAULT_WIDTH)
+            .clamp(UNDO_TREE_MIN_WIDTH, max_size.width.max(UNDO_TREE_MIN_WIDTH));
+        // Until the user drags the bottom edge, the height tracks the content
+        // (capped), so a small tree stays compact.
+        let height = self.undo_tree_height.map(|height| {
+            height.clamp(
+                UNDO_TREE_MIN_HEIGHT,
+                max_size.height.max(UNDO_TREE_MIN_HEIGHT),
+            )
+        });
+        let max_height =
+            UNDO_TREE_DEFAULT_MAX_HEIGHT.min(max_size.height.max(UNDO_TREE_MIN_HEIGHT));
+
         Some(
             WithRemSize::new(ThemeSettings::get_global(cx).ui_font_size(cx))
-                .w_full()
-                .max_w(px(420.))
-                .max_h(px(420.))
-                .flex()
-                .flex_col()
-                .rounded_md()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .elevation_2(cx)
-                .overflow_hidden()
                 .child(
-                    h_flex()
-                        .h_8()
-                        .justify_between()
-                        .gap_2()
-                        .border_b_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .px_2()
+                    div()
+                        .id("undo-tree-visualizer")
+                        .w(width)
+                        .when_some(height, |this, height| this.h(height))
+                        .when(height.is_none(), |this| this.max_h(max_height))
+                        .flex()
+                        .flex_col()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .elevation_2(cx)
+                        .overflow_hidden()
+                        .on_drag_move(cx.listener(
+                            |editor, event: &DragMoveEvent<UndoTreeResizeDrag>, _, cx| {
+                                let edge = event.drag(cx).edge;
+                                let bounds = event.bounds;
+                                let position = event.event.position;
+                                if matches!(
+                                    edge,
+                                    UndoTreeResizeEdge::Left | UndoTreeResizeEdge::BottomLeft
+                                ) {
+                                    editor.undo_tree_width = Some(
+                                        (bounds.right() - position.x).max(UNDO_TREE_MIN_WIDTH),
+                                    );
+                                }
+                                if matches!(
+                                    edge,
+                                    UndoTreeResizeEdge::Bottom | UndoTreeResizeEdge::BottomLeft
+                                ) {
+                                    editor.undo_tree_height =
+                                        Some((position.y - bounds.top()).max(UNDO_TREE_MIN_HEIGHT));
+                                }
+                                cx.notify();
+                            },
+                        ))
                         .child(
                             h_flex()
-                                .min_w_0()
-                                .gap_1()
+                                .h_8()
+                                .justify_between()
+                                .gap_2()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .px_2()
                                 .child(
-                                    IconButton::new("undo-tree-title-icon", IconName::GitBranch)
-                                        .disabled(true)
-                                        .icon_color(Color::Muted)
-                                        .icon_size(IconSize::Small)
-                                        .shape(IconButtonShape::Square),
+                                    h_flex()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .child(
+                                            IconButton::new(
+                                                "undo-tree-title-icon",
+                                                IconName::GitBranch,
+                                            )
+                                            .disabled(true)
+                                            .icon_color(Color::Muted)
+                                            .icon_size(IconSize::Small)
+                                            .shape(IconButtonShape::Square),
+                                        )
+                                        .child(
+                                            Label::new("Undo Tree")
+                                                .size(LabelSize::Small)
+                                                .weight(FontWeight::BOLD)
+                                                .single_line(),
+                                        ),
                                 )
                                 .child(
-                                    Label::new("Undo Tree")
-                                        .size(LabelSize::Small)
-                                        .weight(FontWeight::BOLD)
-                                        .single_line(),
+                                    h_flex()
+                                        .gap_0p5()
+                                        .child(
+                                            IconButton::new(
+                                                "undo-tree-latest",
+                                                IconName::FastForward,
+                                            )
+                                            .shape(IconButtonShape::Square)
+                                            .size(ButtonSize::Compact)
+                                            .icon_size(IconSize::Small)
+                                            .icon_color(Color::Muted)
+                                            .disabled(!can_jump)
+                                            .tooltip(|_, cx| {
+                                                cx.new(|_| Tooltip::new("Jump to Latest")).into()
+                                            })
+                                            .on_click(
+                                                cx.listener(|editor, _, window, cx| {
+                                                    editor.undo_tree_jump_to_latest(
+                                                        &UndoTreeJumpToLatest,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            IconButton::new("undo-tree-close", IconName::Close)
+                                                .shape(IconButtonShape::Square)
+                                                .size(ButtonSize::Compact)
+                                                .icon_size(IconSize::Small)
+                                                .icon_color(Color::Muted)
+                                                .tooltip(|_, cx| {
+                                                    cx.new(|_| Tooltip::new("Hide Undo Tree"))
+                                                        .into()
+                                                })
+                                                .on_click(cx.listener(|editor, _, window, cx| {
+                                                    editor.hide_undo_tree(
+                                                        &HideUndoTree,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })),
+                                        ),
                                 ),
                         )
                         .child(
-                            h_flex()
-                                .gap_0p5()
-                                .child(
-                                    IconButton::new("undo-tree-latest", IconName::FastForward)
-                                        .shape(IconButtonShape::Square)
-                                        .size(ButtonSize::Compact)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .disabled(!can_jump)
-                                        .tooltip(|_, cx| {
-                                            cx.new(|_| Tooltip::new("Jump to Latest")).into()
-                                        })
-                                        .on_click(cx.listener(|editor, _, window, cx| {
-                                            editor.undo_tree_jump_to_latest(
-                                                &UndoTreeJumpToLatest,
-                                                window,
-                                                cx,
-                                            );
-                                        })),
-                                )
-                                .child(
-                                    IconButton::new("undo-tree-close", IconName::Close)
-                                        .shape(IconButtonShape::Square)
-                                        .size(ButtonSize::Compact)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .tooltip(|_, cx| {
-                                            cx.new(|_| Tooltip::new("Hide Undo Tree")).into()
-                                        })
-                                        .on_click(cx.listener(|editor, _, window, cx| {
-                                            editor.hide_undo_tree(&HideUndoTree, window, cx);
-                                        })),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("undo-tree-body")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .when(!state.available, |this| {
-                            this.p_3().child(
-                                Label::new("Undo tree is unavailable for multibuffers")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        })
-                        .when(state.available && state.nodes.is_empty(), |this| {
-                            this.p_3().child(
-                                Label::new("No undo history")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                        })
-                        .when(state.available && !state.nodes.is_empty(), |this| {
-                            this.child(self.render_undo_tree_graph(state, cx))
-                        }),
+                            div()
+                                .id("undo-tree-body")
+                                .flex_1()
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .when(!state.available, |this| {
+                                    this.p_3().child(
+                                        Label::new("Undo tree is unavailable for multibuffers")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                })
+                                .when(state.available && state.nodes.is_empty(), |this| {
+                                    this.p_3().child(
+                                        Label::new("No undo history")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                })
+                                .when(state.available && !state.nodes.is_empty(), |this| {
+                                    this.child(self.render_undo_tree_graph(state, cx))
+                                }),
+                        )
+                        // Resize handles paint last so they sit above the body and
+                        // receive the drag instead of the graph beneath them.
+                        .child(Self::render_undo_tree_resize_handle(
+                            "undo-tree-resize-left",
+                            UndoTreeResizeEdge::Left,
+                        ))
+                        .child(Self::render_undo_tree_resize_handle(
+                            "undo-tree-resize-bottom",
+                            UndoTreeResizeEdge::Bottom,
+                        ))
+                        .child(Self::render_undo_tree_resize_handle(
+                            "undo-tree-resize-corner",
+                            UndoTreeResizeEdge::BottomLeft,
+                        )),
                 )
                 .into_any_element(),
         )
+    }
+
+    fn render_undo_tree_resize_handle(
+        id: &'static str,
+        edge: UndoTreeResizeEdge,
+    ) -> impl IntoElement {
+        let handle = div()
+            .id(id)
+            .absolute()
+            .occlude()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_drag(UndoTreeResizeDrag { edge }, |drag, _, _, cx| {
+                cx.new(|_| drag.clone())
+            });
+        match edge {
+            UndoTreeResizeEdge::Left => handle
+                .left_0()
+                .top_0()
+                .h_full()
+                .w(UNDO_TREE_RESIZE_HANDLE)
+                .cursor_ew_resize(),
+            UndoTreeResizeEdge::Bottom => handle
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h(UNDO_TREE_RESIZE_HANDLE)
+                .cursor_ns_resize(),
+            UndoTreeResizeEdge::BottomLeft => handle
+                .bottom_0()
+                .left_0()
+                .size(px(12.))
+                .cursor_nesw_resize(),
+        }
     }
 
     fn render_undo_tree_graph(
@@ -612,9 +747,8 @@ impl Editor {
             UNDO_TREE_GRAPH_PADDING * 2. + UNDO_TREE_COLUMN_WIDTH * state.columns as f32;
         let graph_height = UNDO_TREE_GRAPH_PADDING * 2. + UNDO_TREE_ROW_HEIGHT * rows as f32;
 
-        let column_center = |column: f32| {
-            UNDO_TREE_GRAPH_PADDING + UNDO_TREE_COLUMN_WIDTH * (column + 0.5)
-        };
+        let column_center =
+            |column: f32| UNDO_TREE_GRAPH_PADDING + UNDO_TREE_COLUMN_WIDTH * (column + 0.5);
         let row_center =
             |row: usize| UNDO_TREE_GRAPH_PADDING + UNDO_TREE_ROW_HEIGHT * (row as f32 + 0.5);
 
@@ -672,8 +806,7 @@ impl Editor {
             .enumerate()
             .map(|(index, node)| {
                 let node_id = node.id;
-                let center =
-                    point(column_center(node.column), row_center(node.row));
+                let center = point(column_center(node.column), row_center(node.row));
                 let kind = node.kind;
                 div()
                     .id(("undo-tree-node", index))

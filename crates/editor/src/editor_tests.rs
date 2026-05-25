@@ -579,7 +579,9 @@ fn branches_into_two(edges: &[crate::undo_tree::UndoTreeVisualizerEdge]) -> bool
     edges.iter().any(|edge| {
         edges
             .iter()
-            .filter(|other| other.from_row == edge.from_row && other.from_column == edge.from_column)
+            .filter(|other| {
+                other.from_row == edge.from_row && other.from_column == edge.from_column
+            })
             .count()
             > 1
     })
