@@ -534,9 +534,6 @@ pub struct Shadow {
     pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    /// Explicit trailing padding to match the 8-byte struct alignment WGSL infers from the
-    /// `vec2<f32>` inside `Bounds`. Without this, the Rust struct would be 108 bytes while the
-    /// WGSL struct would be 112, corrupting every shadow instance after the first.
     pub _pad: u32,
 }
 

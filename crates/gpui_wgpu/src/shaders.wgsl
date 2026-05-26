@@ -951,10 +951,8 @@ fn fmod(a: f32, b: f32) -> f32 {
 struct Shadow {
     order: u32,
     blur_radius: f32,
-    // For drop shadows: the shadow rect (element offset + spread-dilated by the CPU).
-    // For inset shadows: the "hole" rect.
+    // The shadow rect for drop shadows; the "hole" rect for inset shadows.
     bounds: Bounds,
-    // Corner radii of `bounds`. For inset, these are the element's radii minus spread.
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
@@ -984,13 +982,11 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     var shadow = b_shadows[instance_id];
 
-    // The geometry rect differs between drop and inset shadows.
-    //   - Drop: shadow.bounds, inflated by 3 * blur_radius for the gaussian tail.
-    //   - Inset: shadow.element_bounds (the shadow stays inside the element).
     var geometry: Bounds;
     if (shadow.inset != 0u) {
         geometry = shadow.element_bounds;
     } else {
+        // Leave room for the gaussian tail outside the shadow rect.
         let margin = 3.0 * shadow.blur_radius;
         geometry = shadow.bounds;
         geometry.origin -= vec2<f32>(margin);
@@ -1037,8 +1033,8 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     }
 
     if (shadow.inset != 0u) {
-        // Invert the rect coverage to get the blurred complement (the dark ring),
-        // then clip to the element's rounded rect with a 1-pixel AA edge.
+        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+        // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
         let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
                                         shadow.element_corner_radii);

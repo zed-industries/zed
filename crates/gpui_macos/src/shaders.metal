@@ -468,15 +468,11 @@ vertex ShadowVertexOutput shadow_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
-  // The geometry rect we rasterize differs between drop and inset shadows.
-  //   - Drop: shadow.bounds (already offset + spread-dilated by the CPU), inflated by
-  //     3 * blur_radius so the gaussian tail has room outside the rect.
-  //   - Inset: the element's own bounds. The shadow lives entirely inside the element,
-  //     so the geometry never needs to extend beyond it.
   Bounds_ScaledPixels bounds;
   if (shadow.inset != 0u) {
     bounds = shadow.element_bounds;
   } else {
+    // Leave room for the gaussian tail outside the shadow rect.
     float margin = 3. * shadow.blur_radius;
     bounds = shadow.bounds;
     bounds.origin.x -= margin;
@@ -523,10 +519,6 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     }
   }
 
-  // `alpha` is the (blurred) coverage of `shadow.bounds`:
-  //   - For drop shadows, that's the shadow rect itself, so this is the shadow's intensity.
-  //   - For inset shadows, that's the "hole" rect, so we'll invert it below to get the
-  //     blurred *complement* (the dark ring) and then clip it to the element.
   float alpha;
   if (shadow.blur_radius == 0.) {
     float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
@@ -551,10 +543,9 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   }
 
   if (shadow.inset != 0u) {
-    // Invert: the inset shadow lives *outside* the hole rect.
-    alpha = 1. - alpha;
-    // Clip to the element's rounded rect so the shadow never escapes the element.
+    // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
     // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
+    alpha = 1. - alpha;
     float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
                                       shadow.element_corner_radii);
     alpha *= saturate(0.5 - element_distance);
