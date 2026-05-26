@@ -369,6 +369,13 @@ impl Conversation {
         Some(tool_call_id.clone())
     }
 
+    pub fn pending_tool_call_count_for_session(&self, session_id: &acp::SessionId) -> usize {
+        self.permission_requests
+            .get(session_id)
+            .map(|tool_call_ids| tool_call_ids.len())
+            .unwrap_or(0)
+    }
+
     pub fn authorize_pending_tool_call(
         &mut self,
         session_id: &acp::SessionId,
