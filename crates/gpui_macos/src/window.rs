@@ -98,6 +98,8 @@ const NSTrackingInVisibleRect: NSUInteger = 0x200;
 const NSWindowAnimationBehaviorUtilityWindow: NSInteger = 4;
 #[allow(non_upper_case_globals)]
 const NSViewLayerContentsRedrawDuringViewResize: NSInteger = 2;
+#[allow(non_upper_case_globals)]
+const NSFocusRingTypeNone: NSInteger = 1;
 // https://developer.apple.com/documentation/appkit/nsdragoperation
 type NSDragOperation = NSUInteger;
 #[allow(non_upper_case_globals)]
@@ -144,6 +146,10 @@ unsafe fn build_classes() {
                 decl.add_method(
                     sel!(keyUp:),
                     handle_key_up as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(acceptsFirstResponder),
+                    yes as extern "C" fn(&Object, Sel) -> BOOL,
                 );
                 decl.add_method(
                     sel!(mouseDown:),
@@ -288,6 +294,101 @@ unsafe fn build_classes() {
                 decl.add_method(
                     sel!(characterIndexForPoint:),
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
+                );
+
+                decl.add_method(
+                    sel!(isAccessibilityElement),
+                    is_accessibility_element as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(isAccessibilityEnabled),
+                    is_accessibility_element as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(accessibilityRole),
+                    accessibility_role as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityValue),
+                    accessibility_value as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(setAccessibilityValue:),
+                    set_accessibility_value as extern "C" fn(&Object, Sel, id),
+                );
+                decl.add_method(
+                    sel!(isAccessibilityFocused),
+                    is_accessibility_focused as extern "C" fn(&Object, Sel) -> BOOL,
+                );
+                decl.add_method(
+                    sel!(accessibilityInsertionPointLineNumber),
+                    accessibility_insertion_point_line_number
+                        as extern "C" fn(&Object, Sel) -> NSInteger,
+                );
+                decl.add_method(
+                    sel!(accessibilityNumberOfCharacters),
+                    accessibility_number_of_characters as extern "C" fn(&Object, Sel) -> NSInteger,
+                );
+                decl.add_method(
+                    sel!(accessibilitySelectedText),
+                    accessibility_selected_text as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilitySelectedTextRange),
+                    accessibility_selected_text_range as extern "C" fn(&Object, Sel) -> NSRange,
+                );
+                decl.add_method(
+                    sel!(setAccessibilitySelectedTextRange:),
+                    set_accessibility_selected_text_range as extern "C" fn(&Object, Sel, NSRange),
+                );
+                decl.add_method(
+                    sel!(accessibilitySelectedTextRanges),
+                    accessibility_selected_text_ranges as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityVisibleCharacterRange),
+                    accessibility_visible_character_range as extern "C" fn(&Object, Sel) -> NSRange,
+                );
+                decl.add_method(
+                    sel!(accessibilityStringForRange:),
+                    accessibility_string_for_range as extern "C" fn(&Object, Sel, NSRange) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityAttributedStringForRange:),
+                    accessibility_attributed_string_for_range
+                        as extern "C" fn(&Object, Sel, NSRange) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityFrameForRange:),
+                    accessibility_frame_for_range as extern "C" fn(&Object, Sel, NSRange) -> NSRect,
+                );
+                decl.add_method(
+                    sel!(accessibilityLineForIndex:),
+                    accessibility_line_for_index
+                        as extern "C" fn(&Object, Sel, NSInteger) -> NSInteger,
+                );
+                decl.add_method(
+                    sel!(accessibilityRangeForIndex:),
+                    accessibility_range_for_index
+                        as extern "C" fn(&Object, Sel, NSInteger) -> NSRange,
+                );
+                decl.add_method(
+                    sel!(accessibilityStyleRangeForIndex:),
+                    accessibility_style_range_for_index
+                        as extern "C" fn(&Object, Sel, NSInteger) -> NSRange,
+                );
+                decl.add_method(
+                    sel!(accessibilityRangeForLine:),
+                    accessibility_range_for_line
+                        as extern "C" fn(&Object, Sel, NSInteger) -> NSRange,
+                );
+                decl.add_method(
+                    sel!(accessibilityFocusedUIElement),
+                    accessibility_focused_ui_element as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityHitTest:),
+                    accessibility_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
                 );
             }
             decl.register()
@@ -869,6 +970,7 @@ impl MacWindow {
 
             native_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
             native_view.setWantsBestResolutionOpenGLSurface_(YES);
+            let _: () = msg_send![native_view, setFocusRingType: NSFocusRingTypeNone];
 
             // From winit crate: On Mojave, views automatically become layer-backed shortly after
             // being added to a native_window. Changing the layer-backedness of a view breaks the
@@ -2053,9 +2155,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 }
             }
 
-            // Don't send key equivalents to the input handler if there are key modifiers other
-            // than Function key, or macOS shortcuts like cmd-` will stop working.
-            if key_equivalent && key_down_event.keystroke.modifiers != Modifiers::function() {
+            // Don't send modified key equivalents to the input handler if there are key modifiers
+            // other than Function key, or macOS shortcuts like cmd-` will stop working.
+            if key_equivalent
+                && key_down_event.keystroke.modifiers.modified()
+                && key_down_event.keystroke.modifiers != Modifiers::function()
+            {
                 return NO;
             }
 
@@ -2688,6 +2793,201 @@ extern "C" fn character_index_for_point(this: &Object, _: Sel, position: NSPoint
     .flatten()
     .map(|index| index as u64)
     .unwrap_or(NSNotFound as u64)
+}
+
+extern "C" fn accessibility_role(_: &Object, _: Sel) -> id {
+    unsafe { ns_string("AXTextArea") }
+}
+
+extern "C" fn is_accessibility_element(this: &Object, _: Sel) -> BOOL {
+    with_input_handler(this, |input_handler| {
+        input_handler.query_accepts_text_input()
+    })
+    .unwrap_or(false)
+    .to_objc()
+}
+
+extern "C" fn accessibility_value(this: &Object, _: Sel) -> id {
+    let value = with_input_handler(this, accessibility_full_text)
+        .map(|(text, _)| text)
+        .unwrap_or_default();
+
+    unsafe { ns_string(&value) }
+}
+
+extern "C" fn set_accessibility_value(this: &Object, _: Sel, value: id) {
+    unsafe {
+        let value = value.to_str();
+        with_input_handler(this, |input_handler| {
+            if let Some(replacement_range) = accessibility_full_text(input_handler).1 {
+                input_handler.replace_text_in_range(Some(replacement_range), value);
+            }
+        });
+    }
+}
+
+extern "C" fn is_accessibility_focused(this: &Object, _: Sel) -> BOOL {
+    with_input_handler(this, |input_handler| {
+        input_handler.query_accepts_text_input()
+    })
+    .unwrap_or(false)
+    .to_objc()
+}
+
+extern "C" fn accessibility_insertion_point_line_number(_: &Object, _: Sel) -> NSInteger {
+    0
+}
+
+extern "C" fn accessibility_number_of_characters(this: &Object, _: Sel) -> NSInteger {
+    with_input_handler(this, |input_handler| {
+        let (text, range) = accessibility_full_text(input_handler);
+        range.map_or_else(|| text.encode_utf16().count(), |range| range.end)
+    })
+    .unwrap_or(0) as NSInteger
+}
+
+extern "C" fn accessibility_selected_text(this: &Object, _: Sel) -> id {
+    let text = with_input_handler(this, |input_handler| {
+        let selection = input_handler.selected_text_range(true)?;
+        let mut adjusted_range = None;
+        input_handler.text_for_range(selection.range, &mut adjusted_range)
+    })
+    .flatten()
+    .unwrap_or_default();
+
+    unsafe { ns_string(&text) }
+}
+
+extern "C" fn accessibility_selected_text_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| {
+        input_handler
+            .selected_text_range(true)
+            .map(|selection| selection.range.into())
+    })
+    .flatten()
+    .unwrap_or_else(NSRange::invalid)
+}
+
+extern "C" fn set_accessibility_selected_text_range(
+    _this: &Object,
+    _: Sel,
+    _selected_range: NSRange,
+) {
+}
+
+extern "C" fn accessibility_selected_text_ranges(this: &Object, _: Sel) -> id {
+    let range = accessibility_selected_text_range(this, sel!(accessibilitySelectedTextRanges));
+    if !range.is_valid() {
+        return unsafe { msg_send![class!(NSArray), array] };
+    }
+
+    unsafe {
+        let range_value: id = msg_send![class!(NSValue), valueWithRange: range];
+        NSArray::arrayWithObject(nil, range_value)
+    }
+}
+
+extern "C" fn accessibility_visible_character_range(this: &Object, _: Sel) -> NSRange {
+    with_input_handler(this, |input_handler| {
+        accessibility_full_text(input_handler)
+            .1
+            .map(NSRange::from)
+            .unwrap_or_else(NSRange::invalid)
+    })
+    .unwrap_or_else(NSRange::invalid)
+}
+
+extern "C" fn accessibility_string_for_range(this: &Object, _: Sel, range: NSRange) -> id {
+    let text = with_input_handler(this, |input_handler| {
+        let range = range.to_range()?;
+        let mut adjusted_range = None;
+        input_handler.text_for_range(range, &mut adjusted_range)
+    })
+    .flatten()
+    .unwrap_or_default();
+
+    unsafe { ns_string(&text) }
+}
+
+extern "C" fn accessibility_attributed_string_for_range(
+    this: &Object,
+    _: Sel,
+    range: NSRange,
+) -> id {
+    let string =
+        accessibility_string_for_range(this, sel!(accessibilityAttributedStringForRange:), range);
+    unsafe {
+        let attributed_string: id = msg_send![class!(NSAttributedString), alloc];
+        msg_send![attributed_string, initWithString: string]
+    }
+}
+
+extern "C" fn accessibility_frame_for_range(this: &Object, _: Sel, range: NSRange) -> NSRect {
+    first_rect_for_character_range(this, sel!(accessibilityFrameForRange:), range, nil)
+}
+
+extern "C" fn accessibility_line_for_index(_this: &Object, _: Sel, _index: NSInteger) -> NSInteger {
+    0
+}
+
+extern "C" fn accessibility_range_for_index(this: &Object, _: Sel, index: NSInteger) -> NSRange {
+    if index < 0 {
+        return NSRange::invalid();
+    }
+
+    let character_count =
+        accessibility_number_of_characters(this, sel!(accessibilityRangeForIndex:));
+    if index >= character_count {
+        return NSRange::invalid();
+    }
+
+    (index as usize..index as usize + 1).into()
+}
+
+extern "C" fn accessibility_style_range_for_index(
+    this: &Object,
+    _: Sel,
+    _index: NSInteger,
+) -> NSRange {
+    accessibility_visible_character_range(this, sel!(accessibilityStyleRangeForIndex:))
+}
+
+extern "C" fn accessibility_range_for_line(this: &Object, _: Sel, _line: NSInteger) -> NSRange {
+    accessibility_visible_character_range(this, sel!(accessibilityRangeForLine:))
+}
+
+extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
+    if is_accessibility_focused(this, sel!(accessibilityFocusedUIElement)) == YES {
+        this as *const Object as id
+    } else {
+        nil
+    }
+}
+
+extern "C" fn accessibility_hit_test(this: &Object, _: Sel, position: NSPoint) -> id {
+    let position = screen_point_to_gpui_point(this, position);
+    let hit = with_input_handler(this, |input_handler| {
+        input_handler.character_index_for_point(position).is_some()
+    })
+    .unwrap_or(false);
+
+    if hit {
+        this as *const Object as id
+    } else {
+        nil
+    }
+}
+
+fn accessibility_full_text(
+    input_handler: &mut PlatformInputHandler,
+) -> (String, Option<Range<usize>>) {
+    let mut adjusted_range = None;
+    if let Some(text) = input_handler.text_for_range(0..usize::MAX, &mut adjusted_range) {
+        let range = adjusted_range.unwrap_or_else(|| 0..text.encode_utf16().count());
+        (text, Some(range))
+    } else {
+        (String::new(), None)
+    }
 }
 
 fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels> {
