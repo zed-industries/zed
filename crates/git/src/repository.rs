@@ -3500,6 +3500,7 @@ async fn run_askpass_command(
                     Err(anyhow!(REMOTE_CANCELLED_BY_USER))?
                 }
                 AskPassResult::Timedout => {
+                    ask_pass.cancel();
                     // Askpass timed out (no SSH prompt within 17s)
                     // BUT git process might still be running (e.g., GPG signing)
                     // Continue waiting for git to complete
@@ -4639,5 +4640,224 @@ mod tests {
                 })
                 .boxed()
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::disallowed_methods)]
+mod askpass_command_tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use std::time::Duration;
+
+    fn gpg_process() -> util::command::Child {
+        // Simulates a slow GPG sign: exits cleanly after real time passes
+        new_command("sh")
+            .args(["-c", "sleep 1 && echo 'signed'"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    fn failing_process() -> util::command::Child {
+        new_command("sh")
+            .args(["-c", "echo 'auth failed' >&2; exit 1"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    // Happy path: git exits before the 17s askpass window closes
+    #[gpui::test]
+    async fn test_git_completes_before_timeout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        let git_process = new_command("sh")
+            .args(["-c", "exit 0"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let result = run_askpass_command(ask_pass, git_process).await;
+        assert!(result.is_ok(), "fast git exit should succeed");
+    }
+
+    // GPG path: askpass times out (no SSH prompt), git finishes on its own afterward
+    #[gpui::test]
+    async fn test_gpg_signing_completes_after_askpass_timeout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        // GPG signing takes ~1 real second; askpass times out (no SSH prompt)
+        let git_process = gpg_process();
+
+        // Fire the 17s timer immediately — askpass resolves Timedout
+        cx.executor().advance_clock(Duration::from_secs(18));
+
+        // run_askpass_command should continue waiting and get the git output
+        let result = run_askpass_command(ask_pass, git_process).await;
+        assert!(result.is_ok(), "GPG path must succeed after timeout");
+        assert!(
+            result.unwrap().stdout.contains("signed"),
+            "stdout should contain git output"
+        );
+    }
+
+    // GPG path, git fails — error should propagate, not swallowed
+    #[gpui::test]
+    async fn test_git_failure_after_timeout_is_propagated(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        let git_process = failing_process();
+        cx.executor().advance_clock(Duration::from_secs(18));
+
+        let err = run_askpass_command(ask_pass, git_process)
+            .await
+            .unwrap_err();
+
+        assert!(
+            !err.to_string().contains(REMOTE_CANCELLED_BY_USER),
+            "failure after timeout should not look like a user cancellation"
+        );
+        assert!(
+            err.to_string().contains("auth failed"),
+            "stderr from git should be included in error"
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[gpui::test]
+    async fn test_ssh_hang_without_fix(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        let script = {
+            let path = ask_pass.script_path();
+            path.as_ref().to_string_lossy().into_owned()
+        };
+
+        // Sleeps past the 17s askpass window, then calls the script (simulating
+        // SSH finally prompting for credentials after a slow connection).
+        // Without ask_pass.cancel() in the Timedout branch, this hangs forever
+        // because the delegate never answers and git never exits.
+        let git_process = new_command("sh")
+            .args(["-c", &format!("sleep 2 && {script} 'Password:' && sleep 60")])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_secs(18));
+
+        let task = cx.background_spawn(run_askpass_command(ask_pass, git_process));
+        let result = task.await;
+        assert!(result.is_err(), "should fail fast, not hang on SSH auth");
+    }
+
+    #[cfg(windows)]
+    #[gpui::test]
+    async fn test_ssh_hang_detected_after_timeout_windows(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        let socket_path = ask_pass.socket_path().to_owned();
+
+        // Simulate SSH prompting for credentials after the 17s askpass window has closed.
+        // We connect directly to the PasswordProxy socket (bypassing the PS1 script) and
+        // send a null-terminated prompt, then hold the stream open as SSH would while
+        // waiting for a response that never comes.
+        // With ask_pass.cancel() in the Timedout branch, get_password returns
+        // ControlFlow::Break immediately so the stream closes and git exits with an
+        // auth error. Without cancel(), the delegate never answers and git hangs.
+        smol::spawn(async move {
+            smol::Timer::after(Duration::from_secs(2)).await;
+            if let Ok(mut stream) = net::async_net::UnixStream::connect(&socket_path).await {
+                smol::io::AsyncWriteExt::write_all(&mut stream, b"Password:\0").await.ok();
+                smol::Timer::after(Duration::from_secs(60)).await; // hold open like SSH would
+            }
+        })
+        .detach();
+
+        // Simulate a git process that would hang indefinitely waiting for SSH auth
+        let git_process = new_command("cmd")
+            .args(["/c", "ping -n 62 127.0.0.1 > nul"]) // ~60s real hang
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // Fire the 17s askpass timeout immediately
+        cx.executor().advance_clock(Duration::from_secs(18));
+
+        // Should resolve with an error quickly rather than hanging for 60s
+        let task = cx.background_spawn(run_askpass_command(ask_pass, git_process));
+        let result = task.await;
+        assert!(result.is_err(), "should fail fast, not hang");
+    }
+
+    // Verifies that after askpass times out, the cancel flag is set so that
+    // any subsequent askpass calls return empty immediately, allowing git to
+    // exit with an auth error rather than blocking indefinitely.
+    #[gpui::test]
+    async fn test_ssh_hang_detected_after_timeout(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let ask_pass = AskPassSession::new(
+            cx.executor(),
+            AskPassDelegate::new(&mut cx.to_async(), |_, _, _| {}),
+        )
+        .await
+        .unwrap();
+
+        // Simulate git that would hang on SSH auth
+        let git_process = new_command("sh")
+            .args(["-c", "sleep 1 && exit 1"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_secs(18));
+
+        // With cancel() fix: ask_pass is cancelled, git exits with error
+        // Without fix: hangs forever waiting for SSH that never gets creds
+        let task = cx.background_spawn(run_askpass_command(ask_pass, git_process));
+        let result = task.await;
+        assert!(result.is_err(), "should fail, not hang");
     }
 }

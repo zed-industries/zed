@@ -16,7 +16,7 @@ test-support = ["rand"]
 
 [dependencies]
 anyhow.workspace = true
-askpass.workspace = true
+askpass = { workspace = true, features = ["test-support"] }
 async-trait.workspace = true
 collections.workspace = true
 derive_more.workspace = true
@@ -52,3 +52,4 @@ text = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
 rand.workspace = true
+net.workspace = true

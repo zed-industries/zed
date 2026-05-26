@@ -11,6 +11,7 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Context as _, Result};
 use futures::channel::{mpsc, oneshot};
@@ -78,6 +79,7 @@ pub struct AskPassSession {
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
     executor: BackgroundExecutor,
+    cancelled: Arc<AtomicBool>,
 }
 
 const ASKPASS_SCRIPT_NAME: &str = if cfg!(target_os = "windows") {
@@ -101,18 +103,25 @@ impl AskPassSession {
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<()>();
         let kill_tx = Arc::new(Mutex::new(Some(askpass_kill_master_tx)));
 
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_for_closure = cancelled.clone();
+
         let get_password = {
             let executor = executor.clone();
 
             #[cfg(target_os = "windows")]
             let askpass_secret = secret.clone();
             move |prompt| {
+                let cancelled = cancelled_for_closure.clone();
                 let prompt = delegate.ask_password(prompt);
                 let kill_tx = kill_tx.clone();
                 let askpass_opened_tx = askpass_opened_tx.clone();
                 #[cfg(target_os = "windows")]
                 let askpass_secret = askpass_secret.clone();
                 executor.spawn(async move {
+                    if cancelled.load(Ordering::Acquire) {
+                        return ControlFlow::Break(()); // empty response makes SSH auth fails fast
+                    }
                     if let Some(askpass_opened_tx) = askpass_opened_tx.lock().await.take() {
                         askpass_opened_tx.send(()).ok();
                     }
@@ -141,7 +150,12 @@ impl AskPassSession {
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
             executor,
+            cancelled,
         })
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
     }
 
     // This will run the askpass task forever, resolving as many authentication requests as needed.
@@ -180,6 +194,11 @@ impl AskPassSession {
     pub fn script_path(&self) -> impl AsRef<OsStr> {
         self.askpass_task.script_path()
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn socket_path(&self) -> &std::path::Path {
+        self.askpass_task.socket_path()
+    }
 }
 
 pub struct PasswordProxy {
@@ -188,6 +207,8 @@ pub struct PasswordProxy {
     askpass_script_path: std::path::PathBuf,
     #[cfg(target_os = "windows")]
     askpass_helper: String,
+    #[cfg(any(test, feature = "test-support"))]
+    askpass_socket: std::path::PathBuf,
 }
 
 impl PasswordProxy {
@@ -202,6 +223,8 @@ impl PasswordProxy {
     ) -> Result<Self> {
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
+        #[cfg(any(test, feature = "test-support"))]
+        let askpass_socket_for_field = askpass_socket.clone();
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
         let current_exec =
             std::env::current_exe().context("Failed to determine current zed executable path.")?;
@@ -274,6 +297,8 @@ impl PasswordProxy {
             askpass_script_path,
             #[cfg(target_os = "windows")]
             askpass_helper,
+            #[cfg(any(test, feature = "test-support"))]
+            askpass_socket: askpass_socket_for_field.to_path_buf(),
         })
     }
 
@@ -286,6 +311,11 @@ impl PasswordProxy {
         {
             &self.askpass_helper
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn socket_path(&self) -> &std::path::Path {
+        &self.askpass_socket
     }
 }
 /// The main function for when Zed is running in netcat mode for use in askpass.
