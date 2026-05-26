@@ -211,6 +211,10 @@ impl Render for A11yDemo {
                                     .aria_size_of_set(3)
                                     .py_1()
                                     .px_2()
+                                    // Note: even though this `text!` macro
+                                    // produces multiple elements, it doesn't
+                                    // need its own unique ID because the parent
+                                    // div has different IDs for each string.
                                     .child(text!(format!("{}. {}", i + 1, label)))
                             }),
                     ),
