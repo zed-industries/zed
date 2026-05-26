@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, collections::VecDeque, iter, ops::Range, sync::Arc};
+use std::{cmp::Reverse, iter, ops::Range, sync::Arc};
 
 use collections::HashMap;
 use smallvec::SmallVec;
@@ -71,18 +71,11 @@ pub(crate) fn runnable_ranges(
         .map(|grammar| grammar.runnable_config.as_ref())
         .collect::<Vec<_>>();
 
-    let mut pending_ranges = VecDeque::new();
-    iter::from_fn(move || {
-        loop {
-            if let Some(runnable_range) = pending_ranges.pop_front() {
-                return Some(runnable_range);
-            }
+    iter::from_fn(move || -> Option<SmallVec<[RunnableRange; 1]>> {
+        let mat = syntax_matches.peek()?;
 
-            // A match without @run should not terminate the iterator. Only the lack of
-            // another syntax match should.
-            let mat = syntax_matches.peek()?;
-
-            if let Some(runnable_config) = runnable_configs[mat.grammar_index] {
+        let ranges = match runnable_configs[mat.grammar_index] {
+            Some(runnable_config) => {
                 let is_grouped = runnable_config.supports_grouped_runnables
                     && mat.captures.iter().any(|capture| {
                         matches!(
@@ -91,29 +84,33 @@ pub(crate) fn runnable_ranges(
                         )
                     });
                 if is_grouped {
-                    let runnable_ranges = runnable_ranges_from_grouped_matches(
+                    runnable_ranges_from_grouped_matches(
                         buffer,
                         mat.captures,
                         runnable_config,
                         mat.pattern_index,
                         mat.language.clone(),
                         &offset_range,
-                    );
-                    pending_ranges.extend(runnable_ranges);
-                } else if let Some(runnable_range) = runnable_range_from_captures(
-                    buffer,
-                    mat.captures,
-                    runnable_config,
-                    mat.pattern_index,
-                    mat.language,
-                ) {
-                    pending_ranges.push_back(runnable_range);
+                    )
+                } else {
+                    runnable_range_from_captures(
+                        buffer,
+                        mat.captures,
+                        runnable_config,
+                        mat.pattern_index,
+                        mat.language,
+                    )
+                    .into_iter()
+                    .collect()
                 }
             }
+            None => SmallVec::new(),
+        };
 
-            syntax_matches.advance();
-        }
+        syntax_matches.advance();
+        Some(ranges)
     })
+    .flatten()
 }
 
 type RunnableMatchCaptures = SmallVec<[RunnableMatchCapture; 4]>;
@@ -575,8 +572,7 @@ mod tests {
 
     #[gpui::test]
     fn test_single_match_without_run_capture_skipped(cx: &mut TestAppContext) {
-        // Pattern with only a named capture and no `@run`: should silently produce nothing
-        // rather than terminating iteration of other matches.
+        // Pattern with only a named capture and no `@run`: should silently produce nothing.
         let query = indoc! {r#"
             (function_item) @_decl
         "#};
@@ -590,6 +586,36 @@ mod tests {
             runnables.is_empty(),
             "matches without @run should produce no runnables, got {}",
             runnables.len()
+        );
+    }
+
+    #[gpui::test]
+    fn test_match_with_no_runnable_does_not_terminate_iteration(cx: &mut TestAppContext) {
+        // A syntax match yielding no runnable must not terminate the
+        // outer iterator before later matches that DO have `@run` are visited.
+        let query = indoc! {r#"
+            ((function_item
+               name: (identifier) @_helper
+               (#match? @_helper "^helper")) @_decl_no_run)
+
+            ((function_item
+               name: (identifier) @run
+               (#match? @run "^test_")) @_decl)
+        "#};
+        let source = indoc! {r#"
+            fn helper() {}
+            fn test_alpha() {}
+        "#};
+
+        let runnables = collect_runnables(cx, source, query, None);
+        let run_texts: Vec<String> = runnables
+            .iter()
+            .map(|range| source[range.run_range.clone()].to_string())
+            .collect();
+        assert_eq!(
+            run_texts,
+            vec!["test_alpha"],
+            "syntax matches that produce no runnable must not terminate iteration"
         );
     }
 
