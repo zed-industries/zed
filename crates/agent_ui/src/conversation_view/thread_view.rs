@@ -2269,6 +2269,19 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
+        let awaiting_permission = self
+            .render_main_agent_awaiting_permission(window, cx)
+            .or_else(|| self.render_subagents_awaiting_permission(cx));
+        let has_awaiting_permission = awaiting_permission.is_some();
+
+        if changed_buffers.is_empty()
+            && plan.is_empty()
+            && queue_is_empty
+            && !has_awaiting_permission
+        {
+            return None;
+        }
+
         // Temporarily always enable ACP edit controls. This is temporary, to lessen the
         // impact of a nasty bug that causes them to sometimes be disabled when they shouldn't
         // be, which blocks you from being able to accept or reject edits. This switches the
@@ -2279,78 +2292,6 @@ impl ThreadView {
         let plan_expanded = self.plan_expanded;
         let edits_expanded = self.edits_expanded;
         let queue_expanded = self.queue_expanded;
-
-        let mut sections = Vec::new();
-
-        // Show at most one "awaiting permission" row at a time. If the main
-        // agent and subagents both have pending requests, surface the main
-        // agent's prompt.
-        if let Some(element) = self.render_main_agent_awaiting_permission(window, cx) {
-            sections.push(vec![element]);
-        } else if let Some(element) = self.render_subagents_awaiting_permission(cx) {
-            sections.push(vec![element]);
-        }
-
-        if !plan.is_empty() {
-            let mut section = vec![
-                self.render_plan_summary(plan, window, cx)
-                    .into_any_element(),
-            ];
-            if plan_expanded {
-                section.push(
-                    self.render_plan_entries(plan, window, cx)
-                        .into_any_element(),
-                );
-            }
-            sections.push(section);
-        }
-
-        if !changed_buffers.is_empty() && thread.parent_session_id().is_none() {
-            let mut section = vec![
-                self.render_edits_summary(&changed_buffers, edits_expanded, pending_edits, cx)
-                    .into_any_element(),
-            ];
-            if edits_expanded {
-                section.push(
-                    self.render_edited_files(
-                        action_log,
-                        telemetry,
-                        &changed_buffers,
-                        pending_edits,
-                        cx,
-                    )
-                    .into_any_element(),
-                );
-            }
-            sections.push(section);
-        }
-
-        if !queue_is_empty {
-            let mut section = vec![
-                self.render_message_queue_summary(window, cx)
-                    .into_any_element(),
-            ];
-            if queue_expanded {
-                section.push(
-                    self.render_message_queue_entries(window, cx)
-                        .into_any_element(),
-                );
-            }
-            sections.push(section);
-        }
-
-        if sections.is_empty() {
-            return None;
-        }
-
-        let section_children = itertools::intersperse_with(sections, || {
-            vec![
-                Divider::horizontal()
-                    .color(DividerColor::Border)
-                    .into_any_element(),
-            ]
-        })
-        .flatten();
 
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
 
@@ -2376,7 +2317,50 @@ impl ThreadView {
                         blur_radius: px(2.),
                         spread_radius: px(0.),
                     }])
-                    .children(section_children),
+                    .when_some(awaiting_permission, |this, element| this.child(element))
+                    .when(
+                        has_awaiting_permission
+                            && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
+                        |this| this.child(Divider::horizontal().color(DividerColor::Border)),
+                    )
+                    .when(!plan.is_empty(), |this| {
+                        this.child(self.render_plan_summary(plan, window, cx))
+                            .when(plan_expanded, |parent| {
+                                parent.child(self.render_plan_entries(plan, window, cx))
+                            })
+                    })
+                    .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
+                        this.child(Divider::horizontal().color(DividerColor::Border))
+                    })
+                    .when(
+                        !changed_buffers.is_empty() && thread.parent_session_id().is_none(),
+                        |this| {
+                            this.child(self.render_edits_summary(
+                                &changed_buffers,
+                                edits_expanded,
+                                pending_edits,
+                                cx,
+                            ))
+                            .when(edits_expanded, |parent| {
+                                parent.child(self.render_edited_files(
+                                    action_log,
+                                    telemetry.clone(),
+                                    &changed_buffers,
+                                    pending_edits,
+                                    cx,
+                                ))
+                            })
+                        },
+                    )
+                    .when(!queue_is_empty, |this| {
+                        this.when(!plan.is_empty() || !changed_buffers.is_empty(), |this| {
+                            this.child(Divider::horizontal().color(DividerColor::Border))
+                        })
+                        .child(self.render_message_queue_summary(window, cx))
+                        .when(queue_expanded, |parent| {
+                            parent.child(self.render_message_queue_entries(window, cx))
+                        })
+                    }),
             )
             .into_any()
             .into()
