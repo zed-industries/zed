@@ -222,8 +222,8 @@ mod tests {
 
     #[test]
     fn spawn_dedicated_runs_on_a_real_separate_thread() {
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
         let started = StdInstant::now();
         let task = background.spawn_dedicated(|_executor| async move {
             // A genuine blocking syscall on the dedicated thread. If
@@ -258,8 +258,8 @@ mod tests {
         use std::cell::RefCell;
         use std::rc::Rc;
 
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
         let task = background.spawn_dedicated(|_executor| async move {
             let state = Rc::new(RefCell::new(0_i32));
             for _ in 0..3 {
@@ -276,8 +276,8 @@ mod tests {
         use parking_lot::Mutex;
         use std::sync::mpsc;
 
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
 
         let (started_tx, started_rx) = mpsc::channel::<()>();
         let (after_park_tx, after_park_rx) = mpsc::channel::<()>();
@@ -339,8 +339,8 @@ mod tests {
             }
         }
 
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
         let (started_tx, started_rx) = mpsc::channel::<std::thread::ThreadId>();
         let (drop_tx, drop_rx) = mpsc::channel::<std::thread::ThreadId>();
 
@@ -384,8 +384,8 @@ mod tests {
     fn spawn_dedicated_detached_child_outlives_root() {
         use std::sync::mpsc;
 
-        let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let background = BackgroundExecutor::new(scheduler.clone());
+        let background =
+            BackgroundExecutor::new(Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher))));
 
         // `gate_rx` lets the detached child park until the test explicitly
         // releases it — after we've already observed the root completing.
