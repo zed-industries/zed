@@ -49,9 +49,7 @@ use crate::{
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{BinarySettings, LspSettings, ProjectSettings},
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
-    trusted_worktrees::{
-        PathTrust, RemoteHostLocation, ToolTrust, TrustedWorktrees, TrustedWorktreesEvent,
-    },
+    trusted_worktrees::{PathTrust, TrustedWorktrees, TrustedWorktreesEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
 };
@@ -341,8 +339,6 @@ pub struct LocalLspStore {
         HashMap<Option<SharedString>, HashMap<PathBuf, Option<SharedString>>>,
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
-    restricted_tool_tasks:
-        HashMap<(Option<RemoteHostLocation>, ToolTrust), (Subscription, watch::Receiver<bool>)>,
 
     buffers_to_refresh_hash_set: HashSet<BufferId>,
     buffers_to_refresh_queue: VecDeque<BufferId>,
@@ -474,77 +470,22 @@ impl LocalLspStore {
                     }
                 }
             });
-        let wait_until_language_server_tool_trust = if settings
-            .binary
-            .as_ref()
-            .and_then(|binary| binary.path.as_ref())
-            .is_some()
-        {
-            None
-        } else {
-            let tool = ToolTrust::language_server(adapter.name().0);
-            TrustedWorktrees::try_get_global(cx).and_then(|trusted_worktrees| {
-                let remote_host = trusted_worktrees
-                    .read(cx)
-                    .remote_host_for_worktree_store(&self.worktree_store);
-                let task_key = (remote_host.clone(), tool.clone());
-                let can_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                    trusted_worktrees.can_trust_tool_for_worktree_store(
-                        &self.worktree_store,
-                        tool.clone(),
-                        cx,
-                    )
-                });
-                if can_trust {
-                    self.restricted_tool_tasks.remove(&task_key);
-                    None
-                } else {
-                    match self.restricted_tool_tasks.entry(task_key.clone()) {
-                        hash_map::Entry::Occupied(o) => Some(o.get().1.clone()),
-                        hash_map::Entry::Vacant(v) => {
-                            let (mut tx, rx) = watch::channel::<bool>();
-                            let lsp_store = self.weak.clone();
-                            let subscription = cx.subscribe(&trusted_worktrees, move |_, e, cx| {
-                                if let TrustedWorktreesEvent::TrustedTools(
-                                    event_host,
-                                    trusted_tools,
-                                ) = e
-                                {
-                                    if event_host == &remote_host && trusted_tools.contains(&tool) {
-                                        tx.blocking_send(true).ok();
-                                        lsp_store
-                                            .update(cx, |lsp_store, _| {
-                                                if let Some(local_lsp_store) =
-                                                    lsp_store.as_local_mut()
-                                                {
-                                                    local_lsp_store
-                                                        .restricted_tool_tasks
-                                                        .remove(&task_key);
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                }
-                            });
-                            v.insert((subscription, rx.clone()));
-                            Some(rx)
-                        }
-                    }
-                }
-            })
-        };
-        let update_binary_status =
-            wait_until_worktree_trust.is_none() && wait_until_language_server_tool_trust.is_none();
+        let update_binary_status = wait_until_worktree_trust.is_none();
 
+        let settings_location = SettingsLocation {
+            worktree_id,
+            path: RelPath::empty(),
+        };
+        let allow_binary_download =
+            ProjectSettings::get(Some(settings_location), cx).allow_binary_downloads;
         let binary = self.get_language_server_binary(
             worktree_abs_path.clone(),
             adapter.clone(),
             settings,
             toolchain.clone(),
             delegate.clone(),
-            true,
+            allow_binary_download,
             wait_until_worktree_trust,
-            wait_until_language_server_tool_trust,
             cx,
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
@@ -595,14 +536,10 @@ impl LocalLspStore {
             let adapter = adapter.clone();
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
-            let pull_diagnostics = ProjectSettings::get_global(cx)
+            let pull_diagnostics = ProjectSettings::get(Some(settings_location), cx)
                 .diagnostics
                 .lsp_pull_diagnostics
                 .enabled;
-            let settings_location = SettingsLocation {
-                worktree_id,
-                path: RelPath::empty(),
-            };
             let augments_syntax_tokens = AllLanguageSettings::get(Some(settings_location), cx)
                 .language(Some(settings_location), Some(&language_name), cx)
                 .semantic_tokens
@@ -706,22 +643,29 @@ impl LocalLspStore {
 
                     Err(err) => {
                         let log = stderr_capture.lock().take().unwrap_or_default();
-                        delegate.update_status(
-                            adapter.name(),
-                            BinaryStatus::Failed {
-                                error: if log.is_empty() {
-                                    format!("{err:#}")
-                                } else {
-                                    format!("{err:#}\n-- stderr --\n{log}")
+                        if err.is::<language::BinaryDownloadsDisabled>() {
+                            log::info!(
+                                "Did not start language server {server_name:?}: {}",
+                                redact_command(&format!("{err:#}"))
+                            );
+                        } else {
+                            delegate.update_status(
+                                adapter.name(),
+                                BinaryStatus::Failed {
+                                    error: if log.is_empty() {
+                                        format!("{err:#}")
+                                    } else {
+                                        format!("{err:#}\n-- stderr --\n{log}")
+                                    },
                                 },
-                            },
-                        );
-                        log::error!(
-                            "Failed to start language server {server_name:?}: {}",
-                            redact_command(&format!("{err:?}"))
-                        );
-                        if !log.is_empty() {
-                            log::error!("server stderr: {}", redact_command(&log));
+                            );
+                            log::error!(
+                                "Failed to start language server {server_name:?}: {}",
+                                redact_command(&format!("{err:?}"))
+                            );
+                            if !log.is_empty() {
+                                log::error!("server stderr: {}", redact_command(&log));
+                            }
                         }
                         None
                     }
@@ -757,7 +701,6 @@ impl LocalLspStore {
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
         wait_until_worktree_trust: Option<watch::Receiver<bool>>,
-        wait_until_tool_trust: Option<watch::Receiver<bool>>,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = &settings.binary
@@ -858,22 +801,23 @@ impl LocalLspStore {
         };
 
         cx.spawn(async move |cx| {
-            if let Some(rx) = wait_until_worktree_trust {
-                crate::trusted_worktrees::wait_for_trust(
-                    rx,
-                    format!(
-                        "worktree {worktree_abs_path:?} for language server {}",
-                        adapter.name()
-                    ),
-                )
-                .await;
-            }
-            if let Some(rx) = wait_until_tool_trust {
-                crate::trusted_worktrees::wait_for_trust(
-                    rx,
-                    format!("language server {}", adapter.name()),
-                )
-                    .await;
+            if let Some(mut wait_until_worktree_trust) = wait_until_worktree_trust {
+                let already_trusted =  *wait_until_worktree_trust.borrow();
+                if !already_trusted {
+                    log::info!(
+                        "Waiting for worktree {worktree_abs_path:?} to be trusted, before starting language server {}",
+                        adapter.name(),
+                    );
+                    while let Some(worktree_trusted) = wait_until_worktree_trust.recv().await {
+                        if worktree_trusted {
+                            break;
+                        }
+                    }
+                    log::info!(
+                        "Worktree {worktree_abs_path:?} is trusted, starting language server {}",
+                            adapter.name(),
+                    );
+                    }
             }
 
             let (existing_binary, maybe_download_binary) = adapter
@@ -881,6 +825,13 @@ impl LocalLspStore {
                 .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
                 .await
                 .await;
+
+            if existing_binary
+                .as_ref()
+                .is_err_and(|error| error.is::<language::BinaryDownloadsDisabled>())
+            {
+                return existing_binary;
+            }
 
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
 
@@ -1828,6 +1779,9 @@ impl LocalLspStore {
             )
             .await
             {
+                if err.is::<language::BinaryDownloadsDisabled>() {
+                    return Err(err);
+                }
                 zlog::error!(logger => "Formatter failed, skipping: {err:#}");
             }
         }
@@ -4435,7 +4389,6 @@ impl LspStore {
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
-                restricted_tool_tasks: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -13766,6 +13719,10 @@ fn subscribe_to_binary_statuses(
                         BinaryStatus::Starting => proto::ServerBinaryStatus::Starting,
                         BinaryStatus::Stopping => proto::ServerBinaryStatus::Stopping,
                         BinaryStatus::Stopped => proto::ServerBinaryStatus::Stopped,
+                        BinaryStatus::Disabled { reason } => {
+                            message = Some(reason);
+                            proto::ServerBinaryStatus::Disabled
+                        }
                         BinaryStatus::Failed { error } => {
                             message = Some(error);
                             proto::ServerBinaryStatus::Failed

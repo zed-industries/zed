@@ -5786,10 +5786,10 @@ async fn test_remote_project_worktree_trust(cx_a: &mut TestAppContext, cx_b: &mu
     };
 
     cx_a.update(|cx| {
-        project::trusted_worktrees::init(HashMap::default(), HashMap::default(), cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
     cx_b.update(|cx| {
-        project::trusted_worktrees::init(HashMap::default(), HashMap::default(), cx);
+        project::trusted_worktrees::init(HashMap::default(), cx);
     });
 
     let mut server = TestServer::start(cx_a.executor()).await;

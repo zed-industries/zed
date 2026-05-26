@@ -74,6 +74,9 @@ pub struct ProjectSettings {
     /// Configuration for Node-related features
     pub node: NodeBinarySettings,
 
+    /// Whether Zed may download tool binaries and package-based tools.
+    pub allow_binary_downloads: bool,
+
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: DirenvSettings,
 
@@ -91,19 +94,12 @@ pub struct SessionSettings {
     /// Default: true
     pub restore_unsaved_buffers: bool,
     /// Whether or not to skip worktree trust checks.
-    /// When trusted, project settings are synchronized automatically,
-    /// language and MCP servers are downloaded and started automatically.
+    /// When trusted, project settings are synchronized automatically, and language
+    /// and MCP servers are started automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: bool,
-    /// Trust policy for Zed-managed tools (language servers, formatters and the bundled
-    /// Node runtime).
-    ///
-    /// Default: [`ManagedToolsPolicy::Ask`]
-    pub managed_tools: ManagedToolsPolicy,
 }
-
-pub use settings::ManagedToolsPolicy;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
@@ -765,11 +761,11 @@ impl Settings for ProjectSettings {
             },
             git: git_settings,
             node: content.node.clone().unwrap().into(),
+            allow_binary_downloads: project.allow_binary_downloads.unwrap(),
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
-                managed_tools: content.session.unwrap().managed_tools.unwrap_or_default(),
             },
         }
     }
@@ -871,9 +867,7 @@ impl SettingsObserver {
                                 }
                             }
                         }
-                        TrustedWorktreesEvent::Restricted(..)
-                        | TrustedWorktreesEvent::TrustedTools(..)
-                        | TrustedWorktreesEvent::RestrictedTools(..) => {}
+                        TrustedWorktreesEvent::Restricted(..) => {}
                     },
                 )
             });

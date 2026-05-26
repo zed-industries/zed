@@ -34,10 +34,8 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::{
-    Project,
-    git_store::GitStoreEvent,
-    project_settings::ProjectSettings,
-    trusted_worktrees::{RemoteHostLocation, TrustedWorktrees},
+    Project, git_store::GitStoreEvent, project_settings::ProjectSettings,
+    trusted_worktrees::TrustedWorktrees,
 };
 use remote::RemoteConnectionOptions;
 use settings::Settings as _;
@@ -53,7 +51,8 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
+    MultiWorkspace, ToggleBinaryDownloadsRestriction, ToggleWorktreeSecurity, Workspace,
+    binary_downloads_modal::project_blocks_binary_downloads,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
 
@@ -257,6 +256,7 @@ impl Render for TitleBar {
                             },
                         )
                         .children(self.render_restricted_mode(cx))
+                        .children(self.render_binary_downloads_disabled(cx))
                         .when(render_project_items, |title_bar| {
                             title_bar
                                 .when(title_bar_settings.show_project_items, |title_bar| {
@@ -628,34 +628,13 @@ impl TitleBar {
     }
 
     pub fn render_restricted_mode(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let project = self.project.read(cx);
-        let remote_host = project
-            .remote_connection_options(cx)
-            .map(RemoteHostLocation::from);
         let has_restricted_worktrees =
-            TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx);
-        let has_restricted_tools = TrustedWorktrees::has_restricted_tools(remote_host, cx);
-        if !has_restricted_worktrees && !has_restricted_tools {
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
+        if !has_restricted_worktrees {
             return None;
         }
 
-        let (label, tooltip_title, tooltip_meta) =
-            match (has_restricted_worktrees, has_restricted_tools) {
-                (true, _) => (
-                    "Restricted Mode",
-                    "You're in Restricted Mode",
-                    "Mark this project as trusted and unlock all features",
-                ),
-                (false, true) => (
-                    "Restricted Tools",
-                    "Some tools are blocked",
-                    "Review the blocked tools and choose which to allow",
-                ),
-                // Filtered by the early return above.
-                (false, false) => unreachable!(),
-            };
-
-        let button = Button::new("restricted_mode_trigger", label)
+        let button = Button::new("restricted_mode_trigger", "Restricted Mode")
             .style(ButtonStyle::Tinted(TintColor::Warning))
             .label_size(LabelSize::Small)
             .color(Color::Warning)
@@ -664,11 +643,11 @@ impl TitleBar {
                     .size(IconSize::Small)
                     .color(Color::Warning),
             )
-            .tooltip(move |_, cx| {
+            .tooltip(|_, cx| {
                 Tooltip::with_meta(
-                    tooltip_title,
+                    "You're in Restricted Mode",
                     Some(&ToggleWorktreeSecurity),
-                    tooltip_meta,
+                    "Mark this project as trusted and unlock all features",
                     cx,
                 )
             })
@@ -684,6 +663,50 @@ impl TitleBar {
 
         if cfg!(macos_sdk_26) {
             // Make up for Tahoe's traffic light buttons having less spacing around them
+            Some(div().child(button).ml_0p5().into_any_element())
+        } else {
+            Some(button.into_any_element())
+        }
+    }
+
+    /// Compact indicator shown next to the title bar when the project has
+    /// `allow_binary_downloads` effectively disabled. Restricted Mode takes
+    /// precedence: this indicator is only shown when Restricted Mode isn't.
+    pub fn render_binary_downloads_disabled(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let project = self.project.read(cx);
+        if TrustedWorktrees::has_restricted_worktrees(&project.worktree_store(), cx) {
+            return None;
+        }
+        if !project_blocks_binary_downloads(project, cx) {
+            return None;
+        }
+
+        let button = Button::new("binary_downloads_disabled_trigger", "Downloads Off")
+            .style(ButtonStyle::Tinted(TintColor::Warning))
+            .label_size(LabelSize::Small)
+            .color(Color::Warning)
+            .start_icon(
+                Icon::new(IconName::CloudDownload)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .tooltip(|_, cx| {
+                Tooltip::with_meta(
+                    "Tool downloads disabled",
+                    Some(&ToggleBinaryDownloadsRestriction),
+                    "Zed won't install new language servers, MCP servers, debug adapters, or npm packages",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_binary_downloads_restriction_modal(window, cx)
+                    })
+                    .log_err();
+            }));
+
+        if cfg!(macos_sdk_26) {
             Some(div().child(button).ml_0p5().into_any_element())
         } else {
             Some(button.into_any_element())

@@ -13,7 +13,9 @@ use extension::{
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
 use gpui::{BackgroundExecutor, SharedString};
-use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
+use language::{
+    BinaryDownloadsDisabled, BinaryStatus, LanguageName, language_settings::AllLanguageSettings,
+};
 use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
@@ -789,6 +791,20 @@ impl nodejs::Host for WasmState {
         self.capability_granter
             .grant_npm_install_package(&package_name)?;
 
+        let extension_id = self.manifest.id.clone();
+        let downloads_allowed = self
+            .on_main_thread(|cx| {
+                async move { cx.update(|cx| ProjectSettings::get_global(cx).allow_binary_downloads) }
+                    .boxed_local()
+            })
+            .await;
+        if !downloads_allowed {
+            return Result::<(), _>::Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
+                format!("npm package `{package_name}` requested by extension `{extension_id}`"),
+            )))
+            .to_wasmtime_result();
+        }
+
         self.host
             .node_runtime
             .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
@@ -1066,6 +1082,19 @@ impl ExtensionImports for WasmState {
         path: String,
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
+        let extension_id = self.manifest.id.clone();
+        let downloads_allowed = self
+            .on_main_thread(|cx| {
+                async move { cx.update(|cx| ProjectSettings::get_global(cx).allow_binary_downloads) }
+                    .boxed_local()
+            })
+            .await;
+        if !downloads_allowed {
+            return Result::<(), _>::Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
+                format!("download from `{url}` requested by extension `{extension_id}`"),
+            )))
+            .to_wasmtime_result();
+        }
         maybe!(async {
             let parsed_url = Url::parse(&url)?;
             self.capability_granter.grant_download_file(&parsed_url)?;

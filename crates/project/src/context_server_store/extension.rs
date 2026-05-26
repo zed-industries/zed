@@ -7,7 +7,11 @@ use extension::{
     ProjectDelegate,
 };
 use gpui::{App, AsyncApp, Entity, Task};
+use language::BinaryDownloadsDisabled;
+use settings::{Settings as _, SettingsLocation};
+use util::rel_path::RelPath;
 
+use crate::project_settings::ProjectSettings;
 use crate::worktree_store::WorktreeStore;
 
 use super::registry::{self, ContextServerDescriptorRegistry};
@@ -57,7 +61,12 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
         let id = self.id.clone();
         let extension = self.extension.clone();
         cx.spawn(async move |cx| {
-            let extension_project = extension_project(worktree_store, cx)?;
+            let extension_project = extension_project(worktree_store.clone(), cx)?;
+            let downloads_disabled =
+                cx.update(|cx| downloads_disabled_for_any_visible_worktree(&worktree_store, cx));
+            if downloads_disabled {
+                return Err(BinaryDownloadsDisabled::new(format!("context server {id}")).into());
+            }
             let mut command = extension
                 .context_server_command(id.clone(), extension_project.clone())
                 .await?;
@@ -92,6 +101,30 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
             Ok(configuration)
         })
     }
+}
+
+fn downloads_disabled_for_any_visible_worktree(
+    worktree_store: &Entity<WorktreeStore>,
+    cx: &App,
+) -> bool {
+    let worktree_ids: Vec<_> = worktree_store
+        .read(cx)
+        .visible_worktrees(cx)
+        .map(|worktree| worktree.read(cx).id())
+        .collect();
+    if worktree_ids.is_empty() {
+        return !ProjectSettings::get_global(cx).allow_binary_downloads;
+    }
+    worktree_ids.into_iter().any(|worktree_id| {
+        !ProjectSettings::get(
+            Some(SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            }),
+            cx,
+        )
+        .allow_binary_downloads
+    })
 }
 
 struct ContextServerDescriptorRegistryProxy {

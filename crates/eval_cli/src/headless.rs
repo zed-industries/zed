@@ -83,13 +83,14 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     let (mut node_options_tx, node_options_rx) = watch::channel(None);
     cx.observe_global::<SettingsStore>(move |cx| {
-        let settings = &ProjectSettings::get_global(cx).node;
+        let settings = ProjectSettings::get_global(cx);
         let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version,
-            allow_binary_download: true,
-            use_paths: settings.path.as_ref().map(|node_path| {
+            allow_path_lookup: !settings.node.ignore_system_version,
+            allow_binary_download: settings.allow_binary_downloads,
+            use_paths: settings.node.path.as_ref().map(|node_path| {
                 let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
                 let npm_path = settings
+                    .node
                     .npm_path
                     .as_ref()
                     .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));

@@ -2025,6 +2025,11 @@
     "Markdown": [".rules", ".cursorrules", ".windsurfrules", ".clinerules"],
     "Shell Script": [".env.*"],
   },
+  // Whether Zed may download tool binaries and package-based tools such as
+  // language servers, formatters, and the managed Node runtime.
+  //
+  // Default: true
+  "allow_binary_downloads": true,
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //
@@ -2394,8 +2399,8 @@
     // Default: true
     "restore_unsaved_buffers": true,
     // Whether or not to skip worktree trust checks.
-    // When trusted, project settings are synchronized automatically,
-    // language and MCP servers are downloaded and started automatically.
+    // When trusted, project settings are synchronized automatically, and language
+    // and MCP servers are started automatically.
     //
     // Default: false
     "trust_all_worktrees": false,

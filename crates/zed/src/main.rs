@@ -48,10 +48,7 @@ use reqwest_client::ReqwestClient;
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
-use project::{
-    project_settings::ProjectSettings,
-    trusted_worktrees::{self, ToolTrust, TrustedWorktrees, TrustedWorktreesEvent},
-};
+use project::{project_settings::ProjectSettings, trusted_worktrees};
 use proto;
 use recent_projects::{RemoteSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
@@ -201,42 +198,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
-
-fn node_runtime_options(cx: &mut App) -> NodeBinaryOptions {
-    let allow_binary_download =
-        TrustedWorktrees::try_get_global(cx).is_none_or(|trusted_worktrees| {
-            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                trusted_worktrees.can_trust_tool(None, ToolTrust::node_runtime(), cx)
-            })
-        });
-    let settings = &ProjectSettings::get_global(cx).node;
-    NodeBinaryOptions {
-        allow_path_lookup: !settings.ignore_system_version,
-        allow_binary_download,
-        use_paths: settings.path.as_ref().map(|node_path| {
-            let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
-            let npm_path = settings
-                .npm_path
-                .as_ref()
-                .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
-            (
-                node_path.clone(),
-                npm_path.unwrap_or_else(|| {
-                    let base_path = PathBuf::new();
-                    node_path.parent().unwrap_or(&base_path).join("npm")
-                }),
-            )
-        }),
-    }
-}
-
-fn update_node_runtime_options(
-    tx: &Rc<RefCell<watch::Sender<Option<NodeBinaryOptions>>>>,
-    cx: &mut App,
-) {
-    let options = node_runtime_options(cx);
-    tx.borrow_mut().send(Some(options)).log_err();
-}
 
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
@@ -515,22 +476,14 @@ fn main() {
 
     app.run(move |cx| {
         cx.set_global(app_db);
-        let db = workspace::WorkspaceDb::global(cx);
-        let db_trusted_paths = match db.fetch_trusted_worktrees() {
+        let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
             Ok(trusted_paths) => trusted_paths,
             Err(e) => {
                 log::error!("Failed to do initial trusted worktrees fetch: {e:#}");
                 HashMap::default()
             }
         };
-        let db_trusted_tools = match db.fetch_trusted_tools() {
-            Ok(trusted_tools) => trusted_tools,
-            Err(e) => {
-                log::error!("Failed to do initial trusted tools fetch: {e:#}");
-                HashMap::default()
-            }
-        };
-        trusted_worktrees::init(db_trusted_paths, db_trusted_tools, cx);
+        trusted_worktrees::init(db_trusted_paths, cx);
         menu::init();
         zed_actions::init();
 
@@ -574,26 +527,31 @@ fn main() {
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let (tx, rx) = watch::channel(None);
-        let tx = Rc::new(RefCell::new(tx));
-        update_node_runtime_options(&tx, cx);
-        cx.observe_global::<SettingsStore>({
-            let tx = tx.clone();
-            move |cx| update_node_runtime_options(&tx, cx)
+        let (mut tx, rx) = watch::channel(None);
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let settings = ProjectSettings::get_global(cx);
+            let options = NodeBinaryOptions {
+                allow_path_lookup: !settings.node.ignore_system_version,
+                allow_binary_download: settings.allow_binary_downloads,
+                use_paths: settings.node.path.as_ref().map(|node_path| {
+                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                    let npm_path = settings
+                        .node
+                        .npm_path
+                        .as_ref()
+                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                    (
+                        node_path.clone(),
+                        npm_path.unwrap_or_else(|| {
+                            let base_path = PathBuf::new();
+                            node_path.parent().unwrap_or(&base_path).join("npm")
+                        }),
+                    )
+                }),
+            };
+            tx.send(Some(options)).log_err();
         })
         .detach();
-        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
-            cx.subscribe(&trusted_worktrees, move |_, event, cx| {
-                if matches!(
-                    event,
-                    TrustedWorktreesEvent::TrustedTools(..)
-                        | TrustedWorktreesEvent::RestrictedTools(..)
-                ) {
-                    update_node_runtime_options(&tx, cx);
-                }
-            })
-            .detach();
-        }
         ui::on_new_scrollbars::<SettingsStore>(cx);
 
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);

@@ -5061,6 +5061,66 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_disabled_binary_downloads_stop_default_prettier_formatting(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+                settings.project.all_languages.defaults.formatter =
+                    Some(FormatterList::Single(Formatter::Prettier));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.ts": "const a = 1" }))
+        .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("a.ts")), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut buffers = HashSet::default();
+    buffers.insert(buffer);
+    let format_result = project
+        .update(cx, |project, cx| {
+            project.format(
+                buffers,
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Save,
+                cx,
+            )
+        })
+        .with_timeout(Duration::from_secs(1), &cx.executor())
+        .await
+        .unwrap();
+
+    let error = format_result.unwrap_err();
+    assert_eq!(error.is::<language::BinaryDownloadsDisabled>(), true);
+    let last_formatting_failure = project.read_with(cx, |project, cx| {
+        project
+            .last_formatting_failure(cx)
+            .map(|failure| failure.to_string())
+    });
+    assert_eq!(
+        last_formatting_failure,
+        Some("binary downloads are disabled; not installing default prettier instance".to_string())
+    );
+}
+
+#[gpui::test]
 async fn test_supports_range_formatting_ignores_unrelated_language_servers(
     cx: &mut gpui::TestAppContext,
 ) {

@@ -4054,7 +4054,7 @@ mod internal_tests {
             // for `Project::test_with_worktree_trust` to actually wire up
             // trust tracking and for our subscription in
             // `register_project_with_initial_context` to fire.
-            trusted_worktrees::init(HashMap::default(), HashMap::default(), cx);
+            trusted_worktrees::init(HashMap::default(), cx);
         });
 
         let fs = FakeFs::new(cx.executor());

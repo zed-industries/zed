@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
+use language::BinaryDownloadsDisabled;
 use serde_json::Value;
 use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
@@ -509,17 +510,25 @@ impl DebugAdapter for JsDebugAdapter {
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         if self.checked.set(()).is_ok() {
-            delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
-            if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-                adapters::download_adapter_from_github(
-                    self.name(),
-                    version,
-                    adapters::DownloadedFileType::GzipTar,
-                    delegate.as_ref(),
-                )
-                .await?;
+            if delegate.allow_binary_downloads() {
+                delegate
+                    .output_to_console(format!("Checking latest version of {}...", self.name()));
+                if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
+                    adapters::download_adapter_from_github(
+                        self.name(),
+                        version,
+                        adapters::DownloadedFileType::GzipTar,
+                        delegate.as_ref(),
+                    )
+                    .await?;
+                } else {
+                    delegate
+                        .output_to_console(format!("{} debug adapter is up to date", self.name()));
+                }
             } else {
-                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
+                let reason =
+                    BinaryDownloadsDisabled::new(format!("debug adapter {}", Self::ADAPTER_NAME));
+                delegate.output_to_console(format!("{reason}; using cached install if any"));
             }
         }
 

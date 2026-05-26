@@ -1787,8 +1787,6 @@ impl GitStore {
         let (is_trusted, event_paths) = match event {
             TrustedWorktreesEvent::Trusted(_, trusted_paths) => (true, trusted_paths),
             TrustedWorktreesEvent::Restricted(_, restricted_paths) => (false, restricted_paths),
-            TrustedWorktreesEvent::TrustedTools(..)
-            | TrustedWorktreesEvent::RestrictedTools(..) => return,
         };
 
         for (repo_id, worktree_ids) in &self.worktree_ids {

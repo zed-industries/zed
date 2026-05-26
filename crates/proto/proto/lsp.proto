@@ -666,6 +666,7 @@ enum ServerBinaryStatus {
   STOPPING = 4;
   STOPPED = 5;
   FAILED = 6;
+  DISABLED = 7;
 }
 
 message RegisteredForBuffer {

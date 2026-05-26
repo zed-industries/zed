@@ -6,37 +6,29 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, hash_map};
+use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
     FutureExt,
     future::{self, Shared},
     stream::FuturesUnordered,
 };
-use gpui::{
-    AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
-};
+use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    Buffer, LanguageRegistry, LocalFile, OffsetUtf16,
+    BinaryDownloadsDisabled, Buffer, LanguageRegistry, LocalFile, OffsetUtf16,
     language_settings::{Formatter, LanguageSettings},
 };
 use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
-use postage::{sink::Sink, watch};
 use prettier::Prettier;
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
-    File, PathChange, ProjectEntryId, Worktree,
-    lsp_store::WorktreeId,
-    project_settings::ProjectSettings,
-    trusted_worktrees::{
-        self, RemoteHostLocation, ToolTrust, TrustedWorktrees, TrustedWorktreesEvent,
-    },
-    worktree_store::WorktreeStore,
+    File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -48,8 +40,6 @@ pub struct PrettierStore {
     prettiers_per_worktree: HashMap<WorktreeId, HashSet<Option<PathBuf>>>,
     prettier_ignores_per_worktree: HashMap<WorktreeId, HashSet<PathBuf>>,
     prettier_instances: HashMap<PathBuf, PrettierInstance>,
-    restricted_prettier_tasks:
-        HashMap<Option<RemoteHostLocation>, (Subscription, watch::Receiver<bool>)>,
 }
 
 pub(crate) enum PrettierStoreEvent {
@@ -80,66 +70,6 @@ impl PrettierStore {
             prettiers_per_worktree: HashMap::default(),
             prettier_ignores_per_worktree: HashMap::default(),
             prettier_instances: HashMap::default(),
-            restricted_prettier_tasks: HashMap::default(),
-        }
-    }
-
-    fn wait_until_prettier_trust(
-        &mut self,
-        worktree: Option<WorktreeId>,
-        cx: &mut Context<Self>,
-    ) -> Option<watch::Receiver<bool>> {
-        let trusted_worktrees = TrustedWorktrees::try_get_global(cx)?;
-        let remote_host = trusted_worktrees
-            .read(cx)
-            .remote_host_for_worktree_store(&self.worktree_store);
-        // Use the worktree-store-aware check (which also notifies upstream/downstream peers)
-        // when we have a live worktree available; otherwise fall back to a host-only check.
-        let has_live_worktree = worktree.is_some_and(|worktree_id| {
-            self.worktree_store
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .is_some()
-        });
-        let can_trust = trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-            if has_live_worktree {
-                trusted_worktrees.can_trust_tool_for_worktree_store(
-                    &self.worktree_store,
-                    ToolTrust::prettier(),
-                    cx,
-                )
-            } else {
-                trusted_worktrees.can_trust_tool(remote_host.clone(), ToolTrust::prettier(), cx)
-            }
-        });
-        if can_trust {
-            self.restricted_prettier_tasks.remove(&remote_host);
-            return None;
-        }
-
-        match self.restricted_prettier_tasks.entry(remote_host.clone()) {
-            hash_map::Entry::Occupied(entry) => Some(entry.get().1.clone()),
-            hash_map::Entry::Vacant(entry) => {
-                let (mut tx, rx) = watch::channel::<bool>();
-                let this = cx.weak_entity();
-                let subscription = cx.subscribe(&trusted_worktrees, move |_, _, event, cx| {
-                    if let TrustedWorktreesEvent::TrustedTools(event_host, trusted_tools) = event {
-                        if event_host == &remote_host
-                            && trusted_tools.contains(&ToolTrust::prettier())
-                        {
-                            tx.blocking_send(true).ok();
-                            this.update(cx, |prettier_store, _| {
-                                prettier_store
-                                    .restricted_prettier_tasks
-                                    .remove(&remote_host);
-                            })
-                            .ok();
-                        }
-                    }
-                });
-                entry.insert((subscription, rx.clone()));
-                Some(rx)
-            }
         }
     }
 
@@ -205,21 +135,27 @@ impl PrettierStore {
                     {
                         Ok(ControlFlow::Break(())) => None,
                         Ok(ControlFlow::Continue(None)) => {
-                            if let Some(rx) = lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    lsp_store.wait_until_prettier_trust(Some(worktree_id), cx)
-                                })
-                                .ok()?
-                            {
-                                trusted_worktrees::wait_for_trust(rx, "default prettier").await;
-                            }
-                            let default_task = lsp_store
+                            let binary_downloads_allowed = lsp_store
                                 .update(cx, |lsp_store, cx| {
                                     lsp_store
                                         .prettiers_per_worktree
                                         .entry(worktree_id)
                                         .or_default()
                                         .insert(None);
+                                    Self::allow_binary_downloads(Some(worktree_id), cx)
+                                })
+                                .ok()?;
+                            if !binary_downloads_allowed {
+                                log::info!(
+                                    "Not starting default prettier because binary downloads are disabled"
+                                );
+                                let error = Arc::new(anyhow::Error::new(
+                                    BinaryDownloadsDisabled::new("default prettier"),
+                                ));
+                                return Some((None, Task::ready(Err(error)).shared()));
+                            }
+                            let default_task = lsp_store
+                                .update(cx, |lsp_store, cx| {
                                     lsp_store.default_prettier.prettier_task(
                                         &node,
                                         Some(worktree_id),
@@ -289,20 +225,15 @@ impl PrettierStore {
                 })
             }
             None => {
-                let wait_until_prettier_trust = self.wait_until_prettier_trust(None, cx);
-                cx.spawn(async move |prettier_store, cx| {
-                    if let Some(rx) = wait_until_prettier_trust {
-                        trusted_worktrees::wait_for_trust(rx, "default prettier").await;
-                    }
-                    let new_task = prettier_store
-                        .update(cx, |prettier_store, cx| {
-                            prettier_store
-                                .default_prettier
-                                .prettier_task(&node, None, cx)
-                        })
-                        .ok()??;
-                    Some((None, new_task.log_err().await?))
-                })
+                if !Self::allow_binary_downloads(None, cx) {
+                    let error = Arc::new(anyhow::Error::new(BinaryDownloadsDisabled::new(
+                        "default prettier",
+                    )));
+                    let new_task = Task::ready(Err(error)).shared();
+                    return cx.spawn(async move |_, _| Some((None, new_task)));
+                }
+                let new_task = self.default_prettier.prettier_task(&node, None, cx);
+                cx.spawn(async move |_, _| Some((None, new_task?.log_err().await?)))
             }
         }
     }
@@ -626,28 +557,20 @@ impl PrettierStore {
             .detach();
     }
 
+    fn allow_binary_downloads(worktree: Option<WorktreeId>, cx: &App) -> bool {
+        let location = worktree.map(|worktree_id| SettingsLocation {
+            worktree_id,
+            path: RelPath::empty(),
+        });
+        ProjectSettings::get(location, cx).allow_binary_downloads
+    }
+
     pub fn install_default_prettier(
         &mut self,
         worktree: Option<WorktreeId>,
         plugins: impl Iterator<Item = Arc<str>>,
         cx: &mut Context<Self>,
     ) {
-        let plugins = plugins.collect::<Vec<_>>();
-        if !cfg!(any(test, feature = "test-support"))
-            && let Some(rx) = self.wait_until_prettier_trust(worktree, cx)
-        {
-            cx.spawn(async move |prettier_store, cx| {
-                trusted_worktrees::wait_for_trust(rx, "default prettier (plugin install)").await;
-                prettier_store
-                    .update(cx, |prettier_store, cx| {
-                        prettier_store.install_default_prettier(worktree, plugins.into_iter(), cx);
-                    })
-                    .ok();
-            })
-            .detach();
-            return;
-        }
-
         if cfg!(any(test, feature = "test-support")) {
             self.default_prettier.installed_plugins.extend(plugins);
             self.default_prettier.prettier = PrettierInstallation::Installed(PrettierInstance {
@@ -657,7 +580,8 @@ impl PrettierStore {
             return;
         }
 
-        let mut new_plugins = plugins.into_iter().collect::<HashSet<_>>();
+        let mut new_plugins = plugins.collect::<HashSet<_>>();
+        let allow_binary_download = Self::allow_binary_downloads(worktree, cx);
         let node = self.node.clone();
 
         new_plugins.retain(|plugin| !self.default_prettier.installed_plugins.contains(plugin));
@@ -686,6 +610,16 @@ impl PrettierStore {
                 None
             }
         };
+
+        if !allow_binary_download {
+            log::info!("Not installing default prettier because binary downloads are disabled");
+            self.default_prettier.prettier = PrettierInstallation::NotInstalled {
+                attempts: installation_attempt,
+                installation_task: None,
+                not_installed_plugins: new_plugins,
+            };
+            return;
+        }
 
         let plugins_to_install = new_plugins.clone();
         let fs = Arc::clone(&self.fs);
@@ -910,9 +844,15 @@ pub(super) async fn format_with_prettier(
                 })
                 .log_err();
 
-            Some(Err(anyhow!(
-                "{prettier_description} failed to spawn: {error:#}"
-            )))
+            if error.is::<BinaryDownloadsDisabled>() {
+                Some(Err(
+                    BinaryDownloadsDisabled::new(prettier_description).into()
+                ))
+            } else {
+                Some(Err(anyhow!(
+                    "{prettier_description} failed to spawn: {error:#}"
+                )))
+            }
         }
     }
 }

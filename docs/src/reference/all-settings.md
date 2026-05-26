@@ -1543,8 +1543,7 @@ or
 {
   "session": {
     "restore_unsaved_buffers": true,
-    "trust_all_worktrees": false,
-    "managed_tools": "ask"
+    "trust_all_worktrees": false
   }
 }
 ```
@@ -1573,21 +1572,7 @@ If this is true, user won't be prompted whether to save/discard dirty files when
 }
 ```
 
-When trusted, project settings are synchronized automatically, language and MCP servers are downloaded and started automatically.
-
-3. Trust policy for Zed-managed tools (language servers, formatters and the bundled Node runtime):
-
-```json [settings]
-{
-  "session": {
-    "managed_tools": "ask"
-  }
-}
-```
-
-- `"ask"` (default): tools must be approved via the security modal before they run.
-- `"trust"`: auto-trust every Zed-managed tool without prompting.
-- `"block"`: never download or start Zed-managed tools, and do not surface a prompt for them.
+When trusted, project settings are synchronized automatically, and language and MCP servers are started automatically.
 
 ### Drag And Drop Selection
 
@@ -3078,6 +3063,73 @@ Positive `integer` values or `null` for unlimited tabs
   "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
 }
 ```
+
+## Binary Downloads
+
+- Description: Whether Zed may download tool binaries and package-based tools such as language servers, formatters, debug adapters, MCP servers, the managed Node runtime, and npm packages installed by extensions or Copilot. This can be overridden in project settings.
+- Setting: `allow_binary_downloads`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### What `allow_binary_downloads: false` blocks
+
+When set to `false`, Zed refuses to fetch new binaries from the network:
+
+- Language server installs (built-in and from extensions)
+- Default Prettier instance install
+- Debug adapter binaries (CodeLLDB, Delve / Go, JavaScript)
+- MCP servers configured via extensions
+- Managed Node.js download
+- `npm install` of packages, including the GitHub Copilot language server
+- `download_file` calls from WASM extensions
+
+Anything already installed locally still runs. Tools resolved via explicit
+`node.path` / `user_installed_path` / `lsp.<server>.binary.path` settings keep
+working because Zed does not need to download them.
+
+### Project-scoped overrides
+
+This setting may be placed in either `~/.config/zed/settings.json` (global) or
+`.zed/settings.json` (per-project). The per-project value wins for tools
+resolved against that worktree (LSPs, formatters, debug adapters, prettier,
+and MCP servers). The global value still controls truly global resources such
+as the managed Node.js download and Copilot's npm install.
+
+Example: keep downloads off everywhere by default but trust one project to
+download its language servers:
+
+```json [global settings]
+{
+  "allow_binary_downloads": false
+}
+```
+
+```json [.zed/settings.json]
+{
+  "allow_binary_downloads": true
+}
+```
+
+### Interaction with Restricted Mode
+
+Restricted Mode (`session.trust_all_projects` / the worktree trust modal) is
+strictly stricter than `allow_binary_downloads: false`:
+
+- Restricted Mode prevents project settings from being applied at all and
+  stops language servers, MCP servers, formatters, and debug adapters from
+  starting -- even if they are already installed.
+- `allow_binary_downloads: false` only blocks downloads. Anything already on
+  disk (cached LSPs, Node from PATH, user-installed adapter paths, etc.) keeps
+  working.
+
+The title bar reflects this: when a project is in Restricted Mode you see the
+"Restricted Mode" badge; otherwise, when downloads are disabled for the
+project, a small cloud-download icon is shown instead. Clicking it opens a
+modal that explains where the setting is taking effect (global, project, or
+both) and how to override it for the current project only.
 
 ## Node
 

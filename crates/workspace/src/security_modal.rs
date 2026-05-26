@@ -11,7 +11,7 @@ use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable, ScrollHandle, Wea
 
 use project::{
     WorktreeId,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, ToolTrust, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeStore,
 };
 use smallvec::SmallVec;
@@ -25,16 +25,12 @@ use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
     restricted_paths: HashMap<WorktreeId, RestrictedPath>,
-    restricted_tools: HashSet<ToolTrust>,
-    /// Per-tool checkbox state. Defaults to `true` (checked) for every restricted tool.
-    /// Tools the user unchecks remain restricted when the user clicks "Trust and Continue".
-    tool_selection: HashMap<ToolTrust, bool>,
     home_dir: Option<PathBuf>,
     trust_parents: bool,
     worktree_store: WeakEntity<WorktreeStore>,
     remote_host: Option<RemoteHostLocation>,
     focus_handle: FocusHandle,
-    items_scroll_handle: ScrollHandle,
+    project_list_scroll_handle: ScrollHandle,
     trusted: Option<bool>,
 }
 
@@ -60,53 +56,35 @@ impl ModalView for SecurityModal {
 
     fn on_before_dismiss(&mut self, _: &mut Window, _: &mut Context<Self>) -> DismissDecision {
         match self.trusted {
+            Some(false) => {
+                telemetry::event!("Open in Restricted", source = "Worktree Trust Modal");
+                DismissDecision::Dismiss(true)
+            }
             Some(true) => {
                 telemetry::event!("Trust and Continue", source = "Worktree Trust Modal");
+                DismissDecision::Dismiss(true)
             }
-            // Explicit "Stay in Restricted Mode", ESC, or click-outside all leave the user
-            // in restricted mode.
-            Some(false) | None => {
-                self.trusted = Some(false);
-                telemetry::event!("Open in Restricted", source = "Worktree Trust Modal");
-            }
+            // Block dismiss via escape or clicking outside; user must pick an action
+            None => DismissDecision::Dismiss(false),
         }
-        DismissDecision::Dismiss(true)
-    }
-}
-
-fn decorate_with_host(label: String, host: Option<&RemoteHostLocation>) -> String {
-    match host {
-        Some(host) => match &host.user_name {
-            Some(user_name) => format!("{label} ({user_name}@{})", host.host_identifier),
-            None => format!("{label} ({})", host.host_identifier),
-        },
-        None => label,
     }
 }
 
 impl Render for SecurityModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let project_labels = self.project_labels();
-        let has_projects = !project_labels.is_empty();
-        let has_tools = !self.restricted_tools.is_empty();
-        if !has_projects && !has_tools {
+        if self.restricted_paths.is_empty() {
             self.dismiss(cx);
             return v_flex().into_any_element();
         }
 
-        let header_label = self.header_label(project_labels.len(), self.restricted_tools.len());
-        let trust_label = self.build_trust_label();
+        let restricted_count = self.restricted_paths.len();
+        let header_label: SharedString = if restricted_count == 1 {
+            "Unrecognized Project".into()
+        } else {
+            format!("Unrecognized Projects ({})", restricted_count).into()
+        };
 
-        // Sorted snapshot so tool order is stable across renders.
-        let mut tools = self.restricted_tools.iter().cloned().collect::<Vec<_>>();
-        tools.sort_by(|a, b| {
-            a.namespace
-                .cmp(&b.namespace)
-                .then_with(|| a.name.cmp(&b.name))
-        });
-        let any_tool_selected = tools
-            .iter()
-            .any(|tool| *self.tool_selection.get(tool).unwrap_or(&true));
+        let trust_label = self.build_trust_label();
 
         AlertModal::new("security-modal")
             .width(rems(40.))
@@ -136,109 +114,86 @@ impl Render for SecurityModal {
                     .child(
                         div()
                             .size_full()
-                            .vertical_scrollbar_for(&self.items_scroll_handle, window, cx)
+                            .vertical_scrollbar_for(&self.project_list_scroll_handle, window, cx)
                             .child(
                                 v_flex()
-                                    .id("trust_items_container")
-                                    .max_h_32()
+                                    .id("paths_container")
+                                    .max_h_24()
                                     .overflow_y_scroll()
-                                    .track_scroll(&self.items_scroll_handle)
-                                    .children(project_labels.iter().map(|label| {
-                                        h_flex()
-                                            .pl(IconSize::default().rems() + rems(0.5))
-                                            .child(Label::new(label.clone()).color(Color::Muted))
-                                    }))
-                                    .children(tools.into_iter().map(|tool| {
-                                        let selected = self
-                                            .tool_selection
-                                            .get(&tool)
-                                            .copied()
-                                            .unwrap_or(true);
-                                        let id = ElementId::from(SharedString::from(format!(
-                                            "tool-{}-{}",
-                                            tool.namespace, tool.name
-                                        )));
-                                        let label = decorate_with_host(
-                                            format!("{}: {}", tool.namespace, tool.name),
-                                            self.remote_host.as_ref(),
-                                        );
-                                        h_flex().pl(rems(0.25)).child(
-                                            Checkbox::new(id, ToggleState::from(selected))
-                                                .label(label)
-                                                .on_click(cx.listener(
-                                                    move |security_modal,
-                                                          state: &ToggleState,
-                                                          _,
-                                                          cx| {
-                                                        security_modal
-                                                            .tool_selection
-                                                            .insert(tool.clone(), state.selected());
-                                                        cx.notify();
-                                                        cx.stop_propagation();
-                                                    },
-                                                )),
-                                        )
-                                    })),
+                                    .track_scroll(&self.project_list_scroll_handle)
+                                    .children(
+                                        self.restricted_paths.values().filter_map(
+                                            |restricted_path| {
+                                                let abs_path = if restricted_path.is_file {
+                                                    restricted_path.abs_path.parent()
+                                                } else {
+                                                    Some(restricted_path.abs_path.as_ref())
+                                                }?;
+                                                let label = match &restricted_path.host {
+                                                    Some(remote_host) => {
+                                                        match &remote_host.user_name {
+                                                            Some(user_name) => format!(
+                                                                "{} ({}@{})",
+                                                                self.shorten_path(abs_path)
+                                                                    .display(),
+                                                                user_name,
+                                                                remote_host.host_identifier
+                                                            ),
+                                                            None => format!(
+                                                                "{} ({})",
+                                                                self.shorten_path(abs_path)
+                                                                    .display(),
+                                                                remote_host.host_identifier
+                                                            ),
+                                                        }
+                                                    }
+                                                    None => self
+                                                        .shorten_path(abs_path)
+                                                        .display()
+                                                        .to_string(),
+                                                };
+                                                Some(
+                                                    h_flex()
+                                                        .pl(
+                                                            IconSize::default().rems() + rems(0.5),
+                                                        )
+                                                        .child(
+                                                            Label::new(label).color(Color::Muted),
+                                                        ),
+                                                )
+                                            },
+                                        ),
+                                    ),
                             ),
                     ),
             )
             .child(
                 v_flex()
                     .gap_2()
-                    .when(has_projects, |this| {
-                        this.child(
-                            v_flex()
-                                .child(
-                                    Label::new(
-                                        "Untrusted projects are opened in Restricted Mode to protect your system.",
-                                    )
-                                    .color(Color::Muted),
+                    .child(
+                        v_flex()
+                            .child(
+                                Label::new(
+                                    "Untrusted projects are opened in Restricted Mode to protect your system.",
                                 )
-                                .child(
-                                    Label::new(
-                                        "Review .zed/settings.json for any extensions or commands configured by this project.",
-                                    )
-                                    .color(Color::Muted),
-                                ),
-                        )
-                    })
-                    .when(has_tools && !has_projects, |this| {
-                        this.child(
-                            Label::new(
-                                "These Zed-managed tools were requested but have not been allowed yet. \
-                                Tick a row to allow that tool to download and run on this host across all your sessions.",
+                                .color(Color::Muted),
                             )
-                            .color(Color::Muted),
-                        )
-                    })
-                    .when(has_tools && has_projects, |this| {
-                        this.child(
-                            Label::new(
-                                "Untick any Zed-managed tools you do not want to allow on this host.",
-                            )
-                            .color(Color::Muted),
-                        )
-                    })
+                            .child(
+                                Label::new(
+                                    "Review .zed/settings.json for any extensions or commands configured by this project.",
+                                )
+                                .color(Color::Muted),
+                            ),
+                    )
                     .child(
                         v_flex()
                             .child(Label::new("Restricted Mode prevents:").color(Color::Muted))
-                            .when(has_projects, |this| {
-                                this.child(ListBulletItem::new(
-                                    "Project settings from being applied",
-                                ))
-                                .child(ListBulletItem::new(
-                                    "MCP Server integrations from installing",
-                                ))
-                            })
+                            .child(ListBulletItem::new("Project settings from being applied"))
                             .child(ListBulletItem::new("Language servers from running"))
-                            .when(has_tools, |this| {
-                                this.child(ListBulletItem::new(
-                                    "Zed-managed tools from downloading or running",
-                                ))
-                            }),
+                            .child(ListBulletItem::new("MCP Server integrations from installing")),
                     )
-                    .when_some(trust_label, |this, trust_label| {
-                        this.child(
+                    .map(|this| match trust_label {
+                        Some(trust_label) => this.child(
                             Checkbox::new("trust-parents", ToggleState::from(self.trust_parents))
                                 .label(trust_label)
                                 .on_click(cx.listener(
@@ -248,7 +203,8 @@ impl Render for SecurityModal {
                                         cx.stop_propagation();
                                     },
                                 )),
-                        )
+                        ),
+                        None => this,
                     }),
             )
             .footer(
@@ -260,8 +216,11 @@ impl Render for SecurityModal {
                     .child(
                         Button::new("rm", "Stay in Restricted Mode")
                             .key_binding(
-                                KeyBinding::for_action(&ToggleWorktreeSecurity, cx)
-                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                KeyBinding::for_action(
+                                    &ToggleWorktreeSecurity,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(move |security_modal, _, _, cx| {
                                 security_modal.trusted = Some(false);
@@ -273,9 +232,6 @@ impl Render for SecurityModal {
                         Button::new("tc", "Trust and Continue")
                             .style(ButtonStyle::Filled)
                             .layer(ui::ElevationIndex::ModalSurface)
-                            // Disable when there's literally nothing to trust (only happens if
-                            // the user unticks every tool in a tools-only modal).
-                            .disabled(!has_projects && !any_tool_selected)
                             .key_binding(
                                 KeyBinding::for_action(&menu::Confirm, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
@@ -300,10 +256,8 @@ impl SecurityModal {
             worktree_store,
             remote_host: remote_host.map(|host| host.into()),
             restricted_paths: HashMap::default(),
-            restricted_tools: HashSet::default(),
-            tool_selection: HashMap::default(),
             focus_handle: cx.focus_handle(),
-            items_scroll_handle: ScrollHandle::new(),
+            project_list_scroll_handle: ScrollHandle::new(),
             trust_parents: false,
             home_dir: std::env::home_dir(),
             trusted: None,
@@ -311,35 +265,6 @@ impl SecurityModal {
         this.refresh_restricted_paths(cx);
 
         this
-    }
-
-    fn header_label(&self, project_count: usize, tool_count: usize) -> SharedString {
-        match (project_count, tool_count) {
-            (0, 1) => "Unrecognized Tool".into(),
-            (0, n) => format!("Unrecognized Tools ({n})").into(),
-            (1, 0) => "Unrecognized Project".into(),
-            (n, 0) => format!("Unrecognized Projects ({n})").into(),
-            (p, 1) => format!("Unrecognized Projects ({p}) and Tool").into(),
-            (1, t) => format!("Unrecognized Project and Tools ({t})").into(),
-            (p, t) => format!("Unrecognized Projects ({p}) and Tools ({t})").into(),
-        }
-    }
-
-    fn project_labels(&self) -> Vec<String> {
-        self.restricted_paths
-            .values()
-            .filter_map(|restricted_path| {
-                let abs_path = if restricted_path.is_file {
-                    restricted_path.abs_path.parent()
-                } else {
-                    Some(restricted_path.abs_path.as_ref())
-                }?;
-                Some(decorate_with_host(
-                    self.shorten_path(abs_path).display().to_string(),
-                    restricted_path.host.as_ref(),
-                ))
-            })
-            .collect()
     }
 
     fn build_trust_label(&self) -> Option<Cow<'static, str>> {
@@ -381,41 +306,30 @@ impl SecurityModal {
     }
 
     fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
-        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+        if let Some((trusted_worktrees, worktree_store)) =
+            TrustedWorktrees::try_get_global(cx).zip(self.worktree_store.upgrade())
+        {
             trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                if let Some(worktree_store) = self.worktree_store.upgrade() {
-                    let mut paths_to_trust = self
-                        .restricted_paths
-                        .keys()
-                        .copied()
-                        .map(PathTrust::Worktree)
-                        .collect::<HashSet<_>>();
-                    if self.trust_parents {
-                        paths_to_trust.extend(self.restricted_paths.values().filter_map(
-                            |restricted_path| {
-                                if restricted_path.is_file {
-                                    None
-                                } else {
-                                    Some(PathTrust::AbsPath(
-                                        restricted_path.abs_path.parent()?.to_owned(),
-                                    ))
-                                }
-                            },
-                        ));
-                    }
-                    if !paths_to_trust.is_empty() {
-                        trusted_worktrees.trust(&worktree_store, paths_to_trust, cx);
-                    }
-                }
-                let tools_to_trust = self
-                    .restricted_tools
-                    .iter()
-                    .filter(|tool| *self.tool_selection.get(*tool).unwrap_or(&true))
-                    .cloned()
+                let mut paths_to_trust = self
+                    .restricted_paths
+                    .keys()
+                    .copied()
+                    .map(PathTrust::Worktree)
                     .collect::<HashSet<_>>();
-                if !tools_to_trust.is_empty() {
-                    trusted_worktrees.trust_tools(self.remote_host.clone(), tools_to_trust, cx);
+                if self.trust_parents {
+                    paths_to_trust.extend(self.restricted_paths.values().filter_map(
+                        |restricted_paths| {
+                            if restricted_paths.is_file {
+                                None
+                            } else {
+                                let parent_abs_path =
+                                    restricted_paths.abs_path.parent()?.to_owned();
+                                Some(PathTrust::AbsPath(parent_abs_path))
+                            }
+                        },
+                    ));
                 }
+                trusted_worktrees.trust(&worktree_store, paths_to_trust, cx);
             });
         }
 
@@ -428,58 +342,39 @@ impl SecurityModal {
     }
 
     pub fn refresh_restricted_paths(&mut self, cx: &mut Context<Self>) {
-        let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) else {
-            if !self.restricted_paths.is_empty() || !self.restricted_tools.is_empty() {
-                self.restricted_paths.clear();
-                self.restricted_tools.clear();
-                self.tool_selection.clear();
-                cx.notify();
-            }
-            return;
-        };
+        if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
+            if let Some(worktree_store) = self.worktree_store.upgrade() {
+                let new_restricted_worktrees = trusted_worktrees
+                    .read(cx)
+                    .restricted_worktrees(&worktree_store, cx)
+                    .into_iter()
+                    .filter_map(|(worktree_id, abs_path)| {
+                        let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
+                        Some((
+                            worktree_id,
+                            RestrictedPath {
+                                abs_path,
+                                is_file: worktree.read(cx).is_single_file(),
+                                host: self.remote_host.clone(),
+                            },
+                        ))
+                    })
+                    .collect::<HashMap<_, _>>();
 
-        let new_restricted_worktrees = if let Some(worktree_store) = self.worktree_store.upgrade() {
-            trusted_worktrees
-                .read(cx)
-                .restricted_worktrees(&worktree_store, cx)
-                .into_iter()
-                .filter_map(|(worktree_id, abs_path)| {
-                    let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
-                    Some((
-                        worktree_id,
-                        RestrictedPath {
-                            abs_path,
-                            is_file: worktree.read(cx).is_single_file(),
-                            host: self.remote_host.clone(),
-                        },
-                    ))
-                })
-                .collect::<HashMap<_, _>>()
-        } else {
-            HashMap::default()
-        };
-        let new_restricted_tools = trusted_worktrees
-            .read(cx)
-            .restricted_tools(self.remote_host.clone());
-
-        let paths_changed = self.restricted_paths != new_restricted_worktrees;
-        let tools_changed = self.restricted_tools != new_restricted_tools;
-        if paths_changed || tools_changed {
-            if paths_changed {
-                self.trust_parents = false;
+                if self.restricted_paths != new_restricted_worktrees {
+                    self.trust_parents = false;
+                    self.restricted_paths = new_restricted_worktrees;
+                    if self.restricted_paths.is_empty() {
+                        self.trusted = Some(true);
+                        self.dismiss(cx);
+                    } else {
+                        cx.notify();
+                    }
+                }
             }
-            // Drop selection state for tools that are no longer restricted;
-            // newly-restricted tools default to checked.
-            self.tool_selection
-                .retain(|tool, _| new_restricted_tools.contains(tool));
-            self.restricted_paths = new_restricted_worktrees;
-            self.restricted_tools = new_restricted_tools;
-            if self.restricted_paths.is_empty() && self.restricted_tools.is_empty() {
-                self.trusted = Some(true);
-                self.dismiss(cx);
-            } else {
-                cx.notify();
-            }
+        } else if !self.restricted_paths.is_empty() {
+            self.restricted_paths.clear();
+            cx.notify();
         }
     }
 }

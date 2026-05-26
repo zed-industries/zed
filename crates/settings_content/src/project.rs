@@ -81,6 +81,12 @@ pub struct ProjectSettingsContent {
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
+    /// Whether Zed may download tool binaries and package-based tools such as
+    /// language servers, formatters, and the managed Node runtime.
+    ///
+    /// Default: true
+    pub allow_binary_downloads: Option<bool>,
+
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false
@@ -353,31 +359,11 @@ pub struct SessionSettingsContent {
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
     /// Whether or not to skip worktree trust checks.
-    /// When trusted, project settings are synchronized automatically,
-    /// language and MCP servers are downloaded and started automatically.
+    /// When trusted, project settings are synchronized automatically, and language
+    /// and MCP servers are started automatically.
     ///
     /// Default: false
     pub trust_all_worktrees: Option<bool>,
-    /// Trust policy for Zed-managed tools (language servers, formatters and the bundled
-    /// Node runtime).
-    ///
-    /// Default: `ask`
-    pub managed_tools: Option<ManagedToolsPolicy>,
-}
-
-#[derive(
-    Copy, Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ManagedToolsPolicy {
-    /// Never download or start Zed-managed tools and do not surface a prompt for them.
-    /// Equivalent to permanently dismissing the trust modal for every tool.
-    Block,
-    /// Default behavior: tools must be approved via the security modal before they run.
-    #[default]
-    Ask,
-    /// Auto-trust every Zed-managed tool without prompting.
-    Trust,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]

@@ -13,6 +13,7 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod binary_downloads_modal;
 pub mod path_link;
 mod persistence;
 pub mod searchable;
@@ -158,14 +159,15 @@ pub use workspace_settings::{
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
-use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 use crate::{
+    binary_downloads_modal::BinaryDownloadsModal,
     persistence::{
         SerializedAxis,
         model::{SerializedItem, SerializedPane, SerializedPaneGroup},
     },
     security_modal::SecurityModal,
 };
+use crate::{dock::PanelSizeState, item::ItemBufferKind, notifications::NotificationId};
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
@@ -342,6 +344,9 @@ actions!(
         /// Clears all trusted worktrees, placing them in restricted mode on next open.
         /// Requires restart to take effect on already opened projects.
         ClearTrustedWorktrees,
+        /// Shows a modal explaining the `allow_binary_downloads` restriction and
+        /// how to override it per-project. Closes the modal if it is already open.
+        ToggleBinaryDownloadsRestriction,
         /// Stops following a collaborator.
         Unfollow,
         /// Restores the banner.
@@ -1466,27 +1471,21 @@ impl Workspace {
     ) -> Self {
         if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
             cx.subscribe(&trusted_worktrees, |_, worktrees_store, e, cx| {
-                if matches!(
-                    e,
-                    TrustedWorktreesEvent::Trusted(..) | TrustedWorktreesEvent::TrustedTools(..)
-                ) {
+                if let TrustedWorktreesEvent::Trusted(..) = e {
                     // Do not persist auto trusted worktrees
                     if !ProjectSettings::get_global(cx).session.trust_all_worktrees {
                         worktrees_store.update(cx, |worktrees_store, cx| {
                             worktrees_store.schedule_serialization(
                                 cx,
-                                |new_trusted_worktrees, new_trusted_tools, cx| {
+                                |new_trusted_worktrees, cx| {
                                     let timeout =
                                         cx.background_executor().timer(SERIALIZATION_THROTTLE_TIME);
                                     let db = WorkspaceDb::global(cx);
                                     cx.background_spawn(async move {
                                         timeout.await;
-                                        db.save_trusted_worktrees(
-                                            new_trusted_worktrees,
-                                            new_trusted_tools,
-                                        )
-                                        .await
-                                        .log_err();
+                                        db.save_trusted_worktrees(new_trusted_worktrees)
+                                            .await
+                                            .log_err();
                                     })
                                 },
                             )
@@ -7418,11 +7417,16 @@ impl Workspace {
                     workspace.show_worktree_trust_security_modal(true, window, cx);
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ToggleBinaryDownloadsRestriction, window, cx| {
+                    workspace.show_binary_downloads_restriction_modal(window, cx);
+                },
+            ))
             .on_action(
                 cx.listener(|_: &mut Workspace, _: &ClearTrustedWorktrees, _, cx| {
                     if let Some(trusted_worktrees) = TrustedWorktrees::try_get_global(cx) {
                         trusted_worktrees.update(cx, |trusted_worktrees, _| {
-                            trusted_worktrees.clear_all_trust()
+                            trusted_worktrees.clear_trusted_paths()
                         });
                         let db = WorkspaceDb::global(cx);
                         cx.spawn(async move |_, cx| {
@@ -8025,6 +8029,23 @@ impl Workspace {
         });
     }
 
+    pub fn show_binary_downloads_restriction_modal(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing) = self.active_modal::<BinaryDownloadsModal>(cx) {
+            existing.update(cx, |modal, cx| modal.dismiss(cx));
+            return;
+        }
+        let Some(scope) =
+            crate::binary_downloads_modal::scope_for_project(self.project().read(cx), cx)
+        else {
+            return;
+        };
+        self.toggle_modal(window, cx, |_, cx| BinaryDownloadsModal::new(scope, cx));
+    }
+
     pub fn show_worktree_trust_security_modal(
         &mut self,
         toggle: bool,
@@ -8042,17 +8063,16 @@ impl Workspace {
                 });
             }
         } else {
-            let project = self.project().read(cx);
-            let remote_host = project
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
-            let worktree_store = project.worktree_store();
-            let has_restricted_worktrees =
-                TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx);
-            let has_restricted_tools =
-                TrustedWorktrees::has_restricted_tools(remote_host.clone(), cx);
-            if has_restricted_worktrees || has_restricted_tools {
-                let worktree_store = worktree_store.downgrade();
+            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+                &self.project().read(cx).worktree_store(),
+                cx,
+            );
+            if has_restricted_worktrees {
+                let project = self.project().read(cx);
+                let remote_host = project
+                    .remote_connection_options(cx)
+                    .map(RemoteHostLocation::from);
+                let worktree_store = project.worktree_store().downgrade();
                 self.toggle_modal(window, cx, |_, cx| {
                     SecurityModal::new(worktree_store, remote_host, cx)
                 });

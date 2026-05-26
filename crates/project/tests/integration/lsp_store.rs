@@ -1,15 +1,228 @@
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use fs::FakeFs;
-use futures::StreamExt;
-use gpui::TestAppContext;
-use language::{CodeLabel, FakeLspAdapter, HighlightId, rust_lang};
-use lsp::Uri;
+use futures::{FutureExt, StreamExt, lock::OwnedMutexGuard};
+use gpui::{AsyncApp, TestAppContext, UpdateGlobal};
+use language::{
+    BinaryDownloadsDisabled, BinaryStatus, CodeLabel, DynLspInstaller, FakeLspAdapter, HighlightId,
+    LanguageName, LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
+    rust_lang,
+};
+use lsp::{LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName, Uri};
 use project::{Project, lsp_store::*};
 use serde_json::json;
-use util::path;
+use settings::{LocalSettingsKind, LocalSettingsPath, Settings, SettingsStore};
+use util::{path, rel_path::RelPath};
 
 use crate::init_test;
+
+#[derive(Clone, Default)]
+struct DownloadOnlyLspAdapter {
+    fetch_count: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait(?Send)]
+impl DynLspInstaller for DownloadOnlyLspAdapter {
+    async fn try_fetch_server_binary(
+        &self,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _: PathBuf,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> anyhow::Result<LanguageServerBinary> {
+        unreachable!()
+    }
+
+    fn get_language_server_command(
+        self: Arc<Self>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        _: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
+        _: AsyncApp,
+    ) -> LanguageServerBinaryLocations {
+        async move {
+            if !binary_options.allow_binary_download {
+                let reason =
+                    BinaryDownloadsDisabled::new(format!("language server {}", self.name().0));
+                delegate.update_status(
+                    self.name(),
+                    BinaryStatus::Disabled {
+                        reason: reason.to_string(),
+                    },
+                );
+                return (Err(reason.into()), None);
+            }
+
+            self.fetch_count.fetch_add(1, Ordering::SeqCst);
+            (
+                Ok(LanguageServerBinary {
+                    path: "/downloaded/lsp".into(),
+                    arguments: Vec::new(),
+                    env: None,
+                }),
+                None,
+            )
+        }
+        .boxed_local()
+    }
+}
+
+impl LspAdapter for DownloadOnlyLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName::new_static("download-only-language-server")
+    }
+
+    fn language_ids(&self) -> collections::HashMap<LanguageName, String> {
+        collections::HashMap::from_iter([("Rust".into(), "rust".to_string())])
+    }
+}
+
+#[gpui::test]
+async fn test_allow_binary_downloads_false_disables_lsp_downloads(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let adapter = DownloadOnlyLspAdapter::default();
+    let fetch_count = adapter.fetch_count.clone();
+    let adapter_name = adapter.name();
+    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
+    let mut fake_servers = language_registry.register_fake_lsp_server(
+        adapter_name.clone(),
+        lsp::ServerCapabilities::default(),
+        None,
+    );
+    let mut binary_statuses = language_registry.language_server_binary_statuses();
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let disabled_status = loop {
+        let mut next_status = binary_statuses.next().fuse();
+        let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+        let status = futures::select! {
+            status = next_status => status.unwrap(),
+            _ = timeout => panic!("timed out waiting for disabled binary status"),
+        };
+        if status.0 == adapter_name && matches!(status.1, BinaryStatus::Disabled { .. }) {
+            break status.1;
+        }
+    };
+    assert_eq!(
+        disabled_status,
+        BinaryStatus::Disabled {
+            reason: "binary downloads are disabled; not installing language server download-only-language-server".to_string(),
+        }
+    );
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 0);
+
+    let mut next_server = fake_servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_millis(50)).fuse();
+    futures::select! {
+        server = next_server => assert_eq!(server.is_none(), true),
+        _ = timeout => {}
+    }
+}
+
+#[gpui::test]
+async fn test_allow_binary_downloads_can_be_enabled_for_a_project(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/the-root"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "allow_binary_downloads": true }"#),
+                cx,
+            )
+            .unwrap();
+    });
+    project.read_with(cx, |_, cx| {
+        assert_eq!(
+            project::project_settings::ProjectSettings::get(
+                Some(settings::SettingsLocation {
+                    worktree_id,
+                    path: RelPath::empty(),
+                }),
+                cx,
+            )
+            .allow_binary_downloads,
+            true,
+        );
+    });
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let adapter = DownloadOnlyLspAdapter::default();
+    let fetch_count = adapter.fetch_count.clone();
+    let adapter_name = adapter.name();
+    language_registry.register_lsp_adapter("Rust".into(), Arc::new(adapter));
+    let mut fake_servers = language_registry.register_fake_lsp_server(
+        adapter_name,
+        lsp::ServerCapabilities::default(),
+        None,
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut next_server = fake_servers.next().fuse();
+    let mut timeout = cx.executor().timer(Duration::from_secs(1)).fuse();
+    futures::select! {
+        server = next_server => assert_eq!(server.is_some(), true),
+        _ = timeout => panic!("timed out waiting for language server"),
+    }
+    assert_eq!(fetch_count.load(Ordering::SeqCst), 1);
+}
 
 #[gpui::test]
 async fn test_removing_invisible_worktree_cleans_reused_lsp_bookkeeping(cx: &mut TestAppContext) {

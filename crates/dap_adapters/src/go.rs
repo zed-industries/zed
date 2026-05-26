@@ -10,7 +10,7 @@ use dap::{
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{AsyncApp, SharedString};
-use language::LanguageName;
+use language::{BinaryDownloadsDisabled, LanguageName};
 use log::warn;
 use serde_json::{Map, Value};
 use task::TcpArgumentsTemplate;
@@ -67,14 +67,26 @@ impl GoDebugAdapter {
             url: asset.browser_download_url.clone(),
         })
     }
-    async fn install_shim(&self, delegate: &Arc<dyn DapDelegate>) -> anyhow::Result<PathBuf> {
+    pub(crate) async fn install_shim(
+        &self,
+        delegate: &Arc<dyn DapDelegate>,
+    ) -> anyhow::Result<PathBuf> {
         if let Some(path) = self.shim_path.get().cloned() {
             return Ok(path);
         }
 
         let adapter_dir = paths::debug_adapters_dir().join("delve-shim-dap");
+        let downloads_allowed = delegate.allow_binary_downloads();
 
-        match Self::fetch_latest_adapter_version(delegate).await {
+        let download_attempt = if downloads_allowed {
+            Self::fetch_latest_adapter_version(delegate).await
+        } else {
+            Err(anyhow::Error::new(BinaryDownloadsDisabled::new(
+                "Delve debug adapter shim",
+            )))
+        };
+
+        match download_attempt {
             Ok(asset) => {
                 let ty = if consts::OS == "windows" {
                     DownloadedFileType::Zip
@@ -117,7 +129,13 @@ impl GoDebugAdapter {
                 }
 
                 if let Some(path) = cached {
-                    warn!("Failed to fetch latest delve-shim-dap, using cached version: {error:#}");
+                    if downloads_allowed {
+                        warn!(
+                            "Failed to fetch latest delve-shim-dap, using cached version: {error:#}"
+                        );
+                    } else {
+                        log::info!("Using cached delve-shim-dap: {error:#}");
+                    }
                     self.shim_path.set(path.clone()).ok();
                     Ok(path)
                 } else {

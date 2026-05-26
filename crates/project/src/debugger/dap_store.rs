@@ -603,6 +603,16 @@ impl DapStore {
             unimplemented!("Starting session on remote side");
         };
 
+        let worktree_id = worktree.read(cx).id();
+        let allow_binary_downloads = ProjectSettings::get(
+            Some(SettingsLocation {
+                worktree_id,
+                path: RelPath::empty(),
+            }),
+            cx,
+        )
+        .allow_binary_downloads;
+
         Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
             worktree.read(cx).snapshot(),
@@ -614,6 +624,7 @@ impl DapStore {
                 .environment
                 .update(cx, |env, cx| env.worktree_environment(worktree.clone(), cx)),
             local_store.is_headless,
+            allow_binary_downloads,
         ))
     }
 
@@ -945,6 +956,7 @@ pub struct DapAdapterDelegate {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
     is_headless: bool,
+    allow_binary_downloads: bool,
 }
 
 impl DapAdapterDelegate {
@@ -957,6 +969,7 @@ impl DapAdapterDelegate {
         toolchain_store: Arc<dyn LanguageToolchainStore>,
         load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
         is_headless: bool,
+        allow_binary_downloads: bool,
     ) -> Self {
         Self {
             fs,
@@ -967,6 +980,7 @@ impl DapAdapterDelegate {
             toolchain_store,
             load_shell_env_task,
             is_headless,
+            allow_binary_downloads,
         }
     }
 }
@@ -1033,5 +1047,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn is_headless(&self) -> bool {
         self.is_headless
+    }
+
+    fn allow_binary_downloads(&self) -> bool {
+        self.allow_binary_downloads
     }
 }

@@ -41,7 +41,7 @@ use crate::{
     git_store::GitStore,
     lsp_store::{SymbolLocation, log_store::LogKind},
     project_search::SearchResultsHandle,
-    trusted_worktrees::{PathTrust, RemoteHostLocation, ToolTrust, TrustedWorktrees},
+    trusted_worktrees::{PathTrust, RemoteHostLocation, TrustedWorktrees},
     worktree_store::WorktreeIdCounter,
 };
 pub use agent_registry_store::{AgentRegistryStore, RegistryAgent};
@@ -5390,26 +5390,16 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let project = this.read(cx);
-            let remote_host = project
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
-            let trusted_paths = envelope
-                .payload
-                .trusted_paths
-                .into_iter()
-                .filter_map(|proto_path| PathTrust::from_proto(proto_path))
-                .collect::<HashSet<_>>();
-            if !trusted_paths.is_empty() {
-                trusted_worktrees.trust(&project.worktree_store(), trusted_paths, cx);
-            }
-            let trusted_tools = envelope
-                .payload
-                .trusted_tools
-                .into_iter()
-                .filter_map(ToolTrust::from_proto)
-                .collect::<HashSet<_>>();
-            trusted_worktrees.trust_tools(remote_host, trusted_tools, cx);
+            trusted_worktrees.trust(
+                &this.read(cx).worktree_store(),
+                envelope
+                    .payload
+                    .trusted_paths
+                    .into_iter()
+                    .filter_map(|proto_path| PathTrust::from_proto(proto_path))
+                    .collect(),
+                cx,
+            );
         });
         Ok(proto::Ack {})
     }
@@ -5427,11 +5417,7 @@ impl Project {
             .update(|cx| TrustedWorktrees::try_get_global(cx))
             .context("missing trusted worktrees")?;
         trusted_worktrees.update(&mut cx, |trusted_worktrees, cx| {
-            let project = this.read(cx);
-            let worktree_store = project.worktree_store().downgrade();
-            let remote_host = project
-                .remote_connection_options(cx)
-                .map(RemoteHostLocation::from);
+            let worktree_store = this.read(cx).worktree_store().downgrade();
             let restricted_paths = envelope
                 .payload
                 .worktree_ids
@@ -5439,19 +5425,7 @@ impl Project {
                 .map(WorktreeId::from_proto)
                 .map(PathTrust::Worktree)
                 .collect::<HashSet<_>>();
-            if !restricted_paths.is_empty() {
-                trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
-            }
-            trusted_worktrees.restrict_tools(
-                remote_host,
-                envelope
-                    .payload
-                    .restricted_tools
-                    .into_iter()
-                    .filter_map(ToolTrust::from_proto)
-                    .collect(),
-                cx,
-            );
+            trusted_worktrees.restrict(worktree_store, restricted_paths, cx);
         });
         Ok(proto::Ack {})
     }

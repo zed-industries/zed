@@ -251,7 +251,7 @@ fn general_page(cx: &App) -> SettingsPage {
             }),
         ]
     }
-    fn security_section() -> [SettingsPageItem; 2] {
+    fn security_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SectionHeader("Security"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -274,6 +274,21 @@ fn general_page(cx: &App) -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Allow Binary Downloads",
+                description: "Whether Zed may download tool binaries and package-based tools such as language servers, formatters, debug adapters, MCP servers, and the managed Node runtime. Can be overridden per-project.",
+                field: Box::new(SettingField {
+                    json_path: Some("allow_binary_downloads"),
+                    pick: |settings_content| {
+                        settings_content.project.allow_binary_downloads.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.allow_binary_downloads = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
         ]
     }

@@ -1487,7 +1487,7 @@ mod trust_tests {
         .await;
 
         cx.update(|cx| {
-            init(DbTrustedPaths::default(), DbTrustedTools::default(), cx);
+            init(DbTrustedPaths::default(), cx);
         });
 
         let project =
@@ -1551,11 +1551,7 @@ mod trust_tests {
         .await;
 
         cx.update(|cx| {
-            project::trusted_worktrees::init(
-                DbTrustedPaths::default(),
-                DbTrustedTools::default(),
-                cx,
-            );
+            project::trusted_worktrees::init(DbTrustedPaths::default(), cx);
         });
 
         let project =

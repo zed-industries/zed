@@ -639,7 +639,7 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx, is_wsl_interop);
-        trusted_worktrees::init(HashMap::default(), HashMap::default(), cx);
+        trusted_worktrees::init(HashMap::default(), cx);
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
@@ -1212,31 +1212,31 @@ fn initialize_settings(
     });
 
     let (mut tx, rx) = watch::channel(None);
-    let mut node_settings = None;
+    let mut last_options = None;
     cx.observe_global::<SettingsStore>(move |cx| {
-        let new_node_settings = &ProjectSettings::get_global(cx).node;
-        if Some(new_node_settings) != node_settings.as_ref() {
-            log::info!("Got new node settings: {new_node_settings:?}");
-            let options = NodeBinaryOptions {
-                allow_path_lookup: !new_node_settings.ignore_system_version,
-                // TODO: Implement this setting
-                allow_binary_download: true,
-                use_paths: new_node_settings.path.as_ref().map(|node_path| {
-                    let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
-                    let npm_path = new_node_settings
-                        .npm_path
-                        .as_ref()
-                        .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
-                    (
-                        node_path.clone(),
-                        npm_path.unwrap_or_else(|| {
-                            let base_path = PathBuf::new();
-                            node_path.parent().unwrap_or(&base_path).join("npm")
-                        }),
-                    )
-                }),
-            };
-            node_settings = Some(new_node_settings.clone());
+        let settings = ProjectSettings::get_global(cx);
+        let options = NodeBinaryOptions {
+            allow_path_lookup: !settings.node.ignore_system_version,
+            allow_binary_download: settings.allow_binary_downloads,
+            use_paths: settings.node.path.as_ref().map(|node_path| {
+                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                let npm_path = settings
+                    .node
+                    .npm_path
+                    .as_ref()
+                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                (
+                    node_path.clone(),
+                    npm_path.unwrap_or_else(|| {
+                        let base_path = PathBuf::new();
+                        node_path.parent().unwrap_or(&base_path).join("npm")
+                    }),
+                )
+            }),
+        };
+        if last_options.as_ref() != Some(&options) {
+            log::info!("Got new node options: {options:?}");
+            last_options = Some(options.clone());
             tx.send(Some(options)).ok();
         }
     })

@@ -9,8 +9,8 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
-    LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
+    BinaryDownloadsDisabled, BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language,
+    LanguageName, LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -158,11 +158,25 @@ impl DynLspInstaller for ExtensionLspAdapter {
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
-        _: LanguageServerBinaryOptions,
+        binary_options: LanguageServerBinaryOptions,
         _: OwnedMutexGuard<Option<(bool, LanguageServerBinary)>>,
         _: AsyncApp,
     ) -> LanguageServerBinaryLocations {
         async move {
+            if !binary_options.allow_binary_download {
+                let reason = BinaryDownloadsDisabled::new(format!(
+                    "language server {}",
+                    self.language_server_id.0
+                ));
+                delegate.update_status(
+                    self.language_server_id.clone(),
+                    BinaryStatus::Disabled {
+                        reason: reason.to_string(),
+                    },
+                );
+                return (Err(reason.into()), None);
+            }
+
             let ret = maybe!(async move {
                 let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
                 let command = self

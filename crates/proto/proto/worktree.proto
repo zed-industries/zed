@@ -166,12 +166,6 @@ message UpdateUserSettings {
 message TrustWorktrees {
   uint64 project_id = 1;
   repeated PathTrust trusted_paths = 2;
-  repeated ToolTrust trusted_tools = 3;
-}
-
-message ToolTrust {
-  string namespace = 1;
-  string name = 2;
 }
 
 message PathTrust {
@@ -186,7 +180,6 @@ message PathTrust {
 message RestrictWorktrees {
   uint64 project_id = 1;
   repeated uint64 worktree_ids = 3;
-  repeated ToolTrust restricted_tools = 4;
 
   reserved 2;
 }

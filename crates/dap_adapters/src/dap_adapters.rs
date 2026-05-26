@@ -47,12 +47,27 @@ mod test_mocks {
 
     pub(crate) struct MockDelegate {
         worktree_root: PathBuf,
+        allow_binary_downloads: bool,
+        fs: Option<Arc<dyn fs::Fs>>,
     }
 
     impl MockDelegate {
         pub(crate) fn new() -> Arc<dyn adapters::DapDelegate> {
             Arc::new(Self {
                 worktree_root: PathBuf::from("/tmp/test"),
+                allow_binary_downloads: true,
+                fs: None,
+            })
+        }
+
+        pub(crate) fn new_with(
+            allow_binary_downloads: bool,
+            fs: Option<Arc<dyn fs::Fs>>,
+        ) -> Arc<dyn adapters::DapDelegate> {
+            Arc::new(Self {
+                worktree_root: PathBuf::from("/tmp/test"),
+                allow_binary_downloads,
+                fs,
             })
         }
     }
@@ -80,7 +95,9 @@ mod test_mocks {
         }
 
         fn fs(&self) -> Arc<dyn fs::Fs> {
-            unimplemented!("Not needed for tests")
+            self.fs
+                .clone()
+                .expect("`fs` was not provided to MockDelegate but is required for this test")
         }
 
         fn output_to_console(&self, _msg: String) {}
@@ -100,5 +117,48 @@ mod test_mocks {
         fn is_headless(&self) -> bool {
             false
         }
+
+        fn allow_binary_downloads(&self) -> bool {
+            self.allow_binary_downloads
+        }
+    }
+}
+
+#[cfg(test)]
+mod allow_binary_downloads_tests {
+    use super::*;
+    use fs::FakeFs;
+    use language::BinaryDownloadsDisabled;
+
+    #[gpui::test]
+    async fn test_go_adapter_errors_when_downloads_disabled_and_no_cache(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs: Arc<dyn fs::Fs> = FakeFs::new(cx.executor());
+        let delegate = test_mocks::MockDelegate::new_with(false, Some(fs));
+        let adapter = go::GoDebugAdapter::default();
+        let err = adapter.install_shim(&delegate).await.unwrap_err();
+        assert_eq!(err.is::<BinaryDownloadsDisabled>(), true);
+    }
+
+    #[gpui::test]
+    async fn test_codelldb_adapter_errors_when_downloads_disabled_and_no_cache(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs: Arc<dyn fs::Fs> = FakeFs::new(cx.executor());
+        let delegate = test_mocks::MockDelegate::new_with(false, Some(fs));
+        let adapter = codelldb::CodeLldbDebugAdapter::default();
+        let task_definition = dap::adapters::DebugTaskDefinition {
+            adapter: "CodeLLDB".into(),
+            label: "test".into(),
+            config: serde_json::json!({}),
+            tcp_connection: None,
+        };
+        let mut async_cx = cx.to_async();
+        let err = adapter
+            .get_binary(&delegate, &task_definition, None, None, None, &mut async_cx)
+            .await
+            .unwrap_err();
+        assert_eq!(err.is::<BinaryDownloadsDisabled>(), true);
     }
 }
