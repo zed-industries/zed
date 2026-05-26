@@ -1093,6 +1093,18 @@ async fn resolve_dirty_buffer(
     Ok(())
 }
 
+/// Mirrors [`resolve_path`]'s pre-auth validation for the global-skill
+/// branch: returns `Ok(Some(abs_path))` if the path lives under
+/// `~/.agents/skills` and is in a valid state for the requested mode,
+/// `Ok(None)` if the path isn't a global skill at all (so the caller should
+/// fall through to project-path resolution), or `Err(message)` if the path
+/// is a global skill but can't be used (missing in Edit mode, parent
+/// missing in Write mode, etc.).
+///
+/// Errors returned from here surface to the model as tool-result errors
+/// without prompting the user — same contract as [`resolve_path`]. The
+/// idea is that "file doesn't exist" or "parent isn't a directory" are
+/// model mistakes, not decisions the user should be asked to approve.
 async fn resolve_global_skill_path_for_edit_session(
     mode: EditSessionMode,
     path: &PathBuf,
