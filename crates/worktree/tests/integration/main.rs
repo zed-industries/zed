@@ -3017,6 +3017,72 @@ async fn test_repo_exclude(executor: BackgroundExecutor, cx: &mut TestAppContext
     });
 }
 
+#[gpui::test]
+async fn test_repo_exclude_anchored_pattern(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    let project_dir = Path::new(path!("/project"));
+    fs.insert_tree(
+        project_dir,
+        json!({
+            ".git": {
+                "info": {
+                    "exclude": "vendor/cache"
+                }
+            },
+            "vendor": {
+                "cache": {
+                    "blob.bin": "",
+                },
+                "keep.txt": "",
+            },
+            "elsewhere": {
+                "vendor": {
+                    "cache": {
+                        "blob.bin": "",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_dir,
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // An anchored pattern (containing a `/`) is matched relative to the work
+    // tree root, so only the top-level `vendor/cache` is ignored.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &["vendor/cache"],
+                tracked_paths: &["vendor/keep.txt", "elsewhere/vendor/cache"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
 #[derive(Default)]
 struct WorktreeExpectations {
     excluded_paths: &'static [&'static str],
