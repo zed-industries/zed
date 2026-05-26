@@ -1326,6 +1326,7 @@ mod tests {
     fn test_inline_code_preserves_raw_pipes_in_tables() {
         let markdown = r"| Pattern | Meaning |
 | --- | --- |
+| ``^echo(\s|$)`` | command pattern |
 | `a|b` | alternation |
 | `(a|b)` | grouped alternation |
 | `a||b` | empty middle alternative |";
@@ -1370,60 +1371,10 @@ mod tests {
             rows,
             vec![
                 vec!["Pattern".to_string(), "Meaning".to_string()],
+                vec!["^echo(\\s|$)".to_string(), "command pattern".to_string()],
                 vec!["a|b".to_string(), "alternation".to_string()],
                 vec!["(a|b)".to_string(), "grouped alternation".to_string()],
                 vec!["a||b".to_string(), "empty middle alternative".to_string()],
-            ]
-        );
-    }
-
-    #[test]
-    fn test_double_tick_inline_code_preserves_raw_pipes_in_tables() {
-        let markdown = r"| Pattern | Meaning |
-| --- | --- |
-| ``^echo(\s|$)`` | command pattern |";
-        let parsed = parse_markdown_with_options(markdown, false, false);
-        let mut rows = Vec::new();
-        let mut current_row: Option<Vec<String>> = None;
-        let mut current_cell: Option<String> = None;
-
-        for (range, event) in &parsed.events {
-            match event {
-                Start(TableHead) | Start(TableRow) => {
-                    current_row = Some(Vec::new());
-                }
-                End(MarkdownTagEnd::TableHead) | End(MarkdownTagEnd::TableRow) => {
-                    if let Some(row) = current_row.take() {
-                        rows.push(row);
-                    }
-                }
-                Start(TableCell) => {
-                    current_cell = Some(String::new());
-                }
-                End(MarkdownTagEnd::TableCell) => {
-                    if let (Some(row), Some(cell)) = (&mut current_row, current_cell.take()) {
-                        row.push(cell.trim().to_string());
-                    }
-                }
-                Text | Code => {
-                    if let Some(cell) = &mut current_cell {
-                        cell.push_str(&markdown[range.clone()]);
-                    }
-                }
-                SubstitutedText(text) | SubstitutedCode(text) => {
-                    if let Some(cell) = &mut current_cell {
-                        cell.push_str(text);
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        assert_eq!(
-            rows,
-            vec![
-                vec!["Pattern".to_string(), "Meaning".to_string()],
-                vec!["^echo(\\s|$)".to_string(), "command pattern".to_string()],
             ]
         );
     }
