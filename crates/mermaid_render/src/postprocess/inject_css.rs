@@ -189,7 +189,7 @@ fn accent_css(theme: &MermaidTheme) -> String {
     } else {
         gpui::black()
     });
-    
+
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
         // Use the raw player color as the fill; `fill-opacity` blends it toward
