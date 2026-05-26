@@ -116,7 +116,7 @@ pub trait AgentConnection {
     }
 
     /// Whether this agent supports additional session directories.
-    fn supports_session_additional_directories(&self, _cx: &App) -> bool {
+    fn supports_session_additional_directories(&self) -> bool {
         false
     }
 
@@ -132,7 +132,7 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn supports_logout(&self, _cx: &App) -> bool {
+    fn supports_logout(&self) -> bool {
         false
     }
 
@@ -878,7 +878,7 @@ mod test_support {
             self.supports_load_session
         }
 
-        fn supports_session_additional_directories(&self, _cx: &App) -> bool {
+        fn supports_session_additional_directories(&self) -> bool {
             self.supports_session_additional_directories
         }
 

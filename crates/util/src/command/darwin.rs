@@ -524,15 +524,42 @@ fn spawn_posix_spawn(
 
 fn create_pipe() -> io::Result<(libc::c_int, libc::c_int)> {
     let mut fds: [libc::c_int; 2] = [0; 2];
-    let result = unsafe { libc::pipe(fds.as_mut_ptr()) };
-    if result == -1 {
-        return Err(io::Error::last_os_error());
+    unsafe {
+        let result = libc::pipe(fds.as_mut_ptr());
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            return Err(error);
+        }
+
+        // Set close-on-exec on both ends of the pipe.
+        //
+        // Without this, unrelated spawns elsewhere in the process (e.g.
+        // `smol::process` or `async_process`, which on Apple platforms use
+        // `posix_spawn` *without* `POSIX_SPAWN_CLOEXEC_DEFAULT`) would inherit
+        // these file descriptors and keep the pipes open even after we drop our
+        // side.
+        for &fd in &fds {
+            let result = libc::ioctl(fd, libc::FIOCLEX);
+            if result == -1 {
+                let error = io::Error::last_os_error();
+                libc::close(fds[0]);
+                libc::close(fds[1]);
+                return Err(error);
+            }
+        }
+
+        Ok((fds[0], fds[1]))
     }
-    Ok((fds[0], fds[1]))
 }
 
 fn open_dev_null(flags: libc::c_int) -> io::Result<libc::c_int> {
-    let fd = unsafe { libc::open(c"/dev/null".as_ptr() as *const libc::c_char, flags) };
+    // Set close-on-exec for this pipe, for the same reason as in `create_pipe`.
+    let fd = unsafe {
+        libc::open(
+            c"/dev/null".as_ptr() as *const libc::c_char,
+            flags | libc::O_CLOEXEC,
+        )
+    };
     if fd == -1 {
         return Err(io::Error::last_os_error());
     }
@@ -560,6 +587,49 @@ fn invalid_input_error() -> io::Error {
 mod tests {
     use super::*;
     use futures_lite::AsyncWriteExt;
+
+    // Verifies that pipes returned by `create_pipe` aren't visible to unrelated
+    // child processes spawned via `std::process::Command`. On macOS, `std`
+    // uses `posix_spawn` without `POSIX_SPAWN_CLOEXEC_DEFAULT`, so any
+    // non-CLOEXEC fd in the parent leaks into the child. Without
+    // `FD_CLOEXEC` on our pipe fds, an unrelated spawn (a terminal, the crash
+    // handler, etc.) running concurrently with a piped git child would hold
+    // git's stdin write end open and deadlock the git child on `read()`.
+    #[test]
+    fn test_create_pipe_not_inherited_by_unrelated_spawn() {
+        let (read_fd, write_fd) = create_pipe().expect("create_pipe failed");
+
+        // Probe with the exact fds returned by `create_pipe` (no dup), since
+        // duping with `F_DUPFD` would lose CLOEXEC and `F_DUPFD_CLOEXEC` would
+        // unconditionally set it, either of which would defeat the test.
+        #[allow(clippy::disallowed_methods)]
+        let output = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "for fd in {read_fd} {write_fd}; do \
+                    if [ -e /dev/fd/$fd ]; then \
+                        echo $fd WAS INHERITED; \
+                    else \
+                        echo $fd WAS NOT INHERITED; \
+                    fi; \
+                done; \
+                echo DONE"
+            ))
+            .output()
+            .expect("failed to spawn sh");
+
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+
+        unsafe {
+            libc::close(read_fd);
+            libc::close(write_fd);
+        }
+
+        assert_eq!(
+            stdout,
+            format!("{read_fd} WAS NOT INHERITED\n{write_fd} WAS NOT INHERITED\nDONE\n")
+        );
+    }
 
     #[test]
     fn test_spawn_echo() {
