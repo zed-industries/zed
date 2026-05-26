@@ -2239,18 +2239,15 @@ mod tests {
     #[gpui::test]
     async fn test_cached_llm_token_is_cleared_after_sign_out(cx: &mut TestAppContext) {
         init_test(cx);
-        let llm_token_request_count = Arc::new(Mutex::new(0));
+        let llm_token_request_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let http_client = FakeHttpClient::create({
             let llm_token_request_count = llm_token_request_count.clone();
             move |request| {
                 let llm_token_request_count = llm_token_request_count.clone();
                 async move {
                     assert_eq!(request.uri().path(), "/client/llm_tokens");
-                    let token = {
-                        let mut request_count = llm_token_request_count.lock();
-                        *request_count += 1;
-                        format!("llm-token-{}", *request_count)
-                    };
+                    let request_count = llm_token_request_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let token = format!("llm-token-{request_count}");
                     Ok(http_client::Response::builder()
                         .status(200)
                         .body(
@@ -2265,21 +2262,20 @@ mod tests {
             }
         });
         let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
+        client.override_authenticate(|cx| {
+            cx.background_spawn(async {
+                Ok(Credentials {
+                    user_id: 1,
+                    access_token: "account-token".into(),
+                })
+            })
+        });
         let llm_token = LlmApiToken::default();
 
-        let authenticate_client = |client: &Arc<Client>, cx: &TestAppContext| {
-            client.state.write().credentials = Some(Credentials {
-                user_id: 1,
-                access_token: "account-token".into(),
-            });
-            client
-                .cloud_client
-                .set_credentials(1, "account-token".into());
-            let cx = cx.to_async();
-            client.set_status(Status::Authenticated, &cx);
-        };
-
-        authenticate_client(&client, cx);
+        client
+            .sign_in(false, &cx.to_async())
+            .await
+            .expect("initial sign-in should succeed");
         assert_eq!(
             client
                 .cached_llm_token(&llm_token, None)
@@ -2287,7 +2283,7 @@ mod tests {
                 .expect("initial LLM token request should succeed"),
             "llm-token-1"
         );
-        assert_eq!(*llm_token_request_count.lock(), 1);
+        assert_eq!(llm_token_request_count.load(Ordering::SeqCst), 1);
 
         client.sign_out(&cx.to_async()).await;
         client
@@ -2295,7 +2291,10 @@ mod tests {
             .await
             .expect_err("signed-out clients should not reuse cached LLM tokens");
 
-        authenticate_client(&client, cx);
+        client
+            .sign_in(false, &cx.to_async())
+            .await
+            .expect("reauthentication should succeed");
         assert_eq!(
             client
                 .cached_llm_token(&llm_token, None)
@@ -2303,7 +2302,7 @@ mod tests {
                 .expect("LLM token should be fetched again after reauthentication"),
             "llm-token-2"
         );
-        assert_eq!(*llm_token_request_count.lock(), 2);
+        assert_eq!(llm_token_request_count.load(Ordering::SeqCst), 2);
     }
 
     #[gpui::test(iterations = 10)]
