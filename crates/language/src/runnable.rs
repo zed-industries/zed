@@ -19,26 +19,29 @@ pub struct RunnableRange {
 #[derive(Clone, Debug)]
 pub struct RunnableMatchCapture {
     range: Range<usize>,
-    capture: RunnableCapture,
+    capture: ResolverCapture,
+}
+
+/// The subset of `RunnableCapture` that's meaningful to resolvers.
+#[derive(Clone, Debug)]
+enum ResolverCapture {
+    Run,
+    Named(String),
 }
 
 impl RunnableMatchCapture {
-    pub(crate) fn new(range: Range<usize>, capture: RunnableCapture) -> Self {
-        Self { range, capture }
-    }
-
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }
 
     pub fn is_run(&self) -> bool {
-        matches!(self.capture, RunnableCapture::Run)
+        matches!(self.capture, ResolverCapture::Run)
     }
 
     pub fn name(&self) -> Option<&str> {
         match &self.capture {
-            RunnableCapture::Named(name) => Some(name.as_ref()),
-            _ => None,
+            ResolverCapture::Named(name) => Some(name.as_str()),
+            ResolverCapture::Run => None,
         }
     }
 }
@@ -145,33 +148,20 @@ fn runnable_tags_from_pattern(
         .collect()
 }
 
+/// `overlaps` rejects empty ranges, so handle a zero-width `offset_range` (cursor) separately.
+fn range_overlaps_or_contains(range: &Range<usize>, offset_range: &Range<usize>) -> bool {
+    if offset_range.is_empty() {
+        range.contains(&offset_range.start)
+    } else {
+        range.overlaps(offset_range)
+    }
+}
+
 fn group_runnable_matches(
     captures: &[QueryCapture<'_>],
     runnable_config: &RunnableConfig,
     offset_range: &Range<usize>,
 ) -> GroupedRunnableMatches {
-    fn range_matches_offset_range(range: &Range<usize>, offset_range: &Range<usize>) -> bool {
-        if offset_range.is_empty() {
-            range.contains(&offset_range.start)
-        } else {
-            range.overlaps(offset_range)
-        }
-    }
-
-    fn runnable_match_capture(
-        capture: &QueryCapture<'_>,
-        runnable_config: &RunnableConfig,
-    ) -> Option<RunnableMatchCapture> {
-        let kind = runnable_config.extra_captures.get(capture.index as usize)?;
-        if matches!(kind, RunnableCapture::RunItem) {
-            return None;
-        }
-        Some(RunnableMatchCapture::new(
-            capture.node.byte_range(),
-            kind.clone(),
-        ))
-    }
-
     let mut sorted: SmallVec<[&QueryCapture<'_>; 16]> = captures.iter().collect();
     sorted.sort_by_key(|capture| {
         let range = capture.node.byte_range();
@@ -185,30 +175,37 @@ fn group_runnable_matches(
 
     for capture in sorted {
         let range = capture.node.byte_range();
-
-        if matches!(
-            runnable_config.extra_captures.get(capture.index as usize),
-            Some(RunnableCapture::RunItem)
-        ) {
-            if let Some(group) = current_group.take()
-                && current_in_offset
-            {
-                groups.push(group);
-            }
-            current_in_offset = range_matches_offset_range(&range, offset_range);
-            current_group = Some(RunnableMatchGroup {
-                range,
-                captures: SmallVec::new(),
-            });
+        let Some(kind) = runnable_config.extra_captures.get(capture.index as usize) else {
             continue;
-        }
+        };
+
+        let resolver_capture = match kind {
+            RunnableCapture::RunItem => {
+                if let Some(group) = current_group.take()
+                    && current_in_offset
+                {
+                    groups.push(group);
+                }
+                current_in_offset = range_overlaps_or_contains(&range, offset_range);
+                current_group = Some(RunnableMatchGroup {
+                    range,
+                    captures: SmallVec::new(),
+                });
+                continue;
+            }
+            RunnableCapture::Run => ResolverCapture::Run,
+            RunnableCapture::Named(name) => ResolverCapture::Named(name.to_string()),
+        };
+
+        let match_capture = RunnableMatchCapture {
+            range: range.clone(),
+            capture: resolver_capture,
+        };
 
         match current_group.as_mut() {
             Some(group) if group.range.contains_inclusive(&range) => {
-                if current_in_offset
-                    && let Some(capture) = runnable_match_capture(capture, runnable_config)
-                {
-                    group.captures.push(capture);
+                if current_in_offset {
+                    group.captures.push(match_capture);
                 }
             }
             _ => {
@@ -217,9 +214,7 @@ fn group_runnable_matches(
                 {
                     groups.push(group);
                 }
-                if let Some(capture) = runnable_match_capture(capture, runnable_config) {
-                    shared_captures.push(capture);
-                }
+                shared_captures.push(match_capture);
             }
         }
     }
