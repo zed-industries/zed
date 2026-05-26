@@ -18,7 +18,7 @@ Zed loads skills from two locations:
 | Global        | `~/.agents/skills/<name>/SKILL.md`          | Every project                |
 | Project-local | `<worktree>/.agents/skills/<name>/SKILL.md` | The current trusted worktree |
 
-Project-local skills only load from trusted worktrees.
+Project-local skills only load from [trusted worktrees](../worktree-trust.md).
 
 ## Skill File Format {#skill-file-format}
 
@@ -64,7 +64,7 @@ Use this for workflows where you want the user to decide when the skill runs.
 
 Skills are persistent instructions. Agent edits to `SKILL.md` files and bundled skill resources require explicit authorization.
 
-Project-local skills are only loaded from trusted worktrees. This prevents a newly cloned project from injecting skill descriptions into the Zed Agent before you trust the worktree.
+Project-local skills are only loaded from [trusted worktrees](../worktree-trust.md). This prevents a newly cloned project from injecting skill descriptions into the Zed Agent before you trust the worktree.
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 

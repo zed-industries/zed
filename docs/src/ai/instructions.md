@@ -9,6 +9,8 @@ Instructions are always-on context for the Zed Agent. Use instructions for persi
 
 Use [Skills](./skills.md) instead when you want reusable task instructions that can be invoked by name.
 
+Zed supports [`AGENTS.md`](https://agents.md/) as the primary instruction file for personal and project-level agent guidance.
+
 ## Personal Instructions {#personal-instructions}
 
 Personal instructions apply to every project you open with the Zed Agent.
@@ -31,7 +33,7 @@ Project instruction files apply to the current project. Zed uses the first match
 - `.clinerules`
 - `.github/copilot-instructions.md`
 - `AGENT.md`
-- `AGENTS.md`
+- [`AGENTS.md`](https://agents.md/)
 - `CLAUDE.md`
 - `GEMINI.md`
 
