@@ -1551,6 +1551,14 @@ impl ConversationView {
             }
             AcpThreadEvent::ToolAuthorizationRequested(_) => {
                 self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
+                if let Some(active) = self.thread_view(&session_id) {
+                    active.update(cx, |active, cx| {
+                        // Only save focus the first time (when no prompt was already showing).
+                        if active.pre_confirmation_focus.is_none() {
+                            active.pre_confirmation_focus = window.focused(cx);
+                        }
+                    });
+                }
             }
             AcpThreadEvent::ToolAuthorizationReceived(_) => {}
             AcpThreadEvent::Retry(retry) => {

@@ -585,6 +585,8 @@ pub struct ThreadView {
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
     pub(crate) permission_selections: HashMap<acp::ToolCallId, PermissionSelection>,
+    /// Focus handle saved when the first permission prompt appears, restored on dismiss.
+    pub(super) pre_confirmation_focus: Option<FocusHandle>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -890,6 +892,7 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
+            pre_confirmation_focus: None,
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
@@ -2139,6 +2142,7 @@ impl ThreadView {
                 .ok();
         }
         cx.notify();
+        self.restore_pre_confirmation_focus(window, cx);
         Some(())
     }
 
@@ -2283,7 +2287,22 @@ impl ThreadView {
                 .ok();
         }
         cx.notify();
+        self.restore_pre_confirmation_focus(window, cx);
         result
+    }
+
+    fn restore_pre_confirmation_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let session_id = self.thread.read(cx).session_id().clone();
+        let has_pending = self
+            .conversation
+            .read(cx)
+            .pending_tool_call_for_session(&session_id, cx)
+            .is_some();
+        if !has_pending {
+            if let Some(handle) = self.pre_confirmation_focus.take() {
+                window.focus(&handle, cx);
+            }
+        }
     }
 
     // edits
