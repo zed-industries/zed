@@ -158,7 +158,7 @@ fn try_show_references(
     let nav_entry = editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
     let links = locations
         .into_iter()
-        .map(|location| HoverLink::InlayHint(location, server_id))
+        .map(|location| HoverLink::LspLocation(location, server_id))
         .collect();
     editor
         .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
@@ -340,7 +340,7 @@ impl Editor {
             let props = BlockProperties {
                 placement: BlockPlacement::Above(anchor),
                 height: Some(1),
-                style: BlockStyle::Flex,
+                style: BlockStyle::Spacer,
                 render: build_code_lens_renderer(new_line.clone(), editor_handle.clone()),
                 priority: 0,
             };
@@ -644,7 +644,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
 
         div()
             .id(cx.block_id)
-            .pl(cx.margins.gutter.full_width() + cx.em_width * (line.indent_column as f32 + 0.5))
+            .pl(cx.em_width * (line.indent_column as f32 + 0.5))
             .h_full()
             .flex()
             .flex_row()

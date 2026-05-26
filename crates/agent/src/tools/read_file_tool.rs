@@ -10,6 +10,7 @@ use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownCodeBlock;
 
@@ -17,9 +18,132 @@ fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent
     LanguageModelToolResultContent::from(e.to_string())
 }
 
+/// Resolves the optional `start_line` / `end_line` inputs from the tool schema
+/// to a concrete 1-indexed, inclusive `(start, end)` line range:
+///
+/// - `start` defaults to 1 and is clamped to `>= 1` (the model occasionally passes
+///   `0` despite instructions to be 1-indexed).
+/// - `end` defaults to `u32::MAX` and is clamped to `>= start`, so callers always
+///   read at least one line even when the model passes `end < start`.
+///
+/// Callers translate this 1-indexed inclusive range to whichever coordinate
+/// system their slicing API wants (e.g. 0-indexed exclusive row ranges for
+/// `Buffer::text_for_range`).
+fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u32) {
+    let start = start_line.unwrap_or(1).max(1);
+    let end = end_line.unwrap_or(u32::MAX).max(start);
+    (start, end)
+}
+
+/// Prefixes each line of `text` with its line number in `cat -n` format:
+/// the line number is right-aligned in a 6-character field, followed by a
+/// single tab, followed by the line's original content (including its
+/// trailing newline if present). Numbering starts at `start_line`.
+///
+/// This format matches what the model expects in the edit tool, where the
+/// line number prefix is `line number + tab` and everything after the tab is
+/// the actual file content to match.
+fn format_with_line_numbers(text: &str, start_line: u32) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::with_capacity(text.len() + text.len() / 4);
+    write_lines_numbered(&mut output, std::iter::once(text), start_line);
+    output
+}
+
+/// Streams `cat -n`-style line-numbered output directly into `output` from an
+/// iterator of string slices. Chunks do not need to align to line boundaries:
+/// a single chunk may contain multiple newlines, span multiple lines, or end
+/// mid-line. This lets callers consume `Buffer::text_for_range`'s `Chunks`
+/// iterator without materializing the unnumbered text first.
+fn write_lines_numbered<'a>(
+    output: &mut String,
+    chunks: impl IntoIterator<Item = &'a str>,
+    start_line: u32,
+) {
+    use std::fmt::Write as _;
+
+    let mut line_number = start_line;
+    let mut at_line_start = true;
+    for chunk in chunks {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            if at_line_start {
+                // Writes to a `String` are infallible, so the `Result` can be ignored.
+                let _ = write!(output, "{line_number:>6}\t");
+                at_line_start = false;
+            }
+            match rest.find('\n') {
+                Some(nl) => {
+                    let (head, tail) = rest.split_at(nl + 1);
+                    output.push_str(head);
+                    line_number = line_number.saturating_add(1);
+                    at_line_start = true;
+                    rest = tail;
+                }
+                None => {
+                    output.push_str(rest);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Read a file under the global skills directory directly via the filesystem,
+/// bypassing project/worktree resolution. Used for skill resources that live
+/// outside any worktree.
+///
+/// Skill resources are expected to be plain text (Markdown, scripts, configs).
+/// Image rendering, the action log, and the buffer-backed outline path are
+/// intentionally not exercised here — those are project concerns.
+async fn read_global_skill_file(
+    canonical_path: &Path,
+    fs: &dyn fs::Fs,
+    start_line: Option<u32>,
+    end_line: Option<u32>,
+    requested_path: &str,
+    event_stream: &ToolCallEventStream,
+) -> Result<LanguageModelToolResultContent, LanguageModelToolResultContent> {
+    let content = fs.load(canonical_path).await.map_err(tool_content_err)?;
+
+    event_stream.update_fields(acp::ToolCallUpdateFields::new().locations(vec![
+        acp::ToolCallLocation::new(canonical_path)
+            .line(start_line.map(|line| line.saturating_sub(1))),
+    ]));
+
+    let (raw_text, first_line_number) = if start_line.is_some() || end_line.is_some() {
+        // `split_inclusive` keeps each line's terminator attached, so CRLF stays
+        // CRLF and the trailing newline of the last returned line is preserved —
+        // matching `Buffer::text_for_range` in the buffer-backed path.
+        let (start, end) = resolve_line_range(start_line, end_line);
+        let lines: Vec<&str> = content.split_inclusive('\n').collect();
+        let start_idx = (start as usize).saturating_sub(1).min(lines.len());
+        let end_idx = (end as usize).min(lines.len()).max(start_idx);
+        (lines[start_idx..end_idx].concat(), start)
+    } else {
+        (content, 1)
+    };
+
+    let result_text = format_with_line_numbers(&raw_text, first_line_number);
+
+    let markdown = MarkdownCodeBlock {
+        tag: requested_path,
+        text: &result_text,
+    }
+    .to_string();
+    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+        acp::ToolCallContent::Content(acp::Content::new(markdown)),
+    ]));
+
+    Ok(result_text.into())
+}
+
 use super::tool_permissions::{
     ResolvedProjectPath, authorize_symlink_access, canonicalize_worktree_roots,
-    resolve_project_path,
+    resolve_global_skill_path, resolve_project_path,
 };
 use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 
@@ -126,6 +250,25 @@ impl AgentTool for ReadFileTool {
                 .await
                 .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
+
+            // Fast path: if the model passes an absolute path that resolves
+            // under the global skills directory, read it directly via the
+            // filesystem. Global skills live outside any worktree, so the
+            // standard project-path machinery would refuse them.
+            if let Some(skill_path) =
+                resolve_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                return read_global_skill_file(
+                    &skill_path,
+                    fs.as_ref(),
+                    input.start_line,
+                    input.end_line,
+                    &input.path,
+                    &event_stream,
+                )
+                .await;
+            }
+
             let canonical_roots = canonicalize_worktree_roots(&project, &fs, cx).await;
 
             let (project_path, symlink_canonical_target) =
@@ -264,32 +407,42 @@ impl AgentTool for ReadFileTool {
             }
 
             let mut anchor = None;
+            let mut is_outline_response = false;
 
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
-                let result = buffer.read_with(cx, |buffer, _cx| {
-                    // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
-                    let start = input.start_line.unwrap_or(1).max(1);
+                let result_text = buffer.read_with(cx, |buffer, _cx| {
+                    let (start, end) = resolve_line_range(input.start_line, input.end_line);
                     let start_row = start - 1;
                     if start_row <= buffer.max_point().row {
                         let column = buffer.line_indent_for_row(start_row).raw_len();
                         anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
                     }
 
-                    let mut end_row = input.end_line.unwrap_or(u32::MAX);
-                    if end_row <= start_row {
-                        end_row = start_row + 1; // read at least one lines
-                    }
-                    let start = buffer.anchor_before(Point::new(start_row, 0));
-                    let end = buffer.anchor_before(Point::new(end_row, 0));
-                    buffer.text_for_range(start..end).collect::<String>()
+                    // `end` is 1-indexed inclusive; `Point` rows are 0-indexed.
+                    // Using `end` directly as the (exclusive) end row is the
+                    // standard inclusive→exclusive translation, and since
+                    // `resolve_line_range` guarantees `end >= start`, we always
+                    // read at least one line.
+                    let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
+                    let end_anchor = buffer.anchor_before(Point::new(end, 0));
+                    // Stream the numbered output directly from the buffer's
+                    // chunk iterator so the unnumbered range is never
+                    // materialized as its own `String`.
+                    let mut output = String::new();
+                    write_lines_numbered(
+                        &mut output,
+                        buffer.text_for_range(start_anchor..end_anchor),
+                        start,
+                    );
+                    output
                 });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                Ok(result.into())
+                Ok(result_text.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
@@ -303,7 +456,10 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                if buffer_content.is_outline {
+
+                is_outline_response = buffer_content.is_synthetic;
+
+                if buffer_content.is_synthetic {
                     Ok(formatdoc! {"
                         SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
 
@@ -317,7 +473,7 @@ impl AgentTool for ReadFileTool {
                     }
                     .into())
                 } else {
-                    Ok(buffer_content.text.into())
+                    Ok(format_with_line_numbers(&buffer_content.text, 1).into())
                 }
             };
 
@@ -335,11 +491,12 @@ impl AgentTool for ReadFileTool {
                 }
                 if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
                     let text: &str = text;
-                    let markdown = MarkdownCodeBlock {
-                        tag: &input.path,
-                        text,
-                    }
-                    .to_string();
+                    // For outline responses, omit the path tag so the markdown renderer
+                    // does not invoke tree-sitter syntax highlighting against pseudo-code
+                    // outline text. The outline is not valid source for the file's language,
+                    // so highlighting would be both expensive and incorrect.
+                    let tag: &str = if is_outline_response { "" } else { &input.path };
+                    let markdown = MarkdownCodeBlock { tag, text }.to_string();
                     event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
                         acp::ToolCallContent::Content(acp::Content::new(markdown)),
                     ]));
@@ -348,6 +505,27 @@ impl AgentTool for ReadFileTool {
 
             result
         })
+    }
+
+    fn replay(
+        &self,
+        input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        if let LanguageModelToolResultContent::Text(text) = output {
+            let markdown = MarkdownCodeBlock {
+                tag: &input.path,
+                text: &text,
+            }
+            .to_string();
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(markdown)),
+            ]));
+        }
+
+        Ok(())
     }
 }
 
@@ -452,7 +630,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content".into());
+        assert_eq!(
+            result.unwrap(),
+            "     1\tThis is a small file content".into()
+        );
     }
 
     #[gpui::test]
@@ -536,6 +717,172 @@ mod test {
         );
     }
 
+    // The outline returned for a large file is not valid source for the file's
+    // language, so the UI-side markdown wrapping must omit the path tag.
+    // Otherwise the markdown renderer routes the fenced block through
+    // `CodeBlockKind::FencedSrc`, resolves the file's language, and runs
+    // tree-sitter against pseudo-code outline text on every paint.
+    #[gpui::test]
+    async fn test_outline_response_uses_untagged_code_block(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "large_file.rs": (0..1000).map(|i| format!("struct Test{} {{\n    a: u32,\n    b: usize,\n}}", i)).collect::<Vec<_>>().join("\n")
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(language::rust_lang());
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, mut rx) = ToolCallEventStream::test();
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "root/large_file.rs".into(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.clone()
+                    .run(ToolInput::resolved(input), event_stream, cx)
+            })
+            .await
+            .unwrap();
+
+        // Sanity-check: the file is large enough to trigger the outline branch.
+        assert!(
+            result
+                .to_str()
+                .unwrap()
+                .starts_with("SUCCESS: File outline retrieved."),
+            "expected outline response, got: {:?}",
+            result.to_str().unwrap()
+        );
+
+        // The first update carries the location; the second carries the
+        // markdown content destined for the tool-call UI.
+        let _location_update = rx.expect_update_fields().await;
+        let content_update = rx.expect_update_fields().await;
+        let content_blocks = content_update.content.expect("expected content update");
+        let acp::ToolCallContent::Content(content) = content_blocks
+            .first()
+            .expect("expected at least one content block")
+        else {
+            panic!("expected ContentBlock, got {:?}", content_blocks.first());
+        };
+        let acp::ContentBlock::Text(text) = &content.content else {
+            panic!("expected text content block, got {:?}", content.content);
+        };
+
+        assert!(
+            text.text.starts_with("```\n"),
+            "outline response must use an untagged fenced code block; got first line: {:?}",
+            text.text.lines().next()
+        );
+        assert!(
+            !text.text.starts_with("```root/"),
+            "outline response must not include the file path as a code block tag"
+        );
+    }
+
+    // The full-file (non-outline) response should still tag the code block
+    // with the file path so the markdown renderer can resolve the file's
+    // language for syntax highlighting.
+    #[gpui::test]
+    async fn test_full_file_response_keeps_path_tag(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "small_file.rs": "fn main() {}"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+        let (event_stream, mut rx) = ToolCallEventStream::test();
+
+        cx.update(|cx| {
+            let input = ReadFileToolInput {
+                path: "root/small_file.rs".into(),
+                start_line: None,
+                end_line: None,
+            };
+            tool.clone()
+                .run(ToolInput::resolved(input), event_stream, cx)
+        })
+        .await
+        .unwrap();
+
+        let _location_update = rx.expect_update_fields().await;
+        let content_update = rx.expect_update_fields().await;
+        let content_blocks = content_update.content.expect("expected content update");
+        let acp::ToolCallContent::Content(content) = content_blocks
+            .first()
+            .expect("expected at least one content block")
+        else {
+            panic!("expected ContentBlock, got {:?}", content_blocks.first());
+        };
+        let acp::ContentBlock::Text(text) = &content.content else {
+            panic!("expected text content block, got {:?}", content.content);
+        };
+
+        assert!(
+            text.text.starts_with("```root/small_file.rs\n"),
+            "full-file response must tag the code block with the file path; got first line: {:?}",
+            text.text.lines().next()
+        );
+    }
+
+    // When a worktree is named "foo" and contains a subdirectory also named "foo",
+    // read_file({"path": "foo/test.txt"}) should return the file at the worktree
+    // root (as the tool schema promises), not the one inside the foo/ subdirectory.
+    #[gpui::test]
+    async fn test_read_file_worktree_root_not_shadowed_by_subdir(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/foo"),
+            json!({
+                "test.txt": "root content",
+                "foo": {
+                    "test.txt": "subdir content"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/foo").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        // The tool schema says the first component must be the worktree root name,
+        // so "foo/test.txt" means test.txt at the root of the "foo" worktree.
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: "foo/test.txt".into(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+        assert_eq!(result.unwrap(), "     1\troot content".into());
+    }
+
     #[gpui::test]
     async fn test_read_file_with_line_range(cx: &mut TestAppContext) {
         init_test(cx);
@@ -566,7 +913,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
+        assert_eq!(
+            result.unwrap(),
+            "     2\tLine 2\n     3\tLine 3\n     4\tLine 4\n".into()
+        );
     }
 
     #[gpui::test]
@@ -600,7 +950,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n     2\tLine 2\n".into());
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -617,7 +967,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n".into());
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -634,7 +984,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3\n".into());
+        assert_eq!(result.unwrap(), "     3\tLine 3\n".into());
     }
 
     fn error_text(content: LanguageModelToolResultContent) -> String {
@@ -868,7 +1218,7 @@ mod test {
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
-        assert_eq!(result.unwrap(), "Normal file content".into());
+        assert_eq!(result.unwrap(), "     1\tNormal file content".into());
 
         // Path traversal attempts with .. should fail
         let result = cx
@@ -1038,7 +1388,7 @@ mod test {
 
         assert_eq!(
             result,
-            "fn main() { println!(\"Hello from worktree1\"); }".into()
+            "     1\tfn main() { println!(\"Hello from worktree1\"); }".into()
         );
 
         // Test reading private file in worktree1 should fail
@@ -1104,7 +1454,7 @@ mod test {
 
         assert_eq!(
             result,
-            "export function greet() { return 'Hello from worktree2'; }".into()
+            "     1\texport function greet() { return 'Hello from worktree2'; }".into()
         );
 
         // Test reading private file in worktree2 should fail
@@ -1363,6 +1713,325 @@ mod test {
                 Ok(Ok(crate::thread::ThreadEvent::ToolCallAuthorization(_)))
             ),
             "No authorization should be requested when validation fails before read",
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Set up a project that does NOT contain the skills tree, plus a
+        // global skill file outside the worktree.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("spec.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(&skill_md_path, b"# Spec\n\nReference body.".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let content = result.unwrap();
+        let LanguageModelToolResultContent::Text(text) = content else {
+            panic!("expected text content");
+        };
+        assert_eq!(
+            text.as_ref(),
+            "     1\t# Spec\n     2\t\n     3\tReference body."
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_with_line_range(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"line one\nline two\nline three\nline four\n".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(2),
+                    end_line: Some(3),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        // Mirrors the buffer-backed path: lines 2-3 inclusive, WITH trailing
+        // newline of the last returned line.
+        assert_eq!(text.as_ref(), "     2\tline two\n     3\tline three\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_zero_start(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(0),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "     1\tLine 1\n     2\tLine 2\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_zero_end(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(1),
+                    end_line: Some(0),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "     1\tLine 1\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_inverted(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"Line 1\nLine 2\nLine 3\nLine 4\nLine 5".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(3),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "     3\tLine 3\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_global_skill_file_line_range_crlf(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+
+        let skill_md_path = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("references")
+            .join("long.md");
+        fs.create_dir(skill_md_path.parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            &skill_md_path,
+            b"line one\r\nline two\r\nline three\r\n".to_vec(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: skill_md_path.to_string_lossy().into_owned(),
+                    start_line: Some(1),
+                    end_line: Some(2),
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
+            panic!("expected text content");
+        };
+        assert_eq!(text.as_ref(), "     1\tline one\r\n     2\tline two\r\n");
+    }
+
+    #[gpui::test]
+    async fn test_read_outside_skills_dir_still_rejected(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // A path that's neither in the worktree nor under the global skills
+        // dir should still fail — the fast path is gated, not a backdoor for
+        // arbitrary external reads.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        fs.create_dir(path!("/etc").as_ref()).await.unwrap();
+        fs.insert_file(path!("/etc/secret"), b"top secret".to_vec())
+            .await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let tool = Arc::new(ReadFileTool::new(project, action_log, true));
+
+        let result = cx
+            .update(|cx| {
+                let input = ReadFileToolInput {
+                    path: path!("/etc/secret").to_string(),
+                    start_line: None,
+                    end_line: None,
+                };
+                tool.run(
+                    ToolInput::resolved(input),
+                    ToolCallEventStream::test().0,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "path outside skills dir should be rejected"
         );
     }
 }
