@@ -1334,7 +1334,7 @@ mod tests {
     use std::env;
     use util::{RandomCharIter, path};
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
