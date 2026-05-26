@@ -353,22 +353,14 @@ pub(crate) struct EditSession {
     _finalize_diff_guard: Deferred<Box<dyn FnOnce()>>,
 }
 
-enum EditSessionTarget {
-    Project {
-        project_path: ProjectPath,
-        abs_path: PathBuf,
-    },
-    GlobalSkill {
-        abs_path: PathBuf,
-    },
-}
-
-impl EditSessionTarget {
-    fn abs_path(&self) -> &PathBuf {
-        match self {
-            Self::Project { abs_path, .. } | Self::GlobalSkill { abs_path } => abs_path,
-        }
-    }
+/// The destination of an edit session, identified by its absolute path on
+/// disk. `project_path` is `Some` for files that live inside one of the
+/// project's worktrees (i.e. that the standard project-path machinery can
+/// resolve), and `None` for global skill files reached through the
+/// `~/.agents/skills` allowlist.
+struct EditSessionTarget {
+    abs_path: PathBuf,
+    project_path: Option<ProjectPath>,
 }
 
 enum Pipeline {
@@ -661,7 +653,10 @@ impl EditSession {
         let target = if let Some(abs_path) =
             resolve_global_skill_path_for_edit_session(mode, &path, &context, cx).await?
         {
-            EditSessionTarget::GlobalSkill { abs_path }
+            EditSessionTarget {
+                abs_path,
+                project_path: None,
+            }
         } else {
             let project_path = cx.update(|cx| resolve_path(mode, &path, &context.project, cx))?;
 
@@ -674,12 +669,15 @@ impl EditSession {
                 ));
             };
 
-            EditSessionTarget::Project {
-                project_path,
+            EditSessionTarget {
                 abs_path,
+                project_path: Some(project_path),
             }
         };
-        let abs_path = target.abs_path().clone();
+        let EditSessionTarget {
+            abs_path,
+            project_path,
+        } = target;
 
         event_stream.update_fields(
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
@@ -689,15 +687,17 @@ impl EditSession {
             .await
             .map_err(|e| e.to_string())?;
 
-        let buffer = match target {
-            EditSessionTarget::Project { project_path, .. } => context
+        let buffer = match project_path {
+            Some(project_path) => context
                 .project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))
                 .await
                 .map_err(|e| e.to_string())?,
-            EditSessionTarget::GlobalSkill { abs_path } => context
+            None => context
                 .project
-                .update(cx, |project, cx| project.open_local_buffer(abs_path, cx))
+                .update(cx, |project, cx| {
+                    project.open_local_buffer(abs_path.clone(), cx)
+                })
                 .await
                 .map_err(|e| e.to_string())?,
         };
