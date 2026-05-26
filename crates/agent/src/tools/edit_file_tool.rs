@@ -37,7 +37,7 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
