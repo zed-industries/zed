@@ -51,8 +51,28 @@ impl Vim {
             self.create_mark("^".into(), window, cx);
 
             if HelixModeSetting::get_global(cx).0 {
+                let append_insert = self.helix_append_insert.take();
+                let no_insert_transaction =
+                    self.current_tx.is_none() && self.current_anchor.is_none();
+                let restore_append_selection =
+                    no_insert_transaction.then_some(append_insert).flatten();
                 self.update_editor(cx, |_, editor, cx| {
                     editor.dismiss_menus_and_popups(false, window, cx);
+                    if let Some(append_insert) = restore_append_selection {
+                        let snapshot = editor.display_snapshot(cx);
+                        let current = editor
+                            .selections
+                            .all_anchors(&snapshot)
+                            .iter()
+                            .map(|selection| selection.range())
+                            .collect::<Vec<_>>();
+
+                        if current == append_insert.inserted {
+                            editor.change_selections(Default::default(), window, cx, |s| {
+                                s.select_anchor_ranges(append_insert.original);
+                            });
+                        }
+                    }
                 });
                 self.switch_mode(Mode::HelixNormal, false, window, cx);
                 return;
