@@ -7,14 +7,14 @@ use gpui::{Entity, SharedString, Task};
 use language_model::LanguageModelProviderId;
 use project::{AgentId, Project};
 use serde::{Deserialize, Serialize};
-use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::Any, error::Error, fmt, path::PathBuf, rc::Rc};
 use task::{HideStrategy, SpawnInTerminal, TaskId};
 use ui::{App, IconName};
 use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct UserMessageId(Arc<str>);
+pub struct UserMessageId(SharedString);
 
 impl UserMessageId {
     pub fn new() -> Self {
