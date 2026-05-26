@@ -1844,10 +1844,10 @@ impl NativeAgentConnection {
                         match event {
                             ThreadEvent::UserMessage(message) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in message.content {
+                                    for content in &*message.content {
                                         thread.push_user_content_block(
                                             Some(message.id.clone()),
-                                            content.into(),
+                                            content.clone().into(),
                                             cx,
                                         );
                                     }
