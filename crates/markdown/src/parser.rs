@@ -887,7 +887,6 @@ fn mask_raw_pipes_in_inline_code_spans(
 ) {
     let bytes = line.as_bytes();
     let mut index = 0;
-    let mut code_span_ticks = None;
 
     while index < bytes.len() {
         if bytes[index] == b'`' && !is_backslash_escaped(bytes, index) {
@@ -895,28 +894,57 @@ fn mask_raw_pipes_in_inline_code_spans(
                 .iter()
                 .take_while(|byte| **byte == b'`')
                 .count();
-            match code_span_ticks {
-                Some(opening_ticks) if opening_ticks == tick_count => {
-                    code_span_ticks = None;
-                }
-                None => {
-                    code_span_ticks = Some(tick_count);
-                }
-                _ => {}
+            let content_start = index + tick_count;
+            if let Some(content_end) = find_closing_code_span(bytes, content_start, tick_count) {
+                mask_raw_pipes_in_range(
+                    original,
+                    bytes,
+                    line_start,
+                    content_start..content_end,
+                    masked,
+                );
+                index = content_end + tick_count;
+            } else {
+                index = content_start;
+            }
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn find_closing_code_span(bytes: &[u8], mut index: usize, opening_ticks: usize) -> Option<usize> {
+    while index < bytes.len() {
+        if bytes[index] == b'`' && !is_backslash_escaped(bytes, index) {
+            let tick_count = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            if tick_count == opening_ticks {
+                return Some(index);
             }
             index += tick_count;
         } else {
-            if code_span_ticks.is_some()
-                && bytes[index] == b'|'
-                && !is_backslash_escaped(bytes, index)
-            {
-                let masked = masked.get_or_insert_with(|| original.to_owned());
-                masked.replace_range(
-                    line_start + index..line_start + index + 1,
-                    MASKED_RAW_PIPE_IN_CODE,
-                );
-            }
             index += 1;
+        }
+    }
+    None
+}
+
+fn mask_raw_pipes_in_range(
+    original: &str,
+    line_bytes: &[u8],
+    line_start: usize,
+    range: Range<usize>,
+    masked: &mut Option<String>,
+) {
+    for index in range {
+        if line_bytes[index] == b'|' && !is_backslash_escaped(line_bytes, index) {
+            let masked = masked.get_or_insert_with(|| original.to_owned());
+            masked.replace_range(
+                line_start + index..line_start + index + 1,
+                MASKED_RAW_PIPE_IN_CODE,
+            );
         }
     }
 }
@@ -1300,36 +1328,7 @@ mod tests {
         assert_eq!(extract_code_content_range(input), 0..13);
     }
 
-    #[test]
-    fn test_inline_code_substitutes_escaped_pipes() {
-        let markdown = r"| Pattern |
-| --- |
-| `a\|b` |";
-        let parsed = parse_markdown_with_options(markdown, false, false);
-        let code_range = {
-            let start = markdown.find(r"a\|b").expect("inline code source");
-            start..start + r"a\|b".len()
-        };
-
-        assert!(
-            parsed
-                .events
-                .iter()
-                .any(|(range, event)| range == &code_range
-                    && event == &SubstitutedCode("a|b".into())),
-            "expected escaped pipe in table inline code to render as decoded inline code: {:?}",
-            parsed.events
-        );
-    }
-
-    #[test]
-    fn test_inline_code_preserves_raw_pipes_in_tables() {
-        let markdown = r"| Pattern | Meaning |
-| --- | --- |
-| ``^echo(\s|$)`` | command pattern |
-| `a|b` | alternation |
-| `(a|b)` | grouped alternation |
-| `a||b` | empty middle alternative |";
+    fn table_rows(markdown: &str) -> Vec<Vec<String>> {
         let parsed = parse_markdown_with_options(markdown, false, false);
         let mut rows = Vec::new();
         let mut current_row: Option<Vec<String>> = None;
@@ -1367,14 +1366,63 @@ mod tests {
             }
         }
 
+        rows
+    }
+
+    #[test]
+    fn test_inline_code_substitutes_escaped_pipes() {
+        let markdown = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+        let code_range = {
+            let start = markdown.find(r"a\|b").expect("inline code source");
+            start..start + r"a\|b".len()
+        };
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &code_range
+                    && event == &SubstitutedCode("a|b".into())),
+            "expected escaped pipe in table inline code to render as decoded inline code: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
+    fn test_inline_code_preserves_raw_pipes_in_tables() {
+        let markdown = r"| Pattern | Meaning |
+| --- | --- |
+| ``^echo(\s|$)`` | command pattern |
+| `a|b` | alternation |
+| `(a|b)` | grouped alternation |
+| `a||b` | empty middle alternative |";
+
         assert_eq!(
-            rows,
+            table_rows(markdown),
             vec![
                 vec!["Pattern".to_string(), "Meaning".to_string()],
                 vec!["^echo(\\s|$)".to_string(), "command pattern".to_string()],
                 vec!["a|b".to_string(), "alternation".to_string()],
                 vec!["(a|b)".to_string(), "grouped alternation".to_string()],
                 vec!["a||b".to_string(), "empty middle alternative".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unclosed_inline_code_does_not_mask_table_pipes() {
+        let markdown = r"| Pattern | Meaning |
+| --- | --- |
+| `a|b | broken |";
+
+        assert_eq!(
+            table_rows(markdown),
+            vec![
+                vec!["Pattern".to_string(), "Meaning".to_string()],
+                vec!["`a".to_string(), "b".to_string()],
             ]
         );
     }
