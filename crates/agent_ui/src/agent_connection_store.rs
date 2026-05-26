@@ -240,7 +240,7 @@ impl AgentConnectionStore {
         .detach();
 
         cx.spawn({
-            let key = key.clone();
+            let key = key;
             let entry = entry.downgrade();
             async move |this, cx| {
                 while let Ok(status) = loading_status_rx.recv().await {
@@ -254,9 +254,7 @@ impl AgentConnectionStore {
 
                         entry
                             .update(cx, move |_entry, cx| {
-                                cx.emit(AgentConnectionEntryEvent::LoadingStatusChanged(
-                                    status.clone(),
-                                ));
+                                cx.emit(AgentConnectionEntryEvent::LoadingStatusChanged(status));
                             })
                             .ok();
                         cx.notify();
