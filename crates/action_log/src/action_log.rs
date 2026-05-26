@@ -274,7 +274,6 @@ impl ActionLog {
         mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let git_store = this.read_with(cx, |this, cx| this.project.read(cx).git_store().clone())?;
         let git_diff = this
             .update(cx, |this, cx| {
                 this.project.update(cx, |project, cx| {
@@ -283,28 +282,18 @@ impl ActionLog {
             })?
             .await
             .ok();
-        let buffer_repo = git_store.read_with(cx, |git_store, cx| {
-            git_store.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        });
-
         let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
-        let _repo_subscription =
-            if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
-                cx.update(|cx| {
-                    let mut old_head = buffer_repo.read(cx).head_commit.clone();
-                    Some(cx.subscribe(git_diff, move |_, event, cx| {
-                        if let buffer_diff::BufferDiffEvent::DiffChanged { .. } = event {
-                            let new_head = buffer_repo.read(cx).head_commit.clone();
-                            if new_head != old_head {
-                                old_head = new_head;
-                                git_diff_updates_tx.send(()).ok();
-                            }
-                        }
-                    }))
-                })
-            } else {
-                None
-            };
+        let _diff_subscription = if let Some(git_diff) = git_diff.as_ref() {
+            cx.update(|cx| {
+                Some(cx.subscribe(git_diff, move |_, event, _cx| {
+                    if matches!(event, buffer_diff::BufferDiffEvent::BaseTextChanged) {
+                        git_diff_updates_tx.send(()).ok();
+                    }
+                }))
+            })
+        } else {
+            None
+        };
 
         loop {
             futures::select_biased! {
@@ -398,6 +387,11 @@ impl ActionLog {
                 let git_diff_base = git_diff.read(cx).base_text(cx).as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
+                    if buffer_text.len() == git_diff_base.len()
+                        && buffer_text.chars_at(0).eq(git_diff_base.chars_at(0))
+                    {
+                        return (Arc::<str>::from(git_diff_base.to_string()), git_diff_base);
+                    }
                     let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
                     let committed_edits = language::line_diff(
                         &agent_diff_base.to_string(),
@@ -777,7 +771,7 @@ impl ActionLog {
                         initial_version == current_version && current_content == tracked_content;
 
                     if is_ai_only_content {
-                        buffer
+                        let task = buffer
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
@@ -785,7 +779,12 @@ impl ActionLog {
                                     project.delete_entry(entry_id, false, cx)
                                 })
                             })
-                            .unwrap_or(Task::ready(Ok(())))
+                            .unwrap_or_else(|| Task::ready(Ok(None)));
+
+                        cx.background_spawn(async move {
+                            task.await?;
+                            Ok(())
+                        })
                     } else {
                         // Not sure how to disentangle edits made by the user
                         // from edits made by the AI at this point.
@@ -1326,6 +1325,7 @@ mod tests {
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
+    use indoc::indoc;
     use language::Point;
     use project::{FakeFs, Fs, Project, RemoveOptions};
     use rand::prelude::*;
@@ -2707,6 +2707,188 @@ mod tests {
         );
         cx.run_until_parked();
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test]
+    async fn test_keep_edits_on_commit_with_shifted_diff_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let initial_text = indoc! {"
+            use crate::{Alpha, Beta};
+
+            fn keep() {
+                work();
+            }
+
+            fn remove() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.rs": initial_text,
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", initial_text.into())],
+            "0000000",
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.rs"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        let final_text = indoc! {"
+            use crate::{Alpha};
+
+            fn keep() {
+                work();
+            }
+
+            fn after() {
+                work();
+            }
+        "};
+
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_text(final_text, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert!(!unreviewed_hunks(&action_log, cx).is_empty());
+
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.rs", final_text.into())],
+            "0000001",
+        );
+        cx.run_until_parked();
+
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    /// Regression test: when head_commit updates before the BufferDiff's base
+    /// text does, an intermediate DiffChanged (e.g. from a buffer-edit diff
+    /// recalculation) must NOT consume the commit signal.  The subscription
+    /// should only fire once the base text itself has changed.
+    #[gpui::test]
+    async fn test_keep_edits_on_commit_with_stale_diff_changed(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "aaa\nbbb\nccc\nddd\neee",
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt", "aaa\nbbb\nccc\nddd\neee".into())],
+            "0000000",
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path(path!("/project/file.txt"), cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Agent makes an edit: bbb -> BBB
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(Point::new(1, 0)..Point::new(1, 3), "BBB")], None, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Verify the edit is tracked
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(hunks.len(), 1);
+        let hunk = &hunks[0].1;
+        assert_eq!(hunk.len(), 1);
+        assert_eq!(hunk[0].old_text, "bbb\n");
+
+        // Simulate the race condition: update only the HEAD SHA first,
+        // without changing the committed file contents. This is analogous
+        // to compute_snapshot updating head_commit before
+        // reload_buffer_diff_bases has loaded the new base text.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.refs.insert("HEAD".into(), "0000001".into());
+        })
+        .unwrap();
+        cx.run_until_parked();
+
+        // Make a user edit (on a different line) to trigger a buffer diff
+        // recalculation.  This fires DiffChanged while the BufferDiff base
+        // text is still the OLD text.  With the old head_commit-based
+        // subscription this would "consume" the commit detection.
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(Point::new(3, 0)..Point::new(3, 3), "DDD")], None, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Now update the committed file contents to match the buffer
+        // (the agent edit was committed). Keep the same SHA so head_commit
+        // does NOT change again — this is the second half of the race.
+        {
+            use git::repository::repo_path;
+            fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+                state
+                    .head_contents
+                    .insert(repo_path("file.txt"), "aaa\nBBB\nccc\nDDD\neee".into());
+            })
+            .unwrap();
+        }
+        cx.run_until_parked();
+
+        // The agent's edit (bbb -> BBB) should be accepted because the
+        // committed content now matches. Only the user edit (ddd -> DDD)
+        // should remain, but since the user edit is tracked as coming from
+        // the user (ChangeAuthor::User) it would have been rebased into
+        // the diff base already. So no unreviewed hunks should remain.
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![],
+            "agent edits should have been accepted after the base text update"
+        );
     }
 
     #[gpui::test]

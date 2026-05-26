@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use futures::AsyncReadExt as _;
 use gpui::{
-    App, SharedString,
+    App, SharedString, TaskExt,
     http_client::{self, HttpClient},
 };
 use language::language_settings::OpenAiCompatibleEditPredictionSettings;
@@ -57,7 +57,7 @@ pub fn fetch_models(cx: &mut App) -> Vec<SharedString> {
     let mut models: Vec<SharedString> = provider
         .provided_models(cx)
         .into_iter()
-        .map(|model| SharedString::from(model.id().0.to_string()))
+        .map(|model| model.id().0)
         .collect();
     models.sort();
     models

@@ -31,6 +31,7 @@ You can assign distinct and specific models for the following AI-powered feature
 - Thread summary model: Used for generating thread summaries
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
+- Subagent model: Used for subagents spawned by the Agent Panel. If not set, the subagent will inherit the model settings from the parent thread.
 
 ```json [settings]
 {
@@ -50,6 +51,10 @@ You can assign distinct and specific models for the following AI-powered feature
     "thread_summary_model": {
       "provider": "google",
       "model": "gemini-2.0-flash"
+    },
+    "subagent_model": {
+      "provider": "zed.dev",
+      "model": "gpt-5-mini"
     }
   }
 }
@@ -138,7 +143,7 @@ Specify a custom temperature for a provider and/or model:
 
 ## Agent Panel Settings {#agent-panel-settings}
 
-Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
+Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the {#action agent::OpenSettings} action or by the dropdown menu on the top-right corner of the panel.
 
 ### Font Size
 

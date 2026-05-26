@@ -10,6 +10,7 @@ pub struct UpdateButton {
     icon_color: Option<Color>,
     message: SharedString,
     tooltip: Option<SharedString>,
+    disabled: bool,
     show_dismiss: bool,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_dismiss: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
@@ -23,6 +24,7 @@ impl UpdateButton {
             icon_color: None,
             message: message.into(),
             tooltip: None,
+            disabled: false,
             show_dismiss: false,
             on_click: None,
             on_dismiss: None,
@@ -71,18 +73,28 @@ impl UpdateButton {
         self
     }
 
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     pub fn checking() -> Self {
-        Self::new(IconName::ArrowCircle, "Checking for Zed updates…").icon_animate(true)
+        Self::new(IconName::LoadCircle, "Checking for Zed Updates…")
+            .icon_animate(true)
+            .disabled(true)
     }
 
     pub fn downloading(version: impl Into<SharedString>) -> Self {
-        Self::new(IconName::Download, "Downloading Zed update…").tooltip(version)
+        Self::new(IconName::Download, "Downloading Zed Update…")
+            .tooltip(version)
+            .disabled(true)
     }
 
     pub fn installing(version: impl Into<SharedString>) -> Self {
-        Self::new(IconName::ArrowCircle, "Installing Zed update…")
+        Self::new(IconName::LoadCircle, "Installing Zed Update…")
             .icon_animate(true)
             .tooltip(version)
+            .disabled(true)
     }
 
     pub fn updated(version: impl Into<SharedString>) -> Self {
@@ -92,7 +104,7 @@ impl UpdateButton {
     }
 
     pub fn errored(error: impl Into<SharedString>) -> Self {
-        Self::new(IconName::Warning, "Failed to update Zed")
+        Self::new(IconName::Warning, "Failed to Update")
             .icon_color(Color::Warning)
             .tooltip(error)
             .with_dismiss()
@@ -101,13 +113,17 @@ impl UpdateButton {
 
 impl RenderOnce for UpdateButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let border_color = cx.theme().colors().border;
+        let border_color = if self.disabled {
+            cx.theme().colors().border
+        } else {
+            cx.theme().colors().text.opacity(0.15)
+        };
 
         let icon = Icon::new(self.icon)
             .size(IconSize::XSmall)
             .when_some(self.icon_color, |this, color| this.color(color));
         let icon_element = if self.icon_animate {
-            icon.with_rotate_animation(3).into_any_element()
+            icon.with_rotate_animation(2).into_any_element()
         } else {
             icon.into_any_element()
         };
@@ -131,6 +147,7 @@ impl RenderOnce for UpdateButton {
                     .when_some(tooltip, |this, tooltip| {
                         this.tooltip(Tooltip::text(tooltip))
                     })
+                    .disabled(self.disabled)
                     .when_some(self.on_click, |this, handler| this.on_click(handler)),
             )
             .when(self.show_dismiss, |this| {
@@ -162,7 +179,7 @@ impl Component for UpdateButton {
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        let version = "1.99.0";
+        let version = "1.3.0+stable.2025051";
 
         Some(
             v_flex()

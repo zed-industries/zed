@@ -12,8 +12,8 @@ use editor::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
-    Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render,
+    Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
@@ -73,6 +73,7 @@ impl Console {
             editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
+            editor.set_show_bookmarks(false, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_line_numbers(false, cx);
@@ -84,6 +85,7 @@ impl Console {
             editor.set_show_indent_guides(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
             editor.set_use_modal_editing(false);
+            editor.disable_mouse_wheel_zoom();
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             editor
         });
@@ -384,7 +386,7 @@ impl Console {
                     })
                 },
             )
-            .anchor(Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -674,6 +676,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Custom,
                         insert_text_mode: None,
+                        group: None,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -785,6 +788,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,
+                        group: None,
                     }
                 })
                 .collect();

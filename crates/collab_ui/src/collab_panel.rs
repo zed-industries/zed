@@ -6,11 +6,12 @@ use crate::{CollaborationPanelSettings, channel_view::ChannelView};
 use anyhow::Context as _;
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
-use client::{ChannelId, Client, Contact, User, UserStore};
+use client::{ChannelId, Client, Contact, Notification, User, UserStore};
 use collections::{HashMap, HashSet};
 use contact_finder::ContactFinder;
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorStyle};
+use feature_flags::{AutoWatchFeatureFlag, FeatureFlagAppExt as _};
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
@@ -21,6 +22,7 @@ use gpui::{
 };
 
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
+use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::{Fs, Project};
 use rpc::{
     ErrorCode, ErrorExt,
@@ -29,19 +31,23 @@ use rpc::{
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
-use std::{mem, sync::Arc};
+use std::{mem, sync::Arc, time::Duration};
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{
-    Avatar, AvatarAvailabilityIndicator, ContextMenu, CopyButton, Facepile, HighlightedLabel,
-    IconButtonShape, Indicator, ListHeader, ListItem, Tab, Tooltip, prelude::*, tooltip_container,
+    Avatar, AvatarAvailabilityIndicator, CollabNotification, ContextMenu, CopyButton, Facepile,
+    HighlightedLabel, IconButtonShape, Indicator, ListHeader, ListItem, Tab, TintColor, Tooltip,
+    prelude::*, tooltip_container,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::{
-    CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes, OpenChannelNotesById,
-    ScreenShare, ShareProject, Workspace,
+    AutoWatch, CopyRoomId, Deafen, LeaveCall, MultiWorkspace, Mute, OpenChannelNotes,
+    OpenChannelNotesById, ScreenShare, ShareProject, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::{DetachAndPromptErr, NotifyResultExt},
+    notifications::{
+        DetachAndPromptErr, Notification as WorkspaceNotification, NotificationId, NotifyResultExt,
+        SuppressEvent,
+    },
 };
 
 const FILTER_OCCUPIED_CHANNELS_KEY: &str = "filter_occupied_channels";
@@ -87,6 +93,7 @@ struct ChannelMoveClipboard {
 }
 
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
+const TOAST_DURATION: Duration = Duration::from_secs(5);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -267,6 +274,9 @@ pub struct CollabPanel {
     collapsed_channels: Vec<ChannelId>,
     filter_occupied_channels: bool,
     workspace: WeakEntity<Workspace>,
+    notification_store: Entity<NotificationStore>,
+    current_notification_toast: Option<(u64, Task<()>)>,
+    mark_as_read_tasks: HashMap<u64, Task<anyhow::Result<()>>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -394,6 +404,9 @@ impl CollabPanel {
                 channel_editing_state: None,
                 selection: None,
                 channel_store: ChannelStore::global(cx),
+                notification_store: NotificationStore::global(cx),
+                current_notification_toast: None,
+                mark_as_read_tasks: HashMap::default(),
                 user_store: workspace.user_store().clone(),
                 project: workspace.project().clone(),
                 subscriptions: Vec::default(),
@@ -436,6 +449,11 @@ impl CollabPanel {
                         }
                     }
                 },
+            ));
+            this.subscriptions.push(cx.subscribe_in(
+                &this.notification_store,
+                window,
+                Self::on_notification_event,
             ));
 
             this
@@ -600,7 +618,7 @@ impl CollabPanel {
                         executor.clone(),
                     ));
                     if !matches.is_empty() {
-                        let user_id = user.id;
+                        let user_id = user.legacy_id;
                         self.entries.push(ListEntry::CallParticipant {
                             user,
                             peer_id: None,
@@ -630,7 +648,7 @@ impl CollabPanel {
                 self.match_candidates
                     .extend(room.remote_participants().values().map(|participant| {
                         StringMatchCandidate::new(
-                            participant.user.id as usize,
+                            participant.user.legacy_id as usize,
                             &participant.user.github_login,
                         )
                     }));
@@ -666,7 +684,7 @@ impl CollabPanel {
                         self.entries.push(ListEntry::ParticipantProject {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
-                            host_user_id: participant.user.id,
+                            host_user_id: participant.user.legacy_id,
                             is_last: projects.peek().is_none() && !participant.has_video_tracks(),
                         });
                     }
@@ -1006,7 +1024,9 @@ impl CollabPanel {
                             let contact = &contacts[mat.candidate_id];
                             self.entries.push(ListEntry::Contact {
                                 contact: contact.clone(),
-                                calling: active_call.pending_invites().contains(&contact.user.id),
+                                calling: active_call
+                                    .pending_invites()
+                                    .contains(&contact.user.legacy_id),
                             });
                         }
                     }
@@ -1104,9 +1124,13 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> ListItem {
-        let user_id = user.id;
-        let is_current_user =
-            self.user_store.read(cx).current_user().map(|user| user.id) == Some(user_id);
+        let user_id = user.legacy_id;
+        let is_current_user = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .map(|user| user.legacy_id)
+            == Some(user_id);
         let tooltip = format!("Follow {}", user.github_login);
 
         let is_call_admin = ActiveCall::global(cx).read(cx).room().is_some_and(|room| {
@@ -1181,7 +1205,7 @@ impl CollabPanel {
         .into();
 
         ListItem::new(project_id as usize)
-            .height(px(24.))
+            .height(rems_from_px(24.))
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
@@ -1222,7 +1246,7 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .height(px(24.))
+            .height(rems_from_px(24.))
             .toggle_state(is_selected)
             .start_slot(
                 h_flex()
@@ -1269,7 +1293,7 @@ impl CollabPanel {
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
 
         ListItem::new("channel-notes")
-            .height(px(24.))
+            .height(rems_from_px(24.))
             .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.open_channel_notes(channel_id, window, cx);
@@ -1632,7 +1656,7 @@ impl CollabPanel {
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, _, _| {
-            let user_id = contact.user.id;
+            let user_id = contact.user.legacy_id;
 
             if contact.online && !contact.busy {
                 let label = if in_room {
@@ -1655,7 +1679,7 @@ impl CollabPanel {
                 move |window, cx| {
                     this.update(cx, |this, cx| {
                         this.remove_contact(
-                            contact.user.id,
+                            contact.user.legacy_id,
                             &contact.user.github_login,
                             window,
                             cx,
@@ -1759,7 +1783,7 @@ impl CollabPanel {
                 },
                 ListEntry::Contact { contact, calling } => {
                     if contact.online && !contact.busy && !calling {
-                        self.call(contact.user.id, window, cx);
+                        self.call(contact.user.legacy_id, window, cx);
                     }
                 }
                 ListEntry::ParticipantProject {
@@ -1816,7 +1840,7 @@ impl CollabPanel {
                     }
                 }
                 ListEntry::IncomingRequest(user) => {
-                    self.respond_to_contact_request(user.id, true, window, cx)
+                    self.respond_to_contact_request(user.legacy_id, true, window, cx)
                 }
                 ListEntry::ChannelInvite(channel) => {
                     self.respond_to_channel_invite(channel.id, true, cx)
@@ -2432,7 +2456,7 @@ impl CollabPanel {
     }
 
     fn leave_channel(&self, channel_id: ChannelId, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.id) else {
+        let Some(user_id) = self.user_store.read(cx).current_user().map(|u| u.legacy_id) else {
             return;
         };
         let Some(channel) = self.channel_store.read(cx).channel_for_id(channel_id) else {
@@ -2603,6 +2627,18 @@ impl CollabPanel {
         cx.write_to_clipboard(item)
     }
 
+    fn render_disabled_by_organization(&mut self, _cx: &mut Context<Self>) -> Div {
+        v_flex()
+            .p_4()
+            .gap_4()
+            .size_full()
+            .text_center()
+            .justify_center()
+            .child(Label::new(
+                "Collaboration is disabled for this organization.",
+            ))
+    }
+
     fn render_signed_out(&mut self, cx: &mut Context<Self>) -> Div {
         let collab_blurb = "Work with your team in realtime with collaborative editing, voice, shared notes and more.";
 
@@ -2665,26 +2701,28 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let entry = &self.entries[ix];
+        let entry = self.entries[ix].clone();
 
         let is_selected = self.selection == Some(ix);
         match entry {
             ListEntry::Header(section) => {
-                let is_collapsed = self.collapsed_sections.contains(section);
-                self.render_header(*section, is_selected, is_collapsed, cx)
+                let is_collapsed = self.collapsed_sections.contains(&section);
+                self.render_header(section, is_selected, is_collapsed, cx)
                     .into_any_element()
             }
-            ListEntry::Contact { contact, calling } => self
-                .render_contact(contact, *calling, is_selected, cx)
-                .into_any_element(),
+            ListEntry::Contact { contact, calling } => {
+                self.mark_contact_request_accepted_notifications_read(contact.user.legacy_id, cx);
+                self.render_contact(&contact, calling, is_selected, cx)
+                    .into_any_element()
+            }
             ListEntry::ContactPlaceholder => self
                 .render_contact_placeholder(is_selected, cx)
                 .into_any_element(),
             ListEntry::IncomingRequest(user) => self
-                .render_contact_request(user, true, is_selected, cx)
+                .render_contact_request(&user, true, is_selected, cx)
                 .into_any_element(),
             ListEntry::OutgoingRequest(user) => self
-                .render_contact_request(user, false, is_selected, cx)
+                .render_contact_request(&user, false, is_selected, cx)
                 .into_any_element(),
             ListEntry::Channel {
                 channel,
@@ -2694,9 +2732,9 @@ impl CollabPanel {
                 ..
             } => self
                 .render_channel(
-                    channel,
-                    *depth,
-                    *has_children,
+                    &channel,
+                    depth,
+                    has_children,
                     is_selected,
                     ix,
                     string_match.as_ref(),
@@ -2704,10 +2742,10 @@ impl CollabPanel {
                 )
                 .into_any_element(),
             ListEntry::ChannelEditor { depth } => self
-                .render_channel_editor(*depth, window, cx)
+                .render_channel_editor(depth, window, cx)
                 .into_any_element(),
             ListEntry::ChannelInvite(channel) => self
-                .render_channel_invite(channel, is_selected, cx)
+                .render_channel_invite(&channel, is_selected, cx)
                 .into_any_element(),
             ListEntry::CallParticipant {
                 user,
@@ -2715,7 +2753,7 @@ impl CollabPanel {
                 is_pending,
                 role,
             } => self
-                .render_call_participant(user, *peer_id, *is_pending, *role, is_selected, cx)
+                .render_call_participant(&user, peer_id, is_pending, role, is_selected, cx)
                 .into_any_element(),
             ListEntry::ParticipantProject {
                 project_id,
@@ -2724,20 +2762,20 @@ impl CollabPanel {
                 is_last,
             } => self
                 .render_participant_project(
-                    *project_id,
-                    worktree_root_names,
-                    *host_user_id,
-                    *is_last,
+                    project_id,
+                    &worktree_root_names,
+                    host_user_id,
+                    is_last,
                     is_selected,
                     window,
                     cx,
                 )
                 .into_any_element(),
             ListEntry::ParticipantScreen { peer_id, is_last } => self
-                .render_participant_screen(*peer_id, *is_last, is_selected, window, cx)
+                .render_participant_screen(peer_id, is_last, is_selected, window, cx)
                 .into_any_element(),
             ListEntry::ChannelNotes { channel_id } => self
-                .render_channel_notes(*channel_id, is_selected, window, cx)
+                .render_channel_notes(channel_id, is_selected, window, cx)
                 .into_any_element(),
         }
     }
@@ -2846,11 +2884,11 @@ impl CollabPanel {
                         }
                     };
 
-                    Some(channel.name.as_ref())
+                    Some(channel.name.clone())
                 });
 
                 if let Some(name) = channel_name {
-                    SharedString::from(name.to_string())
+                    name
                 } else {
                     SharedString::from("Current Call")
                 }
@@ -2864,13 +2902,75 @@ impl CollabPanel {
             Section::Offline => SharedString::from("Offline"),
         };
 
+        let auto_watch_state = self
+            .workspace
+            .upgrade()
+            .map_or(AutoWatch::Off, |workspace| {
+                *workspace.read(cx).auto_watch_state()
+            });
+        let is_auto_watching = auto_watch_state.enabled();
+
         let button = match section {
-            Section::ActiveCall => channel_link.map(|channel_link| {
-                CopyButton::new("copy-channel-link", channel_link)
-                    .visible_on_hover("section-header")
-                    .tooltip_label("Copy Channel Link")
-                    .into_any_element()
-            }),
+            Section::ActiveCall => {
+                let has_auto_watch_flag = cx.has_flag::<AutoWatchFeatureFlag>();
+                let show_auto_watch = has_auto_watch_flag && is_auto_watching;
+                let show_copy = channel_link.is_some();
+
+                if show_auto_watch || show_copy {
+                    Some(
+                        h_flex()
+                            .when_some(channel_link, |this, channel_link| {
+                                this.child(
+                                    CopyButton::new("copy-channel-link", channel_link)
+                                        .visible_on_hover("section-header")
+                                        .tooltip_label("Copy Channel Link"),
+                                )
+                            })
+                            .when(has_auto_watch_flag, |this| {
+                                this.child(
+                                    IconButton::new(
+                                        "auto-watch-screens",
+                                        if is_auto_watching {
+                                            IconName::Eye
+                                        } else {
+                                            IconName::EyeOff
+                                        },
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .toggle_state(is_auto_watching)
+                                    .selected_style(match auto_watch_state {
+                                        AutoWatch::Paused => {
+                                            ButtonStyle::Tinted(TintColor::Warning)
+                                        }
+                                        _ => ButtonStyle::Tinted(TintColor::Accent),
+                                    })
+                                    .when(!is_auto_watching, |this| {
+                                        this.visible_on_hover("section-header")
+                                    })
+                                    .tooltip(Tooltip::text(match auto_watch_state {
+                                        AutoWatch::Paused => {
+                                            "Auto Watch Screens (paused while sharing)"
+                                        }
+                                        AutoWatch::Active { .. } => "Stop Auto Watching Screens",
+                                        AutoWatch::Off => "Auto Watch Screens",
+                                    }))
+                                    .on_click(cx.listener(
+                                        |this, _, window, cx| {
+                                            this.workspace
+                                                .update(cx, |workspace, cx| {
+                                                    workspace.toggle_auto_watch(window, cx)
+                                                })
+                                                .ok();
+                                        },
+                                    )),
+                                )
+                            })
+                            .into_any_element(),
+                    )
+                } else {
+                    None
+                }
+            }
             Section::Contacts => Some(
                 IconButton::new("add-contact", IconName::Plus)
                     .icon_size(IconSize::Small)
@@ -3028,7 +3128,7 @@ impl CollabPanel {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let github_login = user.github_login.clone();
-        let user_id = user.id;
+        let user_id = user.legacy_id;
         let is_response_pending = self.user_store.read(cx).is_contact_request_pending(user);
         let color = if is_response_pending {
             Color::Muted
@@ -3210,7 +3310,7 @@ impl CollabPanel {
             (IconName::Star, Color::Default, "Add to Favorites")
         };
 
-        let height = px(24.);
+        let height = rems_from_px(24.);
 
         h_flex()
             .id(ix)
@@ -3397,6 +3497,178 @@ impl CollabPanel {
             item.child(self.channel_name_editor.clone())
         }
     }
+
+    fn on_notification_event(
+        &mut self,
+        _: &Entity<NotificationStore>,
+        event: &NotificationEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            NotificationEvent::NewNotification { entry } => {
+                self.add_toast(entry, cx);
+                cx.notify();
+            }
+            NotificationEvent::NotificationRemoved { entry }
+            | NotificationEvent::NotificationRead { entry } => {
+                self.remove_toast(entry.id, cx);
+                cx.notify();
+            }
+            NotificationEvent::NotificationsUpdated { .. } => {
+                cx.notify();
+            }
+        }
+    }
+
+    fn present_notification(
+        &self,
+        entry: &NotificationEntry,
+        cx: &App,
+    ) -> Option<(Option<Arc<User>>, String)> {
+        let user_store = self.user_store.read(cx);
+        match &entry.notification {
+            Notification::ContactRequest { sender_id } => {
+                let requester = user_store.get_cached_user(*sender_id)?;
+                Some((
+                    Some(requester.clone()),
+                    format!("{} wants to add you as a contact", requester.github_login),
+                ))
+            }
+            Notification::ContactRequestAccepted { responder_id } => {
+                let responder = user_store.get_cached_user(*responder_id)?;
+                Some((
+                    Some(responder.clone()),
+                    format!("{} accepted your contact request", responder.github_login),
+                ))
+            }
+            Notification::ChannelInvitation {
+                channel_name,
+                inviter_id,
+                ..
+            } => {
+                let inviter = user_store.get_cached_user(*inviter_id)?;
+                Some((
+                    Some(inviter.clone()),
+                    format!(
+                        "{} invited you to join the #{channel_name} channel",
+                        inviter.github_login
+                    ),
+                ))
+            }
+        }
+    }
+
+    fn add_toast(&mut self, entry: &NotificationEntry, cx: &mut Context<Self>) {
+        let Some((actor, text)) = self.present_notification(entry, cx) else {
+            return;
+        };
+
+        let notification = entry.notification.clone();
+        let needs_response = matches!(
+            notification,
+            Notification::ContactRequest { .. } | Notification::ChannelInvitation { .. }
+        );
+
+        let notification_id = entry.id;
+
+        self.current_notification_toast = Some((
+            notification_id,
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(TOAST_DURATION).await;
+                this.update(cx, |this, cx| this.remove_toast(notification_id, cx))
+                    .ok();
+            }),
+        ));
+
+        let collab_panel = cx.entity().downgrade();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let id = NotificationId::unique::<CollabNotificationToast>();
+
+                workspace.dismiss_notification(&id, cx);
+                workspace.show_notification(id, cx, |cx| {
+                    let workspace = cx.entity().downgrade();
+                    cx.new(|cx| CollabNotificationToast {
+                        actor,
+                        text,
+                        notification: needs_response.then(|| notification),
+                        workspace,
+                        collab_panel: collab_panel.clone(),
+                        focus_handle: cx.focus_handle(),
+                    })
+                })
+            })
+            .ok();
+    }
+
+    fn mark_notification_read(&mut self, notification_id: u64, cx: &mut Context<Self>) {
+        let client = self.client.clone();
+        self.mark_as_read_tasks
+            .entry(notification_id)
+            .or_insert_with(|| {
+                cx.spawn(async move |this, cx| {
+                    let request_result = client
+                        .request(proto::MarkNotificationRead { notification_id })
+                        .await;
+
+                    this.update(cx, |this, _| {
+                        this.mark_as_read_tasks.remove(&notification_id);
+                    })?;
+
+                    request_result?;
+                    Ok(())
+                })
+            });
+    }
+
+    fn mark_contact_request_accepted_notifications_read(
+        &mut self,
+        contact_user_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let notification_ids = self.notification_store.read_with(cx, |store, _| {
+            (0..store.notification_count())
+                .filter_map(|index| {
+                    let entry = store.notification_at(index)?;
+                    if entry.is_read {
+                        return None;
+                    }
+
+                    match &entry.notification {
+                        Notification::ContactRequestAccepted { responder_id }
+                            if *responder_id == contact_user_id =>
+                        {
+                            Some(entry.id)
+                        }
+                        _ => None,
+                    }
+                })
+                .collect::<Vec<_>>()
+        });
+
+        for notification_id in notification_ids {
+            self.mark_notification_read(notification_id, cx);
+        }
+    }
+
+    fn remove_toast(&mut self, notification_id: u64, cx: &mut Context<Self>) {
+        if let Some((current_id, _)) = &self.current_notification_toast {
+            if *current_id == notification_id {
+                self.dismiss_toast(cx);
+            }
+        }
+    }
+
+    fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
+        self.current_notification_toast.take();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let id = NotificationId::unique::<CollabNotificationToast>();
+                workspace.dismiss_notification(&id, cx)
+            })
+            .ok();
+    }
 }
 
 fn render_tree_branch(
@@ -3454,6 +3726,12 @@ impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = *self.client.status().borrow();
 
+        let is_collaboration_disabled = self
+            .user_store
+            .read(cx)
+            .current_organization_configuration()
+            .is_some_and(|config| !config.is_collaboration_enabled);
+
         v_flex()
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
@@ -3473,7 +3751,9 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if !status.is_or_was_connected() || status.is_signing_in() {
+            .child(if is_collaboration_disabled {
+                self.render_disabled_by_organization(cx)
+            } else if !status.is_or_was_connected() || status.is_signing_in() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)
@@ -3482,7 +3762,7 @@ impl Render for CollabPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::Corner::TopLeft)
+                        .anchor(gpui::Anchor::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -3516,6 +3796,21 @@ impl Panel for CollabPanel {
         CollaborationPanelSettings::get_global(cx).default_width
     }
 
+    fn set_active(&mut self, active: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        if active && self.current_notification_toast.is_some() {
+            self.current_notification_toast.take();
+            let workspace = self.workspace.clone();
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        let id = NotificationId::unique::<CollabNotificationToast>();
+                        workspace.dismiss_notification(&id, cx)
+                    })
+                    .ok();
+            });
+        }
+    }
+
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
@@ -3541,6 +3836,12 @@ impl Panel for CollabPanel {
     fn activation_priority(&self) -> u32 {
         5
     }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.collaboration_panel.get_or_insert_default().button = Some(false);
+        }))
+    }
 }
 
 impl Focusable for CollabPanel {
@@ -3559,7 +3860,7 @@ impl PartialEq for ListEntry {
             }
             ListEntry::CallParticipant { user: user_1, .. } => {
                 if let ListEntry::CallParticipant { user: user_2, .. } = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::ParticipantProject {
@@ -3613,12 +3914,12 @@ impl PartialEq for ListEntry {
             }
             ListEntry::IncomingRequest(user_1) => {
                 if let ListEntry::IncomingRequest(user_2) = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::OutgoingRequest(user_1) => {
                 if let ListEntry::OutgoingRequest(user_2) = other {
-                    return user_1.id == user_2.id;
+                    return user_1.legacy_id == user_2.legacy_id;
                 }
             }
             ListEntry::Contact {
@@ -3628,7 +3929,7 @@ impl PartialEq for ListEntry {
                     contact: contact_2, ..
                 } = other
                 {
-                    return contact_1.user.id == contact_2.user.id;
+                    return contact_1.user.legacy_id == contact_2.user.legacy_id;
                 }
             }
             ListEntry::ChannelEditor { depth } => {
@@ -3701,6 +4002,101 @@ impl Render for JoinChannelTooltip {
         })
     }
 }
+
+pub struct CollabNotificationToast {
+    actor: Option<Arc<User>>,
+    text: String,
+    notification: Option<Notification>,
+    workspace: WeakEntity<Workspace>,
+    collab_panel: WeakEntity<CollabPanel>,
+    focus_handle: FocusHandle,
+}
+
+impl Focusable for CollabNotificationToast {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl WorkspaceNotification for CollabNotificationToast {}
+
+impl CollabNotificationToast {
+    fn focus_collab_panel(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let workspace = self.workspace.clone();
+        window.defer(cx, move |window, cx| {
+            workspace
+                .update(cx, |workspace, cx| {
+                    workspace.focus_panel::<CollabPanel>(window, cx)
+                })
+                .ok();
+        })
+    }
+
+    fn respond(&mut self, accept: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(notification) = self.notification.take() {
+            self.collab_panel
+                .update(cx, |collab_panel, cx| match notification {
+                    Notification::ContactRequest { sender_id } => {
+                        collab_panel.respond_to_contact_request(sender_id, accept, window, cx);
+                    }
+                    Notification::ChannelInvitation { channel_id, .. } => {
+                        collab_panel.respond_to_channel_invite(ChannelId(channel_id), accept, cx);
+                    }
+                    Notification::ContactRequestAccepted { .. } => {}
+                })
+                .ok();
+        }
+        cx.emit(DismissEvent);
+    }
+}
+
+impl Render for CollabNotificationToast {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let needs_response = self.notification.is_some();
+
+        let accept_button = if needs_response {
+            Button::new("accept", "Accept").on_click(cx.listener(|this, _, window, cx| {
+                this.respond(true, window, cx);
+                cx.stop_propagation();
+            }))
+        } else {
+            Button::new("dismiss", "Dismiss").on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+        };
+
+        let decline_button = if needs_response {
+            Button::new("decline", "Decline").on_click(cx.listener(|this, _, window, cx| {
+                this.respond(false, window, cx);
+                cx.stop_propagation();
+            }))
+        } else {
+            Button::new("close", "Close").on_click(cx.listener(|_, _, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+        };
+
+        let avatar_uri = self
+            .actor
+            .as_ref()
+            .map(|user| user.avatar_uri.clone())
+            .unwrap_or_default();
+
+        div()
+            .id("collab_notification_toast")
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.focus_collab_panel(window, cx);
+                cx.emit(DismissEvent);
+            }))
+            .child(
+                CollabNotification::new(avatar_uri, accept_button, decline_button)
+                    .child(Label::new(self.text.clone())),
+            )
+    }
+}
+
+impl EventEmitter<DismissEvent> for CollabNotificationToast {}
+impl EventEmitter<SuppressEvent> for CollabNotificationToast {}
 
 #[cfg(any(test, feature = "test-support"))]
 impl CollabPanel {

@@ -1,4 +1,4 @@
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
