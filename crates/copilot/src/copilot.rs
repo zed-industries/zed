@@ -1389,11 +1389,9 @@ fn notify_did_change_config_to_server(
     Ok(())
 }
 
-/// Notify the `copilot_chat` global that the Copilot auth state may have
-/// changed (sign-in, sign-out, account switch). This is the LSP's
-/// `didChangeStatus` notification turned into a cross-crate poke: it
-/// replaces a previous filesystem watcher on the Copilot SDK's config
-/// directory, which was unreliable for SQLite writes on Windows.
+/// Notify Copilot Chat after the Copilot LSP reports an auth state change.
+/// This replaces watching the SDK's token files, which is unreliable for
+/// SQLite backed auth because writes may go through WAL files.
 fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
     if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
         copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
