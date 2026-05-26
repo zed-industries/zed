@@ -808,7 +808,7 @@ impl SkillCreator {
 
     fn render_url_import(&self) -> impl IntoElement {
         v_flex()
-            .min_h_0()
+            .flex_shrink_0()
             .gap_2()
             .child(
                 h_flex()
