@@ -1,11 +1,10 @@
-// vim:textwidth=80
 //! # Accessibility in GPUI
 //!
 //! "Accessibility" refers to the ability of your application to be used by all
 //! users, regardless of disability status. There are many aspects, all important, including:
 //! - Ensuring sufficient text contrast.
-//! - Providing a mechansim to disable animations.
-//! - Providing a mechansim to increase text sizes.
+//! - Providing a mechanism to disable animations.
+//! - Providing a mechanism to increase text sizes.
 //! - etc.
 //!
 //! This guide is focused on **programmatic accessibility**. This allows
@@ -15,7 +14,7 @@
 //! GPUI integrates with [AccessKit] to provide programmatic accessibility
 //! features (referred to as simply "accessibility" for the rest of this guide).
 //!
-//! A minimal example can be found in the GPUI `examples/` directory.
+//! A minimal example can be found in the `examples/a11y` directory.
 //!
 //! ## Background
 //!
@@ -50,7 +49,7 @@
 //! In this example, `inner`s global ID is (roughly speaking) `["outer-id",
 //! "inner-id"]`.
 //!
-//! Since `middle` doesn't have an ID itself, it has no global ID
+//! Since `middle` doesn't have an ID itself, it has no global ID.
 //!
 //! [`GlobalElementId`]s should be unique per-frame. Duplicate global IDs in the
 //! same frame will likely cause bugs.
@@ -86,7 +85,7 @@
 //!     .role(Role::Button)
 //!     .child(
 //!       div()
-//!         .id("id-1")
+//!         .id("id-2")  // <- different ID
 //!         .role(Role::Label)
 //!         .child(text!("hello"))
 //!     );
@@ -100,7 +99,7 @@
 //! In other words, by controlling the ID of an element, you can control whether
 //! a change to a UI element is considered meaningful. You can also control
 //! whether elements are reported to assistive technology *at all* by setting
-//! the [`role`][Element::a11y_role], since nodes with no role are reported.
+//! the [`role`][Element::a11y_role], since nodes with no role are not reported.
 //!
 //! #### IDs and text
 //!
@@ -118,7 +117,7 @@
 //! let a = text!("a");
 //! let b = text!("b");
 //!
-//! // different source locations, different IDs
+//! // Different source locations, different IDs
 //! assert_ne!(a.id(), b.id());
 //!
 //! // However:
@@ -128,8 +127,8 @@
 //! let a = make_text("a");
 //! let b = make_text("b");
 //!
-//! // both `a` and `b` are produced by the same `text!` invocation, so the IDs
-//! are the same
+//! // Both `a` and `b` are produced by the same `text!` invocation, so the IDs
+//! // are the same
 //! assert_eq!(a.id(), b.id());
 //! ```
 //! This can produce surprising behaviour. For example, this footgun:
@@ -156,13 +155,13 @@
 //! # use gpui::*;
 //! let todos = vec!["eat lunch", "drink water", "go to gym"];
 //! let todo_divs = todos.into_iter().enumerate().map(|(index, todo)| {
-//!     text!(todo).with_id(index)
+//!     text!(todo).with_id(index)  // OR `text(id = index, todo)`
 //! });
 //!
 //! div()
 //!     .id("todo-list")
 //!     .role(Role::Document)
-//!     .children(todos)
+//!     .children(todos_divs)
 //! ```
 //!
 //! Occasionally, you will need to create a [`Text`] element with *no* ID. You
@@ -203,13 +202,13 @@
 //! ```
 //!
 //! Note that some common actions are automatically registered. For example,
-//! [`.on_mouse_down()`][Interactivity::on_mouse_down] adds an
+//! [`.on_click()`][StatefulInteractiveElement::on_click] adds an
 //! [`AccessibleAction::Click`] handler that calls the click handler.
 //!
 //! ## Further reading
 //!
 //! Designing high-quality accessible interfaces can be challenging, in the same
-//! way that designing high-quality tranditional interfaces can be. The
+//! way that designing high-quality traditional interfaces can be. The
 //! following pages have useful information:
 //!
 //! - [AccessKit]: The cross-platform accessibility toolkit GPUI uses
@@ -226,4 +225,5 @@
 //! [mdn-aria]: https://developer.mozilla.org/en-US/docs/Learn_web_development/Core/Accessibility/WAI-ARIA_basics
 //! [apg]: https://www.w3.org/WAI/ARIA/apg/
 
-use crate::*;
+#[cfg(doc)]
+use crate::*;  // so I don't have to qualify every type :)

@@ -56,7 +56,7 @@ mod window;
 #[cfg(any(test, feature = "test-support"))]
 pub use proptest;
 
-// #[cfg(doc)]
+#[cfg(doc)]
 pub mod _accessibility;
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
