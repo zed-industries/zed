@@ -161,7 +161,7 @@
 //! div()
 //!     .id("todo-list")
 //!     .role(Role::Document)
-//!     .children(todos_divs)
+//!     .children(todo_divs)
 //! ```
 //!
 //! Occasionally, you will need to create a [`Text`] element with *no* ID. You
