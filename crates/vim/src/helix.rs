@@ -1004,9 +1004,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let include_selection_ranges =
-            self.mode.is_visual() || matches!(self.mode, Mode::HelixNormal);
-        let Some(data) = self.collect_helix_jump_data(include_selection_ranges, window, cx) else {
+        let allow_targets_in_selection = self.mode.has_selection();
+        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        else {
             return;
         };
 
@@ -1032,7 +1032,7 @@ impl Vim {
 
     fn collect_helix_jump_data(
         &mut self,
-        include_selection_ranges: bool,
+        allow_targets_in_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
@@ -1048,7 +1048,7 @@ impl Vim {
             let skip_data = Self::selection_skip_offsets(
                 buffer_snapshot,
                 &selections,
-                include_selection_ranges,
+                allow_targets_in_selection,
             );
 
             // Get the primary cursor position for alternating forward/backward labeling
@@ -1259,7 +1259,7 @@ impl Vim {
     fn selection_skip_offsets(
         buffer: &MultiBufferSnapshot,
         selections: &[Selection<Point>],
-        include_selection_ranges: bool,
+        allow_targets_in_selection: bool,
     ) -> HelixJumpSkipData {
         let mut skip_points = Vec::with_capacity(selections.len());
         let mut skip_ranges = Vec::new();
@@ -1268,7 +1268,7 @@ impl Vim {
             let head_offset = buffer.point_to_offset(selection.head());
             skip_points.push(head_offset);
 
-            if !include_selection_ranges && selection.start != selection.end {
+            if !allow_targets_in_selection && selection.start != selection.end {
                 let mut start = buffer.point_to_offset(selection.start);
                 let mut end = buffer.point_to_offset(selection.end);
                 if start > end {
