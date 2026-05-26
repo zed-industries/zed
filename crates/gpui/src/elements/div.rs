@@ -671,13 +671,6 @@ impl Interactivity {
     }
 }
 
-fn debug_assert_interactivity_has_id(interactivity: &Interactivity) {
-    debug_assert!(
-        interactivity.element_id.is_some(),
-        "Accessibility properties require an `.id()`, since nodes with no ID do not appear in the accessibility tree."
-    );
-}
-
 /// A trait for elements that want to use the standard GPUI event handlers that don't
 /// require any state.
 pub trait InteractiveElement: Sized {
@@ -1178,11 +1171,15 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+}
+
+/// A trait for elements that want to use the standard GPUI interactivity features
+/// that require state.
+pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the accessible role for this element.
     ///
     /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn role(mut self, role: accesskit::Role) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         debug_assert!(
             role != accesskit::Role::GenericContainer,
             "GenericContainer is filtered out of the a11y tree and has no effect"
@@ -1193,105 +1190,90 @@ pub trait InteractiveElement: Sized {
 
     /// Set the accessible label for this element.
     fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_label = Some(label.into());
         self
     }
 
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_selected = Some(selected);
         self
     }
 
     /// Set the expanded state for this element.
     fn aria_expanded(mut self, expanded: bool) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_expanded = Some(expanded);
         self
     }
 
     /// Set the toggled state for this element.
     fn aria_toggled(mut self, toggled: accesskit::Toggled) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_toggled = Some(toggled);
         self
     }
 
     /// Set the numeric value for this element.
     fn aria_numeric_value(mut self, value: f64) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_numeric_value = Some(value);
         self
     }
 
     /// Set the minimum numeric value for this element.
     fn aria_min_numeric_value(mut self, value: f64) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_min_numeric_value = Some(value);
         self
     }
 
     /// Set the maximum numeric value for this element.
     fn aria_max_numeric_value(mut self, value: f64) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_max_numeric_value = Some(value);
         self
     }
 
     /// Set the orientation of this element.
     fn aria_orientation(mut self, orientation: accesskit::Orientation) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_orientation = Some(orientation);
         self
     }
 
     /// Set the heading level of this element.
     fn aria_level(mut self, level: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_level = Some(level);
         self
     }
 
     /// Set the position in set of this element.
     fn aria_position_in_set(mut self, position: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_position_in_set = Some(position);
         self
     }
 
     /// Set the size of set for this element.
     fn aria_size_of_set(mut self, size: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_size_of_set = Some(size);
         self
     }
 
     /// Set the row index for this element.
     fn aria_row_index(mut self, index: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_row_index = Some(index);
         self
     }
 
     /// Set the column index for this element.
     fn aria_column_index(mut self, index: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_column_index = Some(index);
         self
     }
 
     /// Set the row count for this element.
     fn aria_row_count(mut self, count: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_row_count = Some(count);
         self
     }
 
     /// Set the column count for this element.
     fn aria_column_count(mut self, count: usize) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity().aria_column_count = Some(count);
         self
     }
@@ -1306,17 +1288,12 @@ pub trait InteractiveElement: Sized {
         listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App)
         + 'static,
     ) -> Self {
-        debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity()
             .a11y_action_listeners
             .push((action, Box::new(listener)));
         self
     }
-}
 
-/// A trait for elements that want to use the standard GPUI interactivity features
-/// that require state.
-pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
     fn focusable(mut self) -> Self {
         self.interactivity().focusable = true;
