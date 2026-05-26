@@ -3973,6 +3973,25 @@ mod tests {
         assert!(!text.contains("\\|"));
     }
 
+    #[gpui::test]
+    fn test_raw_pipes_in_inline_code_inside_tables(cx: &mut TestAppContext) {
+        let markdown = "\
+| Pattern | What it does |
+| --- | --- |
+| ``^echo(\\s|$)`` | command pattern |
+| `a|b` | alternation |
+| `(a|b)` | grouped alternation |
+| `a||b` | empty middle alternative |";
+        let rendered = render_markdown(markdown, cx);
+        let text = rendered.text_for_range(0..markdown.len());
+
+        assert!(text.contains("^echo(\\s|$)"));
+        assert!(text.contains("a|b"));
+        assert!(text.contains("(a|b)"));
+        assert!(text.contains("a||b"));
+        assert!(!text.contains("``^echo"));
+    }
+
     #[test]
     fn test_source_range_for_rendered_handles_split_chunks() {
         let mappings = vec![
