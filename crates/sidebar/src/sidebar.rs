@@ -5144,6 +5144,13 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
+                    // The active empty-draft placeholder is shown in the
+                    // sidebar to mirror the panel's current state, but it
+                    // is not a useful navigation target in the thread
+                    // switcher — the user is already there. Skip it.
+                    if thread.is_empty_draft {
+                        return None;
+                    }
                     let workspace = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
                         ThreadEntryWorkspace::Closed { .. } => {
