@@ -614,6 +614,31 @@ Return empty arrays where nothing relevant is found."""
     likely = data.get("likely_duplicates", [])
     possible = data.get("possible_duplicates", [])
     closed = data.get("related_closed_issues", [])
+
+    # Claude occasionally places a closed candidate in the duplicate buckets, or vice
+    # versa. Enforce that each match lives in the bucket consistent with the canonical
+    # state of the candidate we passed in.
+    candidate_states = {c["number"]: c["state"] for c in candidates}
+
+    def filter_by_state(items, expected_state, label):
+        kept, wrong = [], []
+        for m in items:
+            (kept if candidate_states.get(m["number"]) == expected_state else wrong).append(m)
+        if wrong:
+            log(f"  Dropped {len(wrong)} from {label} with wrong/unknown state: {[m['number'] for m in wrong]}")
+        return kept
+
+    likely = filter_by_state(likely, "open", "likely_duplicates")
+    possible = filter_by_state(possible, "open", "possible_duplicates")
+    closed = filter_by_state(closed, "closed", "related_closed_issues")
+
+    # Avoid showing the same issue in both the user-facing alert and the triage section.
+    likely_numbers = {m["number"] for m in likely}
+    overlap = [m["number"] for m in possible if m["number"] in likely_numbers]
+    if overlap:
+        log(f"  Dropped {len(overlap)} from possible_duplicates already in likely_duplicates: {overlap}")
+    possible = [m for m in possible if m["number"] not in likely_numbers]
+
     log(f"  Found {len(likely) + len(possible) + len(closed)} potential matches")
     return likely, possible, closed
 
