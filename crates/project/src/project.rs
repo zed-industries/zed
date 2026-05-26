@@ -122,7 +122,6 @@ use rpc::{
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, RegisterSetting, Settings, SettingsLocation, SettingsStore};
-use snippet::Snippet;
 pub use snippet_provider;
 use snippet_provider::SnippetProvider;
 use std::{
