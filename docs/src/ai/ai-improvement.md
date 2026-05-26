@@ -36,7 +36,7 @@ grant permission for future collection.
 > conversation thread includes your messages, AI responses, and thread metadata.
 > If you do not want the thread persisted by Zed, do not rate the response.
 
-## Data Collected from Feedback {#data-collected-ai-feedback}
+### Data Collected from Feedback {#data-collected-ai-feedback}
 
 For conversation threads you explicitly share through ratings or feedback, Zed
 may store:
@@ -74,7 +74,7 @@ Edit Prediction setup and provider configuration live on the
 [Edit Prediction](./edit-prediction.md) page. This page only covers training data
 collection and retention.
 
-## File Exclusions {#file-exclusions}
+### File Exclusions {#file-exclusions}
 
 Certain files are always excluded from Edit Prediction training data collection,
 regardless of opt-in status:
@@ -107,7 +107,7 @@ in your Zed settings file ([how to edit](../configuring-zed.md#settings-files)):
 }
 ```
 
-## Data Collected from Edit Prediction Training {#data-collected-edit-prediction-training}
+### Data Collected from Edit Prediction Training {#data-collected-edit-prediction-training}
 
 For open source projects where you opted in, Zed may collect:
 
@@ -125,7 +125,7 @@ user IDs, and email addresses.
 The training dataset is publicly available at
 [huggingface.co/datasets/zed-industries/zeta](https://huggingface.co/datasets/zed-industries/zeta).
 
-## Training Dataset and Model Output {#training-dataset-and-model-output}
+### Training Dataset and Model Output {#training-dataset-and-model-output}
 
 Zed uses this training dataset to fine-tune
 [Qwen2.5-Coder-7B](https://huggingface.co/Qwen/Qwen2.5-Coder-7B) and makes the
