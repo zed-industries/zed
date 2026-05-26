@@ -32,6 +32,11 @@ pub fn global_llm_token(cx: &App) -> LlmApiToken {
         .clone()
 }
 
+pub fn try_global_llm_token(cx: &App) -> Option<LlmApiToken> {
+    cx.try_global::<GlobalRefreshLlmTokenListener>()
+        .map(|listener| listener.0.read(cx).llm_api_token.clone())
+}
+
 struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
 
 impl Global for GlobalRefreshLlmTokenListener {}

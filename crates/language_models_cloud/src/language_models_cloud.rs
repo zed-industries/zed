@@ -699,6 +699,13 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudModelProvider<TP> {
         self.models = models;
     }
 
+    pub fn clear_models(&mut self) {
+        self.models.clear();
+        self.default_model = None;
+        self.default_fast_model = None;
+        self.recommended_models.clear();
+    }
+
     pub fn create_model(
         &self,
         model: &Arc<cloud_llm_client::LanguageModel>,
