@@ -57,7 +57,7 @@
 //! ### IDs and accessibility
 //!
 //! When GPUI renders a frame, it walks your UI tree, and finds nodes with
-//! global IDs, and informs assistive technology about this node. 
+//! global IDs, and informs assistive technology about this node.
 //!
 //! In order for nodes to be reported, they must also have a non-`None`
 //! [`role`][Element::a11y_role]. This is used to inform assistive technology
@@ -169,7 +169,7 @@
 //! custom UI component (e.g. a button), you may want this so that you can set a
 //! label property on a parent [`div`] without duplicating the text in the
 //! accessibility tree.
-//! 
+//!
 //! ### Handling actions
 //!
 //! Assistive technology can dispatch actions to the UI. While many users of
@@ -195,7 +195,7 @@
 //!     .id("my-slider")
 //!     .role(Role::Slider)
 //!     .on_a11y_action(AccessibleAction::Increment, |_extra, _window, cx| {
-//!         position += 1; 
+//!         position += 1;
 //!         cx.notify();
 //!     })
 //!     .child(todo!());
@@ -226,4 +226,4 @@
 //! [apg]: https://www.w3.org/WAI/ARIA/apg/
 
 #[cfg(doc)]
-use crate::*;  // so I don't have to qualify every type :)
+use crate::*; // so I don't have to qualify every type :)

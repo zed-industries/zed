@@ -1303,7 +1303,8 @@ pub trait InteractiveElement: Sized {
     fn on_a11y_action(
         mut self,
         action: accesskit::Action,
-        listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App) + 'static,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App)
+        + 'static,
     ) -> Self {
         debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity()

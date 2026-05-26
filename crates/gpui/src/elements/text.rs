@@ -158,9 +158,7 @@ pub const fn __hash_text_macro_location_unstable_do_not_use(s: &'static str) -> 
 /// explanation of the significance of the ID of a [`Text`] element.
 #[macro_export]
 macro_rules! text {
-    (id = $id:expr, $text:expr) => {{
-        $crate::Text::new($id.into(), $text.into())
-    }};
+    (id = $id:expr, $text:expr) => {{ $crate::Text::new($id.into(), $text.into()) }};
     ($text:expr) => {{
         const ID: &'static str = concat!(file!(), "/", line!(), ":", column!());
         const HASH: u64 = $crate::__hash_text_macro_location_unstable_do_not_use(ID);
