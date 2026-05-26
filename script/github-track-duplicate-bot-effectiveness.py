@@ -176,9 +176,11 @@ def find_canonical_among(duplicate_number, candidates):
     if not candidates:
         return None
 
+    # candidate issue numbers are baked into the query body via field aliases
+    # (GraphQL doesn't let you parametrize alias names), so $numbers isn't needed.
     data = github_api_graphql(
         """
-        query($owner: String!, $repo: String!, $numbers: [Int!]!) {
+        query($owner: String!, $repo: String!) {
           repository(owner: $owner, name: $repo) {
             PLACEHOLDER
           }
@@ -189,7 +191,7 @@ def find_canonical_among(duplicate_number, candidates):
             f' nodes {{ ... on MarkedAsDuplicateEvent {{ duplicate {{ ... on Issue {{ number }} }} }} }} }} }}'
             for number in candidates
         )),
-        {"owner": REPO_OWNER, "repo": REPO_NAME, "numbers": list(candidates)},
+        {"owner": REPO_OWNER, "repo": REPO_NAME},
         partial_errors_ok=True,
     )
 
