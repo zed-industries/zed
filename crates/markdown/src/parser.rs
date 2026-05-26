@@ -815,13 +815,10 @@ fn mask_raw_pipes_in_inline_code(text: &str) -> Option<String> {
         let line = &text[line_start..line_end];
 
         if let Some((marker, minimum_len)) = fenced_code_block {
-            if let Some((closing_marker, closing_len)) = code_fence_marker(line)
-                && closing_marker == marker
-                && closing_len >= minimum_len
-            {
+            if is_closing_code_fence(line, marker, minimum_len) {
                 fenced_code_block = None;
             }
-        } else if let Some(fence) = code_fence_marker(line) {
+        } else if let Some(fence) = opening_code_fence_marker(line) {
             fenced_code_block = Some(fence);
         } else if !is_indented_code_line(line) {
             mask_raw_pipes_in_inline_code_spans(text, line, line_start, &mut masked);
@@ -836,11 +833,30 @@ fn mask_raw_pipes_in_inline_code(text: &str) -> Option<String> {
     masked
 }
 
-fn code_fence_marker(line: &str) -> Option<(u8, usize)> {
+fn opening_code_fence_marker(line: &str) -> Option<(u8, usize)> {
     let bytes = line.as_bytes();
+    let (index, marker, len) = code_fence_marker_start(bytes)?;
+    if marker == b'`' && bytes[index + len..].contains(&b'`') {
+        return None;
+    }
+    Some((marker, len))
+}
+
+fn is_closing_code_fence(line: &str, marker: u8, minimum_len: usize) -> bool {
+    let bytes = line.as_bytes();
+    let Some((index, closing_marker, len)) = code_fence_marker_start(bytes) else {
+        return false;
+    };
+    closing_marker == marker
+        && len >= minimum_len
+        && bytes[index + len..]
+            .iter()
+            .all(|byte| *byte == b' ' || *byte == b'\t')
+}
+
+fn code_fence_marker_start(bytes: &[u8]) -> Option<(usize, u8, usize)> {
     let mut index = 0;
     let mut leading_spaces = 0;
-
     while index < bytes.len() && bytes[index] == b' ' && leading_spaces < 4 {
         leading_spaces += 1;
         index += 1;
@@ -859,7 +875,7 @@ fn code_fence_marker(line: &str) -> Option<(u8, usize)> {
         .iter()
         .take_while(|byte| **byte == marker)
         .count();
-    (len >= 3).then_some((marker, len))
+    (len >= 3).then_some((index, marker, len))
 }
 
 fn is_indented_code_line(line: &str) -> bool {
@@ -1246,6 +1262,28 @@ mod tests {
         );
         assert_code_block_does_not_emit_links(
             "    https:/\\/example.com\r\n    https://example&#46;com",
+        );
+    }
+
+    #[test]
+    fn test_invalid_closing_fence_keeps_table_pipes_unmasked() {
+        let markdown = "```text\n``` not a closing fence\n| `a|b` | still code |\n```\n";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        assert!(
+            parsed.events.iter().all(|(_, event)| !matches!(
+                event,
+                SubstitutedText(text) if text.contains(MASKED_RAW_PIPE_IN_CODE)
+            )),
+            "fenced code block contents should not be masked: {:?}",
+            parsed.events
+        );
+        assert!(
+            parsed.events.iter().any(|(range, event)| {
+                event == &Text && markdown[range.clone()].contains("| `a|b` | still code |")
+            }),
+            "expected fenced code block text to retain raw pipes: {:?}",
+            parsed.events
         );
     }
 
