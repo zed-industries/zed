@@ -281,7 +281,7 @@ TBD: Centered layout related settings
   // Minimap related settings
   "minimap": {
     "show": "never",                // When to show (auto, always, never)
-    "display_in": "active_editor",  // Where to show (active_editor, all_editor)
+    "display_in": "active_editor",  // Where to show (active_editor, all_editors)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
     "max_width_columns": 80,        // Maximum width of minimap
