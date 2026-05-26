@@ -3449,40 +3449,16 @@ impl Window {
         result
     }
 
-    /// Paint the **drop** (non-inset) box shadows from `shadows` into the scene at the current
-    /// z-index. Inset shadows in the list are ignored here; call [`Self::paint_inset_shadows`]
-    /// after the background quad is painted so they appear *on top of* the background, matching
-    /// CSS paint order:
-    ///   1. drop shadows -> 2. background -> 3. inset shadows -> 4. border -> 5. content.
+    /// Paint the drop (non-inset) shadows from `shadows` into the scene at the current
+    /// z-index. Inset shadows are skipped; paint those with [`Self::paint_inset_shadows`]
+    /// after the element's background so they layer on top of the fill.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_shadows(
+    pub(crate) fn paint_drop_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
         shadows: &[BoxShadow],
-    ) {
-        self.paint_shadows_filtered(bounds, corner_radii, shadows, false);
-    }
-
-    /// Paint the **inset** box shadows from `shadows`. Should be called after the background
-    /// quad so that the inset shadow ends up painted on top of the fill. Drop shadows in the
-    /// list are ignored.
-    pub fn paint_inset_shadows(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        shadows: &[BoxShadow],
-    ) {
-        self.paint_shadows_filtered(bounds, corner_radii, shadows, true);
-    }
-
-    fn paint_shadows_filtered(
-        &mut self,
-        bounds: Bounds<Pixels>,
-        corner_radii: Corners<Pixels>,
-        shadows: &[BoxShadow],
-        want_inset: bool,
     ) {
         self.invalidator.debug_assert_paint();
 
@@ -3492,57 +3468,67 @@ impl Window {
         let element_bounds = self.cover_bounds(bounds);
         let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
-            if shadow.inset != want_inset {
+            if shadow.inset {
                 continue;
             }
-            if shadow.inset {
-                // CSS inset shadow: the visible shadow is the blurred *complement* of a "hole"
-                // rect, masked to the element. The hole is the element offset by `offset` and
-                // shrunk on every side by `spread_radius`. Negative spread expands the hole
-                // (and therefore shrinks the visible shadow); CSS allows this.
-                let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
-                // Match CSS: each corner of the hole = max(0, element_corner - spread).
-                // `Pixels` supports subtraction; clamp at zero so a large spread can't produce
-                // negative radii (which would be nonsensical and could break the SDF).
-                let zero = Pixels::ZERO;
-                let hole_corner_radii = Corners {
-                    top_left: (corner_radii.top_left - shadow.spread_radius).max(zero),
-                    top_right: (corner_radii.top_right - shadow.spread_radius).max(zero),
-                    bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
-                    bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
-                };
-                self.next_frame.scene.insert_primitive(Shadow {
-                    order: 0,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                    bounds: self.cover_bounds(hole),
-                    content_mask,
-                    corner_radii: hole_corner_radii.scale(scale_factor),
-                    color: shadow.color.opacity(opacity),
-                    element_bounds,
-                    element_corner_radii,
-                    inset: 1,
-                    _pad: 0,
-                });
-            } else {
-                // CSS drop shadow: shadow rect is the element offset by `offset` and dilated by
-                // `spread_radius`. The shader inflates this further by `3 * blur_radius` for the
-                // gaussian tail.
-                let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
-                self.next_frame.scene.insert_primitive(Shadow {
-                    order: 0,
-                    blur_radius: shadow.blur_radius.scale(scale_factor),
-                    bounds: self.cover_bounds(shadow_bounds),
-                    content_mask,
-                    corner_radii: corner_radii.scale(scale_factor),
-                    color: shadow.color.opacity(opacity),
-                    // Unused by the shader for drop shadows, but we still pass valid values so
-                    // the GPU struct is well-defined.
-                    element_bounds,
-                    element_corner_radii,
-                    inset: 0,
-                    _pad: 0,
-                });
+            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
+            self.next_frame.scene.insert_primitive(Shadow {
+                order: 0,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                bounds: self.cover_bounds(shadow_bounds),
+                content_mask,
+                corner_radii: corner_radii.scale(scale_factor),
+                color: shadow.color.opacity(opacity),
+                element_bounds,
+                element_corner_radii,
+                inset: 0,
+                _pad: 0,
+            });
+        }
+    }
+
+    /// Paint the inset shadows from `shadows` into the scene at the current z-index. Should
+    /// be called after the element's background so the shadow layers on top of the fill.
+    /// Drop shadows are skipped; paint those with [`Self::paint_drop_shadows`] before the background.
+    pub(crate) fn paint_inset_shadows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let content_mask = self.snapped_content_mask();
+        let opacity = self.element_opacity();
+        let element_bounds = self.cover_bounds(bounds);
+        let element_corner_radii = corner_radii.scale(scale_factor);
+        for shadow in shadows {
+            if !shadow.inset {
+                continue;
             }
+            let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
+            // Clamp at zero so a large spread can't produce negative radii, which would
+            // break the SDF in the shader.
+            let zero = Pixels::ZERO;
+            let hole_corner_radii = Corners {
+                top_left: (corner_radii.top_left - shadow.spread_radius).max(zero),
+                top_right: (corner_radii.top_right - shadow.spread_radius).max(zero),
+                bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
+                bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
+            };
+            self.next_frame.scene.insert_primitive(Shadow {
+                order: 0,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                bounds: self.cover_bounds(hole),
+                content_mask,
+                corner_radii: hole_corner_radii.scale(scale_factor),
+                color: shadow.color.opacity(opacity),
+                element_bounds,
+                element_corner_radii,
+                inset: 1,
+                _pad: 0,
+            });
         }
     }
 
