@@ -2482,6 +2482,12 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+
+        cx.set_state("«aaˇ»", Mode::HelixSelect);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]
