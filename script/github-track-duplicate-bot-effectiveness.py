@@ -35,15 +35,23 @@ REPO_NAME = "zed"
 STAFF_TEAM_SLUG = "staff"
 BOT_LOGIN = "zed-community-bot[bot]"
 BOT_APP_SLUG = "zed-community-bot"
-BOT_COMMENT_PREFIX = "This issue appears to be a duplicate of"
+# Strings that identify a comment posted by the duplicate-detection bot. Any
+# match counts as a bot comment for classification purposes. A single comment
+# can contain both markers (v3+ produces this when there are both confident
+# duplicates and lower-confidence triage context).
+BOT_COMMENT_MARKERS = (
+    "This issue appears to be a duplicate of",  # user-facing duplicate alert
+    "Additional recent context for triagers",  # v3+ collapsed triage section
+)
 BOT_START_DATE = "2026-02-18"
 NEEDS_TRIAGE_LABEL = "state:needs triage"
 DEFAULT_PROJECT_NUMBER = 76
 VALID_CLOSED_AS_VALUES = {"duplicate", "not_planned", "completed"}
 # Add a new tuple when you deploy a new version of the bot that you want to
 # keep track of (e.g. the prompt gets a rewrite or the model gets swapped).
-# Newest first, please. The datetime is for the deployment time (merge to maain).
+# Newest first, please. The datetime is for the deployment time (merge to main).
 BOT_VERSION_TIMELINE = [
+    ("v3", datetime(2026, 5, 25, 14, 30, tzinfo=timezone.utc)),
     ("v2", datetime(2026, 2, 26, 14, 9, tzinfo=timezone.utc)),
     ("v1", datetime(2026, 2, 18, tzinfo=timezone.utc)),
 ]
@@ -96,10 +104,16 @@ def fetch_issue(issue_number):
     }
 
 
+def is_bot_dupe_comment(body):
+    """True if the comment body looks like one posted by the duplicate-detection bot."""
+    return any(marker in body for marker in BOT_COMMENT_MARKERS)
+
+
 def get_bot_comment_with_time(issue_number):
     """Get the bot's duplicate-detection comment and its timestamp from an issue.
 
-    Returns {"body": str, "created_at": str} if found, else None.
+    Recognizes both the user-facing duplicate alert and the v3+ triage-only
+    comment formats. Returns {"body": str, "created_at": str} if found, else None.
     """
     comments_path = f"/repos/{REPO_OWNER}/{REPO_NAME}/issues/{issue_number}/comments"
     page = 1
@@ -107,7 +121,7 @@ def get_bot_comment_with_time(issue_number):
         for comment in comments:
             author = (comment.get("user") or {}).get("login", "")
             body = comment.get("body", "")
-            if author == BOT_LOGIN and body.startswith(BOT_COMMENT_PREFIX):
+            if author == BOT_LOGIN and is_bot_dupe_comment(body):
                 return {"body": body, "created_at": comment.get("created_at", "")}
         page += 1
     return None
@@ -448,7 +462,7 @@ def classify_open():
             node_id = item["node_id"]
 
             skip_reason = (
-                f"type is {type_name}" if type_name not in ("Bug", "Crash")
+                f"type is {type_name}" if type_name and type_name not in ("Bug", "Crash")
                 else f"author {author} is staff" if is_staff_member(author)
                 else "already on the board" if find_project_item(node_id)
                 else "no bot duplicate comment found" if not (bot_comment := get_bot_comment_with_time(number))

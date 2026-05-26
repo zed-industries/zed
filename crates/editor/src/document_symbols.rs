@@ -145,7 +145,7 @@ impl Editor {
         if !self.lsp_data_enabled() {
             return;
         }
-        let Some(project) = self.project.clone() else {
+        let Some(project) = self.project.as_ref().map(|p| p.downgrade()) else {
             return;
         };
 
@@ -191,9 +191,9 @@ impl Editor {
                     .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                     .await;
 
-                let Some(tasks) = editor
-                    .update(cx, |_, cx| {
-                        project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
+                let Some(tasks) = project
+                    .update(cx, |project, cx| {
+                        project.lsp_store().update(cx, |lsp_store, cx| {
                             buffers_to_query
                                 .into_iter()
                                 .map(|buffer| {

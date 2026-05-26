@@ -17,6 +17,7 @@ use project::{
     search::SearchQuery,
 };
 use proto::toggle_lsp_logs::LogType;
+use settings::SeedQuerySetting;
 use std::{any::TypeId, borrow::Cow, sync::Arc};
 use ui::{Checkbox, ContextMenu, PopoverMenu, ToggleState, prelude::*};
 use util::ResultExt as _;
@@ -824,12 +825,13 @@ impl SearchableItem for LspLogView {
 
     fn query_suggestion(
         &mut self,
-        ignore_settings: bool,
+        seed_query_override: Option<SeedQuerySetting>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
-        self.editor
-            .update(cx, |e, cx| e.query_suggestion(ignore_settings, window, cx))
+        self.editor.update(cx, |e, cx| {
+            e.query_suggestion(seed_query_override, window, cx)
+        })
     }
 
     fn activate_match(

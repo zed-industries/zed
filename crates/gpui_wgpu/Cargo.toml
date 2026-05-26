@@ -20,7 +20,7 @@ gpui.workspace = true
 anyhow.workspace = true
 bytemuck = "1"
 collections.workspace = true
-cosmic-text = "0.17.0"
+cosmic-text = "0.19.0"
 etagere = "0.2"
 itertools.workspace = true
 log.workspace = true
@@ -29,6 +29,7 @@ profiling.workspace = true
 raw-window-handle = "0.6"
 smallvec.workspace = true
 swash = "0.2.6"
+unicode-segmentation.workspace = true
 gpui_util.workspace = true
 wgpu.workspace = true
 
@@ -44,3 +45,10 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
 js-sys = "0.3"
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "layout_line"
+harness = false

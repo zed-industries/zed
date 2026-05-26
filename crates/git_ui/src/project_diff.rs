@@ -1,4 +1,5 @@
 use crate::{
+    branch_picker,
     conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
@@ -37,7 +38,10 @@ use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{DiffStat, Divider, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{
+    CommonAnimationExt as _, DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*,
+    vertical_divider,
+};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
@@ -440,6 +444,13 @@ impl ProjectDiff {
                         async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
                     })
                 }
+                BranchDiffEvent::DiffBaseChanged => {
+                    this.pending_scroll.take();
+                    this._task = window.spawn(cx, {
+                        let this = cx.weak_entity();
+                        async |cx| Self::refresh(this, RefreshReason::StatusesChanged, cx).await
+                    })
+                }
             },
         );
 
@@ -531,21 +542,6 @@ impl ProjectDiff {
         let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
         let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
         self.move_to_path(path_key, window, cx)
-    }
-
-    pub fn active_path(&self, cx: &App) -> Option<ProjectPath> {
-        let editor = self.editor.read(cx).focused_editor().read(cx);
-        let multibuffer = editor.buffer().read(cx);
-        let position = editor.selections.newest_anchor().head();
-        let snapshot = multibuffer.snapshot(cx);
-        let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
-        let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
-
-        let file = buffer.read(cx).file()?;
-        Some(ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
     }
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -664,7 +660,7 @@ impl ProjectDiff {
     ) {
         match event {
             EditorEvent::SelectionsChanged { local: true } => {
-                let Some(project_path) = self.active_path(cx) else {
+                let Some(project_path) = self.active_project_path(cx) else {
                     return;
                 };
                 self.workspace
@@ -1037,6 +1033,21 @@ impl Item for ProjectDiff {
             .for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let editor = self.editor.read(cx).focused_editor().read(cx);
+        let multibuffer = editor.buffer().read(cx);
+        let position = editor.selections.newest_anchor().head();
+        let snapshot = multibuffer.snapshot(cx);
+        let (text_anchor, _) = snapshot.anchor_to_buffer_anchor(position)?;
+        let buffer = multibuffer.buffer(text_anchor.buffer_id)?;
+
+        let file = buffer.read(cx).file()?;
+        Some(ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
@@ -1152,6 +1163,8 @@ impl Item for ProjectDiff {
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_empty = self.multibuffer.read(cx).is_empty();
+        let is_loading = self.branch_diff.read(cx).is_tree_base_loading() || !self._task.is_ready();
+
         let is_branch_diff_view = matches!(self.diff_base(cx), DiffBase::Merge { .. });
 
         div()
@@ -1165,7 +1178,17 @@ impl Render for ProjectDiff {
             .items_center()
             .justify_center()
             .size_full()
-            .when(is_empty, |el| {
+            .when(is_empty && is_loading, |el| {
+                let rems = TextSize::Large.rems(cx);
+                el.child(
+                    Icon::new(IconName::LoadCircle)
+                        .size(IconSize::Custom(rems))
+                        .color(Color::Accent)
+                        .with_rotate_animation(3)
+                        .into_any_element(),
+                )
+            })
+            .when(is_empty && !is_loading, |el| {
                 let remote_button = if let Some(panel) = self
                     .workspace
                     .upgrade()
@@ -1685,6 +1708,15 @@ impl Render for BranchDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
         let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+        let diff_base = project_diff.read(cx).diff_base(cx).clone();
+        let DiffBase::Merge { base_ref } = diff_base else {
+            return div();
+        };
+        let selected_base_ref = base_ref.clone();
+        let base_ref_label = format!("Base: {base_ref}");
+        let repository = project_diff.read(cx).branch_diff.read(cx).repo().cloned();
+        let workspace = project_diff.read(cx).workspace.clone();
+        let project_diff_for_picker = project_diff.downgrade();
 
         let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
         let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
@@ -1698,6 +1730,44 @@ impl Render for BranchDiffToolbar {
             .flex_wrap()
             .justify_end()
             .gap_2()
+            .child(
+                PopoverMenu::new("branch-diff-base-branch-picker")
+                    .menu(move |window, cx| {
+                        let project_diff = project_diff_for_picker.clone();
+                        let on_select =
+                            Arc::new(move |branch: git::repository::Branch, cx: &mut App| {
+                                let base_ref: SharedString = branch.name().to_owned().into();
+                                project_diff
+                                    .update(cx, |project_diff, cx| {
+                                        let branch_diff = &mut project_diff.branch_diff;
+                                        branch_diff.update(cx, |branch_diff, cx| {
+                                            branch_diff
+                                                .set_diff_base(DiffBase::Merge { base_ref }, cx);
+                                        });
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            });
+                        Some(branch_picker::select_popover(
+                            workspace.clone(),
+                            repository.clone(),
+                            Some(selected_base_ref.clone()),
+                            on_select,
+                            window,
+                            cx,
+                        ))
+                    })
+                    .trigger_with_tooltip(
+                        Button::new("branch-diff-base-branch", base_ref_label)
+                            .color(Color::Muted)
+                            .end_icon(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        Tooltip::text("Select base branch"),
+                    ),
+            )
             .when(!is_multibuffer_empty, |this| {
                 this.child(DiffStat::new(
                     "branch-diff-stat",
