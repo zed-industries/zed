@@ -56,6 +56,8 @@ mod window;
 #[cfg(any(test, feature = "test-support"))]
 pub use proptest;
 
+// #[cfg(doc)]
+pub mod _accessibility;
 #[cfg(doc)]
 pub mod _ownership_and_data_flow;
 
@@ -76,6 +78,7 @@ mod seal {
 }
 
 pub use accesskit;
+pub use accesskit::Action as AccessibleAction;
 pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
@@ -122,7 +125,6 @@ pub use test::*;
 pub use text_system::*;
 pub use util::{FutureExt, Timeout};
 pub use view::*;
-pub use window::a11y::A11yActionRequest;
 pub use window::*;
 
 pub use pollster::block_on;

@@ -107,12 +107,16 @@ pub trait Element: 'static + IntoElement {
     /// Elements that return `None` are not included in the accessibility tree.
     ///
     /// Note: inclusion in accessibility tree requires non-`None` [`id`][Element::id].
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn a11y_role(&self) -> Option<accesskit::Role> {
         None
     }
 
     /// Write accessibility properties to the given node.
     /// Called only when `a11y_role()` returns `Some`.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn write_a11y_info(&self, _node: &mut accesskit::Node) {}
 
     /// Convert this element into a dynamically-typed [`AnyElement`].

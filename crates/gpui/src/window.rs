@@ -5353,11 +5353,13 @@ impl Window {
     /// Register a listener for an accessibility action on a specific node.
     /// The listener will be called when a screen reader requests the given
     /// action on the node identified by `node_id`.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
     pub fn on_a11y_action(
         &mut self,
         node_id: accesskit::NodeId,
         action: accesskit::Action,
-        listener: impl FnMut(&a11y::A11yActionRequest, &mut Window, &mut App) + 'static,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
         self.a11y
             .action_listeners
@@ -5371,11 +5373,11 @@ impl Window {
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
         if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
-            let a11y_request = a11y::A11yActionRequest::from_accesskit(&request);
+            let extra_data = request.data.as_ref();
             let mut matched = false;
             for (action, listener) in &mut listeners {
                 if *action == request.action {
-                    listener(&a11y_request, self, cx);
+                    listener(extra_data, self, cx);
                     matched = true;
                 }
             }

@@ -13,7 +13,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     mem,
-    ops::Range,
+    ops::{Deref, DerefMut, Range},
     rc::Rc,
     sync::Arc,
 };
@@ -85,6 +85,9 @@ impl Text {
     /// provided. If you want text to be accessible, either use [`text`] to have
     /// an ID automatically assigned, or use [`Text::new`] to manually assign an
     /// ID.
+    ///
+    /// This function is intended for use inside custom UI components, where
+    /// accessible properties may be set on parent containers.
     #[inline]
     pub const fn new_inaccessible(text: SharedString) -> Self {
         Self { id: None, text }
@@ -96,10 +99,29 @@ impl Text {
         self.id.as_ref()
     }
 
+    /// Produce a new [`Text`] with the given `id`.
+    pub fn with_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
     /// The text that this [`Text`] element will display.
     #[inline]
     pub const fn text(&self) -> &SharedString {
         &self.text
+    }
+}
+
+impl Deref for Text {
+    type Target = SharedString;
+    fn deref(&self) -> &Self::Target {
+        &self.text
+    }
+}
+
+impl DerefMut for Text {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.text
     }
 }
 
@@ -124,11 +146,21 @@ pub const fn __hash_text_macro_location_unstable_do_not_use(s: &'static str) -> 
 
 /// Create a new [`Text`] element.
 ///
+/// ```rust
+/// # use gpui::*;
+/// let a = text!("hello");
+/// let b = text!(id = "farewell-message", "hello");
+///
+/// ```
+///
 /// Text created with this macro is *accessible*. The macro generates an ID
 /// based on the source location. See the docs for [`Text`] for a more in-depth
 /// explanation of the significance of the ID of a [`Text`] element.
 #[macro_export]
 macro_rules! text {
+    (id = $id:expr, $text:expr) => {{
+        $crate::Text::new($id.into(), $text.into())
+    }};
     ($text:expr) => {{
         const ID: &'static str = concat!(file!(), "/", line!(), ":", column!());
         const HASH: u64 = $crate::__hash_text_macro_location_unstable_do_not_use(ID);

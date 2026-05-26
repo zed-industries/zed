@@ -1179,6 +1179,8 @@ pub trait InteractiveElement: Sized {
     }
 
     /// Set the accessible role for this element.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn role(mut self, role: accesskit::Role) -> Self {
         debug_assert_interactivity_has_id(self.interactivity());
         debug_assert!(
@@ -1296,10 +1298,12 @@ pub trait InteractiveElement: Sized {
 
     /// Register a handler for an accessibility action on this element.
     /// The handler is called when a screen reader requests the given action.
+    ///
+    /// See the [accessibility guide](crate::_accessibility) for an overview.
     fn on_a11y_action(
         mut self,
         action: accesskit::Action,
-        listener: impl FnMut(&crate::A11yActionRequest, &mut crate::Window, &mut crate::App) + 'static,
+        listener: impl FnMut(Option<&accesskit::ActionData>, &mut crate::Window, &mut crate::App) + 'static,
     ) -> Self {
         debug_assert_interactivity_has_id(self.interactivity());
         self.interactivity()

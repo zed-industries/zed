@@ -1,5 +1,7 @@
 //! Accessibility support, provided by [AccessKit][accesskit].
 //!
+//! There are user-facing guide-level docs [here](crate::_accessibility).
+//!
 //! ## Architecture
 //!
 //! ```text
@@ -96,31 +98,9 @@ use std::sync::{
 /// The fixed AccessKit node ID used for the root of every window's a11y tree.
 pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
 
-/// An accessibility action request, stripped of internal identifiers.
-///
-/// This is the GPUI-facing view of an AccessKit `ActionRequest`. Element
-/// handlers receive this instead of the raw request so they don't need to
-/// know about `NodeId` or `TreeId`.
-pub struct A11yActionRequest {
-    /// The action the screen reader is asking the element to perform.
-    pub action: Action,
-    /// Optional payload for the action (e.g. a numeric value for `SetValue`).
-    pub data: Option<accesskit::ActionData>,
-}
-
-impl A11yActionRequest {
-    #[cfg(not(target_family = "wasm"))]
-    pub(crate) fn from_accesskit(request: &accesskit::ActionRequest) -> Self {
-        Self {
-            action: request.action,
-            data: request.data.clone(),
-        }
-    }
-}
-
 /// A listener for an accessibility action on a specific node.
 pub(crate) type A11yActionListener =
-    Box<dyn FnMut(&A11yActionRequest, &mut Window, &mut App) + 'static>;
+    Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
 
 /// Per-window accessibility state.
 ///
