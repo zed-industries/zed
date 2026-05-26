@@ -50,6 +50,7 @@ pub struct ThreadItem {
     focused: bool,
     hovered: bool,
     rounded: bool,
+    is_truncated: bool,
     added: Option<usize>,
     removed: Option<usize>,
     project_paths: Option<Arc<[PathBuf]>>,
@@ -83,6 +84,7 @@ impl ThreadItem {
             focused: false,
             hovered: false,
             rounded: false,
+            is_truncated: true,
             added: None,
             removed: None,
             project_paths: None,
@@ -204,6 +206,11 @@ impl ThreadItem {
 
     pub fn rounded(mut self, rounded: bool) -> Self {
         self.rounded = rounded;
+        self
+    }
+
+    pub fn is_truncated(mut self, is_truncated: bool) -> Self {
+        self.is_truncated = is_truncated;
         self
     }
 
@@ -412,6 +419,7 @@ impl RenderOnce for ThreadItem {
                 h_flex()
                     .min_w_0()
                     .w_full()
+                    .h_6()
                     .gap_2()
                     .justify_between()
                     .child(
@@ -423,7 +431,7 @@ impl RenderOnce for ThreadItem {
                             .child(icon)
                             .child(title_label),
                     )
-                    .child(gradient_overlay)
+                    .when(self.is_truncated, |this| this.child(gradient_overlay))
                     .when(self.hovered, |this| {
                         this.when_some(self.action_slot, |this, slot| {
                             let overlay = GradientFade::new(base_bg, hover_bg, hover_bg)

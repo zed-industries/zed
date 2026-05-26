@@ -5587,9 +5587,9 @@ impl Sidebar {
                 cx.notify();
             }))
             .when(is_renaming, |this| {
-                this.title_slot(
+                this.is_truncated(false).title_slot(
                     div()
-                        .h_6()
+                        .h_full()
                         .min_w_0()
                         .flex_1()
                         .capture_action(cx.listener(
