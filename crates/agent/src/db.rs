@@ -53,7 +53,7 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
@@ -92,7 +92,7 @@ pub struct SerializedScrollPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
@@ -206,7 +206,7 @@ impl DbThread {
                     crate::Message::User(UserMessage {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
                         id,
-                        content,
+                        content: Arc::from(content),
                     })
                 }
                 language_model::Role::Assistant => {
@@ -285,7 +285,7 @@ impl DbThread {
                 }
             };
 
-            messages.push(message);
+            messages.push(Arc::new(message));
         }
 
         Ok(Self {

@@ -23,8 +23,14 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for applying edits to an existing file.
 ///
-/// Before using this tool, use the `read_file` tool to understand the file's contents and context
+/// Before using this tool, use the `read_file` tool to understand the file's contents and context.
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// `read_file` prefixes each line of its output with a line number right-aligned in a
+/// 6-character field followed by a single tab, then the line's actual content. When you
+/// derive `old_text` or `new_text` from that output, strip this prefix and keep only what
+/// comes after the tab, preserving the original indentation (tabs and spaces) exactly.
+/// Never include any part of the line number prefix in `old_text` or `new_text`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
@@ -253,6 +259,7 @@ impl AgentTool for EditFileTool {
             run_session(
                 self.process_streaming_edits(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await
@@ -483,6 +490,69 @@ mod tests {
         assert!(
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
+        );
+    }
+
+    /// When the edit fails after a session is created but before any edits are
+    /// actually applied (e.g., the first `old_text` doesn't match), the empty
+    /// diff placeholder in the UI should be replaced with the error message.
+    #[gpui::test]
+    async fn test_streaming_edit_surfaces_error_when_no_edits_applied(cx: &mut TestAppContext) {
+        async fn find_first_text_content_in_events(
+            receiver: &mut crate::ToolCallEventStreamReceiver,
+        ) -> Option<String> {
+            use futures::StreamExt as _;
+            while let Some(event) = receiver.next().await {
+                let Ok(crate::ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(update),
+                )) = event
+                else {
+                    continue;
+                };
+                let Some(content) = update.fields.content else {
+                    continue;
+                };
+                for item in content {
+                    if let acp::ToolCallContent::Content(c) = item
+                        && let acp::ContentBlock::Text(text) = c.content
+                    {
+                        return Some(text.text);
+                    }
+                }
+            }
+            None
+        }
+
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello world"})).await;
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/file.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "nonexistent text that is not in the file".into(),
+                        new_text: "replacement".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let EditFileToolOutput::Error { error, diff, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            diff.is_empty(),
+            "sanity check: no edits should have been applied",
+        );
+
+        let content_text = find_first_text_content_in_events(&mut receiver).await;
+        assert_eq!(
+            content_text.as_deref(),
+            Some(error.as_str()),
+            "expected the failure message to be surfaced as tool call content",
         );
     }
 
