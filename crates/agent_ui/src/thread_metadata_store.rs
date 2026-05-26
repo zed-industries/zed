@@ -454,6 +454,7 @@ impl From<&ThreadMetadata> for acp_thread::AgentSessionInfo {
 
 /// Record of a git worktree that was archived (deleted from disk) when its
 /// last thread was archived.
+#[derive(Clone, Debug)]
 pub struct ArchivedGitWorktree {
     /// Auto-incrementing primary key.
     pub id: i64,
@@ -660,8 +661,17 @@ impl Drop for RestoreGuard {
         // executor between updates), but if a future caller ever drops it
         // mid-update an inline release would either panic on a double
         // borrow or — with `try_update` — silently leak the claim until
-        // process exit. Deferring is uniformly safe: by the time the
-        // executor turns to this task, any outer borrow has been released.
+        // process exit.
+        //
+        // Why deferring is safe: GPUI's foreground executor never runs a
+        // queued task while an `App::update` borrow is held. Tasks are
+        // drained between events / between `update` calls, after effects
+        // flush. So by the time the runtime polls the closure below, the
+        // outer borrow (if any) has been released and `try_update` will
+        // succeed. The closure still uses `try_update` rather than `update`
+        // as a belt-and-suspenders safeguard: if a future GPUI change ever
+        // breaks that scheduler invariant, the worst outcome is a logged
+        // leak rather than a process abort.
         self.cx
             .foreground_executor()
             .spawn(async move {

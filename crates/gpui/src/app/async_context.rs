@@ -173,14 +173,24 @@ impl AsyncApp {
     /// - the `App` is mutably borrowed elsewhere (e.g. this `try_update` is
     ///   reached from a `Drop` impl that happens to fire inside an active
     ///   `update` closure), or
-    /// - the `App` is in the middle of quitting, mirroring the behaviour of
-    ///   the other `*_window` async APIs in this file.
+    /// - the `App` is in the middle of [`App::shutdown`] (the `quitting`
+    ///   flag is set). At this point [`App::foreground_executor`] and
+    ///   [`App::spawn`] also bail/panic on the same flag, so spawning work
+    ///   from inside a destructor that races shutdown would be lost anyway.
     ///
     /// This is intended for destructors and other infallibly-running code
     /// paths that need to give up gracefully rather than abort the process.
     /// Regular async code should prefer [`AsyncApp::update`]; the borrow
     /// failure case there usually indicates a real re-entry bug, and
     /// papering over it with `try_update` would just hide it.
+    ///
+    /// Note that, unlike [`App::foreground_executor`] (which panics on
+    /// `quitting`), [`AsyncApp::foreground_executor`] returns the cached
+    /// executor without inspecting `quitting`. A destructor can therefore
+    /// successfully `spawn` a deferred release task during shutdown; the
+    /// task's own `try_update` will then see `quitting` set and bail. That
+    /// is the intended behavior — leaking a claim during shutdown is
+    /// harmless because the process is about to exit.
     pub fn try_update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.try_borrow_mut()?;

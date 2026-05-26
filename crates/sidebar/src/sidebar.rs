@@ -534,18 +534,42 @@ const OVERWRITE_PROMPT_PATH_LIMIT: usize = 5;
 const OVERWRITE_PROMPT_HEADLINE: &str =
     "Restoring this thread will overwrite existing files. Continue?";
 
-/// Button labels for the overwrite prompt. The cancel-first ordering is
-/// deliberate: it makes Cancel the default button (Return) AND the
-/// escape-key target on macOS NSAlert, so a stray keypress can't trigger
-/// an unrecoverable data-loss operation. Looked up by label rather than
-/// by positional index so reordering or adding buttons can't silently
-/// flip the meaning of [`prompt_overwrite_if_needed`]'s return value.
-const OVERWRITE_PROMPT_BUTTONS: &[&str] = &[
-    OVERWRITE_PROMPT_CANCEL_LABEL,
-    OVERWRITE_PROMPT_PROCEED_LABEL,
-];
 const OVERWRITE_PROMPT_CANCEL_LABEL: &str = "Cancel";
 const OVERWRITE_PROMPT_PROCEED_LABEL: &str = "Overwrite";
+
+/// Buttons for the overwrite prompt.
+///
+/// Constructed explicitly as [`PromptButton`] variants (rather than relying on
+/// the [`PromptButton::From<&str>`] lower-casing match on `"cancel"`) so the
+/// Cancel semantics are locked in by the type: a future rename to e.g.
+/// `"Don't overwrite"` cannot silently downgrade the button to
+/// `PromptButton::Other` and lose Escape handling on macOS.
+///
+/// Cancel-first ordering is deliberate for the Return and Escape keys: on
+/// macOS NSAlert, Return triggers the first-added button and Escape triggers
+/// whichever button is `PromptButton::Cancel`. With this ordering both are
+/// the Cancel button, so a stray keypress can't trigger the destructive
+/// option.
+///
+/// **Caveat (macOS)**: the initial keyboard focus (and therefore Space, and
+/// arrow-key + Return) is moved off the Cancel button onto the last
+/// non-cancel button — `Overwrite` here. See `MacWindow::prompt` in
+/// `gpui_macos/src/window.rs` for the rationale. The Return/Escape
+/// guarantees still hold, but a user who touches the keyboard at all before
+/// reading the dialog can still confirm the destructive action with Space.
+/// If that ever becomes a real concern we'd need to either reorder buttons
+/// (and accept Return defaulting to Overwrite) or patch the macOS
+/// initial-focus heuristic for two-button prompts.
+///
+/// The decision lookup matches by label (not by positional index) so
+/// reordering or adding buttons can't silently flip the meaning of
+/// [`prompt_overwrite_if_needed`]'s return value.
+fn overwrite_prompt_buttons() -> [gpui::PromptButton; 2] {
+    [
+        gpui::PromptButton::cancel(OVERWRITE_PROMPT_CANCEL_LABEL),
+        gpui::PromptButton::new(OVERWRITE_PROMPT_PROCEED_LABEL),
+    ]
+}
 
 /// Builds the body shown in the "will overwrite existing contents" prompt
 /// for an archived-thread restore. Lists up to
@@ -606,10 +630,15 @@ enum OverwriteDecision {
     /// Either nothing would be overwritten, or the user explicitly chose
     /// to proceed with the destructive restore.
     Proceed,
-    /// User canceled, or the prompt itself failed. We treat a prompt
-    /// failure as "did not consent" — the only alternative would be
-    /// overwriting without a confirmation, which is unrecoverable.
+    /// User explicitly clicked Cancel (or the prompt dispatched a button we
+    /// didn't ship). No toast is needed — the user just told us not to.
     Abort,
+    /// The prompt itself failed to deliver a decision (window closed mid-
+    /// prompt, platform error). We MUST treat this as "did not consent":
+    /// the only alternative is overwriting without confirmation, which is
+    /// unrecoverable. The caller is responsible for surfacing a toast so
+    /// the user isn't left wondering why nothing happened after their click.
+    PromptFailed(anyhow::Error),
 }
 
 /// Read-only pre-flight: returns the list of worktree paths whose
@@ -617,15 +646,17 @@ enum OverwriteDecision {
 /// Touches no files; safe to abort after this without disturbing the
 /// archived state.
 ///
-/// Worktrees are checked in parallel (via `try_join_all` over per-task
+/// Worktrees are checked in parallel (via `join_all` over per-task
 /// `AsyncApp` clones) because each row's check is an independent fs probe
 /// against a different path. For threads with N worktrees on slow or
 /// networked storage this matters; for the common N ≤ 3 case the
 /// difference is in the noise.
 ///
-/// Per-row errors are wrapped with the offending `worktree_path` so the
-/// caller's user-visible toast can name which worktree's probe failed,
-/// not just "something".
+/// Every per-row failure is logged with the offending `worktree_path`
+/// before this function returns, so triage sees all of them even when
+/// multiple worktrees are broken at once. The returned error reports the
+/// failure count and names the first offender; the rest are recoverable
+/// from the log.
 async fn preflight_overwrite_paths(
     archived_worktrees: &[ArchivedGitWorktree],
     remote_connection: Option<&RemoteConnectionOptions>,
@@ -634,40 +665,67 @@ async fn preflight_overwrite_paths(
     let probes = archived_worktrees.iter().map(|row| {
         let mut cx = cx.clone();
         async move {
-            let overwrites =
+            let result =
                 thread_worktree_archive::restore_would_overwrite(row, remote_connection, &mut cx)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "checking worktree path {} for existing content",
-                            row.worktree_path.display()
-                        )
-                    })?;
-            anyhow::Ok(overwrites.then(|| row.worktree_path.clone()))
+                    .await;
+            (row, result)
         }
     });
-    let results = futures::future::try_join_all(probes).await?;
-    Ok(results.into_iter().flatten().collect())
+    let results = futures::future::join_all(probes).await;
+
+    let mut paths_to_overwrite = Vec::new();
+    let mut first_failure: Option<(PathBuf, anyhow::Error)> = None;
+    let mut failure_count = 0usize;
+    for (row, result) in results {
+        match result {
+            Ok(true) => paths_to_overwrite.push(row.worktree_path.clone()),
+            Ok(false) => {}
+            Err(error) => {
+                failure_count += 1;
+                log::error!(
+                    "Failed to check worktree before restore at {}: {error:#}",
+                    row.worktree_path.display()
+                );
+                if first_failure.is_none() {
+                    first_failure = Some((row.worktree_path.clone(), error));
+                }
+            }
+        }
+    }
+
+    if let Some((path, error)) = first_failure {
+        let remaining = failure_count.saturating_sub(1);
+        return Err(error).with_context(|| {
+            if remaining > 0 {
+                format!(
+                    "Failed to check worktree before restore at {} \
+                     (and {remaining} other worktree(s) also failed; see logs)",
+                    path.display()
+                )
+            } else {
+                format!(
+                    "Failed to check worktree before restore at {}",
+                    path.display()
+                )
+            }
+        });
+    }
+    Ok(paths_to_overwrite)
 }
 
 /// If `paths_to_overwrite` is empty, returns [`OverwriteDecision::Proceed`]
 /// without prompting. Otherwise shows a critical-level platform alert
 /// listing the paths and returns Proceed/Abort based on the user's
-/// choice. Prompt failures (e.g. window closed mid-prompt) log and
-/// resolve to Abort.
+/// choice. Prompt-delivery failures (e.g. window closed mid-prompt) are
+/// reported as [`OverwriteDecision::PromptFailed`] so the caller can
+/// surface a toast — a silent abort after a Restore click is worse than
+/// any toast because the user has no way to tell whether their click
+/// registered.
 ///
 /// The headline ([`OVERWRITE_PROMPT_HEADLINE`]) is passed as the alert's
 /// `message` and the path list as `detail`, so the platform renders the
 /// question prominently and the path list at body weight — not the
 /// other way around.
-///
-/// "Cancel" is placed first so Escape / Return both default to the
-/// non-destructive option on macOS NSAlert (Cancel is the keyEquivalent
-/// for Escape AND the first-added button, which is the default response).
-/// This is intentionally safer than the prevailing `[Destructive, Cancel]`
-/// order used elsewhere in Zed because the consequence here is
-/// unrecoverable user-data loss rather than something reversible like
-/// leaving a channel.
 async fn prompt_overwrite_if_needed(
     paths_to_overwrite: &[PathBuf],
     cx: &mut gpui::AsyncWindowContext,
@@ -676,6 +734,7 @@ async fn prompt_overwrite_if_needed(
         return OverwriteDecision::Proceed;
     }
     let detail = format_overwrite_prompt_detail(paths_to_overwrite);
+    let buttons = overwrite_prompt_buttons();
     // `Critical` rather than `Warning` because the prompt gates an
     // unrecoverable data-loss operation; we want the platform alert
     // icon (e.g. a stop sign on macOS), not a generic warning triangle.
@@ -684,7 +743,7 @@ async fn prompt_overwrite_if_needed(
             gpui::PromptLevel::Critical,
             OVERWRITE_PROMPT_HEADLINE,
             Some(&detail),
-            OVERWRITE_PROMPT_BUTTONS,
+            &buttons,
         )
         .await;
     match result {
@@ -694,25 +753,23 @@ async fn prompt_overwrite_if_needed(
             // shouldn't be reachable: the platform must return one of
             // the indices we passed) falls into the Abort arm, which is
             // the conservative default.
-            match OVERWRITE_PROMPT_BUTTONS.get(idx).copied() {
+            match buttons.get(idx).map(|b| b.label().as_ref()) {
                 Some(OVERWRITE_PROMPT_PROCEED_LABEL) => OverwriteDecision::Proceed,
                 Some(_) | None => OverwriteDecision::Abort,
             }
         }
-        Err(error) => {
-            log::error!("Failed to prompt for overwrite confirmation: {error:#}");
-            OverwriteDecision::Abort
-        }
+        Err(error) => OverwriteDecision::PromptFailed(error.into()),
     }
 }
 
-/// One worktree's outcome from [`run_destructive_restore_pass`]: the
-/// archived row (so the caller's cleanup loop knows which DB record to
-/// drop) paired with the on-disk path the restore actually ended up at.
-/// Borrowing the row keeps the cleanup side-by-side with the
-/// `archived_worktrees` slice owned by the caller, without copying.
-struct RestoreOutcome<'a> {
-    archived: &'a ArchivedGitWorktree,
+/// One worktree's outcome from [`run_destructive_restore_pass`]: a clone
+/// of the archived row (so the caller's cleanup loop knows which DB record
+/// to drop) paired with the on-disk path the restore actually ended up
+/// at. Owning the row avoids tying the outcome's lifetime to the input
+/// slice, which keeps the type usable across awaits and simplifies the
+/// post-restore plumbing.
+struct RestoreOutcome {
+    archived: ArchivedGitWorktree,
     restored_path: PathBuf,
 }
 
@@ -730,11 +787,11 @@ struct RestoreOutcome<'a> {
 /// is committed in the caller, and is driven off the returned outcomes
 /// rather than the input slice so an enhancement that allows partial
 /// success can't accidentally delete records for un-restored worktrees.
-async fn run_destructive_restore_pass<'a>(
-    archived_worktrees: &'a [ArchivedGitWorktree],
+async fn run_destructive_restore_pass(
+    archived_worktrees: &[ArchivedGitWorktree],
     remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<Vec<RestoreOutcome<'a>>> {
+) -> anyhow::Result<Vec<RestoreOutcome>> {
     let mut outcomes = Vec::with_capacity(archived_worktrees.len());
     for row in archived_worktrees {
         let restored_path =
@@ -744,7 +801,7 @@ async fn run_destructive_restore_pass<'a>(
                     format!("restoring worktree at {}", row.worktree_path.display())
                 })?;
         outcomes.push(RestoreOutcome {
-            archived: row,
+            archived: row.clone(),
             restored_path,
         });
     }
@@ -3775,10 +3832,13 @@ impl Sidebar {
         self.show_restore_toast(notification_id, message, cx);
     }
 
-    /// Reports a per-worktree restore failure (preflight error or
-    /// destructive-pass error). The fixed `RestoreWorktreeErrorToast`
-    /// notification ID means repeated failures coalesce into one toast.
-    fn fail_restore_worktree(
+    /// Reports a failure from the destructive restore pass
+    /// (`restore_worktree_via_git` returning Err). The fixed
+    /// `RestoreWorktreeErrorToast` notification ID means repeated failures
+    /// coalesce into one toast rather than stacking. The preflight failure
+    /// path uses [`Self::fail_restore_with_toast`] directly so the toast
+    /// text can match its log wording verbatim.
+    fn fail_destructive_restore_pass(
         &mut self,
         thread_id: agent_ui::ThreadId,
         weak_archive_view: &Option<WeakEntity<ThreadsArchiveView>>,
@@ -3882,7 +3942,15 @@ impl Sidebar {
                     .iter()
                     .map(|row| row.worktree_path.clone())
                     .collect();
-                let _restore_guard = match ThreadMetadataStore::try_claim_restore(
+                // `restore_guard` lives until the end of this spawn body.
+                // Its `Drop` releases the cross-window claim. The leading
+                // underscore is intentionally omitted: leading-underscore
+                // bindings read as "intentionally unused" to many linters
+                // and readers, and this guard is anything but — holding it
+                // alive is its entire purpose. The `#[allow]` silences
+                // clippy without misrepresenting the role.
+                #[allow(unused_variables, clippy::let_underscore_must_use)]
+                let restore_guard = match ThreadMetadataStore::try_claim_restore(
                     &store,
                     thread_id,
                     metadata.remote_connection.as_ref(),
@@ -3949,8 +4017,9 @@ impl Sidebar {
                 }
 
                 // Preflight (read-only). Bailing here leaves the archived
-                // state untouched. Toast text mirrors the log so the user
-                // and triage see the same description of the failed phase.
+                // state untouched. `preflight_overwrite_paths` already logs
+                // each per-row failure with its path; the toast wording
+                // matches the log wording on purpose.
                 let paths_to_overwrite = match preflight_overwrite_paths(
                     &archived_worktrees,
                     metadata.remote_connection.as_ref(),
@@ -3960,15 +4029,12 @@ impl Sidebar {
                 {
                     Ok(paths) => paths,
                     Err(error) => {
-                        log::error!(
-                            "Failed to check worktree path for existing content: {error:#}"
-                        );
                         this.update_in(cx, |this, _window, cx| {
                             this.fail_restore_with_toast(
                                 thread_id,
                                 &weak_archive_view,
                                 NotificationId::unique::<RestoreWorktreeErrorToast>(),
-                                format!("Failed to check worktree before restore: {error:#}"),
+                                format!("{error:#}"),
                                 cx,
                             );
                         })
@@ -3978,16 +4044,35 @@ impl Sidebar {
                 };
 
                 // Confirmation prompt. Still no destructive work yet, so
-                // an Abort here just cleans up UI state.
-                if matches!(
-                    prompt_overwrite_if_needed(&paths_to_overwrite, cx).await,
-                    OverwriteDecision::Abort
-                ) {
-                    this.update_in(cx, |this, _window, cx| {
-                        this.finish_restore_ui(thread_id, &weak_archive_view, cx);
-                    })
-                    .ok();
-                    return anyhow::Ok(());
+                // any non-Proceed outcome just cleans up UI state. We
+                // distinguish a user-initiated Abort (silent — they just
+                // told us not to) from a PromptFailed (toast, otherwise
+                // the user has no signal that anything happened after
+                // their Restore click).
+                match prompt_overwrite_if_needed(&paths_to_overwrite, cx).await {
+                    OverwriteDecision::Proceed => {}
+                    OverwriteDecision::Abort => {
+                        this.update_in(cx, |this, _window, cx| {
+                            this.finish_restore_ui(thread_id, &weak_archive_view, cx);
+                        })
+                        .ok();
+                        return anyhow::Ok(());
+                    }
+                    OverwriteDecision::PromptFailed(error) => {
+                        log::error!("Failed to prompt for overwrite confirmation: {error:#}");
+                        this.update_in(cx, |this, _window, cx| {
+                            this.fail_restore_with_toast(
+                                thread_id,
+                                &weak_archive_view,
+                                NotificationId::unique::<RestoreFailedToast>(),
+                                "Couldn't show overwrite confirmation; aborting restore."
+                                    .to_string(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                        return anyhow::Ok(());
+                    }
                 }
 
                 // Destructive pass.
@@ -4002,7 +4087,12 @@ impl Sidebar {
                     Err(error) => {
                         log::error!("Failed to restore worktree: {error:#}");
                         this.update_in(cx, |this, _window, cx| {
-                            this.fail_restore_worktree(thread_id, &weak_archive_view, &error, cx);
+                            this.fail_destructive_restore_pass(
+                                thread_id,
+                                &weak_archive_view,
+                                &error,
+                                cx,
+                            );
                         })
                         .ok();
                         return anyhow::Ok(());
@@ -4082,14 +4172,23 @@ impl Sidebar {
                 // `cleanup_archived_worktree_record` swallows its own
                 // errors, so a cleanup failure leaks a DB row but
                 // doesn't break the thread.
-                for outcome in &outcomes {
-                    thread_worktree_archive::cleanup_archived_worktree_record(
-                        outcome.archived,
-                        metadata.remote_connection.as_ref(),
-                        cx,
-                    )
-                    .await;
-                }
+                //
+                // Run cleanups concurrently for symmetry with the parallel
+                // preflight: each is an independent DB delete and there's
+                // no ordering requirement between them.
+                let remote_connection = metadata.remote_connection.as_ref();
+                let cleanups = outcomes.iter().map(|outcome| {
+                    let mut cx = cx.clone();
+                    async move {
+                        thread_worktree_archive::cleanup_archived_worktree_record(
+                            &outcome.archived,
+                            remote_connection,
+                            &mut cx,
+                        )
+                        .await;
+                    }
+                });
+                futures::future::join_all(cleanups).await;
 
                 anyhow::Ok(())
             }
