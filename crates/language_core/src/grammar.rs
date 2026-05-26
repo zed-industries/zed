@@ -153,6 +153,9 @@ pub struct RunnableConfig {
     pub query: Query,
     /// A mapping from capture index to capture kind
     pub extra_captures: Vec<RunnableCapture>,
+    /// `true` if the query uses `@run_item`, the marker for matches that
+    /// emit multiple runnables.
+    pub supports_grouped_runnables: bool,
 }
 
 pub struct OverrideConfig {
@@ -400,10 +403,14 @@ impl Grammar {
                 name => RunnableCapture::Named(name.to_string().into()),
             })
             .collect();
+        let supports_grouped_runnables = extra_captures
+            .iter()
+            .any(|capture| matches!(capture, RunnableCapture::RunItem));
 
         self.runnable_config = Some(RunnableConfig {
             extra_captures,
             query,
+            supports_grouped_runnables,
         });
 
         Ok(self)

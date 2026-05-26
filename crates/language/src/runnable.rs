@@ -83,12 +83,14 @@ pub(crate) fn runnable_ranges(
             let mat = syntax_matches.peek()?;
 
             if let Some(runnable_config) = runnable_configs[mat.grammar_index] {
-                if mat.captures.iter().any(|capture| {
-                    matches!(
-                        runnable_config.extra_captures.get(capture.index as usize),
-                        Some(RunnableCapture::RunItem)
-                    )
-                }) {
+                let is_grouped = runnable_config.supports_grouped_runnables
+                    && mat.captures.iter().any(|capture| {
+                        matches!(
+                            runnable_config.extra_captures.get(capture.index as usize),
+                            Some(RunnableCapture::RunItem)
+                        )
+                    });
+                if is_grouped {
                     let runnable_ranges = runnable_ranges_from_grouped_matches(
                         buffer,
                         mat.captures,
