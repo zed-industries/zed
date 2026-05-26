@@ -8,9 +8,8 @@ use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorSty
 use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
-    App, Bounds, DEFAULT_ADDITIONAL_WINDOW_SIZE, Entity, FocusHandle, Focusable, Subscription,
-    Task, TextStyle, Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle,
-    WindowOptions, actions, point,
+    App, Bounds, Entity, FocusHandle, Focusable, Subscription, Task, TextStyle, Tiling,
+    TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -23,9 +22,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SpinnerLabel,
-    SwitchField, ToggleButtonGroup, ToggleButtonGroupSize, ToggleButtonGroupStyle,
-    ToggleButtonSimple, prelude::*,
+    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
+    prelude::*,
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
@@ -39,13 +37,12 @@ actions!(
     [SaveSkill, Cancel, FocusNextField, FocusPreviousField,]
 );
 
-const CREATION_MODE_TAB_INDEX: isize = 1;
-const URL_FIELD_TAB_INDEX: isize = 3;
-const NAME_FIELD_TAB_INDEX: isize = 3;
-const DESCRIPTION_FIELD_TAB_INDEX: isize = 4;
-const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 5;
-const SCOPE_FIELD_TAB_INDEX: isize = 6;
-const BODY_FIELD_TAB_INDEX: isize = 7;
+const URL_FIELD_TAB_INDEX: isize = 1;
+const NAME_FIELD_TAB_INDEX: isize = 2;
+const DESCRIPTION_FIELD_TAB_INDEX: isize = 3;
+const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
+const SCOPE_FIELD_TAB_INDEX: isize = 5;
+const BODY_FIELD_TAB_INDEX: isize = 6;
 const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(100);
 const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
 
@@ -58,12 +55,6 @@ pub enum SkillCreatorOpenMode {
     Url {
         initial_url: Option<String>,
     },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum CreationMode {
-    Form,
-    Url,
 }
 
 #[derive(Clone, Debug)]
@@ -180,10 +171,12 @@ pub fn open_skill_creator(
             return Ok(window);
         }
 
+        let window_size = gpui::size(px(900.), px(1050.));
+
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
             let http_client = cx.http_client();
-            let bounds = Bounds::centered(None, DEFAULT_ADDITIONAL_WINDOW_SIZE, cx);
+            let bounds = Bounds::centered(None, window_size, cx);
             let window_decorations = match std::env::var("ZED_WINDOW_DECORATIONS") {
                 Ok(val) if val == "server" => gpui::WindowDecorations::Server,
                 Ok(val) if val == "client" => gpui::WindowDecorations::Client,
@@ -203,7 +196,7 @@ pub fn open_skill_creator(
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(DEFAULT_ADDITIONAL_WINDOW_SIZE),
+                    window_min_size: Some(window_size),
                     kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
@@ -236,7 +229,6 @@ pub struct SkillCreator {
     fs: Arc<dyn Fs>,
     http_client: Arc<dyn HttpClient>,
     on_saved: Option<Rc<dyn Fn(&mut App)>>,
-    creation_mode: CreationMode,
     url_editor: Entity<InputField>,
     name_editor: Entity<InputField>,
     description_editor: Entity<InputField>,
@@ -293,7 +285,6 @@ impl SkillCreator {
                 cx,
                 "https://github.com/owner/repo/blob/main/path/to/SKILL.md",
             )
-            .label("GitHub Markdown URL")
             .tab_index(URL_FIELD_TAB_INDEX)
             .tab_stop(true)
         });
@@ -419,7 +410,6 @@ impl SkillCreator {
             fs,
             http_client,
             on_saved,
-            creation_mode: CreationMode::Form,
             url_editor,
             name_editor,
             description_editor,
@@ -460,10 +450,8 @@ impl SkillCreator {
             return;
         }
 
-        if self.creation_mode == CreationMode::Url {
-            self.save_error = None;
-            self.schedule_url_import(window, cx);
-        }
+        self.save_error = None;
+        self.schedule_url_import(window, cx);
     }
 
     fn handle_name_input_event(
@@ -569,39 +557,12 @@ impl SkillCreator {
         }
     }
 
-    fn select_creation_mode(
-        &mut self,
-        mode: CreationMode,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.creation_mode == mode {
-            return;
-        }
-
-        self.save_error = None;
-        match mode {
-            CreationMode::Form => {
-                self.creation_mode = CreationMode::Form;
-                self.url_import_debounce_task = None;
-                self.url_import_task = None;
-                self.url_import_status = UrlImportStatus::Idle;
-                window.focus(&self.name_editor.focus_handle(cx), cx);
-                cx.notify();
-            }
-            CreationMode::Url => {
-                self.open_url_import(None, window, cx);
-            }
-        }
-    }
-
     fn open_url_import(
         &mut self,
         initial_url: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.creation_mode = CreationMode::Url;
         self.save_error = None;
         self.url_import_debounce_task = None;
         self.url_import_task = None;
@@ -713,7 +674,6 @@ impl SkillCreator {
                                 .update(cx, |this, cx| {
                                     this.disable_model_invocation =
                                         imported.disable_model_invocation;
-                                    this.creation_mode = CreationMode::Form;
                                     this.url_import_status = UrlImportStatus::Idle;
                                     this.url_import_debounce_task = None;
                                     this.url_import_task = None;
@@ -746,7 +706,7 @@ impl SkillCreator {
         self.recompute_description_error(cx);
         self.recompute_body_error(cx);
 
-        if self.creation_mode != CreationMode::Form || !self.is_valid(cx) || self.saving {
+        if !self.is_valid(cx) || self.saving {
             cx.notify();
             return;
         }
@@ -841,81 +801,41 @@ impl SkillCreator {
         cx.notify();
     }
 
-    fn render_creation_mode_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut tab_index = CREATION_MODE_TAB_INDEX;
-
-        h_flex()
-            .w_full()
-            .justify_between()
-            .gap_3()
-            .child(Label::new("Create from").color(Color::Muted))
-            .child(
-                ToggleButtonGroup::single_row(
-                    "skill-creation-mode",
-                    [
-                        ToggleButtonSimple::new(
-                            "Form",
-                            cx.listener(|this, _event, window, cx| {
-                                this.select_creation_mode(CreationMode::Form, window, cx);
-                            }),
-                        ),
-                        ToggleButtonSimple::new(
-                            "URL",
-                            cx.listener(|this, _event, window, cx| {
-                                this.select_creation_mode(CreationMode::Url, window, cx);
-                            }),
-                        ),
-                    ],
-                )
-                .style(ToggleButtonGroupStyle::Outlined)
-                .size(ToggleButtonGroupSize::Custom(rems_from_px(30.)))
-                .label_size(LabelSize::Default)
-                .auto_width()
-                .tab_index(&mut tab_index)
-                .selected_index(match self.creation_mode {
-                    CreationMode::Form => 0,
-                    CreationMode::Url => 1,
-                }),
-            )
-    }
-
     fn render_url_import(&self) -> impl IntoElement {
         v_flex()
-            .id("skill-creator-url-import")
             .min_h_0()
-            .gap_3()
-            .child(self.url_editor.clone())
+            .gap_2()
             .child(
-                Label::new(
+                h_flex()
+                    .gap_1()
+                    .child(Label::new("Import from URL"))
+                    .child(Label::new("(optional)").color(Color::Muted)),
+            )
+            .child(self.url_editor.clone())
+            .child(match &self.url_import_status {
+                UrlImportStatus::Idle => Label::new(
                     "Paste a GitHub .md URL. Zed will fetch it and fill out the skill form.",
                 )
                 .size(LabelSize::Small)
-                .color(Color::Muted),
-            )
-            .when(
-                matches!(self.url_import_status, UrlImportStatus::Fetching),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .gap_2()
-                            .child(SpinnerLabel::dots().size(LabelSize::Small))
-                            .child(
-                                Label::new("Fetching and parsing…")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
+                .color(Color::Muted)
+                .into_any_element(),
+                UrlImportStatus::Fetching => {
+                    LoadingLabel::new("Fetching and parsing…").into_any_element()
+                }
+                UrlImportStatus::Error(error) => h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::XCircle)
+                            .size(IconSize::Small)
+                            .color(Color::Error),
                     )
-                },
-            )
-            .when_some(
-                match &self.url_import_status {
-                    UrlImportStatus::Error(error) => Some(error.clone()),
-                    UrlImportStatus::Idle | UrlImportStatus::Fetching => None,
-                },
-                |this, error| {
-                    this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
-                },
-            )
+                    .child(
+                        Label::new(error.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Error),
+                    )
+                    .into_any_element(),
+            })
     }
 
     fn render_form_fields(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1086,8 +1006,7 @@ impl SkillCreator {
     }
 
     fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let show_save = self.creation_mode == CreationMode::Form;
-        let valid = show_save && self.is_valid(cx);
+        let valid = self.is_valid(cx);
         let saving = self.saving;
         let main_action = if saving { "Saving…" } else { "Save Skill" };
 
@@ -1116,18 +1035,16 @@ impl SkillCreator {
                                 window.dispatch_action(Box::new(Cancel), cx);
                             }),
                     )
-                    .when(show_save, |this| {
-                        this.child(
-                            Button::new("save-skill", main_action)
-                                .style(ButtonStyle::Filled)
-                                .layer(ui::ElevationIndex::ModalSurface)
-                                .disabled(!valid || saving)
-                                .loading(saving)
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(Box::new(SaveSkill), cx);
-                                }),
-                        )
-                    }),
+                    .child(
+                        Button::new("save-skill", main_action)
+                            .style(ButtonStyle::Filled)
+                            .layer(ui::ElevationIndex::ModalSurface)
+                            .disabled(!valid || saving)
+                            .loading(saving)
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(Box::new(SaveSkill), cx);
+                            }),
+                    ),
             )
     }
 
@@ -1226,14 +1143,9 @@ impl Render for SkillCreator {
                         .min_h_0()
                         .gap_4()
                         .p_4()
-                        .child(self.render_creation_mode_toggle(cx))
+                        .child(self.render_url_import())
                         .child(Divider::horizontal())
-                        .child(match self.creation_mode {
-                            CreationMode::Form => {
-                                self.render_form_fields(window, cx).into_any_element()
-                            }
-                            CreationMode::Url => self.render_url_import().into_any_element(),
-                        }),
+                        .child(self.render_form_fields(window, cx)),
                 )
                 .child(
                     h_flex()
