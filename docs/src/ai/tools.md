@@ -1,11 +1,13 @@
 ---
 title: AI Agent Tools - Zed
-description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, and diagnostics.
+description: Built-in tools for Zed's AI agent including file editing, code search, code intelligence, terminal commands, web search, and diagnostics.
 ---
 
 # Tools
 
 Zed's built-in agent has access to these tools for reading, searching, and editing your codebase. These tools are used in the [Agent Panel](./agent-panel.md) during conversations with AI agents.
+
+The exact tool list can vary by [Agent Profile](./agent-profiles.md), selected model provider, and Zed version. Some tools also depend on language server support for the language you are working in.
 
 You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
 
@@ -46,6 +48,42 @@ Lists files and directories in a given path, providing an overview of filesystem
 ### `read_file`
 
 Reads the content of a specified file in the project, allowing access to file contents.
+
+## Code Intelligence Tools
+
+These tools use Zed's language server integrations. They work best after the agent has read or searched the relevant file so it can identify the exact symbol name and line number.
+
+### `go_to_definition`
+
+Finds the definition of a symbol and returns the file path, line number, and source snippet for the definition location.
+
+**Example:** After seeing `parse_config` used in `src/main.rs`, call `go_to_definition` on that symbol to inspect the implementation before changing call sites.
+
+### `find_references`
+
+Finds references to a symbol across the project and returns file paths, line numbers, and code snippets for each reference.
+
+**Example:** Before changing a public function signature, call `find_references` to find the language-server-confirmed usage sites instead of relying only on text search.
+
+### `get_code_actions`
+
+Gets quick fixes, refactorings, and other code actions available at a symbol location from the language server.
+
+**Example:** After diagnostics report a missing import, call `get_code_actions` at the unresolved symbol to see whether the language server can add the import automatically.
+
+### `apply_code_action`
+
+Applies one of the code actions returned by `get_code_actions`.
+
+**Example:** Call `get_code_actions`, choose the numbered "Add missing import" action, then call `apply_code_action` with that number.
+
+### `rename_symbol`
+
+Renames a symbol across the project using the language server.
+
+**Example:** Rename a function from `parse_config` to `parse_settings` semantically so references are updated according to the symbol's type and scope.
+
+## Web Tools
 
 ### `search_web`
 
@@ -91,8 +129,20 @@ Executes shell commands and returns the combined output, creating a new shell pr
 
 ## Other Tools
 
+### `skill`
+
+Loads instructions from an available [Skill](./skills.md) so the agent can follow project-specific or workflow-specific guidance. Skills can also be invoked by you directly with slash commands.
+
+**Example:** When a repository has a skill for release-note writing, the agent can load that skill before drafting release notes so it follows the local format.
+
 ### `spawn_agent`
 
 Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
 
 **Example:** While refactoring the authentication module, spawn a subagent to investigate how session tokens are validated elsewhere in the codebase. The parent agent continues its work and reviews the subagent's findings when it completes — keeping both context windows focused on a single task.
+
+### `update_plan`
+
+Updates the visible task plan for an agent turn.
+
+**Example:** During a multi-step refactor, the agent can mark investigation complete, implementation in progress, and validation pending so the current state of the task is visible in the thread.
