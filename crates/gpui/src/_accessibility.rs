@@ -189,6 +189,7 @@
 //! [`div().on_a11y_action()`][InteractiveElement::on_a11y_action]:
 //! ```rust,no_run
 //! # use gpui::*;
+//! # fn my_cool_slider() -> Div { div() }
 //! let mut position = 0;  // stored in component state somewhere
 //!
 //! let slider = div()
@@ -198,7 +199,7 @@
 //!         position += 1;
 //!         cx.notify();
 //!     })
-//!     .child(todo!());
+//!     .child(my_cool_slider());
 //! ```
 //!
 //! Note that some common actions are automatically registered. For example,
