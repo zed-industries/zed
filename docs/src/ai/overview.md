@@ -43,6 +43,6 @@ Zed has several AI-powered workflows:
 
 ## Configure AI {#configure-ai}
 
-Use [Set Up AI](./set-up-ai.md) to choose the right setup path, configure model access, add agents or MCP servers, control tools, and turn AI off.
+Use [AI Quick Start](./quick-start.md) to choose the right setup path, configure model access, add agents or MCP servers, control tools, and turn AI off.
 
 For privacy and data handling, see [Privacy & Security](./privacy-and-security.md) and [AI Improvement](./ai-improvement.md).

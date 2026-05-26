@@ -16,7 +16,7 @@ If you're using the Agent Panel for the first time, configure either a model for
 
 - Use [LLM Providers](./llm-providers.md) for Zed-hosted models, API access, subscriptions, gateways, and local models.
 - Use [External Agents](./external-agents.md) for ACP-integrated agents.
-- Use [Set Up AI](./set-up-ai.md) if you are not sure which path to choose.
+- Use [AI Quick Start](./quick-start.md) if you are not sure which path to choose.
 
 ## Overview {#overview}
 

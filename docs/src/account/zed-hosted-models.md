@@ -5,7 +5,7 @@ description: AI models available via Zed Pro including Claude, GPT-5.5, Gemini 3
 
 # Zed-Hosted Models
 
-Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](../ai/llm-providers.md). For general setup, see [Set Up AI](../ai/set-up-ai.md).
+Zed's plans offer hosted versions of major LLMs with higher rate limits than direct API access. Model availability is updated regularly. To use your own API keys instead, see [LLM Providers](../ai/llm-providers.md). For general setup, see [AI Quick Start](../ai/quick-start.md).
 
 > **Note:** Claude Opus models, GPT-5.5 pro, and GPT-5.4 pro are not available on the [Student plan](./plans-and-pricing.md#student).
 

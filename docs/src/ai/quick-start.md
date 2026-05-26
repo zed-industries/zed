@@ -1,82 +1,67 @@
 ---
 title: AI Quick Start - Zed
-description: Choose the right Zed AI setup path for agents, providers, subscriptions, local models, edit prediction, and privacy.
+description: Choose the right Zed AI setup path for agents, models, subscriptions, local models, edit prediction, and privacy.
 ---
 
 # AI Quick Start
 
-Use this page to route to the right setup path. Each section links to the canonical page for the details.
+Use this page to choose the right AI setup path in Zed. If you already know the company, subscription, model provider, agent, or CLI you want to use, start with [AI by Company](./by-company.md).
 
 ## I want Zed's built-in agent {#zed-agent}
 
 Use [Zed Agent](./zed-agent.md) when you want Zed's native agent to read, edit, search, and run code in your project.
 
-- Configure model access with [LLM Providers](./llm-providers.md).
-- Use the [Agent Panel](./agent-panel.md) to prompt and review changes.
-- Use [Agent Profiles](./agent-profiles.md) to choose which tools and MCP tools are available.
+Zed Agent uses Zed-configured models from [LLM Providers](./llm-providers.md). It also uses Zed's built-in tools, [Agent Profiles](./agent-profiles.md), [Skills](./skills.md), [Instructions](./instructions.md), and [MCP servers](./mcp.md).
 
-## I want Claude, Codex, Gemini, or another agent CLI in Zed {#agent-cli}
+Start in the [Agent Panel](./agent-panel.md) to prompt the agent, add context, review changes, and manage threads.
 
-Use [External Agents](./external-agents.md) when the agent is available through ACP. Use [Terminal Threads](./terminal-threads.md) when you want the native CLI or TUI running directly in a terminal-backed thread.
+## I want to use another coding agent in Zed {#agent-cli}
+
+Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, Gemini CLI, or another coding agent.
+
+| If the agent...                 | Use                                       |
+| ------------------------------- | ----------------------------------------- |
+| Integrates with Zed through ACP | [External Agents](./external-agents.md)   |
+| Runs as a CLI or TUI            | [Terminal Threads](./terminal-threads.md) |
 
 External agents and terminal threads usually own their own auth, model configuration, subscriptions, tools, instructions, and MCP configuration.
 
-## I want to use Zed-hosted models {#zed-hosted-models}
+## I want to choose which models Zed uses {#model-access}
 
-Use [Zed-Hosted Models](../account/zed-hosted-models.md) when you want model access through a Zed plan.
-
-- See [Plans & Pricing](../account/plans-and-pricing.md) to compare plans.
-- Use [Billing](../account/billing.md) for invoices, payment, and spend limits.
-
-## I want to use an LLM subscription I already pay for {#existing-subscription}
-
-Use [Use an Existing Subscription](./use-an-existing-subscription.md) when you already pay for ChatGPT, Claude, Copilot, Cursor, OpenCode, or another AI product.
-
-Some subscriptions work as Zed model providers. Others are used through an external agent or terminal CLI.
-
-## I want to bring my own API key {#api-access}
-
-Use [Use API Access](./use-api-access.md) when a provider gives you an API key, API credits, top-ups, or usage billing.
+| If you want to...                                                             | Use                                                               |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Use models billed through Zed                                                 | [Zed-Hosted Models](../account/zed-hosted-models.md)              |
+| Bring your own provider API key, credits, top-ups, or usage billing           | [Use API Access](./use-api-access.md)                             |
+| Use a subscription you already pay for                                        | [Use an Existing Subscription](./use-an-existing-subscription.md) |
+| Use OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another gateway         | [Use a Gateway](./use-a-gateway.md)                               |
+| Use Ollama, LM Studio, local OpenAI-compatible servers, or self-hosted models | [Use a Local Model](./use-a-local-model.md)                       |
 
 Provider keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
-## I want to use a gateway {#gateway}
+## I want to change AI settings {#ai-settings}
 
-Use [Use a Gateway](./use-a-gateway.md) for OpenRouter, Vercel AI Gateway, Amazon Bedrock, or a similar platform.
+| If you want to...                                                           | Go to                                 |
+| --------------------------------------------------------------------------- | ------------------------------------- |
+| Configure LLM providers, external agents, or MCP servers                    | [Agent Settings](./agent-settings.md) |
+| Disable AI, configure tool permissions, or set up edit prediction providers | Settings Editor                       |
+| Edit advanced JSON-only settings                                            | Settings file                         |
 
-## I want to use a local model {#local-model}
+Open Agent Settings with {#action agent::OpenSettings}. Open the Settings Editor with {#action zed::OpenSettings}. Open your settings file with {#action zed::OpenSettingsFile}.
 
-Use [Use a Local Model](./use-a-local-model.md) for Ollama, LM Studio, local OpenAI-compatible servers, or local/self-hosted edit prediction.
+For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 
-## I want AI autocomplete, not an agent {#edit-prediction}
+## I want a specific AI feature {#features}
 
-Use [Edit Prediction](./edit-prediction.md). Edit prediction has its own provider setup and is separate from LLM providers used by the Zed Agent and Inline Assistant.
-
-## I want inline code edits {#inline-edits}
-
-Use [Inline Assistant](./inline-assistant.md) when you want to rewrite selected code, terminal text, or other text in place.
-
-## I want to run multiple AI tasks at once {#parallel-agents}
-
-Use [Parallel Agents](./parallel-agents.md) to run multiple threads across projects and worktrees.
-
-## I want AI help with Git {#git}
-
-Zed can generate commit messages from the Git panel using your configured model. See [LLM Providers](./llm-providers.md) for model access and [Git](../git.md) for Git workflows.
-
-## I want to control what the agent can do {#control-tools}
-
-- Use [Agent Profiles](./agent-profiles.md) to choose which tools are available.
-- Use [Tool Permissions](./tool-permissions.md) to control allow, deny, and confirm behavior.
-- Use [MCP](./mcp.md) to add external tools.
-
-## I want to understand privacy before enabling AI {#privacy}
-
-Read [Privacy & Security](./privacy-and-security.md). For model-improvement controls, see [AI Improvement](./ai-improvement.md).
-
-## I want to understand AI plans, usage, and billing {#billing}
-
-Use [Plans & Pricing](../account/plans-and-pricing.md), [Zed-Hosted Models](../account/zed-hosted-models.md), and [Billing](../account/billing.md).
+| If you want to...                              | Use                                                                                                                                            |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Prompt agents, add context, and review changes | [Agent Panel](./agent-panel.md)                                                                                                                |
+| Accept AI completions while typing             | [Edit Prediction](./edit-prediction.md)                                                                                                        |
+| Rewrite selected code or terminal text         | [Inline Assistant](./inline-assistant.md)                                                                                                      |
+| Run multiple AI tasks at once                  | [Parallel Agents](./parallel-agents.md)                                                                                                        |
+| Generate commit messages                       | [Git commit generation](../git.md#ai-support-in-git)                                                                                           |
+| Control tools and permissions                  | [Agent Profiles](./agent-profiles.md), [Tool Permissions](./tool-permissions.md), and [MCP](./mcp.md)                                          |
+| Understand privacy and data controls           | [Privacy & Security](./privacy-and-security.md) and [AI Improvement](./ai-improvement.md)                                                      |
+| Understand plans, usage, and billing           | [Plans & Pricing](../account/plans-and-pricing.md), [Zed-Hosted Models](../account/zed-hosted-models.md), and [Billing](../account/billing.md) |
 
 ## I want to turn AI off {#turn-ai-off}
 
