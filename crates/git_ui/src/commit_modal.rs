@@ -622,7 +622,7 @@ impl Render for CommitModal {
                 }),
             )
             .w(width)
-            .h_112()
+            .min_h_112()
             .p(container_padding)
             .elevation_3(cx)
             .overflow_hidden()
