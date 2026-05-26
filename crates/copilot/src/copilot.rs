@@ -1259,6 +1259,7 @@ impl Copilot {
                 | request::SignInStatus::AlreadySignedIn { .. } => {
                     server.sign_in_status = SignInStatus::Authorized;
                     cx.emit(Event::CopilotAuthSignedIn);
+                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
                             self.register_buffer(&buffer, cx);
@@ -1278,6 +1279,7 @@ impl Copilot {
                         };
                     }
                     cx.emit(Event::CopilotAuthSignedOut);
+                    notify_copilot_chat_auth_changed(cx);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }
@@ -1379,6 +1381,17 @@ fn notify_did_change_config_to_server(
         })
         .ok();
     Ok(())
+}
+
+/// Notify the `copilot_chat` global that the Copilot auth state may have
+/// changed (sign-in, sign-out, account switch). This is the LSP's
+/// `didChangeStatus` notification turned into a cross-crate poke: it
+/// replaces a previous filesystem watcher on the Copilot SDK's config
+/// directory, which was unreliable for SQLite writes on Windows.
+fn notify_copilot_chat_auth_changed(cx: &mut Context<Copilot>) {
+    if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+        copilot_chat.update(cx, |chat, cx| chat.reload_auth(cx));
+    }
 }
 
 async fn clear_copilot_dir() {

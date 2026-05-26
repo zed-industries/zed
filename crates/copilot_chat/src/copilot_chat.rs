@@ -17,8 +17,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 
-use settings::watch_config_dir;
-
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 const DEFAULT_COPILOT_API_ENDPOINT: &str = "https://api.githubcopilot.com";
 
@@ -501,6 +499,7 @@ pub struct CopilotChat {
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+    fs: Arc<dyn Fs>,
 }
 
 pub fn init(
@@ -529,6 +528,18 @@ pub fn copilot_chat_config_dir() -> &'static PathBuf {
     })
 }
 
+/// Legacy JSON token-storage paths used by older Copilot SDK builds.
+/// Current SDK builds write `auth.db` instead (see
+/// `extract_oauth_token_from_db`). This helper, `extract_oauth_token`,
+/// and the JSON branch of `read_oauth_token` exist purely for backwards
+/// compatibility with users who authenticated before the SDK migration
+/// and still have a valid `apps.json` / `hosts.json` on disk.
+///
+/// TODO: once the GitHub Copilot SDK officially deprecates the JSON
+/// stores, drop this function, `extract_oauth_token`, and the JSON loop
+/// in `read_oauth_token`. At that point `read_oauth_token` collapses to
+/// just `extract_oauth_token_from_db` and the `config_paths` /
+/// `HashSet<PathBuf>` plumbing can go too.
 fn copilot_chat_config_paths() -> [PathBuf; 2] {
     let base_dir = copilot_chat_config_dir();
     [base_dir.join("hosts.json"), base_dir.join("apps.json")]
@@ -546,40 +557,51 @@ impl CopilotChat {
         configuration: CopilotChatConfiguration,
         cx: &mut Context<Self>,
     ) -> Self {
-        let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
-        let dir_path = copilot_chat_config_dir();
-
+        // Initial async scan of token sources (JSON files + auth.db).
+        // Live reload is driven by `reload_auth()`, called from the
+        // `copilot` crate when its LSP fires `didChangeStatus`. We do
+        // not watch the filesystem directly: SQLite writes its WAL
+        // alongside the main file and finalises with rename/replace
+        // operations whose ordering and visibility differ across
+        // platforms, so a `fs.watch` loop over the config dir is racy
+        // (we observed it firing before the token row is committed,
+        // and missing later commits on Windows). The LSP already knows
+        // when auth state changes and gives us a clean, semantic
+        // signal that works the same way on every platform.
+        let fs_for_scan = fs.clone();
         cx.spawn(async move |this, cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs.clone(),
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_domain =
-                    this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain);
+            let oauth_domain =
+                this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
+            let config_paths: HashSet<PathBuf> =
+                copilot_chat_config_paths().into_iter().collect();
+            let auth_db_path = copilot_chat_config_dir().join("auth.db");
 
+            let oauth_token =
+                read_oauth_token(&fs_for_scan, &config_paths, &oauth_domain, &auth_db_path).await;
+            if oauth_token.is_some() {
                 this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
+                    this.oauth_token = oauth_token;
                     cx.notify();
                 })?;
-
-                if oauth_token.is_some() {
-                    Self::update_models(&this, cx).await?;
-                }
+                Self::update_models(&this, cx).await?;
             }
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
         let this = Self {
-            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR)
+                .ok()
+                .or_else(|| {
+                    // Fallback: newer Copilot SDK stores tokens in auth.db
+                    let db_path = copilot_chat_config_dir().join("auth.db");
+                    extract_oauth_token_from_db(&db_path)
+                }),
             api_endpoint: None,
             models: None,
             configuration,
             client,
+            fs,
         };
 
         if this.oauth_token.is_some() {
@@ -764,6 +786,43 @@ impl CopilotChat {
             .detach();
         }
     }
+
+    /// Re-read the OAuth token from disk and refresh the model catalog
+    /// if the token changed. Called from the `copilot` crate when its
+    /// LSP fires `didChangeStatus` (sign-in, sign-out, account switch).
+    pub fn reload_auth(&mut self, cx: &mut Context<Self>) {
+        let fs = self.fs.clone();
+        let oauth_domain = self.configuration.oauth_domain();
+        cx.spawn(async move |this, cx| {
+            let config_paths: HashSet<PathBuf> =
+                copilot_chat_config_paths().into_iter().collect();
+            let auth_db_path = copilot_chat_config_dir().join("auth.db");
+
+            let new_token =
+                read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path).await;
+
+            let token_present = this.update(cx, |this, cx| {
+                let changed = this.oauth_token != new_token;
+                if changed {
+                    this.oauth_token = new_token.clone();
+                    if new_token.is_none() {
+                        // Sign-out: drop derived state so a future sign-in
+                        // re-discovers the endpoint and re-fetches models.
+                        this.api_endpoint = None;
+                        this.models = None;
+                    }
+                    cx.notify();
+                }
+                new_token.is_some()
+            })?;
+
+            if token_present {
+                Self::update_models(&this, cx).await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 }
 
 async fn get_models(
@@ -917,6 +976,25 @@ async fn request_models(
     Ok(models)
 }
 
+/// Read the OAuth token from any available source, in order:
+/// legacy JSON files (`hosts.json`, `apps.json`) first, then the
+/// newer `auth.db` SQLite database written by the Copilot SDK.
+async fn read_oauth_token(
+    fs: &Arc<dyn Fs>,
+    config_paths: &HashSet<PathBuf>,
+    oauth_domain: &str,
+    auth_db_path: &std::path::Path,
+) -> Option<String> {
+    for file_path in config_paths {
+        if let Ok(contents) = fs.load(file_path).await {
+            if let Some(token) = extract_oauth_token(contents, oauth_domain) {
+                return Some(token);
+            }
+        }
+    }
+    extract_oauth_token_from_db(auth_db_path)
+}
+
 fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
     serde_json::from_str::<serde_json::Value>(&contents)
         .map(|v| {
@@ -932,6 +1010,33 @@ fn extract_oauth_token(contents: String, domain: &str) -> Option<String> {
         })
         .ok()
         .flatten()
+}
+
+/// Extract OAuth token from the newer Copilot SDK's SQLite auth.db.
+///
+/// The Copilot SDK migrated token storage from `apps.json` to a SQLite
+/// database (`auth.db`). The schema has an `oauth_tokens` table with a
+/// `token_ciphertext` column containing the raw `ghu_...` token as text.
+fn extract_oauth_token_from_db(db_path: &std::path::Path) -> Option<String> {
+    if !db_path.exists() {
+        return None;
+    }
+
+    let db = sqlez::connection::Connection::open_file(db_path.to_str()?);
+
+    let mut select = db
+        .select_row::<String>("SELECT token_ciphertext FROM oauth_tokens LIMIT 1")
+        .ok()?;
+
+    let token = select().ok().flatten()?;
+
+    if token.starts_with("ghu_") && token.len() >= 36 && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        log::debug!("Copilot OAuth token loaded from auth.db");
+        Some(token)
+    } else {
+        log::warn!("Copilot auth.db: token does not match expected GitHub OAuth format (ghu_<alphanumeric>)");
+        None
+    }
 }
 
 async fn stream_completion(
