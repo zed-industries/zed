@@ -199,6 +199,8 @@ actions!(
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
+        /// Renames the currently selected thread.
+        RenameSelectedThread,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.

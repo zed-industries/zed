@@ -3646,6 +3646,22 @@ impl AgentPanel {
         }
     }
 
+    pub fn conversation_view_for_id(
+        &self,
+        thread_id: &ThreadId,
+        cx: &App,
+    ) -> Option<&Entity<ConversationView>> {
+        self.retained_threads.get(thread_id).or_else(|| {
+            if let Some(view) = self.active_conversation_view()
+                && view.read(cx).thread_id == *thread_id
+            {
+                Some(view)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
         self.active_conversation_view()
             .into_iter()
