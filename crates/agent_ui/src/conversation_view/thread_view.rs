@@ -4238,7 +4238,7 @@ impl ThreadView {
 
         if let Some((provider_id, model_id, confirmation)) = pending_confirmation {
             let weak_self = cx.entity().downgrade();
-            let tooltip_focus = focus_handle.clone();
+            let tooltip_focus = focus_handle;
 
             return Some(
                 PopoverMenu::new("fast-mode-warning")
@@ -4276,7 +4276,7 @@ impl ThreadView {
                                 ContextMenuEntry::new("Enable and Don't Show Again").handler({
                                     let weak_self = weak_self.clone();
                                     let provider_id = provider_id.clone();
-                                    let model_id = model_id.clone();
+                                    let model_id = model_id;
                                     move |_window, cx| {
                                         weak_self
                                             .update(cx, |this, cx| {
