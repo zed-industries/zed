@@ -2008,8 +2008,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = &self.thread;
-
         match event {
             EditorEvent::BufferEdited => {
                 // We only want to set the title if the user has actively edited
@@ -2023,20 +2021,7 @@ impl ThreadView {
                 if new_title.is_empty() {
                     return;
                 }
-                let title = SharedString::from(new_title);
-                if let Some(store) = ThreadMetadataStore::try_global(cx)
-                    && !self.is_subagent()
-                {
-                    let thread_id = self.root_thread_id;
-                    store.update(cx, |store, cx| {
-                        store.set_title_override(thread_id, title.clone(), cx);
-                    });
-                }
-                thread.update(cx, |thread, cx| {
-                    if thread.can_set_title(cx) {
-                        thread.set_title(title, cx).detach_and_log_err(cx);
-                    }
-                });
+                self.apply_renamed_title(SharedString::from(new_title), cx);
             }
             EditorEvent::Blurred => {
                 if title_editor.read(cx).text(cx).is_empty() {
@@ -2047,6 +2032,35 @@ impl ThreadView {
             }
             _ => {}
         }
+    }
+
+    /// Renames the thread, mirroring the editor text and persisting the new
+    /// title. Used by callers outside of the title editor (e.g. the sidebar's
+    /// inline rename) so that they go through the same persistence path as
+    /// the in-thread title editor.
+    pub fn rename(&mut self, title: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        if self.title_editor.read(cx).text(cx) != title.as_ref() {
+            self.title_editor.update(cx, |editor, cx| {
+                editor.set_text(title.clone(), window, cx);
+            });
+        }
+        self.apply_renamed_title(title, cx);
+    }
+
+    fn apply_renamed_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        if let Some(store) = ThreadMetadataStore::try_global(cx)
+            && !self.is_subagent()
+        {
+            let thread_id = self.root_thread_id;
+            store.update(cx, |store, cx| {
+                store.set_title_override(thread_id, title.clone(), cx);
+            });
+        }
+        self.thread.update(cx, |thread, cx| {
+            if thread.can_set_title(cx) {
+                thread.set_title(title, cx).detach_and_log_err(cx);
+            }
+        });
     }
 
     pub fn cancel_editing(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -2608,6 +2622,7 @@ impl ThreadView {
                         offset: point(px(1.), px(-1.)),
                         blur_radius: px(2.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(

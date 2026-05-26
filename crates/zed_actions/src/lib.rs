@@ -264,6 +264,11 @@ pub enum NewWorktreeBranchTarget {
     CurrentBranch,
     /// Create a detached worktree at the tip of an existing branch.
     ExistingBranch { name: String },
+    /// Create a detached worktree at the tip of a remote-tracking branch.
+    RemoteBranch {
+        remote_name: String,
+        branch_name: String,
+    },
 }
 
 /// Creates a new git worktree and switches the workspace to it.

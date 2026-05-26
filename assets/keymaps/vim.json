@@ -494,6 +494,10 @@
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
+      // Macros — Helix swaps Vim's q/Q: Q records, q replays
+      "q": "vim::ReplayLastRecording",
+      "shift-q": "vim::ToggleRecord",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -503,6 +507,8 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences",
+      "g i": "editor::GoToImplementation",
+      "g a": "pane::AlternateFile",
       "g n": "pane::ActivateNextItem",
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",

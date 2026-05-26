@@ -3657,6 +3657,22 @@ impl AgentPanel {
         }
     }
 
+    pub fn conversation_view_for_id(
+        &self,
+        thread_id: &ThreadId,
+        cx: &App,
+    ) -> Option<&Entity<ConversationView>> {
+        self.retained_threads.get(thread_id).or_else(|| {
+            if let Some(view) = self.active_conversation_view()
+                && view.read(cx).thread_id == *thread_id
+            {
+                Some(view)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
         self.active_conversation_view()
             .into_iter()
@@ -9945,6 +9961,14 @@ mod tests {
             &NewWorktreeBranchTarget::CurrentBranch,
         );
         assert_eq!(resolved, None);
+
+        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+            &NewWorktreeBranchTarget::RemoteBranch {
+                remote_name: "origin".to_string(),
+                branch_name: "main".to_string(),
+            },
+        );
+        assert_eq!(resolved, Some("refs/remotes/origin/main".to_string()));
     }
 
     #[gpui::test]

@@ -18,8 +18,8 @@ use agent_ui::threads_archive_view::{
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
     ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
-    NewThread, TerminalId, ThreadId, ThreadImportModal, channels_with_threads,
-    import_threads_from_other_channels,
+    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
+    channels_with_threads, import_threads_from_other_channels,
 };
 use chrono::{DateTime, Utc};
 use editor::Editor;
@@ -431,6 +431,23 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
+/// Identity-and-layout key for a [`ListEntry`] used to preserve measured list items
+/// across rebuilds. Equal shapes must render to the same height; add any new
+/// height-affecting state here.
+#[derive(Debug, PartialEq, Eq)]
+enum EntryShape {
+    ProjectHeader {
+        key: ProjectGroupKey,
+        // Toggles the "No threads yet" empty-state row when not collapsed.
+        has_threads: bool,
+        // Determines whether the "No threads yet" row is rendered (only shown when
+        // `!is_collapsed && !has_threads`).
+        is_collapsed: bool,
+    },
+    Thread(ThreadId),
+    Terminal(TerminalId),
+}
+
 impl SidebarContents {
     fn is_thread_notified(&self, thread_id: &agent_ui::ThreadId) -> bool {
         self.notified_threads.contains(thread_id)
@@ -646,6 +663,7 @@ pub struct Sidebar {
     width: Pixels,
     focus_handle: FocusHandle,
     filter_editor: Entity<Editor>,
+    thread_rename_editor: Entity<Editor>,
     list_state: ListState,
     contents: SidebarContents,
     /// The index of the list item that currently has the keyboard focus
@@ -655,6 +673,10 @@ pub struct Sidebar {
     /// Tracks which sidebar entry is currently active (highlighted).
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
+    renaming_thread_id: Option<ThreadId>,
+    /// start_renaming_thread must seed current title into the title editor
+    /// so this prevents that BufferEdited event from being interpreted as user input.
+    suppress_next_rename_edit: bool,
 
     /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
@@ -700,6 +722,7 @@ impl Sidebar {
             editor.set_placeholder_text("Search threads…", window, cx);
             editor
         });
+        let thread_rename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
         cx.subscribe_in(
             &multi_workspace,
@@ -736,6 +759,15 @@ impl Sidebar {
         })
         .detach();
 
+        cx.subscribe_in(
+            &thread_rename_editor,
+            window,
+            |this, title_editor, event, window, cx| {
+                this.handle_thread_rename_editor_event(title_editor, event, window, cx);
+            },
+        )
+        .detach();
+
         cx.observe(&ThreadMetadataStore::global(cx), |this, _store, cx| {
             this.update_entries(cx);
         })
@@ -765,11 +797,14 @@ impl Sidebar {
             width: DEFAULT_WIDTH,
             focus_handle,
             filter_editor,
+            thread_rename_editor,
             list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
             contents: SidebarContents::default(),
             selection: None,
             active_entry: None,
             hovered_thread_index: None,
+            renaming_thread_id: None,
+            suppress_next_rename_edit: false,
 
             thread_last_accessed: HashMap::new(),
             terminal_last_accessed: HashMap::new(),
@@ -1721,12 +1756,8 @@ impl Sidebar {
 
                 let mut matched_threads: Vec<ThreadEntry> = Vec::new();
                 for mut thread in threads {
-                    let title: &str = thread
-                        .metadata
-                        .title
-                        .as_ref()
-                        .map_or(DEFAULT_THREAD_TITLE, |t| t.as_ref());
-                    if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    let title = thread.metadata.display_title();
+                    if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
                         thread.highlight_positions = positions;
                     }
                     let mut worktree_matched = false;
@@ -1883,13 +1914,14 @@ impl Sidebar {
         }
 
         let had_notifications = self.has_notifications(cx);
-        let scroll_position = self.list_state.logical_scroll_top();
+        let previous_shapes: Vec<EntryShape> =
+            self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
         self.refresh_draft_editor_observations(cx);
 
-        self.list_state.reset(self.contents.entries.len());
-        self.list_state.scroll_to(scroll_position);
+        // Preserve measurements for unchanged entries so sticky headers do not flicker.
+        self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
@@ -1898,6 +1930,56 @@ impl Sidebar {
         }
 
         cx.notify();
+    }
+
+    /// Splices only the changed entry range, leaving unchanged item measurements intact.
+    fn apply_list_state_diff(
+        &self,
+        previous_shapes: &[EntryShape],
+        multi_workspace: &MultiWorkspace,
+    ) {
+        let mut new_iter = self.entry_shapes(multi_workspace);
+        let mut prefix_len = 0;
+        let leading_new = loop {
+            match (previous_shapes.get(prefix_len), new_iter.next()) {
+                (Some(prev), Some(next)) if *prev == next => prefix_len += 1,
+                (None, None) => return,
+                (_, leading) => break leading,
+            }
+        };
+
+        let new_tail: Vec<EntryShape> = leading_new.into_iter().chain(new_iter).collect();
+        let prev_tail = &previous_shapes[prefix_len..];
+        let suffix_len = prev_tail
+            .iter()
+            .rev()
+            .zip(new_tail.iter().rev())
+            .take_while(|(prev, next)| prev == next)
+            .count();
+
+        let old_changed = prefix_len..previous_shapes.len() - suffix_len;
+        let new_changed_count = new_tail.len() - suffix_len;
+        self.list_state.splice(old_changed, new_changed_count);
+    }
+
+    fn entry_shapes<'a>(
+        &'a self,
+        multi_workspace: &'a MultiWorkspace,
+    ) -> impl Iterator<Item = EntryShape> + 'a {
+        self.contents.entries.iter().map(move |entry| match entry {
+            ListEntry::ProjectHeader {
+                key, has_threads, ..
+            } => EntryShape::ProjectHeader {
+                key: key.clone(),
+                has_threads: *has_threads,
+                is_collapsed: multi_workspace
+                    .group_state_by_key(key)
+                    .map(|state| !state.expanded)
+                    .unwrap_or(false),
+            },
+            ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
+            ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
+        })
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor
@@ -2778,10 +2860,17 @@ impl Sidebar {
 
         let is_archived_search_focused = matches!(&self.view, SidebarView::Archive(archive) if archive.read(cx).is_filter_editor_focused(window, cx));
 
+        let is_renaming_thread = self
+            .thread_rename_editor
+            .focus_handle(cx)
+            .is_focused(window);
+
         let identifier = if self.filter_editor.focus_handle(cx).is_focused(window)
             || is_archived_search_focused
         {
             "searching"
+        } else if is_renaming_thread {
+            "editing"
         } else {
             "not_searching"
         };
@@ -2806,6 +2895,11 @@ impl Sidebar {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
+        if self.renaming_thread_id.is_some() {
+            self.finish_thread_rename(window, cx);
+            return;
+        }
+
         if self.filter_editor.read(cx).is_focused(window) {
             if self.reset_filter_editor_text(window, cx) {
                 self.selection = None;
@@ -2864,6 +2958,104 @@ impl Sidebar {
 
     fn has_filter_query(&self, cx: &App) -> bool {
         !self.filter_editor.read(cx).text(cx).is_empty()
+    }
+
+    fn start_renaming_thread(
+        &mut self,
+        ix: usize,
+        thread_id: ThreadId,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.renaming_thread_id.is_some() && self.renaming_thread_id != Some(thread_id) {
+            self.finish_thread_rename(window, cx);
+        }
+
+        self.selection = Some(ix);
+        self.renaming_thread_id = Some(thread_id);
+        self.suppress_next_rename_edit = true;
+        self.list_state.scroll_to_reveal_item(ix);
+        self.thread_rename_editor.update(cx, |editor, cx| {
+            editor.set_text(title, window, cx);
+            editor.select_all(&editor::actions::SelectAll, window, cx);
+            editor.focus_handle(cx).focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn handle_thread_rename_editor_event(
+        &mut self,
+        title_editor: &Entity<Editor>,
+        event: &editor::EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::BufferEdited => {
+                if self.suppress_next_rename_edit {
+                    self.suppress_next_rename_edit = false;
+                    return;
+                }
+                if !title_editor.read(cx).is_focused(window) {
+                    return;
+                }
+                let new_title = title_editor.read(cx).text(cx);
+                if new_title.is_empty() {
+                    return;
+                }
+                let Some(thread_id) = self.renaming_thread_id else {
+                    return;
+                };
+                self.apply_thread_rename(thread_id, SharedString::from(new_title), window, cx);
+            }
+            editor::EditorEvent::Blurred => {
+                self.finish_thread_rename(window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_thread_rename(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut found = false;
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+            for workspace in workspaces {
+                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                    if let Some(view) = agent_panel
+                        .read(cx)
+                        .conversation_view_for_id(&thread_id, cx)
+                        && let Some(thread_view) = view.read(cx).root_thread_view()
+                    {
+                        thread_view.update(cx, |thread_view, cx| {
+                            thread_view.rename(title.clone(), window, cx);
+                        });
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if !found {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.set_title_override(thread_id, title, cx);
+            });
+        }
+    }
+
+    fn finish_thread_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.renaming_thread_id.take().is_none() {
+            return false;
+        }
+        self.focus_handle.focus(window, cx);
+        self.update_entries(cx);
+        true
     }
 
     fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
@@ -2940,6 +3132,10 @@ impl Sidebar {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        if self.finish_thread_rename(window, cx) {
+            return;
+        }
+
         let Some(ix) = self.selection else { return };
         let Some(entry) = self.contents.entries.get(ix) else {
             return;
@@ -5040,6 +5236,23 @@ impl Sidebar {
         }
     }
 
+    fn rename_selected_thread(
+        &mut self,
+        _: &RenameSelectedThread,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selection else {
+            return;
+        };
+        let Some(ListEntry::Thread(thread)) = self.contents.entries.get(ix) else {
+            return;
+        };
+        let thread_id = thread.metadata.thread_id;
+        let title = thread.metadata.display_title();
+        self.start_renaming_thread(ix, thread_id, title, window, cx);
+    }
+
     fn record_thread_access(&mut self, id: &ThreadId) {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
@@ -5478,10 +5691,12 @@ impl Sidebar {
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
         );
+        let is_renaming = self.renaming_thread_id == Some(thread.metadata.thread_id);
 
         let thread_id_for_actions = thread.metadata.thread_id;
         let session_id_for_delete = thread.metadata.session_id.clone();
         let focus_handle = self.focus_handle.clone();
+        let title_editor = self.thread_rename_editor.clone();
 
         let id = SharedString::from(format!("thread-entry-{}", ix));
 
@@ -5509,7 +5724,7 @@ impl Sidebar {
             (thread.icon, thread.icon_from_external_svg.clone())
         };
 
-        ThreadItem::new(id, title)
+        ThreadItem::new(id, title.clone())
             .base_bg(sidebar_bg)
             .icon(icon)
             .when(is_draft, |this| {
@@ -5542,50 +5757,74 @@ impl Sidebar {
                 }
                 cx.notify();
             }))
-            .when(is_hovered && is_running, |this| {
-                this.action_slot(
-                    IconButton::new("stop-thread", IconName::Stop)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .style(ButtonStyle::Tinted(TintColor::Error))
-                        .tooltip(Tooltip::text("Stop Generation"))
-                        .on_click({
-                            cx.listener(move |this, _, _window, cx| {
-                                this.stop_thread(&thread_id_for_actions, cx);
-                            })
-                        }),
+            .when(is_renaming, |this| {
+                this.is_truncated(false).title_slot(
+                    div()
+                        .h_full()
+                        .min_w_0()
+                        .flex_1()
+                        .capture_action(cx.listener(
+                            |this, _: &editor::actions::Newline, window, cx| {
+                                this.finish_thread_rename(window, cx);
+                            },
+                        ))
+                        .on_action(cx.listener(|this, _: &Confirm, window, cx| {
+                            this.finish_thread_rename(window, cx);
+                        }))
+                        .on_action(
+                            cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
+                                this.finish_thread_rename(window, cx);
+                            }),
+                        )
+                        .child(title_editor),
                 )
             })
-            .when(is_hovered && !is_running && !is_draft, |this| {
-                this.action_slot(
-                    IconButton::new("archive-thread", IconName::Archive)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |_window, cx| {
-                                Tooltip::for_action_in(
-                                    "Archive Thread",
-                                    &ArchiveSelectedThread,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
+            .when(is_hovered && !is_renaming, |this| {
+                let rename_button = IconButton::new(("rename-thread", ix), IconName::Pencil)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |_window, cx| {
+                            Tooltip::for_action_in(
+                                "Rename Thread",
+                                &RenameSelectedThread,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click({
+                        let title = title.clone();
+                        cx.listener(move |this, _, window, cx| {
+                            this.start_renaming_thread(
+                                ix,
+                                thread_id_for_actions,
+                                title.clone(),
+                                window,
+                                cx,
+                            );
                         })
-                        .on_click({
-                            let session_id = session_id_for_delete.clone();
-                            cx.listener(move |this, _, window, cx| {
-                                if let Some(ref session_id) = session_id {
-                                    this.archive_thread(session_id, window, cx);
-                                }
-                            })
-                        }),
-                )
-            })
-            .when(
-                is_hovered && !is_running && is_draft && !is_empty_draft,
-                |this| {
-                    this.action_slot(
+                    });
+
+                // Skip the discard button for empty drafts so they can be
+                // dismissed without an explicit action (preserves HEAD's UX).
+                let contextual_action: Option<AnyElement> = if is_running {
+                    Some(
+                        IconButton::new("stop-thread", IconName::Stop)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Error)
+                            .style(ButtonStyle::Tinted(TintColor::Error))
+                            .tooltip(Tooltip::text("Stop Generation"))
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                this.stop_thread(&thread_id_for_actions, cx);
+                            }))
+                            .into_any_element(),
+                    )
+                } else if is_draft && is_empty_draft {
+                    None
+                } else if is_draft {
+                    Some(
                         IconButton::new("discard_thread", IconName::Close)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
@@ -5600,10 +5839,44 @@ impl Sidebar {
                                         cx,
                                     );
                                 })
-                            }),
+                            })
+                            .into_any_element(),
                     )
-                },
-            )
+                } else {
+                    Some(
+                        IconButton::new("archive-thread", IconName::Archive)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |_window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Archive Thread",
+                                        &ArchiveSelectedThread,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                let session_id = session_id_for_delete.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    if let Some(ref session_id) = session_id {
+                                        this.archive_thread(session_id, window, cx);
+                                    }
+                                })
+                            })
+                            .into_any_element(),
+                    )
+                };
+
+                this.action_slot(
+                    h_flex()
+                        .gap_0p5()
+                        .child(rename_button)
+                        .when_some(contextual_action, |this, action| this.child(action)),
+                )
+            })
             .on_click({
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
@@ -7028,6 +7301,7 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::unfold_all))
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::archive_selected_thread))
+            .on_action(cx.listener(Self::rename_selected_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::new_terminal_thread))
             .on_action(cx.listener(Self::toggle_archive))
