@@ -1000,6 +1000,10 @@ impl LanguageServer {
                     color_provider: Some(DocumentColorClientCapabilities {
                         dynamic_registration: Some(true),
                     }),
+                    document_link: Some(DocumentLinkClientCapabilities {
+                        dynamic_registration: Some(true),
+                        tooltip_support: Some(true),
+                    }),
                     folding_range: Some(FoldingRangeClientCapabilities {
                         dynamic_registration: Some(true),
                         line_folding_only: Some(false),

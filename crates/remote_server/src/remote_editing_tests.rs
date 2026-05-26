@@ -2121,7 +2121,8 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .update(cx, |repository, _| repository.branches())
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .branches;
 
     let new_branch = branches[2];
 
