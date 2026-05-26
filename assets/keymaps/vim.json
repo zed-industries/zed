@@ -494,6 +494,10 @@
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
+      // Macros — Helix swaps Vim's q/Q: Q records, q replays
+      "q": "vim::ReplayLastRecording",
+      "shift-q": "vim::ToggleRecord",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
