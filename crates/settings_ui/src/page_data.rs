@@ -128,6 +128,7 @@ fn developer_page(cx: &App) -> SettingsPage {
 
     SettingsPage {
         title: "Developer",
+        is_overridable_by_organization_settings: false,
         items: items.into_boxed_slice(),
     }
 }
@@ -418,6 +419,7 @@ fn general_page(cx: &App) -> SettingsPage {
 
     SettingsPage {
         title: "General",
+        is_overridable_by_organization_settings: true,
         items: concat_sections!(
             @vec,
             general_settings_section(cx),
@@ -1303,6 +1305,7 @@ fn appearance_page() -> SettingsPage {
 
     SettingsPage {
         title: "Appearance",
+        is_overridable_by_organization_settings: false,
         items,
     }
 }
@@ -1391,6 +1394,7 @@ fn keymap_page() -> SettingsPage {
 
     SettingsPage {
         title: "Keymap",
+        is_overridable_by_organization_settings: false,
         items,
     }
 }
@@ -2867,6 +2871,7 @@ fn editor_page() -> SettingsPage {
 
     SettingsPage {
         title: "Editor",
+        is_overridable_by_organization_settings: false,
         items: items,
     }
 }
@@ -3163,6 +3168,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 
     SettingsPage {
         title: "Languages & Tools",
+        is_overridable_by_organization_settings: false,
         items: {
             concat_sections!(
                 non_editor_language_settings_data(),
@@ -3506,6 +3512,7 @@ fn search_and_files_page() -> SettingsPage {
 
     SettingsPage {
         title: "Search & Files",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![search_section(), file_finder_section(), file_scan_section()],
     }
 }
@@ -4608,6 +4615,7 @@ fn window_and_layout_page() -> SettingsPage {
 
     SettingsPage {
         title: "Window & Layout",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![
             status_bar_section(),
             title_bar_section(),
@@ -5992,6 +6000,7 @@ fn panels_page() -> SettingsPage {
 
     SettingsPage {
         title: "Panels",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![
             project_panel_section(),
             terminal_panel_section(),
@@ -6114,6 +6123,7 @@ fn debugger_page() -> SettingsPage {
 
     SettingsPage {
         title: "Debugger",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![general_section()],
     }
 }
@@ -6932,6 +6942,7 @@ fn terminal_page() -> SettingsPage {
 
     SettingsPage {
         title: "Terminal",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![
             environment_section(),
             font_section(),
@@ -7338,6 +7349,7 @@ fn version_control_page() -> SettingsPage {
 
     SettingsPage {
         title: "Version Control",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![
             git_integration_section(),
             git_gutter_section(),
@@ -7446,6 +7458,7 @@ fn collaboration_page() -> SettingsPage {
 
     SettingsPage {
         title: "Collaboration",
+        is_overridable_by_organization_settings: true,
         items: concat_sections![calls_section(), audio_settings()],
     }
 }
@@ -7808,6 +7821,7 @@ fn ai_page(cx: &App) -> SettingsPage {
 
     SettingsPage {
         title: "AI",
+        is_overridable_by_organization_settings: true,
         items: concat_sections![
             general_section(),
             agent_configuration_section(cx),
@@ -7859,6 +7873,7 @@ fn network_page() -> SettingsPage {
 
     SettingsPage {
         title: "Network",
+        is_overridable_by_organization_settings: false,
         items: concat_sections![network_section()],
     }
 }

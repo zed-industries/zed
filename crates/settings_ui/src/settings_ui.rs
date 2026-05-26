@@ -842,6 +842,8 @@ struct NavBarEntry {
 
 struct SettingsPage {
     title: &'static str,
+    /// Are some of the settings on this page susceptible to being overridden by organization settings? (Zed for  Business)
+    is_overridable_by_organization_settings: bool,
     items: Box<[SettingsPageItem]>,
 }
 
@@ -1595,6 +1597,11 @@ impl SettingsWindow {
             .filter_map(|weak| weak.upgrade())
             .collect();
 
+        // Re-render when the current organization changes, so the org-override
+        // banner appears/disappears on sign in/out and org switches.
+        cx.observe(&app_state.user_store, |_, _, cx| cx.notify())
+            .detach();
+
         for workspace in workspaces {
             let project = workspace.read(cx).project().clone();
             cx.observe_release_in(&project, window, |this, _, window, cx| {
@@ -2136,7 +2143,7 @@ impl SettingsWindow {
                         });
                         push_candidates(&mut fuzzy_match_candidates, key_index, header);
                         header_index = item_index;
-                        header_str = *header;
+                        header_str = header;
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
@@ -3266,6 +3273,58 @@ impl SettingsWindow {
         }
     }
 
+    /// Banner warning that the user's organization may override settings on
+    /// this page. Shown on the screens that hold data and privacy controls:
+    /// General (telemetry), AI (Zed model provider, agent feedback, edit
+    /// predictions), and Collaboration.
+    ///
+    /// Suppressed when there's a settings parse/migration error for the
+    /// current file, so the more urgent outdated-settings banner takes
+    /// precedence (per the ticket's edge-case preference).
+    fn render_org_override_banner(&self, cx: &App) -> AnyElement {
+        let on_overridable_page = matches!(
+            self.current_file,
+            SettingsUiFile::User | SettingsUiFile::Project(_)
+        ) && self.current_page().is_overridable_by_organization_settings;
+
+        if !on_overridable_page {
+            return gpui::Empty.into_any_element();
+        }
+
+        let has_settings_error = SettingsStore::global(cx)
+            .error_for_file(self.current_file.to_settings())
+            .is_some();
+        if has_settings_error {
+            return gpui::Empty.into_any_element();
+        }
+
+        let in_business_org = AppState::global(cx)
+            .user_store
+            .read(cx)
+            .current_organization()
+            .is_some_and(|org| !org.is_personal);
+        if !in_business_org {
+            return gpui::Empty.into_any_element();
+        }
+
+        Banner::new()
+            .severity(Severity::Warning)
+            .child(
+                v_flex()
+                    .my_0p5()
+                    .gap_0p5()
+                    .child(Label::new("Organization Settings"))
+                    .child(
+                        Label::new(
+                            "Your organization's data and privacy settings may override your changes here.",
+                        )
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn render_page(
         &mut self,
         window: &mut Window,
@@ -3454,6 +3513,8 @@ impl SettingsWindow {
             }
         }
 
+        let org_override_banner = self.render_org_override_banner(cx);
+
         v_flex()
             .id("settings-ui-page")
             .on_action(cx.listener(|this, _: &menu::SelectNext, window, cx| {
@@ -3545,7 +3606,8 @@ impl SettingsWindow {
                     .gap_2()
                     .child(page_header)
                     .child(warning_banner)
-                    .child(restricted_banner),
+                    .child(restricted_banner)
+                    .child(org_override_banner),
             )
             .child(
                 div()
@@ -4544,6 +4606,7 @@ pub mod test {
             let search_bar = cx.new(|cx| Editor::single_line(window, cx));
             let dummy_page = SettingsPage {
                 title: "Test",
+                is_overridable_by_organization_settings: false,
                 items: Box::new([]),
             };
             Self {
@@ -4670,6 +4733,7 @@ pub mod test {
             .into_iter()
             .map(|builder| SettingsPage {
                 title: builder.title,
+                is_overridable_by_organization_settings: false,
                 items: builder.items.into_boxed_slice(),
             })
             .collect();
