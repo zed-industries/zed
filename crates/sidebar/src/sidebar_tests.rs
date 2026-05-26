@@ -4777,9 +4777,15 @@ async fn test_rename_thread_from_sidebar_updates_title_override(cx: &mut TestApp
     let renamed_title = "abcdefghijklmnopqrstuvwxyé renamed";
     sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.start_renaming_thread(entry_ix, thread_id, title, window, cx);
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.thread_rename_editor.update(cx, |editor, cx| {
             editor.set_text(renamed_title, window, cx);
         });
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.finish_thread_rename(window, cx);
     });
     cx.run_until_parked();
@@ -4913,6 +4919,9 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
         sidebar.thread_rename_editor.update(cx, |editor, cx| {
             editor.set_text(renamed_title, window, cx);
         });
+    });
+    cx.run_until_parked();
+    sidebar.update_in(cx, |sidebar, window, cx| {
         sidebar.finish_thread_rename(window, cx);
     });
     cx.run_until_parked();

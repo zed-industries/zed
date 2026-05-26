@@ -648,6 +648,9 @@ pub struct Sidebar {
     active_entry: Option<ActiveEntry>,
     hovered_thread_index: Option<usize>,
     renaming_thread_id: Option<ThreadId>,
+    /// start_renaming_thread must seed current title into the title editor
+    /// so this prevents that BufferEdited event from being interpreted as user input.
+    suppress_next_rename_edit: bool,
 
     /// Updated only in response to explicit user actions (clicking a
     /// thread, confirming in the thread switcher, etc.) — never from
@@ -775,6 +778,7 @@ impl Sidebar {
             active_entry: None,
             hovered_thread_index: None,
             renaming_thread_id: None,
+            suppress_next_rename_edit: false,
 
             thread_last_accessed: HashMap::new(),
             terminal_last_accessed: HashMap::new(),
@@ -2856,6 +2860,7 @@ impl Sidebar {
 
         self.selection = Some(ix);
         self.renaming_thread_id = Some(thread_id);
+        self.suppress_next_rename_edit = true;
         self.list_state.scroll_to_reveal_item(ix);
         self.thread_rename_editor.update(cx, |editor, cx| {
             editor.set_text(title, window, cx);
@@ -2874,6 +2879,10 @@ impl Sidebar {
     ) {
         match event {
             editor::EditorEvent::BufferEdited => {
+                if self.suppress_next_rename_edit {
+                    self.suppress_next_rename_edit = false;
+                    return;
+                }
                 if !title_editor.read(cx).is_focused(window) {
                     return;
                 }
