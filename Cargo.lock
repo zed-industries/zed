@@ -16252,6 +16252,7 @@ dependencies = [
  "heck 0.5.0",
  "itertools 0.14.0",
  "language",
+ "language_model",
  "log",
  "menu",
  "paths",

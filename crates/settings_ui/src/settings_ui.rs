@@ -772,6 +772,10 @@ pub struct SettingsWindow {
     pub(crate) hidden_deleted_skill_directory_paths: HashSet<PathBuf>,
     pub(crate) regex_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
+    pub(crate) expanded_provider_configurations:
+        HashMap<language_model::LanguageModelProviderId, bool>,
+    pub(crate) provider_configuration_views:
+        HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
 }
 
 struct SearchDocument {
@@ -1801,6 +1805,8 @@ impl SettingsWindow {
             regex_validation_error: None,
             list_state,
             last_copied_link_path: None,
+            expanded_provider_configurations: HashMap::default(),
+            provider_configuration_views: HashMap::default(),
         };
 
         this.fetch_files(window, cx);
@@ -4688,6 +4694,8 @@ pub mod test {
                 hidden_deleted_skill_directory_paths: HashSet::default(),
                 regex_validation_error: None,
                 last_copied_link_path: None,
+                expanded_provider_configurations: HashMap::default(),
+                provider_configuration_views: HashMap::default(),
             }
         }
     }
@@ -4815,6 +4823,8 @@ pub mod test {
             hidden_deleted_skill_directory_paths: HashSet::default(),
             regex_validation_error: None,
             last_copied_link_path: None,
+            expanded_provider_configurations: HashMap::default(),
+            provider_configuration_views: HashMap::default(),
         };
 
         settings_window.build_filter_table();
