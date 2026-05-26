@@ -4314,6 +4314,21 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_span_link_receives_raw_pipe_inline_code(cx: &mut TestAppContext) {
+        let source = r"| Pattern |
+| --- |
+| `a|b` |";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/a-or-b");
+    }
+
+    #[gpui::test]
     fn test_code_span_link_ignores_code_when_mouse_interaction_is_prevented(
         cx: &mut TestAppContext,
     ) {
