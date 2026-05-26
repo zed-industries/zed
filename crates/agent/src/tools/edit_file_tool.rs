@@ -259,6 +259,7 @@ impl AgentTool for EditFileTool {
             run_session(
                 self.process_streaming_edits(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await
@@ -489,6 +490,69 @@ mod tests {
         assert!(
             error.contains("Could not find matching text"),
             "Expected error containing 'Could not find matching text' but got: {error}"
+        );
+    }
+
+    /// When the edit fails after a session is created but before any edits are
+    /// actually applied (e.g., the first `old_text` doesn't match), the empty
+    /// diff placeholder in the UI should be replaced with the error message.
+    #[gpui::test]
+    async fn test_streaming_edit_surfaces_error_when_no_edits_applied(cx: &mut TestAppContext) {
+        async fn find_first_text_content_in_events(
+            receiver: &mut crate::ToolCallEventStreamReceiver,
+        ) -> Option<String> {
+            use futures::StreamExt as _;
+            while let Some(event) = receiver.next().await {
+                let Ok(crate::ThreadEvent::ToolCallUpdate(
+                    acp_thread::ToolCallUpdate::UpdateFields(update),
+                )) = event
+                else {
+                    continue;
+                };
+                let Some(content) = update.fields.content else {
+                    continue;
+                };
+                for item in content {
+                    if let acp::ToolCallContent::Content(c) = item
+                        && let acp::ContentBlock::Text(text) = c.content
+                    {
+                        return Some(text.text);
+                    }
+                }
+            }
+            None
+        }
+
+        let (edit_tool, _project, _action_log, _fs, _thread) =
+            setup_test(cx, json!({"file.txt": "hello world"})).await;
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: "root/file.txt".into(),
+                    edits: vec![Edit {
+                        old_text: "nonexistent text that is not in the file".into(),
+                        new_text: "replacement".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let EditFileToolOutput::Error { error, diff, .. } = task.await.unwrap_err() else {
+            panic!("expected error");
+        };
+        assert!(
+            diff.is_empty(),
+            "sanity check: no edits should have been applied",
+        );
+
+        let content_text = find_first_text_content_in_events(&mut receiver).await;
+        assert_eq!(
+            content_text.as_deref(),
+            Some(error.as_str()),
+            "expected the failure message to be surfaced as tool call content",
         );
     }
 
