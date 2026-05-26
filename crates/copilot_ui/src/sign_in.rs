@@ -6,7 +6,7 @@ use copilot::{
 use gpui::{
     App, ClipboardItem, Context, DismissEvent, Element, Entity, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled,
-    Subscription, Window, WindowBounds, WindowOptions, div, point,
+    Subscription, TaskExt, Window, WindowBounds, WindowOptions, div, point,
 };
 use project::project_settings::ProjectSettings;
 use settings::Settings as _;
@@ -481,7 +481,6 @@ impl ConfigurationView {
         cx: &mut Context<Self>,
     ) -> Self {
         let copilot = AppState::try_global(cx)
-            .and_then(|state| state.upgrade())
             .and_then(|state| GlobalCopilotAuth::try_get_or_init(state, cx));
 
         Self {
@@ -536,23 +535,12 @@ impl ConfigurationView {
         label: impl Into<SharedString>,
         edit_prediction: bool,
     ) -> impl IntoElement {
-        ButtonLike::new("loading_button")
+        Button::new("loading_button", label)
+            .full_width()
             .disabled(true)
+            .loading(true)
             .style(ButtonStyle::Outlined)
             .when(edit_prediction, |this| this.size(ButtonSize::Medium))
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_1()
-                    .justify_center()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Small)
-                            .color(Color::Muted)
-                            .with_rotate_animation(4),
-                    )
-                    .child(Label::new(label)),
-            )
     }
 
     fn render_sign_in_button(&self, edit_prediction: bool) -> impl IntoElement {
@@ -578,9 +566,8 @@ impl ConfigurationView {
             )
             .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
-                if let Some(app_state) = AppState::global(cx).upgrade()
-                    && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)
-                {
+                let app_state = AppState::global(cx);
+                if let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx) {
                     initiate_sign_in(copilot.0, window, cx)
                 }
             })
@@ -608,9 +595,8 @@ impl ConfigurationView {
                     .color(Color::Muted),
             )
             .on_click(|_, window, cx| {
-                if let Some(app_state) = AppState::global(cx).upgrade()
-                    && let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx)
-                {
+                let app_state = AppState::global(cx);
+                if let Some(copilot) = GlobalCopilotAuth::try_get_or_init(app_state, cx) {
                     reinstall_and_sign_in(copilot.0, window, cx);
                 }
             })

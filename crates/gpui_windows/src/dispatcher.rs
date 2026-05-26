@@ -13,10 +13,7 @@ use windows::{
     Win32::{
         Foundation::{LPARAM, WPARAM},
         Media::{timeBeginPeriod, timeEndPeriod},
-        System::Threading::{
-            GetCurrentThread, HIGH_PRIORITY_CLASS, SetPriorityClass, SetThreadPriority,
-            THREAD_PRIORITY_TIME_CRITICAL,
-        },
+        System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL},
         UI::WindowsAndMessaging::PostMessageW,
     },
 };
@@ -24,7 +21,7 @@ use windows::{
 use crate::{HWND, SafeHwnd, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 use gpui::{
     GLOBAL_THREAD_TIMINGS, PlatformDispatcher, Priority, PriorityQueueSender, RunnableVariant,
-    THREAD_TIMINGS, TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
+    TaskTiming, ThreadTaskTimings, TimerResolutionGuard,
 };
 
 pub(crate) struct WindowsDispatcher {
@@ -106,25 +103,7 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn get_current_thread_timings(&self) -> gpui::ThreadTaskTimings {
-        THREAD_TIMINGS.with(|timings| {
-            let timings = timings.lock();
-            let thread_name = timings.thread_name.clone();
-            let total_pushed = timings.total_pushed;
-            let timings = &timings.timings;
-
-            let mut vec = Vec::with_capacity(timings.len());
-
-            let (s1, s2) = timings.as_slices();
-            vec.extend_from_slice(s1);
-            vec.extend_from_slice(s2);
-
-            gpui::ThreadTaskTimings {
-                thread_name,
-                thread_id: std::thread::current().id(),
-                timings: vec,
-                total_pushed,
-            }
-        })
+        gpui::profiler::get_current_thread_task_timings()
     }
 
     fn is_main_thread(&self) -> bool {
@@ -181,12 +160,7 @@ impl PlatformDispatcher for WindowsDispatcher {
             // SAFETY: always safe to call
             let thread_handle = unsafe { GetCurrentThread() };
 
-            // SAFETY: thread_handle is a valid handle to a thread
-            unsafe { SetPriorityClass(thread_handle, HIGH_PRIORITY_CLASS) }
-                .context("thread priority class")
-                .log_err();
-
-            // SAFETY: thread_handle is a valid handle to a thread
+            // SAFETY: thread_handle is a valid handle to the current thread
             unsafe { SetThreadPriority(thread_handle, THREAD_PRIORITY_TIME_CRITICAL) }
                 .context("thread priority")
                 .log_err();

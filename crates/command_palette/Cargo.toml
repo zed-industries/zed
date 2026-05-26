@@ -21,7 +21,7 @@ client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 db.workspace = true
-fuzzy.workspace = true
+fuzzy_nucleo.workspace = true
 gpui.workspace = true
 menu.workspace = true
 log.workspace = true
@@ -49,3 +49,4 @@ menu.workspace = true
 project = { workspace = true, features = ["test-support"] }
 
 workspace = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true

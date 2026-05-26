@@ -95,7 +95,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 use {
     acp_thread::{AgentConnection, StubAgentConnection},
-    agent_client_protocol as acp,
+    agent_client_protocol::schema as acp,
     agent_servers::{AgentServer, AgentServerDelegate},
     anyhow::{Context as _, Result},
     assets::Assets,
@@ -109,7 +109,7 @@ use {
     image::RgbaImage,
     project::{AgentId, Project},
     project_panel::ProjectPanel,
-    settings::{NotifyWhenAgentWaiting, Settings as _},
+    settings::{NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, Settings as _},
     settings_ui::SettingsWindow,
     std::{
         any::Any,
@@ -119,7 +119,7 @@ use {
         time::Duration,
     },
     util::ResultExt as _,
-    workspace::{AppState, MultiWorkspace, Panel as _, Workspace},
+    workspace::{AppState, MultiWorkspace, Workspace},
     zed_actions::OpenSettingsAt,
 };
 
@@ -170,13 +170,13 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
 
     // Set the global app state so settings_ui and other subsystems can find it
     cx.update(|cx| {
-        AppState::set_global(Arc::downgrade(&app_state), cx);
+        AppState::set_global(app_state.clone(), cx);
     });
 
     // Initialize all Zed subsystems
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         client::init(&app_state.client, cx);
         audio::init(cx);
         workspace::init(app_state.clone(), cx);
@@ -201,7 +201,12 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         });
         prompt_store::init(cx);
         let prompt_builder = prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx);
-        language_model::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_model::init(cx);
+        client::RefreshLlmTokenListener::register(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         git_ui::init(cx);
         project::AgentRegistryStore::init_global(
@@ -211,9 +216,9 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         );
         agent_ui::init(
             app_state.fs.clone(),
-            app_state.client.clone(),
             prompt_builder,
             app_state.languages.clone(),
+            true,
             false,
             cx,
         );
@@ -231,7 +236,7 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         agent_settings::AgentSettings::override_global(
             agent_settings::AgentSettings {
                 notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
-                play_sound_when_agent_done: false,
+                play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
                 ..agent_settings::AgentSettings::get_global(cx).clone()
             },
             cx,
@@ -441,6 +446,23 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
+    // Run Test: ThreadItem branch names visual test
+    println!("\n--- Test: thread_item_branch_names ---");
+    match run_thread_item_branch_name_visual_tests(app_state.clone(), &mut cx, update_baseline) {
+        Ok(TestResult::Passed) => {
+            println!("✓ thread_item_branch_names: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ thread_item_branch_names: Baseline updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ thread_item_branch_names: FAILED - {}", e);
+            failed += 1;
+        }
+    }
+
     // Run Test 3: Multi-workspace sidebar visual tests
     println!("\n--- Test 3: multi_workspace_sidebar ---");
     match run_multi_workspace_sidebar_visual_tests(app_state.clone(), &mut cx, update_baseline) {
@@ -547,24 +569,24 @@ fn run_visual_tests(project_path: PathBuf, update_baseline: bool) -> Result<()> 
         }
     }
 
-    // Run Test 11: Thread target selector visual tests
-    #[cfg(feature = "visual-tests")]
-    {
-        println!("\n--- Test 11: start_thread_in_selector (6 variants) ---");
-        match run_start_thread_in_selector_visual_tests(app_state.clone(), &mut cx, update_baseline)
-        {
-            Ok(TestResult::Passed) => {
-                println!("✓ start_thread_in_selector: PASSED");
-                passed += 1;
-            }
-            Ok(TestResult::BaselineUpdated(_)) => {
-                println!("✓ start_thread_in_selector: Baselines updated");
-                updated += 1;
-            }
-            Err(e) => {
-                eprintln!("✗ start_thread_in_selector: FAILED - {}", e);
-                failed += 1;
-            }
+    // Run Test: Sidebar with duplicate project names
+    println!("\n--- Test: sidebar_duplicate_names ---");
+    match run_sidebar_duplicate_project_names_visual_tests(
+        app_state.clone(),
+        &mut cx,
+        update_baseline,
+    ) {
+        Ok(TestResult::Passed) => {
+            println!("✓ sidebar_duplicate_names: PASSED");
+            passed += 1;
+        }
+        Ok(TestResult::BaselineUpdated(_)) => {
+            println!("✓ sidebar_duplicate_names: Baselines updated");
+            updated += 1;
+        }
+        Err(e) => {
+            eprintln!("✗ sidebar_duplicate_names: FAILED - {}", e);
+            failed += 1;
         }
     }
 
@@ -965,7 +987,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
     let user_store = cx.new(|cx| client::UserStore::new(client.clone(), cx));
     let workspace_store = cx.new(|cx| workspace::WorkspaceStore::new(client.clone(), cx));
 
-    theme::init(theme::LoadThemes::JustBase, cx);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
     client::init(&client, cx);
 
     let app_state = Arc::new(AppState {
@@ -978,7 +1000,7 @@ fn init_app_state(cx: &mut App) -> Arc<AppState> {
         build_window_options: |_, _| Default::default(),
         session,
     });
-    AppState::set_global(Arc::downgrade(&app_state), cx);
+    AppState::set_global(app_state.clone(), cx);
     app_state
 }
 
@@ -1126,11 +1148,11 @@ fn run_breakpoint_hover_visual_tests(
     //
     // The breakpoint hover requires multiple steps:
     // 1. Draw to register mouse listeners
-    // 2. Mouse move to trigger gutter_hovered and create PhantomBreakpointIndicator
+    // 2. Mouse move to trigger gutter_hovered and create GutterHoverButton
     // 3. Wait 200ms for is_active to become true
     // 4. Draw again to render the indicator
     //
-    // The gutter_position should be in the gutter area to trigger the phantom breakpoint.
+    // The gutter_position should be in the gutter area to trigger the gutter hover button.
     // The button_position should be directly over the breakpoint icon button for tooltip hover.
     // Based on debug output: button is at origin=(3.12, 66.5) with size=(14, 16)
     let gutter_position = point(px(30.0), px(85.0));
@@ -2066,7 +2088,7 @@ fn run_agent_thread_view_test(
     let mut tool_content: Vec<acp::ToolCallContent> = Vec::new();
     let mut tool_locations: Vec<acp::ToolCallLocation> = Vec::new();
 
-    while let Ok(Some(event)) = event_receiver.try_next() {
+    while let Ok(event) = event_receiver.try_recv() {
         if let Ok(agent::ThreadEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
             update,
         ))) = event
@@ -2133,16 +2155,10 @@ fn run_agent_thread_view_test(
         })
         .context("Failed to get workspace handle")?;
 
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
     cx.background_executor.allow_parking();
     let panel = cx
         .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
+        .block_test(AgentPanel::load(weak_workspace, async_window_cx))
         .context("Failed to load AgentPanel")?;
     cx.background_executor.forbid_parking();
 
@@ -2528,11 +2544,6 @@ fn run_multi_workspace_sidebar_visual_tests(
     std::fs::create_dir_all(&workspace1_dir)?;
     std::fs::create_dir_all(&workspace2_dir)?;
 
-    // Enable the agent-v2 feature flag so multi-workspace is active
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
-
     // Create both projects upfront so we can build both workspaces during
     // window creation, before the MultiWorkspace entity exists.
     // This avoids a re-entrant read panic that occurs when Workspace::new
@@ -2594,7 +2605,7 @@ fn run_multi_workspace_sidebar_visual_tests(
                     });
                     cx.new(|cx| {
                         let mut multi_workspace = MultiWorkspace::new(workspace1, window, cx);
-                        multi_workspace.activate(workspace2, cx);
+                        multi_workspace.activate(workspace2, None, window, cx);
                         multi_workspace
                     })
                 },
@@ -2607,7 +2618,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Add worktree to workspace 1 (index 0) so it shows as "private-test-remote"
     let add_worktree1_task = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace1 = &multi_workspace.workspaces()[0];
+            let workspace1 = multi_workspace.workspaces().next().unwrap();
             let project = workspace1.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&workspace1_dir, true, cx)
@@ -2626,7 +2637,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Add worktree to workspace 2 (index 1) so it shows as "zed"
     let add_worktree2_task = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
-            let workspace2 = &multi_workspace.workspaces()[1];
+            let workspace2 = multi_workspace.workspaces().nth(1).unwrap();
             let project = workspace2.read(cx).project().clone();
             project.update(cx, |project, cx| {
                 project.find_or_create_worktree(&workspace2_dir, true, cx)
@@ -2645,16 +2656,18 @@ fn run_multi_workspace_sidebar_visual_tests(
     // Switch to workspace 1 so it's highlighted as active (index 0)
     multi_workspace_window
         .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.activate_index(0, window, cx);
+            let workspace = multi_workspace.workspaces().next().unwrap().clone();
+            multi_workspace.activate(workspace, None, window, cx);
         })
         .context("Failed to activate workspace 1")?;
 
     cx.run_until_parked();
 
-    // Create the sidebar and register it on the MultiWorkspace
-    let sidebar = multi_workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(multi_workspace_window.into(), |root_view, window, cx| {
+            let multi_workspace_handle: Entity<MultiWorkspace> = root_view.downcast().unwrap();
             cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
         })
         .context("Failed to create sidebar")?;
@@ -2671,7 +2684,7 @@ fn run_multi_workspace_sidebar_visual_tests(
     let save_tasks = multi_workspace_window
         .update(cx, |multi_workspace, _window, cx| {
             let thread_store = agent::ThreadStore::global(cx);
-            let workspaces = multi_workspace.workspaces().to_vec();
+            let workspaces: Vec<_> = multi_workspace.workspaces().cloned().collect();
             let mut tasks = Vec::new();
 
             for (index, workspace) in workspaces.iter().enumerate() {
@@ -2851,6 +2864,259 @@ impl gpui::Render for ErrorWrappingTestView {
                     .actions_slot(Button::new("retry", "Retry").label_size(LabelSize::Small)),
             )
     }
+}
+
+#[cfg(target_os = "macos")]
+struct ThreadItemBranchNameTestView;
+
+#[cfg(target_os = "macos")]
+impl gpui::Render for ThreadItemBranchNameTestView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use ui::{
+            IconName, Label, LabelSize, ThreadItem, ThreadItemWorktreeInfo, WorktreeKind,
+            prelude::*,
+        };
+
+        let section_label = |text: &str| {
+            Label::new(text.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted)
+        };
+
+        let container = || {
+            v_flex()
+                .w_80()
+                .border_1()
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().panel_background)
+        };
+
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().background)
+            .p_4()
+            .gap_3()
+            .child(
+                Label::new("ThreadItem Branch Names")
+                    .size(LabelSize::Large)
+                    .color(Color::Default),
+            )
+            .child(section_label(
+                "Linked worktree with branch (worktree / branch)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-branch", "Fix scrolling behavior")
+                        .icon(IconName::AiClaude)
+                        .timestamp("5m")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("jade-glen".into()),
+                            full_path: "/worktrees/jade-glen/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("fix-scrolling".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Linked worktree without branch (detached HEAD)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-no-branch", "Review worktree cleanup")
+                        .icon(IconName::AiClaude)
+                        .timestamp("1h")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("focal-arrow".into()),
+                            full_path: "/worktrees/focal-arrow/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: None,
+                        }]),
+                ),
+            )
+            .child(section_label("Main worktree with branch (nothing shown)"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("2d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("zed".into()),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: Some("main".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Main worktree without branch (nothing shown)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-no-branch", "Simple greeting thread")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("3d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("zed".into()),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: None,
+                        }]),
+                ),
+            )
+            .child(section_label("Linked worktree where name matches branch"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-same-name", "Implement feature")
+                        .icon(IconName::AiClaude)
+                        .timestamp("6d")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("stoic-reed".into()),
+                            full_path: "/worktrees/stoic-reed/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("stoic-reed".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Manually opened linked worktree (main_path resolves to original repo)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-manual-linked", "Robust Git Worktree Rollback")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("40m")
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("focal-arrow".into()),
+                            full_path: "/worktrees/focal-arrow/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("persist-worktree-3-wiring".into()),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Linked worktree + branch + diff stats + timestamp",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-linked-full", "Full metadata with diff stats")
+                        .icon(IconName::AiClaude)
+                        .timestamp("3w")
+                        .added(42)
+                        .removed(17)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("jade-glen".into()),
+                            full_path: "/worktrees/jade-glen/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some("feature-branch".into()),
+                        }]),
+                ),
+            )
+            .child(section_label("Long branch name truncation with diff stats"))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-long-branch", "Overflow test with very long branch")
+                        .icon(IconName::AiClaude)
+                        .timestamp("2d")
+                        .added(108)
+                        .removed(53)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("my-project".into()),
+                            full_path: "/worktrees/my-project/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Linked,
+                            branch_name: Some(
+                                "fix-very-long-branch-name-that-should-truncate".into(),
+                            ),
+                        }]),
+                ),
+            )
+            .child(section_label(
+                "Main worktree with branch + diff stats + timestamp (branch hidden)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-main-full", "Main worktree with everything")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("5m")
+                        .added(23)
+                        .removed(8)
+                        .worktrees(vec![ThreadItemWorktreeInfo {
+                            worktree_name: Some("zed".into()),
+                            full_path: "/projects/zed".into(),
+                            highlight_positions: Vec::new(),
+                            kind: WorktreeKind::Main,
+                            branch_name: Some("sidebar-show-branch-name".into()),
+                        }]),
+                ),
+            )
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_thread_item_branch_name_visual_tests(
+    _app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    let window_size = size(px(400.0), px(1150.0));
+    let bounds = Bounds {
+        origin: point(px(0.0), px(0.0)),
+        size: window_size,
+    };
+
+    let window = cx
+        .update(|cx| {
+            cx.open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    focus: false,
+                    show: false,
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(|_| ThreadItemBranchNameTestView),
+            )
+        })
+        .context("Failed to open thread item branch name test window")?;
+
+    cx.run_until_parked();
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.refresh();
+    })?;
+
+    cx.run_until_parked();
+
+    let test_result = run_visual_test(
+        "thread_item_branch_names",
+        window.into(),
+        cx,
+        update_baseline,
+    )?;
+
+    cx.update_window(window.into(), |_, window, _cx| {
+        window.remove_window();
+    })
+    .log_err();
+
+    cx.run_until_parked();
+
+    for _ in 0..15 {
+        cx.advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+    }
+
+    Ok(test_result)
 }
 
 #[cfg(target_os = "macos")]
@@ -3049,96 +3315,13 @@ fn run_error_wrapping_visual_tests(
     Ok(test_result)
 }
 
-#[cfg(all(target_os = "macos", feature = "visual-tests"))]
-/// Runs a git command in the given directory and returns an error with
-/// stderr/stdout context if the command fails (non-zero exit status).
-fn run_git_command(args: &[&str], dir: &std::path::Path) -> Result<()> {
-    let output = std::process::Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("failed to spawn `git {}`", args.join(" ")))?;
-
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "`git {}` failed (exit {})\nstdout: {}\nstderr: {}",
-            args.join(" "),
-            output.status,
-            stdout.trim(),
-            stderr.trim(),
-        );
-    }
-    Ok(())
-}
-
-#[cfg(all(target_os = "macos", feature = "visual-tests"))]
-fn run_start_thread_in_selector_visual_tests(
-    app_state: Arc<AppState>,
+#[cfg(target_os = "macos")]
+/// Helper to create a project, add a worktree at the given path, and return the project.
+fn create_project_with_worktree(
+    worktree_dir: &Path,
+    app_state: &Arc<AppState>,
     cx: &mut VisualTestAppContext,
-    update_baseline: bool,
-) -> Result<TestResult> {
-    use agent_ui::{AgentPanel, StartThreadIn, WorktreeCreationStatus};
-
-    // Enable feature flags so the thread target selector renders
-    cx.update(|cx| {
-        cx.update_flags(true, vec!["agent-v2".to_string()]);
-    });
-
-    // Create a temp directory with a real git repo so "New Worktree" is enabled
-    let temp_dir = tempfile::tempdir()?;
-    let temp_path = temp_dir.keep();
-    let canonical_temp = temp_path.canonicalize()?;
-    let project_path = canonical_temp.join("project");
-    std::fs::create_dir_all(&project_path)?;
-
-    // Initialize git repo
-    run_git_command(&["init"], &project_path)?;
-    run_git_command(&["config", "user.email", "test@test.com"], &project_path)?;
-    run_git_command(&["config", "user.name", "Test User"], &project_path)?;
-
-    // Create source files
-    let src_dir = project_path.join("src");
-    std::fs::create_dir_all(&src_dir)?;
-    std::fs::write(
-        src_dir.join("main.rs"),
-        r#"fn main() {
-    println!("Hello, world!");
-
-    let x = 42;
-    let y = x * 2;
-
-    if y > 50 {
-        println!("y is greater than 50");
-    } else {
-        println!("y is not greater than 50");
-    }
-
-    for i in 0..10 {
-        println!("i = {}", i);
-    }
-}
-
-fn helper_function(a: i32, b: i32) -> i32 {
-    a + b
-}
-"#,
-    )?;
-
-    std::fs::write(
-        project_path.join("Cargo.toml"),
-        r#"[package]
-name = "test_project"
-version = "0.1.0"
-edition = "2021"
-"#,
-    )?;
-
-    // Commit so git status is clean
-    run_git_command(&["add", "."], &project_path)?;
-    run_git_command(&["commit", "-m", "Initial commit"], &project_path)?;
-
+) -> Result<Entity<Project>> {
     let project = cx.update(|cx| {
         project::Project::local(
             app_state.client.clone(),
@@ -3155,14 +3338,43 @@ edition = "2021"
         )
     });
 
-    // Use a wide window so we see project panel + editor + agent panel
-    let window_size = size(px(1280.0), px(800.0));
+    let add_task = cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.find_or_create_worktree(worktree_dir, true, cx)
+        })
+    });
+
+    cx.background_executor.allow_parking();
+    cx.foreground_executor
+        .block_test(add_task)
+        .context("Failed to add worktree")?;
+    cx.background_executor.forbid_parking();
+
+    cx.run_until_parked();
+    Ok(project)
+}
+
+#[cfg(target_os = "macos")]
+fn open_sidebar_test_window(
+    projects: Vec<Entity<Project>>,
+    app_state: &Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+) -> Result<WindowHandle<MultiWorkspace>> {
+    anyhow::ensure!(!projects.is_empty(), "need at least one project");
+
+    let window_size = size(px(400.0), px(600.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,
     };
 
-    let workspace_window: WindowHandle<MultiWorkspace> = cx
+    let mut projects_iter = projects.into_iter();
+    let first_project = projects_iter
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("need at least one project"))?;
+    let remaining: Vec<_> = projects_iter.collect();
+
+    let multi_workspace_window: WindowHandle<MultiWorkspace> = cx
         .update(|cx| {
             cx.open_window(
                 WindowOptions {
@@ -3172,448 +3384,90 @@ edition = "2021"
                     ..Default::default()
                 },
                 |window, cx| {
-                    let workspace = cx.new(|cx| {
-                        Workspace::new(None, project.clone(), app_state.clone(), window, cx)
+                    let first_ws = cx.new(|cx| {
+                        Workspace::new(None, first_project.clone(), app_state.clone(), window, cx)
                     });
-                    cx.new(|cx| MultiWorkspace::new(workspace, window, cx))
+                    cx.new(|cx| {
+                        let mut mw = MultiWorkspace::new(first_ws, window, cx);
+                        for project in remaining {
+                            let ws = cx.new(|cx| {
+                                Workspace::new(None, project, app_state.clone(), window, cx)
+                            });
+                            mw.activate(ws, None, window, cx);
+                        }
+                        mw
+                    })
                 },
             )
         })
-        .context("Failed to open thread target selector test window")?;
+        .context("Failed to open MultiWorkspace window")?;
 
     cx.run_until_parked();
 
-    // Create and register the workspace sidebar
-    let sidebar = workspace_window
-        .update(cx, |_multi_workspace, window, cx| {
-            let multi_workspace_handle = cx.entity();
-            cx.new(|cx| sidebar::Sidebar::new(multi_workspace_handle, window, cx))
+    // Create the sidebar outside the MultiWorkspace update to avoid a
+    // re-entrant read panic (Sidebar::new reads the MultiWorkspace).
+    let sidebar = cx
+        .update_window(multi_workspace_window.into(), |root_view, window, cx| {
+            let mw_handle: Entity<MultiWorkspace> = root_view
+                .downcast()
+                .map_err(|_| anyhow::anyhow!("Failed to downcast root view to MultiWorkspace"))?;
+            Ok::<_, anyhow::Error>(cx.new(|cx| sidebar::Sidebar::new(mw_handle, window, cx)))
         })
-        .context("Failed to create sidebar")?;
+        .context("Failed to create sidebar")??;
 
-    workspace_window
-        .update(cx, |multi_workspace, _window, cx| {
-            multi_workspace.register_sidebar(sidebar.clone(), cx);
+    multi_workspace_window
+        .update(cx, |mw, _window, cx| {
+            mw.register_sidebar(sidebar.clone(), cx);
         })
         .context("Failed to register sidebar")?;
 
+    cx.run_until_parked();
+
     // Open the sidebar
-    workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            multi_workspace.toggle_sidebar(window, cx);
+    multi_workspace_window
+        .update(cx, |mw, window, cx| {
+            mw.toggle_sidebar(window, cx);
         })
         .context("Failed to toggle sidebar")?;
 
-    cx.run_until_parked();
-
-    // Add the git project as a worktree
-    let add_worktree_task = workspace_window
-        .update(cx, |multi_workspace, _window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            let project = workspace.read(cx).project().clone();
-            project.update(cx, |project, cx| {
-                project.find_or_create_worktree(&project_path, true, cx)
-            })
-        })
-        .context("Failed to start adding worktree")?;
-
-    cx.background_executor.allow_parking();
-    cx.foreground_executor
-        .block_test(add_worktree_task)
-        .context("Failed to add worktree")?;
-    cx.background_executor.forbid_parking();
-
-    cx.run_until_parked();
-
-    // Wait for worktree scan and git status
-    for _ in 0..5 {
+    // Let rendering settle
+    for _ in 0..10 {
         cx.advance_clock(Duration::from_millis(100));
         cx.run_until_parked();
     }
 
-    // Open the project panel
-    let (weak_workspace, async_window_cx) = workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            (workspace.read(cx).weak_handle(), window.to_async(cx))
-        })
-        .context("Failed to get workspace handle")?;
-
-    cx.background_executor.allow_parking();
-    let project_panel = cx
-        .foreground_executor
-        .block_test(ProjectPanel::load(weak_workspace, async_window_cx))
-        .context("Failed to load project panel")?;
-    cx.background_executor.forbid_parking();
-
-    workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(project_panel, window, cx);
-                workspace.open_panel::<ProjectPanel>(window, cx);
-            });
-        })
-        .context("Failed to add project panel")?;
-
-    cx.run_until_parked();
-
-    // Open main.rs in the editor
-    let open_file_task = workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            workspace.update(cx, |workspace, cx| {
-                let worktree = workspace.project().read(cx).worktrees(cx).next();
-                if let Some(worktree) = worktree {
-                    let worktree_id = worktree.read(cx).id();
-                    let rel_path: std::sync::Arc<util::rel_path::RelPath> =
-                        util::rel_path::rel_path("src/main.rs").into();
-                    let project_path: project::ProjectPath = (worktree_id, rel_path).into();
-                    Some(workspace.open_path(project_path, None, true, window, cx))
-                } else {
-                    None
-                }
-            })
-        })
-        .log_err()
-        .flatten();
-
-    if let Some(task) = open_file_task {
-        cx.background_executor.allow_parking();
-        cx.foreground_executor.block_test(task).log_err();
-        cx.background_executor.forbid_parking();
-    }
-
-    cx.run_until_parked();
-
-    // Load the AgentPanel
-    let (weak_workspace, async_window_cx) = workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            (workspace.read(cx).weak_handle(), window.to_async(cx))
-        })
-        .context("Failed to get workspace handle for agent panel")?;
-
-    let prompt_builder =
-        cx.update(|cx| prompt_store::PromptBuilder::load(app_state.fs.clone(), false, cx));
-
-    // Register an observer so that workspaces created by the worktree creation
-    // flow get AgentPanel and ProjectPanel loaded automatically. Without this,
-    // `workspace.panel::<AgentPanel>(cx)` returns None in the new workspace and
-    // the creation flow's `focus_panel::<AgentPanel>` call is a no-op.
-    let _workspace_observer = cx.update({
-        let prompt_builder = prompt_builder.clone();
-        |cx| {
-            cx.observe_new(move |workspace: &mut Workspace, window, cx| {
-                let Some(window) = window else { return };
-                let prompt_builder = prompt_builder.clone();
-                let panels_task = cx.spawn_in(window, async move |workspace_handle, cx| {
-                    let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
-                    let agent_panel =
-                        AgentPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
-                    if let Ok(panel) = project_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    if let Ok(panel) = agent_panel.await {
-                        workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
-                                workspace.add_panel(panel, window, cx);
-                            })
-                            .log_err();
-                    }
-                    anyhow::Ok(())
-                });
-                workspace.set_panels_task(panels_task);
-            })
-        }
-    });
-
-    cx.background_executor.allow_parking();
-    let panel = cx
-        .foreground_executor
-        .block_test(AgentPanel::load(
-            weak_workspace,
-            prompt_builder,
-            async_window_cx,
-        ))
-        .context("Failed to load AgentPanel")?;
-    cx.background_executor.forbid_parking();
-
-    workspace_window
-        .update(cx, |multi_workspace, window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
-            workspace.update(cx, |workspace, cx| {
-                workspace.add_panel(panel.clone(), window, cx);
-                workspace.open_panel::<AgentPanel>(window, cx);
-            });
-        })
-        .context("Failed to add and open AgentPanel")?;
-
-    cx.run_until_parked();
-
-    // Inject the stub server and open a thread so the toolbar is visible
-    let connection = StubAgentConnection::new();
-    let stub_agent: Rc<dyn AgentServer> = Rc::new(StubAgentServer::new(connection));
-
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
-        });
-    })?;
-
-    cx.run_until_parked();
-
-    // ---- Screenshot 1: Default "Local Project" selector (dropdown closed) ----
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
+    // Refresh the window
+    cx.update_window(multi_workspace_window.into(), |_, window, _cx| {
         window.refresh();
     })?;
+
     cx.run_until_parked();
 
-    let result_default = run_visual_test(
-        "start_thread_in_selector_default",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
+    Ok(multi_workspace_window)
+}
 
-    // ---- Screenshot 2: Dropdown open showing menu entries ----
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.open_start_thread_in_menu_for_tests(window, cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_open_dropdown = run_visual_test(
-        "start_thread_in_selector_open",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
-    // ---- Screenshot 3: "New Worktree" selected (dropdown closed, label changed) ----
-    // First dismiss the dropdown, then change the target so the toolbar label is visible
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.close_start_thread_in_menu_for_tests(cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.set_start_thread_in_for_tests(StartThreadIn::NewWorktree, cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_new_worktree = run_visual_test(
-        "start_thread_in_selector_new_worktree",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
-    // ---- Screenshot 4: "Creating worktree…" status banner ----
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel
-                .set_worktree_creation_status_for_tests(Some(WorktreeCreationStatus::Creating), cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_creating = run_visual_test(
-        "worktree_creation_status_creating",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
-    // ---- Screenshot 5: Error status banner ----
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.set_worktree_creation_status_for_tests(
-                Some(WorktreeCreationStatus::Error(
-                    "Failed to create worktree: branch already exists".into(),
-                )),
-                cx,
-            );
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_error = run_visual_test(
-        "worktree_creation_status_error",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
-    // ---- Screenshot 6: Worktree creation succeeded ----
-    // Clear the error status and re-select New Worktree to ensure a clean state.
-    cx.update_window(workspace_window.into(), |_, _window, cx| {
-        panel.update(cx, |panel, cx| {
-            panel.set_worktree_creation_status_for_tests(None, cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(StartThreadIn::NewWorktree), cx);
-    })?;
-    cx.run_until_parked();
-
-    // Insert a message into the active thread's message editor and submit.
-    let thread_view = cx
-        .read(|cx| panel.read(cx).active_thread_view(cx))
-        .ok_or_else(|| anyhow::anyhow!("No active thread view"))?;
-
-    cx.update_window(workspace_window.into(), |_, window, cx| {
-        let message_editor = thread_view.read(cx).message_editor.clone();
-        message_editor.update(cx, |message_editor, cx| {
-            message_editor.set_message(
-                vec![acp::ContentBlock::Text(acp::TextContent::new(
-                    "Add a CLI flag to set the log level".to_string(),
-                ))],
-                window,
-                cx,
-            );
-            message_editor.send(cx);
-        });
-    })?;
-    cx.run_until_parked();
-
-    // Wait for the full worktree creation flow to complete. The creation status
-    // is cleared to `None` at the very end of the async task, after panels are
-    // loaded, the agent panel is focused, and the new workspace is activated.
-    cx.background_executor.allow_parking();
-    let mut creation_complete = false;
-    for _ in 0..120 {
-        cx.run_until_parked();
-        let status_cleared = cx.read(|cx| {
-            panel
-                .read(cx)
-                .worktree_creation_status_for_tests()
-                .is_none()
-        });
-        let workspace_count = workspace_window.update(cx, |multi_workspace, _window, _cx| {
-            multi_workspace.workspaces().len()
-        })?;
-        if workspace_count == 2 && status_cleared {
-            creation_complete = true;
-            break;
-        }
-        cx.advance_clock(Duration::from_millis(100));
-    }
-    cx.background_executor.forbid_parking();
-
-    if !creation_complete {
-        return Err(anyhow::anyhow!("Worktree creation did not complete"));
-    }
-
-    // The creation flow called `external_thread` on the new workspace's agent
-    // panel, which tried to launch a real agent binary and failed. Replace the
-    // error state by injecting the stub server, and shrink the panel so the
-    // editor content is visible.
-    workspace_window.update(cx, |multi_workspace, window, cx| {
-        let new_workspace = &multi_workspace.workspaces()[1];
-        new_workspace.update(cx, |workspace, cx| {
-            if let Some(new_panel) = workspace.panel::<AgentPanel>(cx) {
-                new_panel.update(cx, |panel, cx| {
-                    panel.set_size(Some(px(480.0)), window, cx);
-                    panel.open_external_thread_with_server(stub_agent.clone(), window, cx);
-                });
-            }
-        });
-    })?;
-    cx.run_until_parked();
-
-    // Type and send a message so the thread target dropdown disappears.
-    let new_panel = workspace_window.update(cx, |multi_workspace, _window, cx| {
-        let new_workspace = &multi_workspace.workspaces()[1];
-        new_workspace.read(cx).panel::<AgentPanel>(cx)
-    })?;
-    if let Some(new_panel) = new_panel {
-        let new_thread_view = cx.read(|cx| new_panel.read(cx).active_thread_view(cx));
-        if let Some(new_thread_view) = new_thread_view {
-            cx.update_window(workspace_window.into(), |_, window, cx| {
-                let message_editor = new_thread_view.read(cx).message_editor.clone();
-                message_editor.update(cx, |editor, cx| {
-                    editor.set_message(
-                        vec![acp::ContentBlock::Text(acp::TextContent::new(
-                            "Add a CLI flag to set the log level".to_string(),
-                        ))],
-                        window,
-                        cx,
-                    );
-                    editor.send(cx);
-                });
-            })?;
-            cx.run_until_parked();
-        }
-    }
-
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
-        window.refresh();
-    })?;
-    cx.run_until_parked();
-
-    let result_succeeded = run_visual_test(
-        "worktree_creation_succeeded",
-        workspace_window.into(),
-        cx,
-        update_baseline,
-    );
-
-    // Clean up — drop the workspace observer first so no new panels are
-    // registered on workspaces created during teardown.
-    drop(_workspace_observer);
-
-    workspace_window
-        .update(cx, |multi_workspace, _window, cx| {
-            let workspace = &multi_workspace.workspaces()[0];
+#[cfg(target_os = "macos")]
+fn cleanup_sidebar_test_window(
+    window: WindowHandle<MultiWorkspace>,
+    cx: &mut VisualTestAppContext,
+) -> Result<()> {
+    window.update(cx, |mw, _window, cx| {
+        for workspace in mw.workspaces() {
             let project = workspace.read(cx).project().clone();
             project.update(cx, |project, cx| {
-                let worktree_ids: Vec<_> =
-                    project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
-                for id in worktree_ids {
+                let ids: Vec<_> = project.worktrees(cx).map(|wt| wt.read(cx).id()).collect();
+                for id in ids {
                     project.remove_worktree(id, cx);
                 }
             });
-        })
-        .log_err();
+        }
+    })?;
 
     cx.run_until_parked();
 
-    cx.update_window(workspace_window.into(), |_, window, _cx| {
+    cx.update_window(window.into(), |_, window, _cx| {
         window.remove_window();
-    })
-    .log_err();
+    })?;
 
     cx.run_until_parked();
 
@@ -3622,51 +3476,113 @@ edition = "2021"
         cx.run_until_parked();
     }
 
-    // Delete the preserved temp directory so visual-test runs don't
-    // accumulate filesystem artifacts.
-    if let Err(err) = std::fs::remove_dir_all(&temp_path) {
-        log::warn!(
-            "failed to clean up visual-test temp dir {}: {err}",
-            temp_path.display()
-        );
-    }
+    Ok(())
+}
 
-    // Reset feature flags
+#[cfg(target_os = "macos")]
+fn run_sidebar_duplicate_project_names_visual_tests(
+    app_state: Arc<AppState>,
+    cx: &mut VisualTestAppContext,
+    update_baseline: bool,
+) -> Result<TestResult> {
+    let temp_dir = tempfile::tempdir()?;
+    let temp_path = temp_dir.keep();
+    let canonical_temp = temp_path.canonicalize()?;
+
+    // Create directory structure where every leaf directory is named "zed" but
+    // lives at a distinct path. This lets us test that the sidebar correctly
+    // disambiguates projects whose names would otherwise collide.
+    //
+    //   code/zed/       — project1 (single worktree)
+    //   code/foo/zed/   — project2 (single worktree)
+    //   code/bar/zed/   — project3, first worktree
+    //   code/baz/zed/   — project3, second worktree
+    //
+    // No two projects share a worktree path, so ProjectGroupBuilder will
+    // place each in its own group.
+    let code_zed = canonical_temp.join("code").join("zed");
+    let foo_zed = canonical_temp.join("code").join("foo").join("zed");
+    let bar_zed = canonical_temp.join("code").join("bar").join("zed");
+    let baz_zed = canonical_temp.join("code").join("baz").join("zed");
+    std::fs::create_dir_all(&code_zed)?;
+    std::fs::create_dir_all(&foo_zed)?;
+    std::fs::create_dir_all(&bar_zed)?;
+    std::fs::create_dir_all(&baz_zed)?;
+
     cx.update(|cx| {
-        cx.update_flags(false, vec![]);
+        cx.update_flags(true, vec!["agent-v2".to_string()]);
     });
 
-    let results = [
-        ("default", result_default),
-        ("open_dropdown", result_open_dropdown),
-        ("new_worktree", result_new_worktree),
-        ("creating", result_creating),
-        ("error", result_error),
-        ("succeeded", result_succeeded),
-    ];
-
     let mut has_baseline_update = None;
-    let mut failures = Vec::new();
 
-    for (name, result) in &results {
-        match result {
-            Ok(TestResult::Passed) => {}
-            Ok(TestResult::BaselineUpdated(p)) => {
-                has_baseline_update = Some(p.clone());
-            }
-            Err(e) => {
-                failures.push(format!("{}: {}", name, e));
+    // Two single-worktree projects whose leaf name is "zed"
+    {
+        let project1 = create_project_with_worktree(&code_zed, &app_state, cx)?;
+        let project2 = create_project_with_worktree(&foo_zed, &app_state, cx)?;
+
+        let window = open_sidebar_test_window(vec![project1, project2], &app_state, cx)?;
+
+        let result = run_visual_test(
+            "sidebar_two_projects_same_leaf_name",
+            window.into(),
+            cx,
+            update_baseline,
+        );
+
+        cleanup_sidebar_test_window(window, cx)?;
+        match result? {
+            TestResult::Passed => {}
+            TestResult::BaselineUpdated(path) => {
+                has_baseline_update = Some(path);
             }
         }
     }
 
-    if !failures.is_empty() {
-        Err(anyhow::anyhow!(
-            "start_thread_in_selector failures: {}",
-            failures.join("; ")
-        ))
-    } else if let Some(p) = has_baseline_update {
-        Ok(TestResult::BaselineUpdated(p))
+    // Three projects, third has two worktrees (all leaf names "zed")
+    //
+    // project1: code/zed
+    // project2: code/foo/zed
+    // project3: code/bar/zed + code/baz/zed
+    //
+    // Each project has a unique set of worktree paths, so they form
+    // separate groups. The sidebar must disambiguate all three.
+    {
+        let project1 = create_project_with_worktree(&code_zed, &app_state, cx)?;
+        let project2 = create_project_with_worktree(&foo_zed, &app_state, cx)?;
+
+        let project3 = create_project_with_worktree(&bar_zed, &app_state, cx)?;
+        let add_second_worktree = cx.update(|cx| {
+            project3.update(cx, |project, cx| {
+                project.find_or_create_worktree(&baz_zed, true, cx)
+            })
+        });
+        cx.background_executor.allow_parking();
+        cx.foreground_executor
+            .block_test(add_second_worktree)
+            .context("Failed to add second worktree to project 3")?;
+        cx.background_executor.forbid_parking();
+        cx.run_until_parked();
+
+        let window = open_sidebar_test_window(vec![project1, project2, project3], &app_state, cx)?;
+
+        let result = run_visual_test(
+            "sidebar_three_projects_with_multi_worktree",
+            window.into(),
+            cx,
+            update_baseline,
+        );
+
+        cleanup_sidebar_test_window(window, cx)?;
+        match result? {
+            TestResult::Passed => {}
+            TestResult::BaselineUpdated(path) => {
+                has_baseline_update = Some(path);
+            }
+        }
+    }
+
+    if let Some(path) = has_baseline_update {
+        Ok(TestResult::BaselineUpdated(path))
     } else {
         Ok(TestResult::Passed)
     }

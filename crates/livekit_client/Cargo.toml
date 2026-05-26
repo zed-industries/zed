@@ -49,6 +49,7 @@ livekit.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio = { workspace = true, features = ["time"] }
+webrtc-sys.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true

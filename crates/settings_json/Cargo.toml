@@ -27,9 +27,3 @@ serde_path_to_error.workspace = true
 [dev-dependencies]
 unindent.workspace = true
 pretty_assertions.workspace = true
-
-# Uncomment other workspace dependencies as needed
-# assistant.workspace = true
-# client.workspace = true
-# project.workspace = true
-# settings.workspace = true

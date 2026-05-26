@@ -14,6 +14,7 @@ use std::sync::{
 };
 
 static NEXT_WAYLAND_SHARE_ID: AtomicU64 = AtomicU64::new(1);
+const PIPEWIRE_TIMEOUT_S: u64 = 30;
 
 pub struct WaylandScreenCaptureStream {
     id: u64,
@@ -64,6 +65,17 @@ pub(crate) async fn start_wayland_desktop_capture(
     };
     use libwebrtc::native::yuv_helper::argb_to_nv12;
     use std::time::Duration;
+    use webrtc_sys::webrtc::ffi as webrtc_ffi;
+
+    fn webrtc_log_callback(message: String, severity: webrtc_ffi::LoggingSeverity) {
+        match severity {
+            webrtc_ffi::LoggingSeverity::Error => log::error!("[webrtc] {}", message.trim()),
+            _ => log::debug!("[webrtc] {}", message.trim()),
+        }
+    }
+
+    let _webrtc_log_sink = webrtc_ffi::new_log_sink(webrtc_log_callback);
+    log::debug!("Wayland desktop capture: WebRTC internal logging enabled");
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let (mut video_source_tx, mut video_source_rx) = mpsc::channel::<NativeVideoSource>(1);
@@ -79,7 +91,6 @@ pub(crate) async fn start_wayland_desktop_capture(
     })?;
 
     let permanent_error = Arc::new(AtomicBool::new(false));
-
     let stop_cb = stop_flag.clone();
     let permanent_error_cb = permanent_error.clone();
     capturer.start_capture(None, {
@@ -136,6 +147,8 @@ pub(crate) async fn start_wayland_desktop_capture(
         }
     });
 
+    log::info!("Wayland desktop capture: starting capture loop");
+
     let stop = stop_flag.clone();
     let tokio_task = gpui_tokio::Tokio::spawn(cx, async move {
         loop {
@@ -162,10 +175,11 @@ pub(crate) async fn start_wayland_desktop_capture(
     let executor = cx.background_executor().clone();
     let video_source = video_source_rx
         .next()
-        .with_timeout(Duration::from_secs(15), &executor)
+        .with_timeout(Duration::from_secs(PIPEWIRE_TIMEOUT_S), &executor)
         .await
         .map_err(|_| {
             stop_flag.store(true, Ordering::Relaxed);
+            log::error!("Wayland desktop capture timed out.");
             anyhow::anyhow!(
                 "Screen sharing timed out waiting for the first frame. \
                  Check that xdg-desktop-portal and PipeWire are running, \

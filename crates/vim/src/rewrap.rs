@@ -1,19 +1,20 @@
 use crate::{Vim, motion::Motion, object::Object, state::Mode};
 use collections::HashMap;
 use editor::{Bias, Editor, RewrapOptions, SelectionEffects, display_map::ToDisplayPoint};
-use gpui::{Context, Window, actions};
+use gpui::{Action, Context, Window};
 use language::SelectionGoal;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
-actions!(
-    vim,
-    [
-        /// Rewraps the selected text to fit within the line width.
-        Rewrap
-    ]
-);
+/// Rewraps the selected text to fit within the line width.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+pub(crate) struct Rewrap {
+    pub line_length: Option<usize>,
+}
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
-    Vim::action(editor, cx, |vim, _: &Rewrap, window, cx| {
+    Vim::action(editor, cx, |vim, action: &Rewrap, window, cx| {
         vim.record_current_action(cx);
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
@@ -21,9 +22,10 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut positions = vim.save_selection_starts(editor, cx);
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
+                        line_length: action.line_length,
                         ..Default::default()
                     },
                     cx,
@@ -72,7 +74,7 @@ impl Vim {
                         );
                     });
                 });
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
                         ..Default::default()
@@ -110,7 +112,7 @@ impl Vim {
                         object.expand_selection(map, selection, around, times);
                     });
                 });
-                editor.rewrap_impl(
+                editor.rewrap(
                     RewrapOptions {
                         override_language_settings: true,
                         ..Default::default()

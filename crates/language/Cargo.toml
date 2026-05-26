@@ -35,11 +35,13 @@ ec4rs.workspace = true
 encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
+futures-lite.workspace = true
 fuzzy.workspace = true
 globset.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 imara-diff.workspace = true
+language_core.workspace = true
 itertools.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -48,14 +50,12 @@ postage.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
 rpc.workspace = true
-schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smallvec.workspace = true
-smol.workspace = true
 streaming-iterator.workspace = true
 strsim.workspace = true
 sum_tree.workspace = true
@@ -101,6 +101,12 @@ toml.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+criterion.workspace = true
+theme_settings.workspace = true
+
+[[bench]]
+name = "highlight_map"
+harness = false
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

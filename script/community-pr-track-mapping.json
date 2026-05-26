@@ -1,0 +1,251 @@
+{
+  "_comment": "Tracks are ordered by specificity (fewest labels first). When a PR has labels matching multiple tracks, the first match wins. To add a new track, insert it at the position that reflects its size. To add a label to an existing track, append it to that track's labels array.",
+  "tracks": [
+    {
+      "name": "Edit Predictions",
+      "labels": ["area:ai/edit prediction", "area:ai/supermaven", "area:ai/zeta"]
+    },
+    {
+      "name": "Tree-sitter",
+      "labels": ["area:tree-sitter"]
+    },
+    {
+      "name": "Design",
+      "labels": ["area:design papercut"]
+    },
+    {
+      "name": "Terminal",
+      "labels": ["area:integrations/terminal"]
+    },
+    {
+      "name": "Extensions",
+      "labels": ["area:extensions/infrastructure"]
+    },
+    {
+      "name": "Tasks & REPL",
+      "labels": ["area:tasks", "area:repl"]
+    },
+    {
+      "name": "Markdown Preview",
+      "labels": ["area:preview/markdown", "area:preview/mermaid"]
+    },
+    {
+      "name": "NixOS",
+      "labels": ["area:tooling/nix", "platform:nixos"]
+    },
+    {
+      "name": "Collab",
+      "labels": ["area:collab", "area:collab/audio", "area:collab/chat"]
+    },
+    {
+      "name": "Vim, Helix & Keybinds",
+      "labels": ["area:controls/keybinds", "area:parity/helix", "area:parity/vim"]
+    },
+    {
+      "name": "Debugger",
+      "labels": [
+        "area:debugger",
+        "area:debugger/dap/CodeLLDB",
+        "area:debugger/dap/debugpy",
+        "area:debugger/dap/gdb",
+        "area:debugger/dap/javascript"
+      ]
+    },
+    {
+      "name": "Git",
+      "labels": [
+        "area:integrations/git",
+        "area:integrations/git/blame",
+        "area:integrations/git/git graph",
+        "area:integrations/git/split view"
+      ]
+    },
+    {
+      "name": "GPUI & Input",
+      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui"]
+    },
+    {
+      "name": "Auth & Zed.dev",
+      "labels": [
+        "area:auth",
+        "area:billing",
+        "area:permissions",
+        "area:zed account",
+        "area:zed.dev",
+        "area:zed.dev/theme builder"
+      ]
+    },
+    {
+      "name": "Linux",
+      "labels": ["area:tooling/flatpak", "platform:linux", "platform:linux/wayland", "platform:linux/x11"]
+    },
+    {
+      "name": "Windows, WSL, Remote, dev containers",
+      "labels": ["area:dev containers", "platform:remote", "platform:windows", "platform:windows/wsl"]
+    },
+    {
+      "name": "Workspace & Navigation",
+      "labels": [
+        "area:command palette",
+        "area:file finder",
+        "area:navigation",
+        "area:outline",
+        "area:project panel",
+        "area:workspace"
+      ]
+    },
+    {
+      "name": "Editor & Search",
+      "labels": [
+        "area:code folding",
+        "area:editor",
+        "area:editor/brackets",
+        "area:editor/linked edits",
+        "area:multi-buffer",
+        "area:multi-cursor",
+        "area:search",
+        "area:snippets"
+      ]
+    },
+    {
+      "name": "UI & Settings",
+      "labels": [
+        "area:keymap editor",
+        "area:popovers",
+        "area:preview/images",
+        "area:settings",
+        "area:settings/ui",
+        "area:status bar",
+        "area:ui/animations",
+        "area:ui/dock",
+        "area:ui/file icons",
+        "area:ui/font",
+        "area:ui/menus",
+        "area:ui/minimap",
+        "area:ui/panel",
+        "area:ui/scaling",
+        "area:ui/scrolling",
+        "area:ui/tabs",
+        "area:ui/themes"
+      ]
+    },
+    {
+      "name": "AI",
+      "labels": [
+        "area:ai",
+        "area:ai/acp",
+        "area:ai/agent thread",
+        "area:ai/anthropic",
+        "area:ai/assistant",
+        "area:ai/bedrock",
+        "area:ai/codex",
+        "area:ai/copilot",
+        "area:ai/cursor",
+        "area:ai/deepseek",
+        "area:ai/gemini",
+        "area:ai/inline assistant",
+        "area:ai/lmstudio",
+        "area:ai/mcp",
+        "area:ai/mistral",
+        "area:ai/multiagent sidebar",
+        "area:ai/ollama",
+        "area:ai/openai",
+        "area:ai/openai compatible",
+        "area:ai/opencode",
+        "area:ai/openrouter",
+        "area:ai/qwen",
+        "area:ai/text thread"
+      ]
+    },
+    {
+      "name": "macOS",
+      "labels": ["platform:macOS"]
+    },
+    {
+      "name": "Languages & LSP",
+      "labels": [
+        "area:autocompletions",
+        "area:code actions",
+        "area:diagnostics",
+        "area:inlay hints",
+        "area:language server",
+        "area:language server/server failure",
+        "area:languages",
+        "area:languages/astro",
+        "area:languages/bash",
+        "area:languages/c",
+        "area:languages/c#",
+        "area:languages/c++",
+        "area:languages/clojure",
+        "area:languages/css",
+        "area:languages/dart",
+        "area:languages/elixir",
+        "area:languages/elm",
+        "area:languages/f#",
+        "area:languages/gleam",
+        "area:languages/glsl",
+        "area:languages/go",
+        "area:languages/heex",
+        "area:languages/html",
+        "area:languages/java",
+        "area:languages/javascript",
+        "area:languages/json",
+        "area:languages/jsx",
+        "area:languages/julia",
+        "area:languages/lua",
+        "area:languages/markdown",
+        "area:languages/obj-c",
+        "area:languages/ocaml",
+        "area:languages/php",
+        "area:languages/prisma",
+        "area:languages/proto",
+        "area:languages/python",
+        "area:languages/ruby",
+        "area:languages/rust",
+        "area:languages/svelte",
+        "area:languages/swift",
+        "area:languages/tailwind css",
+        "area:languages/toml",
+        "area:languages/tsx",
+        "area:languages/typescript",
+        "area:languages/unsupported",
+        "area:languages/vue",
+        "area:languages/yaml",
+        "area:languages/zig",
+        "area:semantic tokens",
+        "area:tooling/emmet",
+        "area:tooling/eslint",
+        "area:tooling/prettier"
+      ]
+    },
+    {
+      "name": "Performance & Catch-all",
+      "labels": [
+        "area:cli",
+        "area:discoverability",
+        "area:installer-updater",
+        "area:internationalization",
+        "area:internationalization/rtl support",
+        "area:legal",
+        "area:logging",
+        "area:network",
+        "area:onboarding",
+        "area:parity/emacs",
+        "area:parity/jetbrains",
+        "area:parity/vscode",
+        "area:performance",
+        "area:performance/memory leak",
+        "area:release notes",
+        "area:security & privacy",
+        "area:security & privacy/workspace trust",
+        "area:serialization",
+        "area:telemetry",
+        "area:tooling",
+        "area:integrations/environment",
+        "area:accessibility",
+        "area:docs",
+        "platform:general"
+      ]
+    }
+  ]
+}
