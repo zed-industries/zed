@@ -733,10 +733,8 @@ impl Sidebar {
         cx.subscribe_in(
             &thread_rename_editor,
             window,
-            |this, _, event, window, cx| {
-                if matches!(event, editor::EditorEvent::Blurred) {
-                    this.confirm_thread_rename(window, cx);
-                }
+            |this, title_editor, event, window, cx| {
+                this.handle_thread_rename_editor_event(title_editor, event, window, cx);
             },
         )
         .detach();
@@ -2780,7 +2778,7 @@ impl Sidebar {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.renaming_thread_id.is_some() {
-            self.cancel_thread_rename(window, cx);
+            self.finish_thread_rename(window, cx);
             return;
         }
 
@@ -2853,7 +2851,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         if self.renaming_thread_id.is_some() && self.renaming_thread_id != Some(thread_id) {
-            self.confirm_thread_rename(window, cx);
+            self.finish_thread_rename(window, cx);
         }
 
         self.selection = Some(ix);
@@ -2867,36 +2865,74 @@ impl Sidebar {
         cx.notify();
     }
 
-    fn confirm_thread_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(thread_id) = self.renaming_thread_id.take() else {
-            return false;
-        };
+    fn handle_thread_rename_editor_event(
+        &mut self,
+        title_editor: &Entity<Editor>,
+        event: &editor::EditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::BufferEdited => {
+                if !title_editor.read(cx).is_focused(window) {
+                    return;
+                }
+                let new_title = title_editor.read(cx).text(cx);
+                if new_title.is_empty() {
+                    return;
+                }
+                let Some(thread_id) = self.renaming_thread_id else {
+                    return;
+                };
+                self.apply_thread_rename(thread_id, SharedString::from(new_title), window, cx);
+            }
+            editor::EditorEvent::Blurred => {
+                self.finish_thread_rename(window, cx);
+            }
+            _ => {}
+        }
+    }
 
-        let new_title = self
-            .thread_rename_editor
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-        if !new_title.is_empty() {
-            let title = SharedString::from(new_title);
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store
-                    .rename_thread(thread_id, title, cx)
-                    .detach_and_log_err(cx);
-            });
+    fn apply_thread_rename(
+        &mut self,
+        thread_id: ThreadId,
+        title: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut found = false;
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+            for workspace in workspaces {
+                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+                    if let Some(view) = agent_panel
+                        .read(cx)
+                        .conversation_view_for_id(&thread_id, cx)
+                        && let Some(thread_view) = view.read(cx).root_thread_view()
+                    {
+                        thread_view.update(cx, |thread_view, cx| {
+                            thread_view.rename(title.clone(), window, cx);
+                        });
+                        found = true;
+                    }
+                }
+            }
         }
 
+        if !found {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.set_title_override(thread_id, title, cx);
+            });
+        }
+    }
+
+    fn finish_thread_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.renaming_thread_id.take().is_none() {
+            return false;
+        }
         self.focus_handle.focus(window, cx);
         self.update_entries(cx);
         true
-    }
-
-    fn cancel_thread_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.renaming_thread_id.take().is_some() {
-            self.focus_handle.focus(window, cx);
-            cx.notify();
-        }
     }
 
     fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
@@ -2973,7 +3009,7 @@ impl Sidebar {
     }
 
     fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if self.confirm_thread_rename(window, cx) {
+        if self.finish_thread_rename(window, cx) {
             return;
         }
 
@@ -3068,7 +3104,7 @@ impl Sidebar {
                     Agent::from(metadata.agent_id.clone()),
                     metadata.thread_id,
                     Some(metadata.folder_paths().clone()),
-                    metadata.title(),
+                    metadata.title.clone(),
                     focus,
                     AgentThreadSource::Sidebar,
                     window,
@@ -5594,15 +5630,15 @@ impl Sidebar {
                         .flex_1()
                         .capture_action(cx.listener(
                             |this, _: &editor::actions::Newline, window, cx| {
-                                this.confirm_thread_rename(window, cx);
+                                this.finish_thread_rename(window, cx);
                             },
                         ))
                         .on_action(cx.listener(|this, _: &Confirm, window, cx| {
-                            this.confirm_thread_rename(window, cx);
+                            this.finish_thread_rename(window, cx);
                         }))
                         .on_action(
                             cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
-                                this.cancel_thread_rename(window, cx);
+                                this.finish_thread_rename(window, cx);
                             }),
                         )
                         .child(title_editor),
