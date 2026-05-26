@@ -271,6 +271,11 @@ struct ThreadEntry {
     is_background: bool,
     is_title_generating: bool,
     is_draft: bool,
+    /// True when this entry is a draft whose editor (and persisted prompt)
+    /// contain no content. We surface these in the sidebar with a
+    /// synthesized "New {agent} Thread" label but suppress their
+    /// timestamp — an empty draft has no meaningful age to display.
+    is_empty_draft: bool,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
@@ -1443,6 +1448,9 @@ impl Sidebar {
                             is_background: false,
                             is_title_generating: false,
                             is_draft,
+                            // Defaulted here; resolved below when we compute
+                            // the draft title so the two stay in sync.
+                            is_empty_draft: false,
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
@@ -1541,11 +1549,32 @@ impl Sidebar {
                     if !thread.is_draft {
                         continue;
                     }
-                    thread.metadata.title = draft_display_label_for_thread_metadata(
-                        &thread.metadata,
-                        &thread.workspace,
+                    // Resolve title and empty-state together so the sidebar
+                    // can both render a meaningful label and suppress the
+                    // timestamp for drafts with no content.
+                    let workspace_for_label = match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => Some(workspace),
+                        ThreadEntryWorkspace::Closed { .. } => None,
+                    };
+                    match agent_ui::draft_prompt_store::display_label_for_draft(
+                        workspace_for_label,
+                        thread.metadata.thread_id,
                         cx,
-                    );
+                    ) {
+                        Some(label) => {
+                            thread.metadata.title = Some(label);
+                            thread.is_empty_draft = false;
+                        }
+                        None => {
+                            thread.metadata.title =
+                                Some(agent_ui::draft_prompt_store::empty_draft_placeholder_label(
+                                    workspace_for_label,
+                                    &thread.metadata.agent_id,
+                                    cx,
+                                ));
+                            thread.is_empty_draft = true;
+                        }
+                    }
                 }
                 threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
 
@@ -5100,9 +5129,14 @@ impl Sidebar {
                         }
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
-                    let timestamp: SharedString =
+                    // Mirror the sidebar-row rule: empty drafts have no
+                    // meaningful age, so we omit the timestamp.
+                    let timestamp: SharedString = if thread.is_empty_draft {
+                        SharedString::default()
+                    } else {
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
-                            .into();
+                            .into()
+                    };
                     Some(ThreadSwitcherEntry::Thread(ThreadSwitcherThreadEntry {
                         title: thread.metadata.display_title(),
                         icon: thread.icon,
@@ -5438,7 +5472,14 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp = format_history_entry_timestamp(Self::thread_display_time(&thread.metadata));
+        // Empty drafts (no editor content, no persisted prompt) don't have
+        // a meaningful age, so we suppress the timestamp. ThreadItem treats
+        // an empty SharedString as "no timestamp" and hides the label.
+        let timestamp: SharedString = if thread.is_empty_draft {
+            SharedString::default()
+        } else {
+            format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
+        };
 
         let is_remote = thread.workspace.is_remote(cx);
 

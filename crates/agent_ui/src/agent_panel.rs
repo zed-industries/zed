@@ -1630,16 +1630,31 @@ impl AgentPanel {
             return;
         };
 
+        // If the draft has no persisted prompt content, treat the metadata
+        // row as a ghost from a previous session: drop it so the panel
+        // creates a fresh draft (with a new `thread_id` and current
+        // timestamps) the next time `ensure_draft` runs. This prevents the
+        // sidebar from surfacing days-old empty-draft entries when the user
+        // reopens a project where they once hit `cmd-n` and didn't type.
+        let persisted_blocks = crate::draft_prompt_store::read(thread_id, cx);
+        let has_persisted_content = persisted_blocks
+            .as_ref()
+            .is_some_and(|blocks| !blocks.is_empty());
+        if !has_persisted_content {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.delete(thread_id, cx);
+            });
+            return;
+        }
+
         let agent = if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent
         } else {
             Agent::from(metadata.agent_id.clone())
         };
-        let initial_content = crate::draft_prompt_store::read(thread_id, cx).map(|blocks| {
-            AgentInitialContent::ContentBlock {
-                blocks,
-                auto_submit: false,
-            }
+        let initial_content = persisted_blocks.map(|blocks| AgentInitialContent::ContentBlock {
+            blocks,
+            auto_submit: false,
         });
         let thread = self.create_agent_thread_with_server(
             agent,
