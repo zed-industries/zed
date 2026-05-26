@@ -623,6 +623,7 @@ impl MarkdownPreviewView {
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
             .code_block_renderer(CodeBlockRenderer::Default {
                 copy_button_visibility: CopyButtonVisibility::VisibleOnHover,
+                wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             })
             .scroll_handle(self.scroll_handle.clone())
@@ -1020,7 +1021,9 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
-            .size_full()
+            .w_full()
+            .flex_1()
+            .min_h_0()
             .bg(bg_color)
             .child(
                 div()

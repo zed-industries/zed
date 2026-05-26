@@ -259,8 +259,9 @@ pub fn into_open_ai_response(
 
     ResponseRequest {
         model: model_id.into(),
+        instructions: None,
         input: input_items,
-        store: false,
+        store: Some(false),
         include,
         stream,
         temperature,
@@ -301,14 +302,14 @@ fn append_message_to_response_items(
         ..
     } = message;
     let phase = if role == Role::Assistant {
-        response_message_phase_from_details(reasoning_details.as_ref())
+        response_message_phase_from_details(reasoning_details.as_deref())
     } else {
         None
     };
 
     if role == Role::Assistant {
         append_reasoning_details_to_response_items(
-            reasoning_details.as_ref(),
+            reasoning_details.as_deref(),
             replayed_reasoning_item_indexes,
             input_items,
         );
@@ -551,10 +552,13 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
-        if let Some(usage) = event.usage {
+        if let Some(usage) = event.usage
+            && let Some(prompt_tokens) = usage.prompt_tokens
+            && let Some(completion_tokens) = usage.completion_tokens
+        {
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
+                input_tokens: prompt_tokens,
+                output_tokens: completion_tokens,
                 cache_creation_input_tokens: 0,
                 cache_read_input_tokens: 0,
             })));
@@ -1336,7 +1340,6 @@ mod tests {
         };
         let user_image = LanguageModelImage {
             source: SharedString::from("aGVsbG8="),
-            size: None,
         };
         let expected_image_url = user_image.to_base64_url();
 
@@ -1480,7 +1483,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1500,7 +1503,7 @@ mod tests {
                             "status": "completed",
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1568,7 +1571,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1582,7 +1585,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1751,7 +1754,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "phase": "final_answer",
                     "reasoning_items": [
                         {
@@ -1761,7 +1764,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1843,13 +1846,13 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![MessageContent::Text("First.".into())],
                     cache: false,
-                    reasoning_details: Some(first_reasoning_details),
+                    reasoning_details: Some(Arc::new(first_reasoning_details)),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![MessageContent::Text("Second.".into())],
                     cache: false,
-                    reasoning_details: Some(second_reasoning_details),
+                    reasoning_details: Some(Arc::new(second_reasoning_details)),
                 },
             ],
             tools: Vec::new(),
@@ -1923,7 +1926,7 @@ mod tests {
                     MessageContent::Text("This is visible assistant output.".into()),
                 ],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1937,7 +1940,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,

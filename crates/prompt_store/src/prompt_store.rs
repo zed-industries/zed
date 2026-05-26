@@ -1,4 +1,5 @@
 mod prompts;
+pub mod rules_to_skills_migration;
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
