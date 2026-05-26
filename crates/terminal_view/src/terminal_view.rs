@@ -859,7 +859,10 @@ impl TerminalView {
     }
 
     pub fn add_paths_to_terminal(&self, paths: &[PathBuf], window: &mut Window, cx: &mut App) {
-        let mut text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        let mut text = paths
+            .iter()
+            .map(|path| format!(" {}", shell_escape_path(path)))
+            .join("");
         text.push(' ');
         window.focus(&self.focus_handle(cx), cx);
         self.terminal.update(cx, |terminal, _| {
@@ -996,6 +999,28 @@ impl TerminalView {
                 }),
         )
     }
+}
+
+#[cfg(unix)]
+fn shell_escape_path(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            ' ' | '!' | '"' | '#' | '$' | '&' | '\'' | '(' | ')' | '*' | ',' | ';' | '<' | '>'
+            | '?' | '[' | '\\' | ']' | '^' | '`' | '{' | '|' | '}' | '~' | '\t' | '\n' => {
+                result.push('\\');
+                result.push(c);
+            }
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
+#[cfg(not(unix))]
+fn shell_escape_path(path: &std::path::Path) -> String {
+    format!("{path:?}")
 }
 
 fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
