@@ -1170,7 +1170,6 @@ pub trait InteractiveElement: Sized {
         self.interactivity().focus_visible_style = Some(Box::new(f(StyleRefinement::default())));
         self
     }
-
 }
 
 /// A trait for elements that want to use the standard GPUI interactivity features
