@@ -59,6 +59,16 @@ pub type TransactionId = clock::Lamport;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct UndoNodeId(usize);
 
+impl UndoNodeId {
+    pub fn new(id: usize) -> Self {
+        Self(id)
+    }
+
+    pub fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
 pub struct Buffer {
     snapshot: BufferSnapshot,
     history: History,
@@ -172,6 +182,29 @@ pub struct UndoTreeNodeSnapshot {
     pub last_edit_at: Option<SystemTime>,
     pub saved: bool,
     pub latest_saved: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct UndoHistoryState {
+    pub base_text: Rope,
+    pub operations: Vec<Operation>,
+    pub nodes: Vec<UndoHistoryNode>,
+    pub root: UndoNodeId,
+    pub current: UndoNodeId,
+    pub latest_saved: Option<UndoNodeId>,
+    pub line_ending: LineEnding,
+}
+
+#[derive(Clone, Debug)]
+pub struct UndoHistoryNode {
+    pub id: UndoNodeId,
+    pub parent: Option<UndoNodeId>,
+    pub children: Vec<UndoNodeId>,
+    pub active_child: Option<usize>,
+    pub transaction: Option<Transaction>,
+    pub first_edit_at: Option<SystemTime>,
+    pub last_edit_at: Option<SystemTime>,
+    pub saved: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -335,6 +368,7 @@ impl History {
         None
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     fn current_path_entries(&self) -> Vec<&HistoryEntry> {
         let mut path = self.path_to_root(self.current_node).unwrap_or_default();
         path.reverse();
@@ -961,6 +995,257 @@ impl History {
             node.saved = true;
             self.latest_saved_node = Some(node.id);
         }
+    }
+
+    fn export_state(&self, line_ending: LineEnding) -> UndoHistoryState {
+        UndoHistoryState {
+            base_text: self.base_text.clone(),
+            operations: self
+                .operations
+                .iter()
+                .map(|(_, operation)| operation.clone())
+                .collect(),
+            nodes: self
+                .nodes
+                .iter()
+                .flatten()
+                .map(|node| UndoHistoryNode {
+                    id: node.id,
+                    parent: node.parent,
+                    children: node.children.clone(),
+                    active_child: node.active_child,
+                    transaction: node.entry.as_ref().map(|entry| entry.transaction.clone()),
+                    first_edit_at: node.first_edit_timestamp,
+                    last_edit_at: node.last_edit_timestamp,
+                    saved: node.saved,
+                })
+                .collect(),
+            root: self.root_node,
+            current: self.current_node,
+            latest_saved: self.latest_saved_node,
+            line_ending,
+        }
+    }
+
+    fn from_restored_state(
+        state: UndoHistoryState,
+        operations: TreeMap<clock::Lamport, Operation>,
+        group_interval: Duration,
+        clock: &mut clock::Lamport,
+    ) -> Result<Self> {
+        let max_node_id = Self::max_restored_node_id(&state.nodes)?;
+        let nodes = Self::restore_nodes(state.nodes, state.root, max_node_id, &operations, clock)?;
+
+        let history = Self {
+            base_text: state.base_text,
+            operations,
+            nodes,
+            root_node: state.root,
+            current_node: state.current,
+            latest_saved_node: state.latest_saved,
+            transaction_depth: 0,
+            group_interval,
+        };
+
+        history.validate_topology()?;
+        Ok(history)
+    }
+
+    fn max_restored_node_id(nodes: &[UndoHistoryNode]) -> Result<usize> {
+        nodes
+            .iter()
+            .map(|node| node.id.0)
+            .max()
+            .context("undo history has no nodes")
+    }
+
+    fn restore_nodes(
+        restored_nodes: Vec<UndoHistoryNode>,
+        root_node: UndoNodeId,
+        max_node_id: usize,
+        operations: &TreeMap<clock::Lamport, Operation>,
+        clock: &mut clock::Lamport,
+    ) -> Result<Vec<Option<HistoryNode>>> {
+        let mut nodes = vec![None; max_node_id + 1];
+        let mut seen_nodes = HashSet::default();
+        let mut transaction_ids = HashSet::default();
+        let now = Instant::now();
+
+        for node in restored_nodes {
+            if !seen_nodes.insert(node.id) {
+                anyhow::bail!("duplicate undo node {:?}", node.id);
+            }
+
+            Self::validate_restored_node(
+                &node,
+                root_node,
+                max_node_id,
+                operations,
+                &mut transaction_ids,
+                clock,
+            )?;
+
+            let node_id = node.id;
+            nodes[node_id.0] = Some(Self::history_node_from_restored_node(node, now));
+        }
+
+        Ok(nodes)
+    }
+
+    fn validate_restored_node(
+        node: &UndoHistoryNode,
+        root_node: UndoNodeId,
+        max_node_id: usize,
+        operations: &TreeMap<clock::Lamport, Operation>,
+        transaction_ids: &mut HashSet<TransactionId>,
+        clock: &mut clock::Lamport,
+    ) -> Result<()> {
+        if node.id == root_node {
+            Self::validate_restored_root_node(node)?;
+        } else {
+            Self::validate_restored_transaction_node(node, operations, transaction_ids, clock)?;
+        }
+
+        Self::validate_restored_child_indexes(node, max_node_id)
+    }
+
+    fn validate_restored_root_node(node: &UndoHistoryNode) -> Result<()> {
+        if node.parent.is_some() {
+            anyhow::bail!("undo root has a parent");
+        }
+        if node.transaction.is_some() {
+            anyhow::bail!("undo root has a transaction");
+        }
+        Ok(())
+    }
+
+    fn validate_restored_transaction_node(
+        node: &UndoHistoryNode,
+        operations: &TreeMap<clock::Lamport, Operation>,
+        transaction_ids: &mut HashSet<TransactionId>,
+        clock: &mut clock::Lamport,
+    ) -> Result<()> {
+        let transaction = node
+            .transaction
+            .as_ref()
+            .context("non-root undo node is missing a transaction")?;
+        if !transaction_ids.insert(transaction.id) {
+            anyhow::bail!("duplicate undo transaction {:?}", transaction.id);
+        }
+        clock.observe(transaction.id);
+        Self::validate_restored_transaction_edits(transaction, operations)
+    }
+
+    fn validate_restored_transaction_edits(
+        transaction: &Transaction,
+        operations: &TreeMap<clock::Lamport, Operation>,
+    ) -> Result<()> {
+        for edit_id in &transaction.edit_ids {
+            match operations.get(edit_id) {
+                Some(Operation::Edit(_)) => {}
+                Some(Operation::Undo(_)) => {
+                    anyhow::bail!("undo transaction references undo operation {:?}", edit_id);
+                }
+                None => anyhow::bail!("undo transaction references missing edit {:?}", edit_id),
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_restored_child_indexes(node: &UndoHistoryNode, max_node_id: usize) -> Result<()> {
+        if let Some(active_child) = node.active_child
+            && active_child >= node.children.len()
+        {
+            anyhow::bail!("undo node {:?} has invalid active child", node.id);
+        }
+
+        for child_id in &node.children {
+            if child_id.0 > max_node_id {
+                anyhow::bail!(
+                    "undo node {:?} references missing child {:?}",
+                    node.id,
+                    child_id
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn history_node_from_restored_node(node: UndoHistoryNode, now: Instant) -> HistoryNode {
+        let entry = node.transaction.map(|transaction| HistoryEntry {
+            transaction,
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: true,
+        });
+
+        HistoryNode {
+            id: node.id,
+            parent: node.parent,
+            children: node.children,
+            active_child: node.active_child,
+            entry,
+            first_edit_timestamp: node.first_edit_at,
+            last_edit_timestamp: node.last_edit_at,
+            saved: node.saved,
+        }
+    }
+
+    fn validate_topology(&self) -> Result<()> {
+        self.validate_topology_anchors()?;
+        let visited = self.validate_reachable_topology()?;
+        self.validate_all_nodes_reachable(visited.len())
+    }
+
+    fn validate_topology_anchors(&self) -> Result<()> {
+        let root = self.node(self.root_node).context("missing undo root")?;
+        if root.parent.is_some() {
+            anyhow::bail!("undo root has a parent");
+        }
+        if self.node(self.current_node).is_none() {
+            anyhow::bail!("missing current undo node");
+        }
+        if let Some(latest_saved) = self.latest_saved_node
+            && self.node(latest_saved).is_none()
+        {
+            anyhow::bail!("missing latest saved undo node");
+        }
+        Ok(())
+    }
+
+    fn validate_reachable_topology(&self) -> Result<HashSet<UndoNodeId>> {
+        let mut visited = HashSet::default();
+        let mut stack = vec![self.root_node];
+        while let Some(node_id) = stack.pop() {
+            if !visited.insert(node_id) {
+                anyhow::bail!("cycle in undo history at {:?}", node_id);
+            }
+            let node = self.node(node_id).context("missing undo node")?;
+            for child_id in &node.children {
+                self.validate_topology_child(node_id, *child_id)?;
+                stack.push(*child_id);
+            }
+        }
+
+        Ok(visited)
+    }
+
+    fn validate_topology_child(&self, parent_id: UndoNodeId, child_id: UndoNodeId) -> Result<()> {
+        let child = self.node(child_id).context("missing undo child")?;
+        if child.parent != Some(parent_id) {
+            anyhow::bail!("undo child {:?} has inconsistent parent", child_id);
+        }
+        Ok(())
+    }
+
+    fn validate_all_nodes_reachable(&self, visited_count: usize) -> Result<()> {
+        let live_node_count = self.nodes.iter().flatten().count();
+        if visited_count != live_node_count {
+            anyhow::bail!("undo history has unreachable nodes");
+        }
+
+        Ok(())
     }
 }
 
@@ -1961,6 +2246,52 @@ impl Buffer {
 
     pub fn undo_tree_snapshot(&self) -> UndoTreeSnapshot {
         self.history.snapshot()
+    }
+
+    pub fn export_undo_history(&self) -> UndoHistoryState {
+        self.history.export_state(self.line_ending())
+    }
+
+    pub fn restore_undo_history(&mut self, state: UndoHistoryState) -> Result<()> {
+        if self.history.transaction_depth != 0 {
+            anyhow::bail!("cannot restore undo history during an active transaction");
+        }
+        if state.line_ending != self.line_ending() {
+            anyhow::bail!("undo history line ending does not match buffer");
+        }
+
+        let mut rebuilt = Buffer::new_normalized(
+            self.replica_id(),
+            self.remote_id(),
+            state.line_ending,
+            state.base_text.clone(),
+        );
+        let mut operations = state.operations.clone();
+        operations.sort_unstable_by_key(Operation::timestamp);
+        rebuilt.apply_ops(operations);
+        if rebuilt.has_deferred_ops() {
+            anyhow::bail!("undo history operations could not be replayed");
+        }
+        if rebuilt.text() != self.text() {
+            anyhow::bail!("undo history final text does not match buffer");
+        }
+
+        for (_, operation) in rebuilt.history.operations.iter() {
+            rebuilt.lamport_clock.observe(operation.timestamp());
+        }
+        let history = History::from_restored_state(
+            state,
+            rebuilt.history.operations.clone(),
+            self.history.group_interval,
+            &mut rebuilt.lamport_clock,
+        )?;
+
+        self.snapshot = rebuilt.snapshot;
+        self.history = history;
+        self.deferred_ops = rebuilt.deferred_ops;
+        self.deferred_replicas = rebuilt.deferred_replicas;
+        self.lamport_clock = rebuilt.lamport_clock;
+        Ok(())
     }
 
     pub fn current_undo_node(&self) -> UndoNodeId {

@@ -2389,6 +2389,23 @@
     //
     // Default: true
     "restore_unsaved_buffers": true,
+    // Whether to persist per-buffer undo history across restarts.
+    //
+    // Default: true
+    "persist_undo_history": true,
+    // Maximum uncompressed serialized undo history bytes to persist per buffer.
+    //
+    // Default: 10485760 (10MiB)
+    "max_persisted_undo_history_bytes": 10485760,
+    // Maximum undo history nodes to persist per buffer.
+    //
+    // Default: 30000
+    "max_persisted_undo_history_nodes": 30000,
+    // Maximum age in days for persisted undo history. Set to 0 to disable
+    // age-based cleanup.
+    //
+    // Default: 30
+    "max_persisted_undo_history_age_days": 30,
     // Whether or not to skip worktree trust checks.
     // When trusted, project settings are synchronized automatically,
     // language and MCP servers are downloaded and started automatically.

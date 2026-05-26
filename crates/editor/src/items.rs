@@ -4,7 +4,7 @@ use crate::{
     ReportEditorEvent, SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
-    persistence::{EditorDb, SerializedEditor},
+    persistence::{EditorDb, PersistedUndoHistory, SerializedEditor},
     scroll::{ScrollAnchor, ScrollOffset},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -18,8 +18,9 @@ use gpui::{
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, Point,
-    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LineEnding, LocalFile,
+    Point, ReplicaId, SelectionGoal, SerializedUndoHistory,
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
@@ -30,6 +31,7 @@ use project::{
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
 use settings::Settings;
+use sha2::{Digest, Sha256};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
@@ -62,6 +64,7 @@ use zed_actions::preview::{
 };
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
+const MAX_PERSISTED_UNDO_HISTORY_ROWS_PER_WORKSPACE: usize = 10_000;
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -1192,13 +1195,11 @@ impl SerializableItem for Editor {
         _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        workspace::delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "editors",
-            &EditorDb::global(cx),
-            cx,
-        )
+        let db = EditorDb::global(cx);
+        cx.background_spawn(async move {
+            db.delete_unloaded_editors_and_item_undo_histories(workspace_id, alive_items)
+                .await
+        })
     }
 
     fn deserialize(
@@ -1240,6 +1241,11 @@ impl SerializableItem for Editor {
         log::debug!(
             "Deserialized editor {item_id:?} in workspace {workspace_id:?}, {serialized_editor:?}"
         );
+        let session_settings = ProjectSettings::get_global(cx).session;
+        let persist_undo_history = session_settings.persist_undo_history;
+        let max_undo_history_bytes = session_settings.max_persisted_undo_history_bytes;
+        let max_undo_history_nodes = session_settings.max_persisted_undo_history_nodes;
+        let undo_history_db = EditorDb::global(cx);
 
         match serialized_editor {
             SerializedEditor {
@@ -1279,6 +1285,19 @@ impl SerializableItem for Editor {
                         }
                     });
 
+                    if persist_undo_history {
+                        restore_persisted_undo_history(
+                            buffer.clone(),
+                            undo_history_db.clone(),
+                            workspace_id,
+                            item_id,
+                            max_undo_history_bytes,
+                            max_undo_history_nodes,
+                            cx,
+                        )
+                        .await?;
+                    }
+
                     cx.update(|window, cx| {
                         cx.new(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
@@ -1316,6 +1335,19 @@ impl SerializableItem for Editor {
                             });
                         }
 
+                        if persist_undo_history {
+                            restore_persisted_undo_history(
+                                buffer.clone(),
+                                undo_history_db.clone(),
+                                workspace_id,
+                                item_id,
+                                max_undo_history_bytes,
+                                max_undo_history_nodes,
+                                cx,
+                            )
+                            .await?;
+                        }
+
                         cx.update(|window, cx| {
                             cx.new(|cx| {
                                 let mut editor =
@@ -1346,6 +1378,19 @@ impl SerializableItem for Editor {
                                 });
                             }
 
+                            if persist_undo_history {
+                                restore_persisted_undo_history(
+                                    buffer.clone(),
+                                    undo_history_db.clone(),
+                                    workspace_id,
+                                    item_id,
+                                    max_undo_history_bytes,
+                                    max_undo_history_nodes,
+                                    cx,
+                                )
+                                .await?;
+                            }
+
                             cx.update(|window, cx| {
                                 cx.new(|cx| {
                                     let mut editor =
@@ -1367,6 +1412,19 @@ impl SerializableItem for Editor {
                     .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
+
+                if persist_undo_history {
+                    restore_persisted_undo_history(
+                        buffer.clone(),
+                        undo_history_db.clone(),
+                        workspace_id,
+                        item_id,
+                        max_undo_history_bytes,
+                        max_undo_history_nodes,
+                        cx,
+                    )
+                    .await?;
+                }
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {
@@ -1419,18 +1477,45 @@ impl SerializableItem for Editor {
                 })
         });
 
-        let is_dirty = buffer.read(cx).is_dirty();
-        let mtime = buffer.read(cx).saved_mtime();
+        let session_settings = ProjectSettings::get_global(cx).session;
+        let persist_undo_history = session_settings.persist_undo_history;
+        let max_undo_history_bytes = session_settings.max_persisted_undo_history_bytes;
+        let max_undo_history_nodes = session_settings.max_persisted_undo_history_nodes;
+        let max_undo_history_age_days = session_settings.max_persisted_undo_history_age_days;
 
-        let snapshot = buffer.read(cx).snapshot();
+        let (is_dirty, mtime, undo_history_key, undo_history, snapshot) = {
+            let buffer = buffer.read(cx);
+            let undo_history_key = persist_undo_history
+                .then(|| undo_history_key_for_buffer(buffer, item_id, cx))
+                .flatten();
+            let undo_history = undo_history_key.as_ref().and_then(|_| {
+                match buffer.export_undo_history(max_undo_history_nodes) {
+                    Ok(history) if history.node_count() > 1 => Some(history),
+                    Ok(_) => None,
+                    Err(error) => {
+                        log::warn!("failed to export undo history: {error:#}");
+                        None
+                    }
+                }
+            });
+            (
+                buffer.is_dirty(),
+                buffer.saved_mtime(),
+                undo_history_key,
+                undo_history,
+                buffer.snapshot(),
+            )
+        };
 
         let db = EditorDb::global(cx);
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
+                let current_text = snapshot.text();
+                let text_hash = hash_normalized_text(&current_text);
+                let line_ending = persisted_line_ending(snapshot.line_ending()).to_string();
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                    let contents = snapshot.text();
                     let language = snapshot.language().map(|lang| lang.name().to_string());
-                    (Some(contents), language)
+                    (Some(current_text), language)
                 } else {
                     (None, None)
                 };
@@ -1444,7 +1529,33 @@ impl SerializableItem for Editor {
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 db.save_serialized_editor(item_id, workspace_id, editor)
                     .await
-                    .context("failed to save serialized editor")
+                    .context("failed to save serialized editor")?;
+
+                if let Some(undo_history_key) = undo_history_key {
+                    save_persisted_undo_history(
+                        &db,
+                        workspace_id,
+                        undo_history_key,
+                        undo_history,
+                        UndoHistoryMetadata {
+                            mtime,
+                            line_ending,
+                            text_hash,
+                        },
+                        max_undo_history_bytes,
+                    )
+                    .await?;
+
+                    db.prune_undo_histories(
+                        workspace_id,
+                        MAX_PERSISTED_UNDO_HISTORY_ROWS_PER_WORKSPACE,
+                        max_undo_history_age_days,
+                    )
+                    .await
+                    .context("failed to prune undo histories")?;
+                }
+
+                Ok::<(), anyhow::Error>(())
             })
             .await
             .context("failed to save contents of buffer")?;
@@ -1461,6 +1572,7 @@ impl SerializableItem for Editor {
                     | EditorEvent::DirtyChanged
                     | EditorEvent::BufferEdited
                     | EditorEvent::FileHandleChanged
+                    | EditorEvent::UndoHistoryChanged
             )
     }
 }
@@ -2139,6 +2251,178 @@ fn path_for_file<'a>(
         }
         Some(path.display(file.path_style(cx)))
     }
+}
+
+#[derive(Clone)]
+struct UndoHistoryKey {
+    kind: &'static str,
+    key: String,
+}
+
+struct UndoHistoryMetadata {
+    mtime: Option<MTime>,
+    line_ending: String,
+    text_hash: String,
+}
+
+fn undo_history_key_for_buffer(
+    buffer: &Buffer,
+    item_id: ItemId,
+    cx: &App,
+) -> Option<UndoHistoryKey> {
+    if buffer.replica_id() != ReplicaId::LOCAL {
+        return None;
+    }
+
+    if let Some(file) = buffer.file() {
+        let file = file.as_local()?;
+        Some(UndoHistoryKey {
+            kind: "file",
+            key: file.abs_path(cx).to_string_lossy().into_owned(),
+        })
+    } else {
+        Some(UndoHistoryKey {
+            kind: "item",
+            key: item_id.to_string(),
+        })
+    }
+}
+
+fn persisted_line_ending(line_ending: LineEnding) -> &'static str {
+    match line_ending {
+        LineEnding::Unix => "unix",
+        LineEnding::Windows => "windows",
+    }
+}
+
+fn hash_normalized_text(text: &str) -> String {
+    hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+fn undo_history_matches_buffer(buffer: &Buffer, persisted: &PersistedUndoHistory) -> bool {
+    if persisted.line_ending != persisted_line_ending(buffer.line_ending()) {
+        return false;
+    }
+
+    if let Some(persisted_mtime) = persisted.mtime
+        && buffer.saved_mtime() != Some(persisted_mtime)
+    {
+        return false;
+    }
+
+    let current_hash = hash_normalized_text(&buffer.snapshot().text());
+    current_hash == persisted.text_hash
+}
+
+async fn save_persisted_undo_history(
+    db: &EditorDb,
+    workspace_id: WorkspaceId,
+    undo_history_key: UndoHistoryKey,
+    undo_history: Option<SerializedUndoHistory>,
+    metadata: UndoHistoryMetadata,
+    max_bytes: usize,
+) -> Result<()> {
+    let key_kind = undo_history_key.kind;
+    let key = undo_history_key.key;
+
+    let Some(undo_history) = undo_history else {
+        db.delete_undo_history(workspace_id, key_kind.to_string(), key)
+            .await
+            .context("failed to delete empty undo history")?;
+        return Ok(());
+    };
+
+    let payload = undo_history.to_json_bytes()?;
+    if payload.len() > max_bytes {
+        log::warn!("not saving undo history because it exceeds configured byte limit");
+        db.delete_undo_history(workspace_id, key_kind.to_string(), key)
+            .await
+            .context("failed to delete oversized undo history")?;
+        return Ok(());
+    }
+
+    let compressed =
+        zstd::bulk::compress(&payload, 0).context("failed to compress undo history")?;
+    let undo_history = PersistedUndoHistory {
+        mtime: (key_kind == "file").then_some(metadata.mtime).flatten(),
+        line_ending: metadata.line_ending,
+        text_hash: metadata.text_hash,
+        uncompressed_byte_len: payload.len(),
+        payload: compressed,
+    };
+
+    db.save_undo_history(workspace_id, key_kind.to_string(), key, undo_history)
+        .await
+        .context("failed to save undo history")
+}
+
+async fn restore_persisted_undo_history(
+    buffer: Entity<Buffer>,
+    db: EditorDb,
+    workspace_id: WorkspaceId,
+    item_id: ItemId,
+    max_bytes: usize,
+    max_nodes: usize,
+    cx: &mut AsyncWindowContext,
+) -> Result<()> {
+    let Some(key) = buffer.read_with(cx, |buffer, cx| {
+        undo_history_key_for_buffer(buffer, item_id, cx)
+    }) else {
+        return Ok(());
+    };
+
+    let persisted = match db.get_undo_history(workspace_id, key.kind, &key.key) {
+        Ok(Some(persisted)) => persisted,
+        Ok(None) => return Ok(()),
+        Err(error) => {
+            log::warn!("failed to load persisted undo history: {error:#}");
+            return Ok(());
+        }
+    };
+
+    if persisted.uncompressed_byte_len > max_bytes {
+        log::warn!("skipping persisted undo history larger than configured limit");
+        return Ok(());
+    }
+
+    let initial_version = buffer.read_with(cx, |buffer, _| buffer.version());
+    let matches = buffer.read_with(cx, |buffer, _| {
+        undo_history_matches_buffer(buffer, &persisted)
+    });
+    if !matches {
+        return Ok(());
+    }
+
+    let payload = persisted.payload.clone();
+    let history = match cx
+        .background_spawn(async move {
+            let decompressed = zstd::bulk::decompress(&payload, max_bytes)
+                .context("failed to decompress undo history")?;
+            SerializedUndoHistory::from_json_bytes(&decompressed, max_nodes)
+        })
+        .await
+    {
+        Ok(history) => history,
+        Err(error) => {
+            log::warn!("failed to decode persisted undo history: {error:#}");
+            return Ok(());
+        }
+    };
+
+    let matches = buffer.read_with(cx, |buffer, _| {
+        buffer.version() == initial_version && undo_history_matches_buffer(buffer, &persisted)
+    });
+    if !matches {
+        return Ok(());
+    }
+
+    buffer.update(cx, |buffer, cx| {
+        if let Err(error) = buffer.restore_undo_history(history, max_nodes, cx) {
+            log::warn!("failed to restore persisted undo history: {error:#}");
+        }
+    });
+
+    Ok(())
 }
 
 /// Restores serialized buffer contents by overwriting the buffer with saved text.

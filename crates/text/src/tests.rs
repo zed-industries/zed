@@ -768,6 +768,56 @@ fn test_undo_tree_saved_node_metadata() {
 }
 
 #[test]
+fn test_undo_history_export_restore_preserves_tree_and_disables_grouping() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.undo();
+    buffer.edit([(1..1, "C")]);
+    let transaction_c = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.mark_current_undo_node_saved();
+    assert_eq!(buffer.text(), "AC");
+
+    let exported = buffer.export_undo_history();
+    let mut restored = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "AC");
+    restored.set_group_interval(Duration::from_secs(60));
+    restored.restore_undo_history(exported).unwrap();
+
+    let snapshot = restored.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    assert_eq!(snapshot.current, node_c.id);
+    assert_eq!(snapshot.latest_saved, Some(node_c.id));
+    assert!(node_c.saved);
+    assert_eq!(node_a.children, vec![node_b.id, node_c.id]);
+
+    restored.undo();
+    let snapshot = restored.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let transaction_b_index = node_a
+        .children
+        .iter()
+        .position(|child_id| *child_id == node_b.id)
+        .unwrap();
+    assert!(restored.switch_undo_branch(node_a.id, transaction_b_index));
+    restored.redo();
+    assert_eq!(restored.text(), "AB");
+
+    let live_nodes_before_edit = live_transaction_node_count(&restored);
+    restored.edit([(2..2, "D")]);
+    assert_eq!(restored.text(), "ABD");
+    assert_eq!(
+        live_transaction_node_count(&restored),
+        live_nodes_before_edit + 1
+    );
+}
+
+#[test]
 fn test_undo_tree_grouping_within_active_path() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");

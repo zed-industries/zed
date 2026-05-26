@@ -352,6 +352,22 @@ pub struct SessionSettingsContent {
     ///
     /// Default: true
     pub restore_unsaved_buffers: Option<bool>,
+    /// Whether to persist per-buffer undo history across restarts.
+    ///
+    /// Default: true
+    pub persist_undo_history: Option<bool>,
+    /// Maximum uncompressed serialized undo history bytes to persist per buffer.
+    ///
+    /// Default: 10485760
+    pub max_persisted_undo_history_bytes: Option<usize>,
+    /// Maximum undo history nodes to persist per buffer.
+    ///
+    /// Default: 30000
+    pub max_persisted_undo_history_nodes: Option<usize>,
+    /// Maximum age in days for persisted undo history. Set to 0 to disable age-based cleanup.
+    ///
+    /// Default: 30
+    pub max_persisted_undo_history_age_days: Option<usize>,
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.

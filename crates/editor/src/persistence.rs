@@ -13,6 +13,7 @@ use itertools::Itertools as _;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
@@ -23,6 +24,72 @@ pub(crate) struct SerializedEditor {
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
     pub(crate) mtime: Option<MTime>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PersistedUndoHistory {
+    pub(crate) mtime: Option<MTime>,
+    pub(crate) line_ending: String,
+    pub(crate) text_hash: String,
+    pub(crate) uncompressed_byte_len: usize,
+    pub(crate) payload: Vec<u8>,
+}
+
+impl StaticColumnCount for PersistedUndoHistory {
+    fn column_count() -> usize {
+        6
+    }
+}
+
+impl Bind for PersistedUndoHistory {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let start_index = match self
+            .mtime
+            .and_then(|mtime| mtime.to_seconds_and_nanos_for_persistence())
+        {
+            Some((seconds, nanos)) => {
+                let start_index = statement.bind(&(seconds as i64), start_index)?;
+                statement.bind(&(nanos as i32), start_index)?
+            }
+            None => {
+                let start_index = statement.bind::<Option<i64>>(&None, start_index)?;
+                statement.bind::<Option<i32>>(&None, start_index)?
+            }
+        };
+        let start_index = statement.bind(&self.line_ending, start_index)?;
+        let start_index = statement.bind(&self.text_hash, start_index)?;
+        let start_index = statement.bind(&self.uncompressed_byte_len, start_index)?;
+        statement.bind(&self.payload, start_index)
+    }
+}
+
+impl Column for PersistedUndoHistory {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (mtime_seconds, start_index): (Option<i64>, i32) =
+            Column::column(statement, start_index)?;
+        let (mtime_nanos, start_index): (Option<i32>, i32) =
+            Column::column(statement, start_index)?;
+        let (line_ending, start_index): (String, i32) = Column::column(statement, start_index)?;
+        let (text_hash, start_index): (String, i32) = Column::column(statement, start_index)?;
+        let (uncompressed_byte_len, start_index): (usize, i32) =
+            Column::column(statement, start_index)?;
+        let (payload, start_index): (Vec<u8>, i32) = Column::column(statement, start_index)?;
+
+        let mtime = mtime_seconds
+            .zip(mtime_nanos)
+            .map(|(seconds, nanos)| MTime::from_seconds_and_nanos(seconds as u64, nanos as u32));
+
+        Ok((
+            Self {
+                mtime,
+                line_ending,
+                text_hash,
+                uncompressed_byte_len,
+                payload,
+            },
+            start_index,
+        ))
+    }
 }
 
 impl StaticColumnCount for SerializedEditor {
@@ -223,7 +290,50 @@ impl Domain for EditorDb {
                 PRIMARY KEY(workspace_id, path, start)
             );
         ),
+        sql! (
+            CREATE TABLE undo_histories (
+                workspace_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                schema_version INTEGER NOT NULL,
+                current_text_hash TEXT NOT NULL,
+                mtime_seconds INTEGER,
+                mtime_nanos INTEGER,
+                data BLOB NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
+                PRIMARY KEY(workspace_id, path)
+            );
+        ),
+        sql! (
+            DROP TABLE undo_histories;
+
+            CREATE TABLE undo_histories (
+                workspace_id INTEGER NOT NULL,
+                key_kind TEXT NOT NULL,
+                key TEXT NOT NULL,
+                mtime_seconds INTEGER DEFAULT NULL,
+                mtime_nanos INTEGER DEFAULT NULL,
+                line_ending TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                uncompressed_byte_len INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                updated_at_seconds INTEGER NOT NULL,
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE,
+                PRIMARY KEY(workspace_id, key_kind, key)
+            ) STRICT;
+        ),
     ];
+
+    fn should_allow_migration_change(index: usize, old: &str, new: &str) -> bool {
+        index == 9
+            && old.contains("key_kind TEXT NOT NULL")
+            && old.contains("payload BLOB NOT NULL")
+            && new.contains("path TEXT NOT NULL")
+            && new.contains("data BLOB NOT NULL")
+    }
 }
 
 db::static_connection!(EditorDb, [WorkspaceDb]);
@@ -257,6 +367,156 @@ impl EditorDb {
                 mtime_seconds = ?7,
                 mtime_nanos = ?8
         }
+    }
+
+    query! {
+        pub fn get_undo_history(workspace_id: WorkspaceId, key_kind: &str, key: &str) -> Result<Option<PersistedUndoHistory>> {
+            SELECT mtime_seconds, mtime_nanos, line_ending, text_hash, uncompressed_byte_len, payload
+            FROM undo_histories
+            WHERE workspace_id = ? AND key_kind = ? AND key = ?
+        }
+    }
+
+    pub async fn save_undo_history(
+        &self,
+        workspace_id: WorkspaceId,
+        key_kind: String,
+        key: String,
+        undo_history: PersistedUndoHistory,
+    ) -> Result<()> {
+        let updated_at_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs() as i64);
+
+        self.write(move |conn| {
+            let mut statement = Statement::prepare(
+                conn,
+                sql!(
+                    INSERT INTO undo_histories
+                        (workspace_id, key_kind, key, mtime_seconds, mtime_nanos, line_ending, text_hash, uncompressed_byte_len, payload, updated_at_seconds)
+                    VALUES
+                        (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                    ON CONFLICT DO UPDATE SET
+                        mtime_seconds = ?4,
+                        mtime_nanos = ?5,
+                        line_ending = ?6,
+                        text_hash = ?7,
+                        uncompressed_byte_len = ?8,
+                        payload = ?9,
+                        updated_at_seconds = ?10
+                ),
+            )?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            next_index = statement.bind(&key_kind, next_index)?;
+            next_index = statement.bind(&key, next_index)?;
+            next_index = undo_history.bind(&statement, next_index)?;
+            statement.bind(&updated_at_seconds, next_index)?;
+            statement.exec()
+        })
+        .await
+    }
+
+    pub async fn delete_undo_history(
+        &self,
+        workspace_id: WorkspaceId,
+        key_kind: String,
+        key: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM undo_histories
+                WHERE workspace_id = ?1 AND key_kind = ?2 AND key = ?3
+            ))?((workspace_id, key_kind, key))
+        })
+        .await
+    }
+
+    pub async fn delete_unloaded_editors_and_item_undo_histories(
+        &self,
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            if alive_items.is_empty() {
+                conn.exec_bound(sql!(
+                    DELETE FROM editors
+                    WHERE workspace_id = ?1
+                ))?(workspace_id)?;
+                conn.exec_bound(sql!(
+                    DELETE FROM undo_histories
+                    WHERE workspace_id = ?1 AND key_kind = ?2
+                ))?((workspace_id, "item"))?;
+                return Ok(());
+            }
+
+            let placeholders = alive_items
+                .iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(", ");
+            let delete_editors = format!(
+                "DELETE FROM editors WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
+            );
+            let mut statement = Statement::prepare(conn, delete_editors)?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            for item_id in &alive_items {
+                next_index = statement.bind(item_id, next_index)?;
+            }
+            statement.exec()?;
+
+            let delete_undo_histories = format!(
+                "DELETE FROM undo_histories WHERE workspace_id = ? AND key_kind = ? AND key NOT IN ({placeholders})"
+            );
+            let mut statement = Statement::prepare(conn, delete_undo_histories)?;
+            let mut next_index = statement.bind(&workspace_id, 1)?;
+            next_index = statement.bind(&"item", next_index)?;
+            for item_id in alive_items {
+                next_index = statement.bind(&item_id.to_string(), next_index)?;
+            }
+            statement.exec()
+        })
+        .await
+    }
+
+    pub async fn prune_undo_histories(
+        &self,
+        workspace_id: WorkspaceId,
+        max_histories: usize,
+        max_age_days: usize,
+    ) -> Result<()> {
+        const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+
+        let current_seconds = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs() as i64);
+        let cutoff_seconds = if max_age_days == 0 {
+            None
+        } else {
+            let max_age_days = i64::try_from(max_age_days).unwrap_or(i64::MAX);
+            let max_age_seconds = max_age_days.saturating_mul(SECONDS_PER_DAY);
+            Some(current_seconds.saturating_sub(max_age_seconds))
+        };
+
+        self.write(move |conn| {
+            if let Some(cutoff_seconds) = cutoff_seconds {
+                conn.exec_bound(sql!(
+                    DELETE FROM undo_histories
+                    WHERE workspace_id = ?1 AND updated_at_seconds < ?2
+                ))?((workspace_id, cutoff_seconds))?;
+            }
+
+            conn.exec_bound(sql!(
+                DELETE FROM undo_histories
+                WHERE workspace_id = ?1
+                    AND rowid NOT IN (
+                        SELECT rowid FROM undo_histories
+                        WHERE workspace_id = ?1
+                        ORDER BY updated_at_seconds DESC
+                        LIMIT ?2
+                    )
+            ))?((workspace_id, max_histories))
+        })
+        .await
     }
 
     // Returns the scroll top row, and offset
@@ -613,5 +873,165 @@ mod tests {
         assert_eq!(retrieved_b.len(), 1);
         assert_eq!(retrieved_a[0].0, 10); // file_a's fold
         assert_eq!(retrieved_b[0].0, 30); // file_b's fold
+    }
+
+    #[gpui::test]
+    async fn test_save_get_and_cleanup_undo_histories(cx: &mut gpui::TestAppContext) {
+        let db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        let editor_db = cx.update(|cx| EditorDb::global(cx));
+
+        let file_history = PersistedUndoHistory {
+            mtime: Some(MTime::from_seconds_and_nanos(10, 20)),
+            line_ending: "unix".to_string(),
+            text_hash: "hash-a".to_string(),
+            uncompressed_byte_len: 4,
+            payload: vec![1, 2, 3, 4],
+        };
+        editor_db
+            .save_undo_history(
+                workspace_id,
+                "file".to_string(),
+                "/tmp/a.rs".to_string(),
+                file_history.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/a.rs")
+                .unwrap(),
+            Some(file_history)
+        );
+
+        let updated_file_history = PersistedUndoHistory {
+            mtime: Some(MTime::from_seconds_and_nanos(30, 40)),
+            line_ending: "windows".to_string(),
+            text_hash: "hash-b".to_string(),
+            uncompressed_byte_len: 2,
+            payload: vec![9, 8],
+        };
+        editor_db
+            .save_undo_history(
+                workspace_id,
+                "file".to_string(),
+                "/tmp/a.rs".to_string(),
+                updated_file_history.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/a.rs")
+                .unwrap(),
+            Some(updated_file_history.clone())
+        );
+
+        let item_history = PersistedUndoHistory {
+            mtime: None,
+            line_ending: "unix".to_string(),
+            text_hash: "hash-item".to_string(),
+            uncompressed_byte_len: 1,
+            payload: vec![7],
+        };
+        editor_db
+            .save_undo_history(
+                workspace_id,
+                "item".to_string(),
+                "1".to_string(),
+                item_history.clone(),
+            )
+            .await
+            .unwrap();
+        editor_db
+            .save_undo_history(
+                workspace_id,
+                "item".to_string(),
+                "2".to_string(),
+                item_history,
+            )
+            .await
+            .unwrap();
+
+        editor_db
+            .delete_unloaded_editors_and_item_undo_histories(workspace_id, vec![1])
+            .await
+            .unwrap();
+
+        assert!(
+            editor_db
+                .get_undo_history(workspace_id, "item", "1")
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            editor_db
+                .get_undo_history(workspace_id, "item", "2")
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/a.rs")
+                .unwrap(),
+            Some(updated_file_history.clone())
+        );
+
+        editor_db
+            .write(move |conn| {
+                conn.exec_bound(sql!(
+                    UPDATE undo_histories
+                    SET updated_at_seconds = ?4
+                    WHERE workspace_id = ?1 AND key_kind = ?2 AND key = ?3
+                ))?((workspace_id, "file", "/tmp/a.rs", 0_i64))
+            })
+            .await
+            .unwrap();
+
+        editor_db
+            .prune_undo_histories(workspace_id, 100, 0)
+            .await
+            .unwrap();
+        assert!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/a.rs")
+                .unwrap()
+                .is_some()
+        );
+
+        editor_db
+            .prune_undo_histories(workspace_id, 100, 30)
+            .await
+            .unwrap();
+        assert!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/a.rs")
+                .unwrap()
+                .is_none()
+        );
+
+        editor_db
+            .save_undo_history(
+                workspace_id,
+                "file".to_string(),
+                "/tmp/delete.rs".to_string(),
+                updated_file_history,
+            )
+            .await
+            .unwrap();
+        editor_db
+            .delete_undo_history(
+                workspace_id,
+                "file".to_string(),
+                "/tmp/delete.rs".to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            editor_db
+                .get_undo_history(workspace_id, "file", "/tmp/delete.rs")
+                .unwrap()
+                .is_none()
+        );
     }
 }

@@ -5515,6 +5515,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "hex",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -5541,6 +5542,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sha2",
  "smallvec",
  "snippet",
  "sum_tree",
@@ -5573,6 +5575,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zlog",
+ "zstd",
  "ztracing",
 ]
 

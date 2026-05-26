@@ -90,6 +90,22 @@ pub struct SessionSettings {
     ///
     /// Default: true
     pub restore_unsaved_buffers: bool,
+    /// Whether to persist per-buffer undo history across restarts.
+    ///
+    /// Default: true
+    pub persist_undo_history: bool,
+    /// Maximum uncompressed serialized undo history bytes to persist per buffer.
+    ///
+    /// Default: 10485760
+    pub max_persisted_undo_history_bytes: usize,
+    /// Maximum undo history nodes to persist per buffer.
+    ///
+    /// Default: 30000
+    pub max_persisted_undo_history_nodes: usize,
+    /// Maximum age in days for persisted undo history. Set to 0 to disable age-based cleanup.
+    ///
+    /// Default: 30
+    pub max_persisted_undo_history_age_days: usize,
     /// Whether or not to skip worktree trust checks.
     /// When trusted, project settings are synchronized automatically,
     /// language and MCP servers are downloaded and started automatically.
@@ -761,6 +777,22 @@ impl Settings for ProjectSettings {
             load_direnv: project.load_direnv.clone().unwrap(),
             session: SessionSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
+                persist_undo_history: content.session.unwrap().persist_undo_history.unwrap(),
+                max_persisted_undo_history_bytes: content
+                    .session
+                    .unwrap()
+                    .max_persisted_undo_history_bytes
+                    .unwrap(),
+                max_persisted_undo_history_nodes: content
+                    .session
+                    .unwrap()
+                    .max_persisted_undo_history_nodes
+                    .unwrap(),
+                max_persisted_undo_history_age_days: content
+                    .session
+                    .unwrap()
+                    .max_persisted_undo_history_age_days
+                    .unwrap(),
                 trust_all_worktrees: content.session.unwrap().trust_all_worktrees.unwrap(),
             },
         }

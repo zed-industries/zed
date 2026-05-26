@@ -20,7 +20,7 @@ pub use crate::{
     proto,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use clock::Lamport;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -35,6 +35,7 @@ use gpui::{
 
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smallvec::SmallVec;
 use std::{
@@ -51,7 +52,7 @@ use std::{
     path::PathBuf,
     rc,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
 use sum_tree::TreeMap;
@@ -329,6 +330,482 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
+}
+
+const UNDO_HISTORY_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SerializedUndoHistory {
+    version: u32,
+    line_ending: SerializedLineEnding,
+    base_text: String,
+    operations: Vec<SerializedTextOperation>,
+    nodes: Vec<SerializedUndoNode>,
+    root: usize,
+    current: usize,
+    latest_saved: Option<usize>,
+}
+
+impl SerializedUndoHistory {
+    pub fn from_json_bytes(bytes: &[u8], max_nodes: usize) -> Result<Self> {
+        let history: Self = serde_json::from_slice(bytes).context("invalid undo history JSON")?;
+        history.validate(max_nodes)?;
+        Ok(history)
+    }
+
+    pub fn to_json_bytes(&self) -> Result<Vec<u8>> {
+        serde_json::to_vec(self).context("failed to serialize undo history")
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending.into()
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn from_text_state(state: text::UndoHistoryState) -> Self {
+        Self {
+            version: UNDO_HISTORY_SCHEMA_VERSION,
+            line_ending: state.line_ending.into(),
+            base_text: state.base_text.to_string(),
+            operations: state
+                .operations
+                .into_iter()
+                .map(SerializedTextOperation::from)
+                .collect(),
+            nodes: state
+                .nodes
+                .into_iter()
+                .map(SerializedUndoNode::from)
+                .collect(),
+            root: state.root.as_usize(),
+            current: state.current.as_usize(),
+            latest_saved: state.latest_saved.map(text::UndoNodeId::as_usize),
+        }
+    }
+
+    fn into_text_state(self) -> Result<text::UndoHistoryState> {
+        self.validate(usize::MAX)?;
+        Ok(text::UndoHistoryState {
+            base_text: Rope::from(&self.base_text),
+            operations: self
+                .operations
+                .into_iter()
+                .map(SerializedTextOperation::into_text_operation)
+                .collect::<Result<Vec<_>>>()?,
+            nodes: self
+                .nodes
+                .into_iter()
+                .map(SerializedUndoNode::into_text_node)
+                .collect::<Result<Vec<_>>>()?,
+            root: text::UndoNodeId::new(self.root),
+            current: text::UndoNodeId::new(self.current),
+            latest_saved: self.latest_saved.map(text::UndoNodeId::new),
+            line_ending: self.line_ending.into(),
+        })
+    }
+
+    fn validate(&self, max_nodes: usize) -> Result<()> {
+        if self.version != UNDO_HISTORY_SCHEMA_VERSION {
+            bail!("unsupported undo history schema version {}", self.version);
+        }
+        if self.nodes.is_empty() {
+            bail!("undo history has no nodes");
+        }
+        if self.nodes.len() > max_nodes {
+            bail!("undo history node count exceeds limit");
+        }
+
+        let mut operation_ids = HashSet::default();
+        let mut edit_operation_ids = HashSet::default();
+        for operation in &self.operations {
+            let timestamp = operation.timestamp();
+            if !operation_ids.insert(timestamp) {
+                bail!("duplicate undo history operation timestamp");
+            }
+            match operation {
+                SerializedTextOperation::Edit {
+                    ranges, new_text, ..
+                } => {
+                    if ranges.len() != new_text.len() {
+                        bail!("undo history edit operation has mismatched ranges and text");
+                    }
+                    for range in ranges {
+                        if range.start > range.end {
+                            bail!("undo history edit operation has invalid range");
+                        }
+                    }
+                    edit_operation_ids.insert(timestamp);
+                }
+                SerializedTextOperation::Undo { counts, .. } => {
+                    for count in counts {
+                        if !edit_operation_ids.contains(&count.edit_id) {
+                            bail!("undo history undo operation references missing edit");
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut node_ids = HashSet::default();
+        let mut transaction_ids = HashSet::default();
+        for node in &self.nodes {
+            if !node_ids.insert(node.id) {
+                bail!("duplicate undo history node");
+            }
+            if let Some(active_child) = node.active_child
+                && active_child >= node.children.len()
+            {
+                bail!("undo history node has invalid active child");
+            }
+            if node.id != self.root && node.parent.is_none() {
+                bail!("non-root undo history node has no parent");
+            }
+            if node.id == self.root {
+                if node.parent.is_some() || node.transaction.is_some() {
+                    bail!("undo history root is invalid");
+                }
+            } else {
+                let transaction = node
+                    .transaction
+                    .as_ref()
+                    .context("non-root undo history node has no transaction")?;
+                if !transaction_ids.insert(transaction.id) {
+                    bail!("duplicate undo history transaction");
+                }
+                for edit_id in &transaction.edit_ids {
+                    if !edit_operation_ids.contains(edit_id) {
+                        bail!("undo history transaction references missing edit");
+                    }
+                }
+            }
+        }
+
+        if !node_ids.contains(&self.root) {
+            bail!("undo history root is missing");
+        }
+        if !node_ids.contains(&self.current) {
+            bail!("undo history current node is missing");
+        }
+        if let Some(latest_saved) = self.latest_saved
+            && !node_ids.contains(&latest_saved)
+        {
+            bail!("undo history latest saved node is missing");
+        }
+
+        for node in &self.nodes {
+            for child_id in &node.children {
+                let child = self
+                    .nodes
+                    .iter()
+                    .find(|candidate| candidate.id == *child_id)
+                    .context("undo history child is missing")?;
+                if child.parent != Some(node.id) {
+                    bail!("undo history child has inconsistent parent");
+                }
+            }
+        }
+
+        let mut visited = HashSet::default();
+        let mut stack = vec![self.root];
+        while let Some(node_id) = stack.pop() {
+            if !visited.insert(node_id) {
+                bail!("undo history contains a cycle");
+            }
+            let node = self
+                .nodes
+                .iter()
+                .find(|candidate| candidate.id == node_id)
+                .context("undo history node is missing")?;
+            stack.extend(node.children.iter().copied());
+        }
+        if visited.len() != self.nodes.len() {
+            bail!("undo history has unreachable nodes");
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum SerializedLineEnding {
+    Unix,
+    Windows,
+}
+
+impl From<LineEnding> for SerializedLineEnding {
+    fn from(line_ending: LineEnding) -> Self {
+        match line_ending {
+            LineEnding::Unix => Self::Unix,
+            LineEnding::Windows => Self::Windows,
+        }
+    }
+}
+
+impl From<SerializedLineEnding> for LineEnding {
+    fn from(line_ending: SerializedLineEnding) -> Self {
+        match line_ending {
+            SerializedLineEnding::Unix => Self::Unix,
+            SerializedLineEnding::Windows => Self::Windows,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum SerializedTextOperation {
+    Edit {
+        timestamp: SerializedLamport,
+        version: Vec<SerializedLamport>,
+        ranges: Vec<SerializedFullRange>,
+        new_text: Vec<String>,
+    },
+    Undo {
+        timestamp: SerializedLamport,
+        version: Vec<SerializedLamport>,
+        counts: Vec<SerializedUndoCount>,
+    },
+}
+
+impl SerializedTextOperation {
+    fn timestamp(&self) -> SerializedLamport {
+        match self {
+            Self::Edit { timestamp, .. } | Self::Undo { timestamp, .. } => *timestamp,
+        }
+    }
+
+    fn into_text_operation(self) -> Result<text::Operation> {
+        Ok(match self {
+            Self::Edit {
+                timestamp,
+                version,
+                ranges,
+                new_text,
+            } => text::Operation::Edit(text::EditOperation {
+                timestamp: timestamp.into(),
+                version: deserialize_version(version),
+                ranges: ranges
+                    .into_iter()
+                    .map(|range| text::FullOffset(range.start)..text::FullOffset(range.end))
+                    .collect(),
+                new_text: new_text.into_iter().map(Arc::from).collect(),
+            }),
+            Self::Undo {
+                timestamp,
+                version,
+                counts,
+            } => text::Operation::Undo(text::UndoOperation {
+                timestamp: timestamp.into(),
+                version: deserialize_version(version),
+                counts: counts
+                    .into_iter()
+                    .map(|count| (count.edit_id.into(), count.count))
+                    .collect(),
+            }),
+        })
+    }
+}
+
+impl From<text::Operation> for SerializedTextOperation {
+    fn from(operation: text::Operation) -> Self {
+        match operation {
+            text::Operation::Edit(edit) => Self::Edit {
+                timestamp: edit.timestamp.into(),
+                version: serialize_version(&edit.version),
+                ranges: edit
+                    .ranges
+                    .into_iter()
+                    .map(|range| SerializedFullRange {
+                        start: range.start.0,
+                        end: range.end.0,
+                    })
+                    .collect(),
+                new_text: edit
+                    .new_text
+                    .into_iter()
+                    .map(|text| text.to_string())
+                    .collect(),
+            },
+            text::Operation::Undo(undo) => Self::Undo {
+                timestamp: undo.timestamp.into(),
+                version: serialize_version(&undo.version),
+                counts: undo
+                    .counts
+                    .into_iter()
+                    .map(|(edit_id, count)| SerializedUndoCount {
+                        edit_id: edit_id.into(),
+                        count,
+                    })
+                    .collect(),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SerializedUndoNode {
+    id: usize,
+    parent: Option<usize>,
+    children: Vec<usize>,
+    active_child: Option<usize>,
+    transaction: Option<SerializedTransaction>,
+    first_edit_at: Option<SerializedSystemTime>,
+    last_edit_at: Option<SerializedSystemTime>,
+    saved: bool,
+}
+
+impl SerializedUndoNode {
+    fn into_text_node(self) -> Result<text::UndoHistoryNode> {
+        Ok(text::UndoHistoryNode {
+            id: text::UndoNodeId::new(self.id),
+            parent: self.parent.map(text::UndoNodeId::new),
+            children: self
+                .children
+                .into_iter()
+                .map(text::UndoNodeId::new)
+                .collect(),
+            active_child: self.active_child,
+            transaction: self
+                .transaction
+                .map(SerializedTransaction::into_text_transaction)
+                .transpose()?,
+            first_edit_at: self
+                .first_edit_at
+                .map(SerializedSystemTime::into_system_time),
+            last_edit_at: self
+                .last_edit_at
+                .map(SerializedSystemTime::into_system_time),
+            saved: self.saved,
+        })
+    }
+}
+
+impl From<text::UndoHistoryNode> for SerializedUndoNode {
+    fn from(node: text::UndoHistoryNode) -> Self {
+        Self {
+            id: node.id.as_usize(),
+            parent: node.parent.map(text::UndoNodeId::as_usize),
+            children: node
+                .children
+                .into_iter()
+                .map(text::UndoNodeId::as_usize)
+                .collect(),
+            active_child: node.active_child,
+            transaction: node.transaction.map(SerializedTransaction::from),
+            first_edit_at: node
+                .first_edit_at
+                .and_then(SerializedSystemTime::from_system_time),
+            last_edit_at: node
+                .last_edit_at
+                .and_then(SerializedSystemTime::from_system_time),
+            saved: node.saved,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SerializedTransaction {
+    id: SerializedLamport,
+    edit_ids: Vec<SerializedLamport>,
+    start: Vec<SerializedLamport>,
+}
+
+impl SerializedTransaction {
+    fn into_text_transaction(self) -> Result<Transaction> {
+        Ok(Transaction {
+            id: self.id.into(),
+            edit_ids: self.edit_ids.into_iter().map(Into::into).collect(),
+            start: deserialize_version(self.start),
+        })
+    }
+}
+
+impl From<Transaction> for SerializedTransaction {
+    fn from(transaction: Transaction) -> Self {
+        Self {
+            id: transaction.id.into(),
+            edit_ids: transaction
+                .edit_ids
+                .into_iter()
+                .map(SerializedLamport::from)
+                .collect(),
+            start: serialize_version(&transaction.start),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+struct SerializedLamport {
+    replica_id: u16,
+    value: clock::Seq,
+}
+
+impl From<clock::Lamport> for SerializedLamport {
+    fn from(timestamp: clock::Lamport) -> Self {
+        Self {
+            replica_id: timestamp.replica_id.as_u16(),
+            value: timestamp.value,
+        }
+    }
+}
+
+impl From<SerializedLamport> for clock::Lamport {
+    fn from(timestamp: SerializedLamport) -> Self {
+        Self {
+            replica_id: ReplicaId::new(timestamp.replica_id),
+            value: timestamp.value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SerializedFullRange {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SerializedUndoCount {
+    edit_id: SerializedLamport,
+    count: u32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+struct SerializedSystemTime {
+    seconds: u64,
+    nanos: u32,
+}
+
+impl SerializedSystemTime {
+    fn from_system_time(time: SystemTime) -> Option<Self> {
+        let duration = time.duration_since(UNIX_EPOCH).ok()?;
+        Some(Self {
+            seconds: duration.as_secs(),
+            nanos: duration.subsec_nanos(),
+        })
+    }
+
+    fn into_system_time(self) -> SystemTime {
+        UNIX_EPOCH + Duration::new(self.seconds, self.nanos)
+    }
+}
+
+fn serialize_version(version: &clock::Global) -> Vec<SerializedLamport> {
+    version
+        .iter()
+        .filter(|timestamp| timestamp.value > 0)
+        .map(SerializedLamport::from)
+        .collect()
+}
+
+fn deserialize_version(version: Vec<SerializedLamport>) -> clock::Global {
+    version
+        .into_iter()
+        .map(clock::Lamport::from)
+        .collect::<clock::Global>()
 }
 
 /// The file associated with a buffer.
@@ -3191,6 +3668,38 @@ impl Buffer {
 
     pub fn undo_tree_snapshot(&self) -> text::UndoTreeSnapshot {
         self.text.undo_tree_snapshot()
+    }
+
+    pub fn export_undo_history(&self, max_nodes: usize) -> Result<SerializedUndoHistory> {
+        let history = SerializedUndoHistory::from_text_state(self.text.export_undo_history());
+        history.validate(max_nodes)?;
+        Ok(history)
+    }
+
+    pub fn restore_undo_history(
+        &mut self,
+        history: SerializedUndoHistory,
+        max_nodes: usize,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        history.validate(max_nodes)?;
+        if history.line_ending() != self.line_ending() {
+            bail!("persisted undo history line ending does not match buffer");
+        }
+
+        let was_dirty = self.is_dirty();
+        self.text.restore_undo_history(history.into_text_state()?)?;
+        if was_dirty {
+            self.has_unsaved_edits.set((self.version.clone(), true));
+        } else {
+            self.saved_version = self.version.clone();
+            self.has_unsaved_edits
+                .set((self.saved_version.clone(), false));
+        }
+        self.was_changed();
+        cx.emit(BufferEvent::UndoHistoryChanged);
+        cx.notify();
+        Ok(())
     }
 
     pub fn current_undo_node(&self) -> text::UndoNodeId {

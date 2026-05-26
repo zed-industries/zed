@@ -642,6 +642,67 @@ fn test_undo_tree_switch_branch_emits_history_event(cx: &mut TestAppContext) {
     assert_eq!(*buffer_events.lock(), vec![BufferEvent::UndoHistoryChanged]);
 }
 
+#[gpui::test]
+fn test_undo_history_restore_emits_history_event(cx: &mut TestAppContext) {
+    let source = cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let history = source.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "A")], None, cx);
+        buffer.edit([(1..1, "B")], None, cx);
+        buffer.undo(cx);
+        buffer.edit([(1..1, "C")], None, cx);
+        buffer.did_save(buffer.snapshot().version().clone(), None, cx);
+        buffer.export_undo_history(100).unwrap()
+    });
+
+    let buffer_events = Arc::new(Mutex::new(Vec::new()));
+    let buffer = cx.new(|cx| Buffer::local("AC", cx));
+    let buffer_entity = buffer.clone();
+    buffer.update(cx, |buffer, cx| {
+        cx.subscribe(&buffer_entity, {
+            let buffer_events = buffer_events.clone();
+            move |_, _, event, _| buffer_events.lock().push(event.clone())
+        })
+        .detach();
+
+        buffer.restore_undo_history(history, 100, cx).unwrap();
+        let snapshot = buffer.undo_tree_snapshot();
+        assert_eq!(snapshot.latest_saved, Some(snapshot.current));
+        assert_eq!(buffer.text(), "AC");
+    });
+
+    assert_eq!(*buffer_events.lock(), vec![BufferEvent::UndoHistoryChanged]);
+}
+
+#[gpui::test]
+fn test_undo_history_serialization_rejects_invalid_payload(cx: &mut TestAppContext) {
+    let source = cx.new(|cx| Buffer::local("", cx));
+    let history = source.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "A")], None, cx);
+        buffer.export_undo_history(100).unwrap()
+    });
+    let bytes = history.to_json_bytes().unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+    value["version"] = serde_json::json!(u32::MAX);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert!(SerializedUndoHistory::from_json_bytes(&bytes, 100).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&history.to_json_bytes().unwrap())
+        .expect("history should serialize as JSON");
+    let nodes = value["nodes"].as_array_mut().unwrap();
+    let node = nodes
+        .iter_mut()
+        .find(|node| node["transaction"].is_object())
+        .expect("history should have a transaction node");
+    node["transaction"]["edit_ids"][0]["value"] = serde_json::json!(u32::MAX);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert!(SerializedUndoHistory::from_json_bytes(&bytes, 100).is_err());
+}
+
 fn undo_tree_node_for_transaction(
     snapshot: &text::UndoTreeSnapshot,
     transaction_id: TransactionId,

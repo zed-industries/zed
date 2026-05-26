@@ -52,6 +52,7 @@ fuzzy.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
+hex.workspace = true
 indoc.workspace = true
 edit_prediction_types.workspace = true
 itertools.workspace = true
@@ -76,6 +77,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+sha2.workspace = true
 smallvec.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
@@ -104,6 +106,7 @@ vim_mode_setting.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zlog.workspace = true
+zstd.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
