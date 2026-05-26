@@ -1582,24 +1582,11 @@ impl Client {
         })
     }
 
-    async fn ensure_authenticated_for_llm_token(&self, llm_token: &LlmApiToken) -> Result<()> {
-        let is_signed_out =
-            self.state.read().credentials.is_none() || self.status().borrow().is_signed_out();
-        if is_signed_out {
-            llm_token.clear().await;
-            anyhow::bail!("not signed in");
-        }
-
-        Ok(())
-    }
-
     pub async fn cached_llm_token(
         &self,
         llm_token: &LlmApiToken,
         organization_id: Option<OrganizationId>,
     ) -> Result<String> {
-        self.ensure_authenticated_for_llm_token(llm_token).await?;
-
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
         match llm_token
@@ -1645,8 +1632,6 @@ impl Client {
         llm_token: &LlmApiToken,
         organization_id: Option<OrganizationId>,
     ) -> Result<String> {
-        self.ensure_authenticated_for_llm_token(llm_token).await?;
-
         let system_id = self.telemetry().system_id().map(|x| x.to_string());
         let cloud_client = self.cloud_client();
         match llm_token
