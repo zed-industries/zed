@@ -238,6 +238,7 @@ pub fn char_diff<'a>(old_text: &'a str, new_text: &'a str) -> Vec<(Range<usize>,
     edits
 }
 
+#[derive(Clone)]
 pub struct DiffOptions {
     pub language_scope: Option<LanguageScope>,
     pub max_word_diff_len: usize,
