@@ -911,21 +911,27 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
     float2 point0 = input.position.xy - center;
     float corner_radius = pick_corner_radius(point0, shadow.corner_radii);
 
-    // The signal is only non-zero in a limited range, so don't waste samples
-    float low = point0.y - half_size.y;
-    float high = point0.y + half_size.y;
-    float start = clamp(-3. * shadow.blur_radius, low, high);
-    float end = clamp(3. * shadow.blur_radius, low, high);
+    float alpha;
+    if (shadow.blur_radius == 0.) {
+        float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        alpha = saturate(0.5 - distance);
+    } else {
+        // The signal is only non-zero in a limited range, so don't waste samples
+        float low = point0.y - half_size.y;
+        float high = point0.y + half_size.y;
+        float start = clamp(-3. * shadow.blur_radius, low, high);
+        float end = clamp(3. * shadow.blur_radius, low, high);
 
-    // Accumulate samples (we can get away with surprisingly few samples)
-    float step = (end - start) / 4.;
-    float y = start + step * 0.5;
-    float alpha = 0.;
-    for (int i = 0; i < 4; i++) {
-        alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
-                            corner_radius, half_size) *
-                gaussian(y, shadow.blur_radius) * step;
-        y += step;
+        // Accumulate samples (we can get away with surprisingly few samples)
+        float step = (end - start) / 4.;
+        float y = start + step * 0.5;
+        alpha = 0.;
+        for (int i = 0; i < 4; i++) {
+            alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
+                                corner_radius, half_size) *
+                    gaussian(y, shadow.blur_radius) * step;
+            y += step;
+        }
     }
 
     if (shadow.inset != 0u) {

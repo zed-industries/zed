@@ -1012,21 +1012,27 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 
     let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
-    // The signal is only non-zero in a limited range, so don't waste samples
-    let low = center_to_point.y - half_size.y;
-    let high = center_to_point.y + half_size.y;
-    let start = clamp(-3.0 * shadow.blur_radius, low, high);
-    let end = clamp(3.0 * shadow.blur_radius, low, high);
+    var alpha: f32;
+    if (shadow.blur_radius == 0.0) {
+        let distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        alpha = saturate(0.5 - distance);
+    } else {
+        // The signal is only non-zero in a limited range, so don't waste samples
+        let low = center_to_point.y - half_size.y;
+        let high = center_to_point.y + half_size.y;
+        let start = clamp(-3.0 * shadow.blur_radius, low, high);
+        let end = clamp(3.0 * shadow.blur_radius, low, high);
 
-    // Accumulate samples (we can get away with surprisingly few samples)
-    let step = (end - start) / 4.0;
-    var y = start + step * 0.5;
-    var alpha = 0.0;
-    for (var i = 0; i < 4; i += 1) {
-        let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
-            shadow.blur_radius, corner_radius, half_size);
-        alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
-        y += step;
+        // Accumulate samples (we can get away with surprisingly few samples)
+        let step = (end - start) / 4.0;
+        var y = start + step * 0.5;
+        alpha = 0.0;
+        for (var i = 0; i < 4; i += 1) {
+            let blur = blur_along_x(center_to_point.x, center_to_point.y - y,
+                shadow.blur_radius, corner_radius, half_size);
+            alpha +=  blur * gaussian(y, shadow.blur_radius) * step;
+            y += step;
+        }
     }
 
     if (shadow.inset != 0u) {
