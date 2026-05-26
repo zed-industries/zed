@@ -13,10 +13,12 @@
 //! - The window's title is "GPUI Accessibility Demo".
 //! - The window has a sequence of UI elements, stacked vertically:
 //!   - A heading with the text "Accessibility Demo".
-//!   - A row containing two buttons:
-//!     - The first button has the text "Count <i>", where "<i>" is the number
-//!       of times the button has been pressed.
-//!     - The second button has the text "Reset", and resets the count to 0.
+//!   - A row containing two elements:
+//!     - A spin button (role `SpinButton`) labelled "Counter: <n>", where
+//!       `<n>` is the current count. It supports `Increment` and `Decrement`
+//!       accessible actions, and also increments on click. The numeric value
+//!       is clamped to a minimum of 0.
+//!     - A button labelled "Reset counter" that resets the count to 0.
 //!   - A row containing two elements:
 //!     - A switch, that can be toggled, and starts disabled. Toggling the switch
 //!       does nothing.
