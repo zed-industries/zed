@@ -1205,10 +1205,7 @@ impl Render for CommitViewToolbar {
                         }),
                 )
                 .children(remote_info.map(|(provider_name, url)| {
-                    let icon = match provider_name.as_str() {
-                        "GitHub" => IconName::Github,
-                        _ => IconName::Link,
-                    };
+                    let icon = crate::get_provider_icon(provider_name.as_str());
 
                     IconButton::new("view_on_provider", icon)
                         .icon_size(IconSize::Small)

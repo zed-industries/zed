@@ -634,6 +634,17 @@ pub struct TurnFields {
     pub turn_tokens: Option<u64>,
 }
 
+/// How a tool call is rendered relative to its surroundings.
+///
+/// `Standalone` draws its own border/margin/location header. `Embedded` is
+/// hosted by a container that provides its own framing (e.g. the subagent
+/// card or the main-agent awaiting-permission row).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ToolCallLayout {
+    Standalone,
+    Embedded,
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -2550,13 +2561,15 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
-        let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
-        let has_subagents_awaiting = subagents_awaiting_permission.is_some();
+        let awaiting_permission = self
+            .render_main_agent_awaiting_permission(window, cx)
+            .or_else(|| self.render_subagents_awaiting_permission(cx));
+        let has_awaiting_permission = awaiting_permission.is_some();
 
         if changed_buffers.is_empty()
             && plan.is_empty()
             && queue_is_empty
-            && !has_subagents_awaiting
+            && !has_awaiting_permission
         {
             return None;
         }
@@ -2597,11 +2610,9 @@ impl ThreadView {
                         spread_radius: px(0.),
                         inset: false,
                     }])
-                    .when_some(subagents_awaiting_permission, |this, element| {
-                        this.child(element)
-                    })
+                    .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
-                        has_subagents_awaiting
+                        has_awaiting_permission
                             && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
                         |this| this.child(Divider::horizontal().color(DividerColor::Border)),
                     )
@@ -2989,6 +3000,93 @@ impl ThreadView {
                 )
                 .into_any(),
         )
+    }
+
+    /// Returns true when the entry has been measured and sits entirely below
+    /// the current viewport.
+    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
+        let viewport_bounds = self.list_state.viewport_bounds();
+        self.list_state
+            .bounds_for_item(entry_ix)
+            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
+    }
+
+    pub(crate) fn render_main_agent_awaiting_permission(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.is_subagent() {
+            return None;
+        }
+
+        let active_session_id = self.thread.read(cx).session_id().clone();
+        let conversation = self.conversation.read(cx);
+        let tool_call_id = conversation.pending_tool_call_for_session(&active_session_id, cx)?;
+        let pending_count = conversation.pending_tool_call_count_for_session(&active_session_id);
+
+        let thread = self.thread.read(cx);
+        let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
+
+        if !self.entry_is_below_viewport(entry_ix) {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle(cx);
+
+        let card = self.render_any_tool_call(
+            &active_session_id,
+            entry_ix,
+            tool_call,
+            &focus_handle,
+            ToolCallLayout::Embedded,
+            window,
+            cx,
+        );
+
+        let label: SharedString = if pending_count > 1 {
+            format!("Awaiting Confirmation ({pending_count})").into()
+        } else {
+            "Awaiting Confirmation".into()
+        };
+
+        let header = h_flex()
+            .p_1p5()
+            .pl_2()
+            .w_full()
+            .gap_1p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        h_flex()
+                            .w_2()
+                            .justify_center()
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
+                    )
+                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+            )
+            .child(
+                Button::new("main-agent-permission-scroll-to", "Scroll")
+                    .label_size(LabelSize::Small)
+                    .end_icon(
+                        Icon::new(IconName::ArrowDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.list_state.scroll_to(ListOffset {
+                            item_ix: entry_ix,
+                            offset_in_item: px(0.0),
+                        });
+                        cx.notify();
+                    })),
+            );
+
+        Some(v_flex().child(header).child(card).into_any())
     }
 
     fn render_message_queue_summary(
@@ -5132,7 +5230,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
-                    false,
+                    ToolCallLayout::Standalone,
                     window,
                     cx,
                 );
@@ -6333,7 +6431,7 @@ impl ThreadView {
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -6550,7 +6648,7 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .when(!is_subagent, |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.my_1p5()
                     .mx_5()
                     .border_1()
@@ -6635,7 +6733,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6665,7 +6763,7 @@ impl ThreadView {
                         terminal,
                         tool_call,
                         focus_handle,
-                        is_subagent,
+                        layout,
                         window,
                         cx,
                     )
@@ -6676,7 +6774,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     focus_handle,
-                    is_subagent,
+                    layout,
                     window,
                     cx,
                 ))
@@ -6690,7 +6788,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6938,7 +7036,7 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if is_subagent {
+                if layout == ToolCallLayout::Embedded {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
@@ -6952,7 +7050,7 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .when(!is_subagent, |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.map(|this| {
                     if has_location && !use_card_layout {
                         this.ml_4()
@@ -7953,7 +8051,7 @@ impl ThreadView {
                 terminal,
                 tool_call,
                 focus_handle,
-                false,
+                ToolCallLayout::Standalone,
                 window,
                 cx,
             ),
@@ -8532,7 +8630,7 @@ impl ThreadView {
                                 entry_ix,
                                 tool_call,
                                 focus_handle,
-                                true,
+                                ToolCallLayout::Embedded,
                                 window,
                                 cx,
                             ))

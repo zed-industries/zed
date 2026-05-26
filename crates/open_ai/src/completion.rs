@@ -302,14 +302,14 @@ fn append_message_to_response_items(
         ..
     } = message;
     let phase = if role == Role::Assistant {
-        response_message_phase_from_details(reasoning_details.as_ref())
+        response_message_phase_from_details(reasoning_details.as_deref())
     } else {
         None
     };
 
     if role == Role::Assistant {
         append_reasoning_details_to_response_items(
-            reasoning_details.as_ref(),
+            reasoning_details.as_deref(),
             replayed_reasoning_item_indexes,
             input_items,
         );
@@ -1483,7 +1483,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::ToolUse(tool_use)],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1503,7 +1503,7 @@ mod tests {
                             "status": "completed",
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1571,7 +1571,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1585,7 +1585,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1754,7 +1754,7 @@ mod tests {
                 role: Role::Assistant,
                 content: vec![MessageContent::Text("Done.".into())],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "phase": "final_answer",
                     "reasoning_items": [
                         {
@@ -1764,7 +1764,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
@@ -1846,13 +1846,13 @@ mod tests {
                     role: Role::Assistant,
                     content: vec![MessageContent::Text("First.".into())],
                     cache: false,
-                    reasoning_details: Some(first_reasoning_details),
+                    reasoning_details: Some(Arc::new(first_reasoning_details)),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
                     content: vec![MessageContent::Text("Second.".into())],
                     cache: false,
-                    reasoning_details: Some(second_reasoning_details),
+                    reasoning_details: Some(Arc::new(second_reasoning_details)),
                 },
             ],
             tools: Vec::new(),
@@ -1926,7 +1926,7 @@ mod tests {
                     MessageContent::Text("This is visible assistant output.".into()),
                 ],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "rs_123",
@@ -1940,7 +1940,7 @@ mod tests {
                             "status": "completed"
                         }
                     ]
-                })),
+                }))),
             }],
             tools: Vec::new(),
             tool_choice: None,
