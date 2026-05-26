@@ -732,7 +732,10 @@ fn test_background_priority_scheduling() {
 #[test]
 fn test_spawn_dedicated_basic_round_trip() {
     let result = TestScheduler::once(async |scheduler| {
-        scheduler.spawn_dedicated(|_executor| async { 42 }).await
+        scheduler
+            .background()
+            .spawn_dedicated(|_executor| async { 42 })
+            .await
     });
     assert_eq!(result, 42);
 }
@@ -741,6 +744,7 @@ fn test_spawn_dedicated_basic_round_trip() {
 fn test_spawn_dedicated_not_send_future() {
     let result = TestScheduler::once(async |scheduler| {
         scheduler
+            .background()
             .spawn_dedicated(|_executor| async move {
                 // `Rc<RefCell<_>>` is `!Send`. If `spawn_dedicated` required
                 // the returned future to be `Send`, this wouldn't compile.
@@ -763,6 +767,7 @@ fn test_spawn_dedicated_send_closure_captures() {
         let shared = Arc::new(Mutex::new(0_i32));
         let shared_for_closure = shared.clone();
         let returned = scheduler
+            .background()
             .spawn_dedicated(move |_executor| {
                 // `shared_for_closure` crossed the `Send` boundary of the
                 // closure; we then mutate it from inside the !Send future.
@@ -782,6 +787,7 @@ fn test_spawn_dedicated_send_closure_captures() {
 fn test_spawn_dedicated_inner_spawn_local() {
     let result = TestScheduler::once(async |scheduler| {
         scheduler
+            .background()
             .spawn_dedicated(|executor| async move {
                 // The provided executor can spawn additional `!Send` work
                 // onto the same dedicated session.
@@ -805,10 +811,11 @@ fn test_spawn_dedicated_determinism_under_many() {
     let outcomes = TestScheduler::many(if cfg!(miri) { 4 } else { 20 }, async |scheduler| {
         let trace = Arc::new(Mutex::new(Vec::<u32>::new()));
 
+        let background = scheduler.background();
         let mut tasks = Vec::new();
         for id in 0..4_u32 {
             let trace = trace.clone();
-            let task = scheduler.spawn_dedicated(move |executor| async move {
+            let task = background.spawn_dedicated(move |executor| async move {
                 for step in 0..3 {
                     trace.lock().push(id * 100 + step);
                     executor.spawn(async {}).await;
@@ -831,10 +838,11 @@ fn test_spawn_dedicated_determinism_under_many() {
     let outcomes_replay = TestScheduler::many(if cfg!(miri) { 4 } else { 20 }, async |scheduler| {
         let trace = Arc::new(Mutex::new(Vec::<u32>::new()));
 
+        let background = scheduler.background();
         let mut tasks = Vec::new();
         for id in 0..4_u32 {
             let trace = trace.clone();
-            let task = scheduler.spawn_dedicated(move |executor| async move {
+            let task = background.spawn_dedicated(move |executor| async move {
                 for step in 0..3 {
                     trace.lock().push(id * 100 + step);
                     executor.spawn(async {}).await;
@@ -881,14 +889,16 @@ fn test_spawn_dedicated_dropping_task_cancels_future() {
 
         let task = {
             let counter = counter.clone();
-            scheduler.spawn_dedicated(move |_executor| async move {
-                *counter.lock() = 1;
-                // Park here until the test resumes us. If the task is
-                // dropped before this resolves, the second assignment
-                // below must never happen.
-                let _ = resume_rx.await;
-                *counter.lock() = 2;
-            })
+            scheduler
+                .background()
+                .spawn_dedicated(move |_executor| async move {
+                    *counter.lock() = 1;
+                    // Park here until the test resumes us. If the task is
+                    // dropped before this resolves, the second assignment
+                    // below must never happen.
+                    let _ = resume_rx.await;
+                    *counter.lock() = 2;
+                })
         };
 
         // Let the dedicated future make its first observable step.
@@ -919,15 +929,17 @@ fn test_spawn_dedicated_detached_child_runs_after_root_completes() {
 
         let task = {
             let child_ran = child_ran.clone();
-            scheduler.spawn_dedicated(move |executor| async move {
-                executor
-                    .spawn(async move {
-                        *child_ran.lock() = true;
-                    })
-                    .detach();
-                // Root returns immediately, before the child has had a
-                // chance to run.
-            })
+            scheduler
+                .background()
+                .spawn_dedicated(move |executor| async move {
+                    executor
+                        .spawn(async move {
+                            *child_ran.lock() = true;
+                        })
+                        .detach();
+                    // Root returns immediately, before the child has had a
+                    // chance to run.
+                })
         };
 
         task.await;

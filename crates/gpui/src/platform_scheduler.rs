@@ -10,6 +10,7 @@ use scheduler::{
 #[cfg(not(target_family = "wasm"))]
 use std::task::{Context, Poll};
 use std::{
+    any::Any,
     future::Future,
     pin::Pin,
     sync::{
@@ -48,26 +49,6 @@ impl PlatformScheduler {
 
     fn next_session_id(&self) -> SessionId {
         SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
-    }
-
-    /// Spawn work on a fresh OS thread that's exclusive to the returned
-    /// task and anything spawned on the executor it provides. Blocking
-    /// syscalls inside that work don't disturb any other executor in the
-    /// process.
-    ///
-    /// `f` is called on the dedicated thread with a [`LocalExecutor`]
-    /// pinned to it. The future `f` returns may freely be `!Send`. The
-    /// returned `Task` is that future's task: dropping it cancels the
-    /// root, but detached children keep running until they finish. The
-    /// thread shuts down once the executor and every task on it are gone.
-    #[allow(dead_code, reason = "public API with no production callers yet")]
-    pub fn spawn_dedicated<F, Fut>(self: &Arc<Self>, f: F) -> Task<Fut::Output>
-    where
-        F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
-        Fut: Future + 'static,
-        Fut::Output: Send + 'static,
-    {
-        spawn_dedicated_thread(self.next_session_id(), self.clone(), f)
     }
 }
 
@@ -164,6 +145,21 @@ impl Scheduler for PlatformScheduler {
         self.clock.clone()
     }
 
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>> {
+        let session_id = self.next_session_id();
+        spawn_dedicated_thread(session_id, self, move |executor| f(executor))
+    }
+
     fn as_test(&self) -> Option<&TestScheduler> {
         None
     }
@@ -188,6 +184,7 @@ impl Clock for PlatformClock {
 mod tests {
     use super::*;
     use crate::{RunnableVariant, ThreadTaskTimings};
+    use scheduler::BackgroundExecutor;
     use std::time::Instant as StdInstant;
 
     // `spawn_dedicated` shouldn't touch the platform dispatcher at all;
@@ -226,8 +223,9 @@ mod tests {
     #[test]
     fn spawn_dedicated_runs_on_a_real_separate_thread() {
         let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+        let background = BackgroundExecutor::new(scheduler.clone());
         let started = StdInstant::now();
-        let task = scheduler.spawn_dedicated(|_executor| async move {
+        let task = background.spawn_dedicated(|_executor| async move {
             // A genuine blocking syscall on the dedicated thread. If
             // `spawn_dedicated` were running the future on any shared
             // executor, this would stall that executor.
@@ -261,7 +259,8 @@ mod tests {
         use std::rc::Rc;
 
         let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
-        let task = scheduler.spawn_dedicated(|_executor| async move {
+        let background = BackgroundExecutor::new(scheduler.clone());
+        let task = background.spawn_dedicated(|_executor| async move {
             let state = Rc::new(RefCell::new(0_i32));
             for _ in 0..3 {
                 *state.borrow_mut() += 1;
@@ -278,6 +277,7 @@ mod tests {
         use std::sync::mpsc;
 
         let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+        let background = BackgroundExecutor::new(scheduler.clone());
 
         let (started_tx, started_rx) = mpsc::channel::<()>();
         let (after_park_tx, after_park_rx) = mpsc::channel::<()>();
@@ -285,7 +285,7 @@ mod tests {
 
         let task = {
             let observed_post_await_write = observed_post_await_write.clone();
-            scheduler.spawn_dedicated(move |_executor| async move {
+            background.spawn_dedicated(move |_executor| async move {
                 // Announce that the future is live on the dedicated thread.
                 started_tx
                     .send(())
@@ -340,10 +340,11 @@ mod tests {
         }
 
         let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+        let background = BackgroundExecutor::new(scheduler.clone());
         let (started_tx, started_rx) = mpsc::channel::<std::thread::ThreadId>();
         let (drop_tx, drop_rx) = mpsc::channel::<std::thread::ThreadId>();
 
-        let task = scheduler.spawn_dedicated(move |_executor| async move {
+        let task = background.spawn_dedicated(move |_executor| async move {
             // Captured by the future's state. When the future completes and
             // its state is dropped on the dedicated thread, this guard's
             // `Drop` fires and reports the thread id it ran on.
@@ -384,13 +385,14 @@ mod tests {
         use std::sync::mpsc;
 
         let scheduler = Arc::new(PlatformScheduler::new(Arc::new(SmokeDispatcher)));
+        let background = BackgroundExecutor::new(scheduler.clone());
 
         // `gate_rx` lets the detached child park until the test explicitly
         // releases it — after we've already observed the root completing.
         let (gate_tx, gate_rx) = mpsc::channel::<()>();
         let (child_done_tx, child_done_rx) = mpsc::channel::<std::thread::ThreadId>();
 
-        let task = scheduler.spawn_dedicated(move |executor| async move {
+        let task = background.spawn_dedicated(move |executor| async move {
             executor
                 .spawn(async move {
                     // Blocking on `recv` is normally wrong inside an

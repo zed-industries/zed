@@ -10,6 +10,7 @@ use rand::{
     distr::{StandardUniform, uniform::SampleRange, uniform::SampleUniform},
     prelude::*,
 };
+use std::any::Any;
 use std::{
     any::type_name_of_val,
     collections::{BTreeMap, HashSet, VecDeque},
@@ -156,23 +157,6 @@ impl TestScheduler {
         let mut state = self.state.lock();
         state.next_session_id.0 += 1;
         state.next_session_id
-    }
-
-    /// Spawn work on a fresh foreground session. In the test world this
-    /// is just a new session driven by the test scheduler's run loop
-    /// alongside everything else; the returned future may be `!Send`.
-    pub fn spawn_dedicated<F, Fut>(self: &Arc<Self>, f: F) -> Task<Fut::Output>
-    where
-        F: FnOnce(LocalExecutor) -> Fut + Send + 'static,
-        Fut: Future + 'static,
-        Fut::Output: Send + 'static,
-    {
-        let session_id = self.allocate_session_id();
-        let scheduler = self.clone();
-        let executor = LocalExecutor::new(session_id, self.clone(), move |runnable| {
-            scheduler.schedule_local(session_id, runnable);
-        });
-        executor.spawn(f(executor.clone()))
     }
 
     /// Create a local executor for this scheduler.
@@ -676,6 +660,29 @@ impl Scheduler for TestScheduler {
 
     fn clock(&self) -> Arc<dyn Clock> {
         self.clock.clone()
+    }
+
+    /// In the test world, dedicated work is just a fresh local session driven
+    /// by the test scheduler's run loop alongside everything else. No real
+    /// thread is spawned, so determinism under `TestScheduler::many` is
+    /// preserved.
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>> {
+        let session_id = self.allocate_session_id();
+        let scheduler = self.clone();
+        let executor = LocalExecutor::new(session_id, self, move |runnable| {
+            scheduler.schedule_local(session_id, runnable);
+        });
+        executor.spawn(f(executor.clone()))
     }
 
     fn as_test(&self) -> Option<&TestScheduler> {

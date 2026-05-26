@@ -11,6 +11,7 @@ pub use test_scheduler::*;
 use async_task::Runnable;
 use futures::channel::oneshot;
 use std::{
+    any::Any,
     future::Future,
     panic::Location,
     pin::Pin,
@@ -107,6 +108,31 @@ pub trait Scheduler: Send + Sync {
     #[track_caller]
     fn timer(&self, timeout: Duration) -> Timer;
     fn clock(&self) -> Arc<dyn Clock>;
+
+    /// Spawn a closure on a fresh session pinned to its own [`LocalExecutor`].
+    ///
+    /// `PlatformScheduler` runs the closure on a new OS thread (see
+    /// [`spawn_dedicated_thread`]). `TestScheduler` runs it on the test
+    /// scheduler's loop alongside everything else so determinism under
+    /// `TestScheduler::many` is preserved.
+    ///
+    /// This is the dyn-safe entry point: the closure's output is type-erased
+    /// as `Box<dyn Any + Send + Sync>` so the trait stays object-safe.
+    /// Callers typically reach for the type-safe wrappers on
+    /// [`LocalExecutor::spawn_dedicated`] and
+    /// [`BackgroundExecutor::spawn_dedicated`], which compose this method
+    /// with [`Task::downcast`] to recover the closure's concrete return type.
+    fn spawn_dedicated(
+        self: Arc<Self>,
+        f: Box<
+            dyn FnOnce(
+                    LocalExecutor,
+                )
+                    -> Pin<Box<dyn Future<Output = Box<dyn Any + Send + Sync>> + 'static>>
+                + Send
+                + 'static,
+        >,
+    ) -> Task<Box<dyn Any + Send + Sync>>;
 
     fn as_test(&self) -> Option<&TestScheduler> {
         None
