@@ -93,7 +93,7 @@ pub(crate) fn runnable_ranges(
                         runnable_config,
                         mat.pattern_index,
                         mat.language.clone(),
-                        &offset_range,
+                        offset_range.clone(),
                     )
                 } else {
                     runnable_range_from_captures(
@@ -160,7 +160,7 @@ fn range_overlaps_or_contains(range: &Range<usize>, offset_range: &Range<usize>)
 fn group_runnable_matches(
     captures: &[QueryCapture<'_>],
     runnable_config: &RunnableConfig,
-    offset_range: &Range<usize>,
+    offset_range: Range<usize>,
 ) -> GroupedRunnableMatches {
     let mut sorted: SmallVec<[&QueryCapture<'_>; 16]> = captures.iter().collect();
     sorted.sort_by_key(|capture| {
@@ -186,7 +186,7 @@ fn group_runnable_matches(
                 {
                     groups.push(group);
                 }
-                current_in_offset = range_overlaps_or_contains(&range, offset_range);
+                current_in_offset = range_overlaps_or_contains(&range, &offset_range);
                 current_group = Some(RunnableMatchGroup {
                     range,
                     captures: SmallVec::new(),
@@ -236,7 +236,7 @@ fn runnable_ranges_from_grouped_matches(
     runnable_config: &RunnableConfig,
     pattern_index: usize,
     language: Arc<Language>,
-    offset_range: &Range<usize>,
+    offset_range: Range<usize>,
 ) -> SmallVec<[RunnableRange; 1]> {
     let GroupedRunnableMatches {
         groups,
