@@ -247,6 +247,7 @@ impl RenderOnce for KeybindingHint {
                         offset: point(px(0.), px(1.)),
                         blur_radius: px(0.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .child(self.keybinding.size(rems_from_px(kb_size))),
             )

@@ -7365,7 +7365,7 @@ fn git_status_indicator(git_status: GitSummary) -> Option<(&'static str, Color)>
         return Some(("D", Color::Deleted));
     }
     if git_status.worktree.modified > 0 {
-        return Some(("M", Color::Warning));
+        return Some(("M", Color::Modified));
     }
     if git_status.index.deleted > 0 {
         return Some(("D", Color::Deleted));
