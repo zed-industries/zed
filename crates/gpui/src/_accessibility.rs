@@ -62,7 +62,7 @@
 //! In order for nodes to be reported, they must also have a non-`None`
 //! [`role`][Element::a11y_role]. This is used to inform assistive technology
 //! what *sort* of node it is (button, label, table, etc.). You can use
-//! [`div().role()`][Div::role] to set the role.
+//! [`div().id(...).role()`][StatefulInteractiveElement::role] to set the role.
 //!
 //! Nodes with the same global ID *across frames* are considered to be "the
 //! same" node. For example:
@@ -163,6 +163,23 @@
 //!     .role(Role::Document)
 //!     .children(todo_divs);
 //! ```
+//! Another possible solution is to wrap the [`text!`] in another node that
+//! *does* have a unique global ID. For example:
+//! ```rust
+//! # use gpui::*;
+//! let todos = vec!["eat lunch", "drink water", "go to gym"];
+//! let todo_divs = todos.into_iter().enumerate().map(|(index, todo)| {
+//!     div().id(index).child(text!(todo))
+//! });
+//!
+//! div()
+//!     .id("todo-list")
+//!     .role(Role::Document)
+//!     .children(todo_divs);
+//! ```
+//! Since the AccessKit [`NodeId`][accesskit::NodeId] is derived from the global
+//! ID, and the global ID takes into account the IDs of all ancestors, this
+//! works too.
 //!
 //! Occasionally, you will need to create a [`Text`] element with *no* ID. You
 //! can achieve this with [`Text::new_inaccessible`]. If you are creating a

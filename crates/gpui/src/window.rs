@@ -5412,12 +5412,10 @@ impl Window {
                 }
             }
             accesskit::Action::Focus => {
-                if let Some(focus_id) = self.a11y.focus_ids.get(&request.target_node).copied() {
-                    if self.focus_enabled {
-                        self.focus = Some(focus_id);
-                        self.clear_pending_keystrokes();
-                        self.refresh();
-                    }
+                if let Some(focus_id) = self.a11y.focus_ids.get(&request.target_node).copied()
+                    && let Some(handle) = FocusHandle::for_id(focus_id, &cx.focus_handles)
+                {
+                    self.focus(&handle, cx);
                 }
             }
             accesskit::Action::Blur => {
