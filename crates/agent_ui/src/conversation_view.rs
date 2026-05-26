@@ -513,6 +513,7 @@ pub struct ConversationView {
     notifications: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     auth_task: Option<Task<()>>,
+    loading_status: Option<SharedString>,
     /// When settings change, use this to see if the theme has changed (which
     /// causes mermaid diagrams to re-render).
     last_theme_id: Option<String>,
@@ -788,6 +789,7 @@ impl ConversationView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             auth_task: None,
+            loading_status: None,
             last_theme_id: Some(cx.theme().id.clone()),
             draft_prompt_persist_task: None,
             code_span_resolver,
@@ -833,6 +835,8 @@ impl ConversationView {
                     .unwrap_or((None, None));
                 (session_id, work_dirs, title)
             });
+
+        self.loading_status = None;
 
         let state = Self::initial_state(
             self.agent.clone(),
@@ -896,6 +900,10 @@ impl ConversationView {
                             cx.notify();
                         });
                     }
+                }
+                AgentConnectionEntryEvent::LoadingStatusChanged(status) => {
+                    this.loading_status = status.clone();
+                    cx.notify();
                 }
             });
 
@@ -1391,7 +1399,10 @@ impl ConversationView {
                 .active_view()
                 .and_then(|v| v.read(cx).thread.read(cx).title())
                 .unwrap_or_else(|| DEFAULT_THREAD_TITLE.into()),
-            ServerState::Loading { .. } => "Loading…".into(),
+            ServerState::Loading { .. } => self
+                .loading_status
+                .clone()
+                .unwrap_or_else(|| "Loading…".into()),
             ServerState::LoadError { error, .. } => match error {
                 LoadError::Unsupported { .. } => {
                     format!("Upgrade {}", self.agent.agent_id()).into()
@@ -3085,21 +3096,27 @@ impl Render for ConversationView {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(match &self.server_state {
-                ServerState::Loading { .. } => v_flex()
-                    .flex_1()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        Label::new("Loading…").color(Color::Muted).with_animation(
-                            "loading-agent-label",
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.3, 0.7)),
-                            |label, delta| label.alpha(delta),
-                        ),
-                    )
-                    .into_any(),
+                ServerState::Loading { .. } => {
+                    let label_text = self
+                        .loading_status
+                        .clone()
+                        .unwrap_or_else(|| "Loading…".into());
+                    v_flex()
+                        .flex_1()
+                        .size_full()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Label::new(label_text).color(Color::Muted).with_animation(
+                                "loading-agent-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.3, 0.7)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                        )
+                        .into_any()
+                }
                 ServerState::LoadError { error: e, .. } => v_flex()
                     .flex_1()
                     .size_full()
