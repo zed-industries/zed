@@ -1280,7 +1280,7 @@ fn render_settings_item(
     )
 }
 
-fn render_non_json_item(
+pub(crate) fn render_non_json_item(
     settings_window: &SettingsWindow,
     item: &NonJsonItem,
     window: &mut Window,
@@ -1476,7 +1476,7 @@ impl PartialEq for ActionLink {
     }
 }
 
-struct NonJsonItem {
+pub(crate) struct NonJsonItem {
     title: &'static str,
     description: &'static str,
     /// A stable path identifier for deep-linking and search, even though this
@@ -1919,7 +1919,11 @@ impl SettingsWindow {
                 move |this: &mut SettingsWindow,
                       window: &mut Window,
                       cx: &mut Context<SettingsWindow>| {
-                    this.open_and_scroll_to_navbar_entry(entry_index, None, false, window, cx);
+                    if this.sub_page_stack.is_empty() {
+                        this.open_and_scroll_to_navbar_entry(
+                            entry_index, None, false, window, cx,
+                        );
+                    }
                 },
             );
             focus_subscriptions.push(subscription);
@@ -2435,6 +2439,7 @@ impl SettingsWindow {
 
         let is_new_page = self.navbar_entries[self.navbar_entry].page_index
             != self.navbar_entries[navbar_entry].page_index;
+
         self.navbar_entry = navbar_entry;
 
         // We only need to reset visible items when updating matches

@@ -10,11 +10,11 @@ use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
-    ActionLink, DynamicItem, NonJsonItem, PROJECT, SettingField, SettingItem,
-    SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink, USER, active_language,
-    all_language_names,
+    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
+    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page,
+        render_llm_providers_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -132,29 +132,6 @@ fn developer_page() -> SettingsPage {
 }
 
 fn general_page(cx: &App) -> SettingsPage {
-    fn non_json_test_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SectionHeader("NonJson Test"),
-            SettingsPageItem::NonJson(NonJsonItem {
-                title: "Test NonJson Setting",
-                description: "A test non-JSON-backed setting that prints to stdout on every interaction.",
-                json_path: Some("test.non_json"),
-                files: USER,
-                can_reset: |_cx| {
-                    println!("[NonJson test] can_reset called");
-                    true
-                },
-                reset: |_window, _cx| {
-                    println!("[NonJson test] reset called");
-                },
-                render_control: |_settings_window, _window, _cx| {
-                    println!("[NonJson test] render_control called");
-                    ui::Label::new("NonJson control").into_any_element()
-                },
-            }),
-        ]
-    }
-
     fn general_settings_section(_cx: &App) -> Vec<SettingsPageItem> {
         vec![
             SettingsPageItem::SectionHeader("General Settings"),
@@ -442,7 +419,6 @@ fn general_page(cx: &App) -> SettingsPage {
         title: "General",
         items: concat_sections!(
             @vec,
-            non_json_test_section(),
             general_settings_section(cx),
             security_section(),
             workspace_restoration_section(),
@@ -7509,6 +7485,15 @@ fn ai_page(cx: &App) -> SettingsPage {
     fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "LLM Providers".into(),
+                r#type: Default::default(),
+                json_path: Some("llm_providers"),
+                description: Some("Configure API keys and settings for LLM providers.".into()),
+                in_json: false,
+                files: USER,
+                render: render_llm_providers_page,
+            }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Skills".into(),
                 r#type: Default::default(),
