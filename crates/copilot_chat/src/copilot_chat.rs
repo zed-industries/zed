@@ -551,31 +551,28 @@ impl CopilotChat {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
-        // Watch legacy hosts.json/apps.json
-        let fs_for_json = fs.clone();
-        cx.spawn(async move |this, cx| {
-            let mut parent_watch_rx = watch_config_dir(
-                cx.background_executor(),
-                fs_for_json,
-                dir_path.clone(),
-                config_paths,
-            );
-            while let Some(contents) = parent_watch_rx.next().await {
-                let oauth_domain =
-                    this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
-                let oauth_token = extract_oauth_token(contents, &oauth_domain)
-                    .or_else(|| extract_oauth_token_from_db(&oauth_domain));
+        cx.spawn({
+            let fs = fs.clone();
+            async move |this, cx| {
+                let mut parent_watch_rx =
+                    watch_config_dir(cx.background_executor(), fs, dir_path.clone(), config_paths);
+                while let Some(contents) = parent_watch_rx.next().await {
+                    let oauth_domain =
+                        this.read_with(cx, |this, _| this.configuration.oauth_domain())?;
+                    let oauth_token = extract_oauth_token(contents, &oauth_domain)
+                        .or_else(|| extract_oauth_token_from_db(&oauth_domain));
 
-                this.update(cx, |this, cx| {
-                    this.oauth_token = oauth_token.clone();
-                    cx.notify();
-                })?;
+                    this.update(cx, |this, cx| {
+                        this.oauth_token = oauth_token.clone();
+                        cx.notify();
+                    })?;
 
-                if oauth_token.is_some() {
-                    Self::update_models(&this, cx).await?;
+                    if oauth_token.is_some() {
+                        Self::update_models(&this, cx).await?;
+                    }
                 }
+                anyhow::Ok(())
             }
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
 
@@ -1828,16 +1825,17 @@ mod tests {
         let token = "ghu_test_token_value_1234567890";
         let connection = sqlez::connection::Connection::open_file(db_path.to_str().unwrap());
         connection
-            .exec(
-                "CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);",
-            )
+            .exec("CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);")
             .unwrap()()
         .unwrap();
         connection
             .exec_bound::<(&str, Vec<u8>)>(
                 "INSERT INTO oauth_tokens (auth_authority, token_ciphertext) VALUES (?, ?);",
             )
-            .unwrap()(("https://api.enterprise.githubcopilot.com", token.as_bytes().to_vec()))
+            .unwrap()((
+            "https://api.enterprise.githubcopilot.com",
+            token.as_bytes().to_vec(),
+        ))
         .unwrap();
         drop(connection);
 
@@ -1853,9 +1851,7 @@ mod tests {
 
         let connection = sqlez::connection::Connection::open_file(db_path.to_str().unwrap());
         connection
-            .exec(
-                "CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);",
-            )
+            .exec("CREATE TABLE oauth_tokens (auth_authority TEXT, token_ciphertext BLOB);")
             .unwrap()()
         .unwrap();
         connection
