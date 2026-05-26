@@ -9,7 +9,7 @@ Zed's AI docs are organized around three areas:
 
 | Area         | Use it to choose                    | Examples                                                             |
 | ------------ | ----------------------------------- | -------------------------------------------------------------------- |
-| Agents       | How agentic work runs in Zed        | Zed Agent, external agents, terminal threads                         |
+| Agents       | How agentic work runs in Zed        | Zed Agent, External Agents, Terminal Threads                         |
 | Model access | How Zed connects to language models | Zed-hosted models, API access, subscriptions, gateways, local models |
 | Features     | Which AI workflow you want to use   | Agentic editing, inline edits, edit prediction, Git assistance       |
 

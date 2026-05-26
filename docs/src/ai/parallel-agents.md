@@ -37,7 +37,7 @@ You can search your threads in history; search will fuzzy match on thread titles
 
 ### Importing External Agent Threads {#importing-threads}
 
-If you have external agents installed, Zed will detect whether you have existing threads and invite you to import them into Zed. Once you open Thread History, you'll find an import icon button in the Thread History toolbar that lets you import threads at any time. Clicking on it opens a modal where you can select the agents whose threads you want to import.
+If you have External Agents installed, Zed will detect whether you have existing threads and invite you to import them into Zed. Once you open Thread History, you'll find an import icon button in the Thread History toolbar that lets you import threads at any time. Clicking on it opens a modal where you can select the agents whose threads you want to import.
 
 > **Note:** Thread import is subject to agent support. Some agents (such as Cursor and Gemini CLI) are not currently supported.
 
@@ -45,7 +45,7 @@ If you have external agents installed, Zed will detect whether you have existing
 
 Each thread runs independently, so you can send a prompt, open a second thread, and give it a different task while the first continues working. To scope a new thread to a specific project, hover over that project's header in the Threads Sidebar and click the `+` button, or use {#action agents_sidebar::NewThreadInGroup} from the keyboard. See [Creating New Threads](./agent-panel.md#new-thread) for the other entry points.
 
-Each thread can use a different agent, so you can run Zed's built-in agent in one thread and an [external agent](./external-agents.md) like Claude Code or Codex in another.
+Each thread can use a different agent, so you can run Zed's built-in agent in one thread and an [External Agent](./external-agents.md) like Claude Code or Codex in another.
 
 ### Thread Types {#thread-types}
 
@@ -54,8 +54,8 @@ The Threads Sidebar can hold different thread types:
 | Thread type           | Configuration                                                                   |
 | --------------------- | ------------------------------------------------------------------------------- |
 | Zed Agent thread      | Uses Zed Agent settings, profiles, tools, Skills, Instructions, and MCP         |
-| External agent thread | Uses the ACP integration and the agent's native configuration                   |
-| Terminal thread       | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
+| External Agent thread | Uses the ACP integration and the agent's native configuration                   |
+| Terminal Thread       | Runs a CLI/TUI in a terminal-backed thread; the CLI owns auth and configuration |
 
 For terminal-backed CLI/TUI workflows, see [Terminal Threads](./terminal-threads.md).
 
@@ -88,6 +88,6 @@ After the agent finishes, review the diff and merge the changes through your nor
 ## See Also {#see-also}
 
 - [Agent Panel](./agent-panel.md): Manage individual threads and configure the agent
-- [External Agents](./external-agents.md): Use ACP-integrated external agents
+- [External Agents](./external-agents.md): Use ACP-integrated External Agents
 - [Terminal Threads](./terminal-threads.md): Run agent CLIs and TUIs directly in Zed
 - [Tools](./tools.md): Built-in tools available in each thread

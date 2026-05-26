@@ -7,7 +7,7 @@ description: Configure Ollama, LM Studio, local OpenAI-compatible servers, and l
 
 Use local models when you run the model on your machine or on infrastructure you control.
 
-| Local path                        | Zed AI features      | External agents | Terminal threads | Notes                                              |
+| Local path                        | Zed AI features      | External Agents | Terminal Threads | Notes                                              |
 | --------------------------------- | -------------------- | --------------- | ---------------- | -------------------------------------------------- |
 | Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
 | LM Studio                         | Yes                  | Separate config | Separate config  | Configure LM Studio for Zed AI features            |
@@ -107,4 +107,4 @@ Edit Prediction has its own provider setup. See [Edit Prediction](./edit-predict
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 
-This page covers local models configured in Zed. External agents and terminal CLIs may have their own local-model setup; configure those in the agent or CLI.
+This page covers local models configured in Zed. External Agents and terminal CLIs may have their own local-model setup; configure those in the agent or CLI.

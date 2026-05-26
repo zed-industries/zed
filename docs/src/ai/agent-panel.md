@@ -12,7 +12,7 @@ Open it with {#action agent::NewThread} from [the Command Palette](../command-pa
 
 ## Getting Started {#getting-started}
 
-If you're using the Agent Panel for the first time, configure either a model for the [Zed Agent](./zed-agent.md) or an [external agent](./external-agents.md).
+If you're using the Agent Panel for the first time, configure either a model for the [Zed Agent](./zed-agent.md) or an [External Agent](./external-agents.md).
 
 - Use [LLM Providers](./llm-providers.md) for Zed-hosted models, API access, subscriptions, gateways, and local models.
 - Use [External Agents](./external-agents.md) for ACP-integrated agents.
@@ -20,13 +20,13 @@ If you're using the Agent Panel for the first time, configure either a model for
 
 ## Overview {#overview}
 
-With an LLM provider or external agent configured, type in the message editor and press `enter` to submit.
+With an LLM provider or External Agent configured, type in the message editor and press `enter` to submit.
 Expand the editor with {#kb agent::ExpandMessageEditor} if you need more room.
 
 Responses stream in with indicators showing [which tools](./tools.md) the model is using.
 The sections below cover what you can do from here.
 
-> Note that some Agent Panel features may not be available for every external agent. Restoring threads from history, checkpoints, token usage display, and similar features depend on the agent integration.
+> Note that some Agent Panel features may not be available for every External Agent. Restoring threads from history, checkpoints, token usage display, and similar features depend on the agent integration.
 > Their availability varies depending on the agent.
 
 ### Creating New Threads {#new-thread}
@@ -37,10 +37,10 @@ Start a new thread with {#kb agent::NewThread}, or open the "New Thread…" menu
 
 From the "New Thread…" menu you can:
 
-- Pick **Zed Agent** or any installed [external agent](./external-agents.md) to start a new thread with that agent.
+- Pick **Zed Agent** or any installed [External Agent](./external-agents.md) to start a new thread with that agent.
 - Choose **New From Summary** to start a fresh Zed Agent thread seeded with a summary of the current conversation — useful for compacting long threads as you approach the context window limit.
 
-{#action agent::NewExternalAgentThread} creates a new thread with the specified external agent id.
+{#action agent::NewExternalAgentThread} creates a new thread with the specified External Agent id.
 
 You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#threads-sidebar), scoped to a specific project — see [Running Multiple Threads](./parallel-agents.md#running-multiple-threads).
 
@@ -63,7 +63,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Messages sent while the agent is in the generating state get, by default, queued.
 
-For the Zed agent, queued messages get sent at the next turn boundary, which is usually between a tool call and a response, whereas for external agents, the message gets sent at the end of the generation.
+For the Zed Agent, queued messages get sent at the next turn boundary, which is usually between a tool call and a response, whereas for External Agents, the message gets sent at the end of the generation.
 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.

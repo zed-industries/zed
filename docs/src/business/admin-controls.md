@@ -7,7 +7,7 @@ description: Configure AI, collaboration, and data sharing settings for your ent
 
 Owners and admins can configure settings that apply to every member of the organization.
 
-Most controls apply server-side to anything that routes through Zed's infrastructure. Some, like the Collaboration toggle, are enforced client-side and require members to be on a minimum Zed version. These controls don't cover [bring-your-own-key (BYOK) configurations](../ai/llm-providers.md), [gateways](../ai/use-a-gateway.md), [local or self-hosted models](../ai/use-a-local-model.md), [external agents](../ai/external-agents.md), [terminal threads](../ai/terminal-threads.md), or [third-party extensions](../extensions.md), since those work independently of Zed's servers.
+Most controls apply server-side to anything that routes through Zed's infrastructure. Some, like the Collaboration toggle, are enforced client-side and require members to be on a minimum Zed version. These controls don't cover [bring-your-own-key (BYOK) configurations](../ai/llm-providers.md), [gateways](../ai/use-a-gateway.md), [local or self-hosted models](../ai/use-a-local-model.md), [External Agents](../ai/external-agents.md), [Terminal Threads](../ai/terminal-threads.md), or [third-party extensions](../extensions.md), since those work independently of Zed's servers.
 
 ## Accessing admin controls
 
@@ -26,7 +26,7 @@ This control is configured from the Data & Privacy page in the organization dash
 The **Zed Model Provider** toggle controls whether members can use Zed's [hosted AI models](../account/zed-hosted-models.md):
 
 - **On:** Members can use Zed's hosted models for AI features.
-- **Off:** Members must bring their own API keys via [Providers](../ai/llm-providers.md) or use [external agents](../ai/external-agents.md) for AI features.
+- **Off:** Members must bring their own API keys via [Providers](../ai/llm-providers.md) or use [External Agents](../ai/external-agents.md) for AI features.
 
 ## Edit Predictions
 

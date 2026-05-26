@@ -7,7 +7,7 @@ description: Configure OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other 
 
 Use a gateway when you route model requests through a platform such as OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
 
-| Gateway                   | Zed AI features | External agents | Terminal threads | Notes                                        |
+| Gateway                   | Zed AI features | External Agents | Terminal Threads | Notes                                        |
 | ------------------------- | --------------- | --------------- | ---------------- | -------------------------------------------- |
 | OpenRouter                | Yes             | Separate config | Separate config  | Uses OpenRouter API access                   |
 | Vercel AI Gateway         | Yes             | Separate config | Separate config  | Uses Vercel AI Gateway API access            |

@@ -73,4 +73,4 @@ If a tool is not available in the active profile, the Zed Agent cannot use it. I
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 
-Agent profiles apply to the Zed Agent. External agents and terminal threads do not use Zed Agent profiles unless their integration explicitly supports similar behavior.
+Agent profiles apply to the Zed Agent. External Agents and Terminal Threads do not use Zed Agent profiles unless their integration explicitly supports similar behavior.

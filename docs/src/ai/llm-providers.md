@@ -7,7 +7,7 @@ description: Choose how Zed gets language models: Zed-hosted models, API access,
 
 Use this page to choose which models power Zed-owned AI features, including [Zed Agent](./zed-agent.md), [Inline Assistant](./inline-assistant.md), Git commit generation, thread summaries, and similar model-backed features.
 
-[External agents](./external-agents.md) and [terminal threads](./terminal-threads.md) are different: Zed hosts the thread, but the external agent or CLI usually owns its own model setup.
+[External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md) are different: Zed hosts the thread, but the External Agent or CLI usually owns its own model setup.
 
 ## Choose a Model Access Path {#choose-a-model-access-path}
 
@@ -23,7 +23,7 @@ Use this page to choose which models power Zed-owned AI features, including [Zed
 
 Zed AI features are Zed-owned features that use a selected language model, including Zed Agent, Inline Assistant, Git commit generation, thread summaries, and similar model-backed features.
 
-| Model access path     | Zed AI features | External agents   | Terminal threads |
+| Model access path     | Zed AI features | External Agents   | Terminal Threads |
 | --------------------- | --------------- | ----------------- | ---------------- |
 | Zed-hosted models     | Yes             | No                | No               |
 | API access            | Yes             | Separate config   | Separate config  |
@@ -38,7 +38,7 @@ Use the child pages for provider-specific details and setup steps.
 | Agent path                                | Model configuration                          |
 | ----------------------------------------- | -------------------------------------------- |
 | [Zed Agent](./zed-agent.md)               | Uses LLM providers configured in Zed         |
-| [External Agents](./external-agents.md)   | Usually owned by the external agent          |
+| [External Agents](./external-agents.md)   | Usually owned by the External Agent          |
 | [Terminal Threads](./terminal-threads.md) | Owned by the CLI/TUI running in the terminal |
 
 ## Edit Prediction {#edit-prediction}

@@ -370,7 +370,7 @@ To use other AI models in Zed, you have several options:
 
 - Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
 - Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
-- Use [external agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 

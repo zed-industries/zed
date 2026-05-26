@@ -1,6 +1,6 @@
 ---
 title: AI Agents in Zed
-description: Compare Zed Agent, external agents, and terminal threads.
+description: Compare Zed Agent, External Agents, and Terminal Threads.
 ---
 
 # Agents
@@ -22,14 +22,14 @@ An agent path is sometimes called a harness. It is the way agentic work is start
 | Which agent or CLI should run the work?   | This page                           |
 | Which model should power Zed AI features? | [LLM Providers](./llm-providers.md) |
 
-The [Zed Agent](./zed-agent.md) uses models configured in Zed. [External agents](./external-agents.md) and [terminal threads](./terminal-threads.md) may use their own model setup.
+The [Zed Agent](./zed-agent.md) uses models configured in Zed. [External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md) may use their own model setup.
 
 ## Thread Types {#thread-types}
 
 Threads are the units shown in the [Threads Sidebar](./parallel-agents.md#threads-sidebar). Thread types include:
 
 - Zed Agent threads
-- External agent threads
-- Terminal threads
+- External Agent threads
+- Terminal Threads
 
 Use [Parallel Agents](./parallel-agents.md) to run and manage multiple threads at once.

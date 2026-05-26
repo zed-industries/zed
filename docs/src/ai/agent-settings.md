@@ -1,17 +1,17 @@
 ---
 title: Agent Settings - Zed
-description: Map the Agent Settings panel to Zed AI setup pages for LLM providers, external agents, MCP servers, and related settings.
+description: Map the Agent Settings panel to Zed AI setup pages for LLM providers, External Agents, MCP servers, and related settings.
 ---
 
 # Agent Settings
 
-Agent Settings is the in-panel configuration view for model providers, external agents, and MCP servers. Open it with {#action agent::OpenSettings} or from the top-right menu in the [Agent Panel](./agent-panel.md).
+Agent Settings is the in-panel configuration view for model providers, External Agents, and MCP servers. Open it with {#action agent::OpenSettings} or from the top-right menu in the [Agent Panel](./agent-panel.md).
 
 Agent Settings is different from the Settings Editor.
 
 | Surface              | Opens with                      | Use it for                                                                           |
 | -------------------- | ------------------------------- | ------------------------------------------------------------------------------------ |
-| Agent Settings panel | {#action agent::OpenSettings}   | LLM providers, external agents, MCP servers                                          |
+| Agent Settings panel | {#action agent::OpenSettings}   | LLM providers, External Agents, MCP servers                                          |
 | Settings Editor      | {#action zed::OpenSettings}     | General Zed settings, `disable_ai`, tool permissions, edit prediction provider setup |
 | Settings file        | {#action zed::OpenSettingsFile} | Direct JSON edits and settings not exposed in UI                                     |
 
@@ -32,7 +32,7 @@ For the model-access paths and provider-specific setup, see [LLM Providers](./ll
 
 ## External Agents {#external-agents}
 
-The external agents section configures ACP-integrated agents.
+The External Agents section configures ACP-integrated agents.
 
 Use `Add Agent` to:
 

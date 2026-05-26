@@ -41,14 +41,14 @@ Project instructions override personal `AGENTS.md` when they conflict.
 
 ## Instruction File Support {#support}
 
-| File                              | Zed Agent                                              | External agents       | Terminal threads                 |
+| File                              | Zed Agent                                              | External Agents       | Terminal Threads                 |
 | --------------------------------- | ------------------------------------------------------ | --------------------- | -------------------------------- |
 | `~/.config/zed/AGENTS.md`         | Loaded as personal instructions                        | Not generally used    | Not used unless the CLI reads it |
 | Project `AGENTS.md`               | Loaded as project instructions                         | Depends on the agent  | Depends on the CLI               |
 | `CLAUDE.md`                       | Loaded as compatible project instructions by Zed Agent | Claude reads natively | Claude Code CLI reads natively   |
 | `.github/copilot-instructions.md` | Loaded as compatible project instructions by Zed Agent | Depends on the agent  | Depends on the CLI               |
 
-External agents and terminal threads may read their own native instruction files directly. Do not assume Zed's instruction loader controls those agents.
+External Agents and Terminal Threads may read their own native instruction files directly. Do not assume Zed's instruction loader controls those agents.
 
 ## Instructions vs. Skills {#instructions-vs-skills}
 

@@ -24,10 +24,10 @@ Zed supports these first-class API providers for model-backed Zed AI features:
 
 ## What API Access Applies To {#support}
 
-| Access path                       | Zed AI features | External agents | Terminal threads | Notes                                                                                                        |
+| Access path                       | Zed AI features | External Agents | Terminal Threads | Notes                                                                                                        |
 | --------------------------------- | --------------- | --------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | Provider API key                  | Yes             | Separate config | Separate config  | Zed Agent, Inline Assistant, Git commit generation, and similar Zed-owned features can use configured models |
-| API key used by an external agent | No              | Agent-owned     | Separate config  | Configure it in the external agent                                                                           |
+| API key used by an External Agent | No              | Agent-owned     | Separate config  | Configure it in the External Agent                                                                           |
 | API key used by a CLI/TUI         | No              | Separate config | CLI-owned        | Configure it in the terminal environment or CLI config                                                       |
 
 ## API Keys and Environment Variables {#api-keys}
@@ -56,7 +56,7 @@ OpenAI-compatible provider environment variables are generated from the configur
 
 Zed LLM providers for Zed AI features are initialized in the local Zed app. In SSH, dev container, and other remote projects, API keys saved in Zed are read from the local system keychain, and provider environment variables are read from the local Zed process environment.
 
-External agents and terminal threads may run their own processes and use their own remote or local environment. See [External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md).
+External Agents and Terminal Threads may run their own processes and use their own remote or local environment. See [External Agents](./external-agents.md) and [Terminal Threads](./terminal-threads.md).
 
 ## Provider Notes {#provider-notes}
 

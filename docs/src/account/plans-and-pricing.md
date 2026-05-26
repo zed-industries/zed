@@ -15,7 +15,7 @@ Zed works without AI features or a subscription. No [authentication](../authenti
 | ---------------------------------------------- | ------- | --------- | --------- | --------- |
 | Zed-hosted AI models                           | —       | ✓         | ✓         | ✓         |
 | [AI via own API keys](../ai/use-api-access.md) | ✓       | ✓         | ✓         | ✓         |
-| [External agents](../ai/external-agents.md)    | ✓       | ✓         | ✓         | ✓         |
+| [External Agents](../ai/external-agents.md)    | ✓       | ✓         | ✓         | ✓         |
 | Edit Predictions                               | Limited | Unlimited | Unlimited | Unlimited |
 | Org-wide admin controls                        | —       | —         | —         | ✓         |
 | Roles & permissions                            | —       | —         | —         | ✓         |

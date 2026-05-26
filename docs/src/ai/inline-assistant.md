@@ -21,7 +21,7 @@ You can do that by:
 
 If you have already set up an LLM provider to interact with [the Agent Panel](./agent-panel.md#getting-started), then that will also work for the Inline Assistant.
 
-[External agents](./external-agents.md) run in agent threads, but they are not available for Inline Assistant generations. The Inline Assistant uses Zed-configured [LLM providers](./llm-providers.md), including Zed-hosted models, provider API keys, gateways, local models, and supported subscriptions.
+[External Agents](./external-agents.md) run in agent threads, but they are not available for Inline Assistant generations. The Inline Assistant uses Zed-configured [LLM providers](./llm-providers.md), including Zed-hosted models, provider API keys, gateways, local models, and supported subscriptions.
 
 ## Adding Context
 

@@ -68,7 +68,7 @@ Project-local skills are only loaded from [trusted worktrees](../worktree-trust.
 
 ## Agent Path Boundaries {#agent-path-boundaries}
 
-Zed Skills apply to the Zed Agent. External agents and terminal threads may have their own native skills, prompts, or instruction systems. Configure those in the external agent or CLI.
+Zed Skills apply to the Zed Agent. External Agents and Terminal Threads may have their own native skills, prompts, or instruction systems. Configure those in the External Agent or CLI.
 
 ## Migrating from Rules {#migrating-from-rules}
 

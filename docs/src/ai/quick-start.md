@@ -24,7 +24,7 @@ Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, Gem
 | Integrates with Zed through ACP | [External Agents](./external-agents.md)   |
 | Runs as a CLI or TUI            | [Terminal Threads](./terminal-threads.md) |
 
-External agents and terminal threads usually own their own auth, model configuration, subscriptions, tools, instructions, and MCP configuration.
+External Agents and Terminal Threads usually own their own auth, model configuration, subscriptions, tools, instructions, and MCP configuration.
 
 ## I want to choose which models Zed uses {#model-access}
 
@@ -42,7 +42,7 @@ Provider keys saved through Zed are stored in the system keychain, not in `setti
 
 | If you want to...                                                           | Go to                                                                    |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Configure LLM providers, external agents, or MCP servers                    | [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings} |
+| Configure LLM providers, External Agents, or MCP servers                    | [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings} |
 | Disable AI, configure tool permissions, or set up edit prediction providers | Settings Editor with {#action zed::OpenSettings}                         |
 | Edit advanced JSON-only settings                                            | Settings file with {#action zed::OpenSettingsFile}                       |
 
