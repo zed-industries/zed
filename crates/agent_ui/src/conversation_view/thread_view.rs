@@ -28,7 +28,6 @@ use settings::update_settings_file;
 use ui::{ButtonLike, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle, Tab};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::notifications::NotificationId;
-use workspace::notifications::simple_message_notification::MessageNotification;
 
 use super::*;
 
@@ -603,6 +602,7 @@ pub struct ThreadView {
     pub message_editor: Entity<MessageEditor>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub project: WeakEntity<Project>,
     /// Cache + worktree snapshot for resolving paths in markdown code spans.
     /// Cloned from the parent `ConversationView` so the cache is shared and the
@@ -916,6 +916,7 @@ impl ThreadView {
             message_editor,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
+            fast_mode_menu_handle: PopoverMenuHandle::default(),
             project,
             code_span_resolver,
             show_external_source_prompt_warning,
@@ -4203,31 +4204,137 @@ impl ThreadView {
         }
 
         let thread = self.as_native_thread(cx)?.read(cx);
+        let is_fast = matches!(thread.speed(), Some(Speed::Fast));
 
-        let (tooltip_label, color, icon) = if matches!(thread.speed(), Some(Speed::Fast)) {
-            ("Disable Fast Mode", Color::Accent, IconName::FastForward)
+        let model_identity = thread
+            .model()
+            .map(|model| (model.provider_id(), model.id()));
+
+        let (tooltip_label, color, icon, new_speed) = if is_fast {
+            (
+                "Disable Fast Mode",
+                Color::Accent,
+                IconName::FastForward,
+                Speed::Standard,
+            )
         } else {
             (
                 "Enable Fast Mode",
                 Color::Custom(cx.theme().colors().icon_disabled.opacity(0.8)),
                 IconName::FastForwardOff,
+                Speed::Fast,
             )
         };
 
         let focus_handle = self.message_editor.focus_handle(cx);
 
+        let pending_confirmation = (!is_fast)
+            .then(|| self.pending_fast_mode_confirmation(cx))
+            .flatten();
+
+        let icon_button = IconButton::new("fast-mode", icon)
+            .icon_size(IconSize::Small)
+            .icon_color(color);
+
+        if let Some((provider_id, model_id, confirmation)) = pending_confirmation {
+            let weak_self = cx.entity().downgrade();
+            let tooltip_focus = focus_handle.clone();
+
+            return Some(
+                PopoverMenu::new("fast-mode-warning")
+                    .with_handle(self.fast_mode_menu_handle.clone())
+                    .trigger_with_tooltip(icon_button, move |_, cx| {
+                        Tooltip::for_action_in(tooltip_label, &ToggleFastMode, &tooltip_focus, cx)
+                    })
+                    .menu(move |window, cx| {
+                        let weak_self = weak_self.clone();
+                        let confirmation = confirmation.clone();
+                        let provider_id = provider_id.clone();
+                        let model_id = model_id.clone();
+
+                        Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                            let message = confirmation.message.clone();
+                            menu.custom_row(move |_window, _cx| {
+                                div()
+                                    .max_w_72()
+                                    .child(Label::new(confirmation.title.clone()))
+                                    .child(Label::new(message.clone()).color(Color::Muted))
+                                    .into_any_element()
+                            })
+                            .separator()
+                            .item(ContextMenuEntry::new("Enable Now").handler({
+                                let weak_self = weak_self.clone();
+                                move |_window, cx| {
+                                    weak_self
+                                        .update(cx, |this, cx| {
+                                            this.apply_fast_mode_speed(Speed::Fast, cx);
+                                        })
+                                        .log_err();
+                                }
+                            }))
+                            .item(
+                                ContextMenuEntry::new("Enable and Don't Show Again").handler({
+                                    let weak_self = weak_self.clone();
+                                    let provider_id = provider_id.clone();
+                                    let model_id = model_id.clone();
+                                    move |_window, cx| {
+                                        weak_self
+                                            .update(cx, |this, cx| {
+                                                this.apply_fast_mode_speed(Speed::Fast, cx);
+                                            })
+                                            .log_err();
+                                        set_fast_mode_warning_dismissed(
+                                            &provider_id,
+                                            &model_id,
+                                            cx,
+                                        );
+                                    }
+                                }),
+                            )
+                        }))
+                    })
+                    .offset(gpui::Point {
+                        x: px(0.0),
+                        y: px(-2.0),
+                    })
+                    .anchor(gpui::Anchor::BottomLeft)
+                    .into_any_element(),
+            );
+        }
+
+        let _ = model_identity;
+
         Some(
-            IconButton::new("fast-mode", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(color)
+            icon_button
                 .tooltip(move |_, cx| {
                     Tooltip::for_action_in(tooltip_label, &ToggleFastMode, &focus_handle, cx)
                 })
                 .on_click(cx.listener(move |this, _, _window, cx| {
-                    this.toggle_fast_mode(cx);
+                    this.apply_fast_mode_speed(new_speed, cx);
                 }))
                 .into_any_element(),
         )
+    }
+
+    fn pending_fast_mode_confirmation(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        LanguageModelProviderId,
+        LanguageModelId,
+        FastModeConfirmation,
+    )> {
+        let thread = self.as_native_thread(cx)?.read(cx);
+        let model = thread.model()?;
+        let provider_id = model.provider_id();
+        let model_id = model.id();
+        let confirmation = LanguageModelRegistry::read_global(cx)
+            .provider(&provider_id)
+            .and_then(|provider| provider.fast_mode_confirmation(cx))?;
+        if fast_mode_warning_dismissed(&provider_id, &model_id, cx) {
+            return None;
+        }
+        Some((provider_id, model_id, confirmation))
     }
 
     fn render_thinking_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -9501,32 +9608,23 @@ impl ThreadView {
         });
     }
 
-    fn toggle_fast_mode(&mut self, cx: &mut Context<Self>) {
+    fn toggle_fast_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.fast_mode_available(cx) {
             return;
         }
+
         let Some(thread) = self.as_native_thread(cx) else {
             return;
         };
-        let (current_speed, model_identity) = {
-            let thread = thread.read(cx);
-            (
-                thread.speed().unwrap_or_default(),
-                thread
-                    .model()
-                    .map(|model| (model.provider_id(), model.id())),
-            )
-        };
+
+        let current_speed = thread.read(cx).speed().unwrap_or_default();
         let new_speed = current_speed.toggle();
 
-        if new_speed == Speed::Fast
-            && let Some((provider_id, model_id)) = model_identity
-            && let Some(confirmation) = LanguageModelRegistry::read_global(cx)
-                .provider(&provider_id)
-                .and_then(|provider| provider.fast_mode_confirmation(cx))
-            && !fast_mode_warning_dismissed(&provider_id, &model_id, cx)
-        {
-            self.show_fast_mode_warning(provider_id, model_id, confirmation, cx);
+        if new_speed == Speed::Fast && self.pending_fast_mode_confirmation(cx).is_some() {
+            let menu_handle = self.fast_mode_menu_handle.clone();
+            window.defer(cx, move |window, cx| {
+                menu_handle.toggle(window, cx);
+            });
             return;
         }
 
@@ -9555,55 +9653,6 @@ impl ThreadView {
                         });
                     }
                 }
-            });
-        });
-    }
-
-    fn show_fast_mode_warning(
-        &mut self,
-        provider_id: LanguageModelProviderId,
-        model_id: LanguageModelId,
-        confirmation: FastModeConfirmation,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            self.apply_fast_mode_speed(Speed::Fast, cx);
-            return;
-        };
-        let weak_self = cx.entity().downgrade();
-        workspace.update(cx, |workspace, cx| {
-            let notification_id = NotificationId::composite::<FastModeWarning>(SharedString::from(
-                fast_mode_warning_id(&provider_id, &model_id),
-            ));
-            workspace.show_notification(notification_id, cx, move |cx| {
-                cx.new(move |cx| {
-                    let weak_self_primary = weak_self.clone();
-                    let weak_self_secondary = weak_self;
-                    let dismiss_target = (provider_id, model_id);
-                    MessageNotification::new(confirmation.message, cx)
-                        .with_title(confirmation.title)
-                        .primary_message("Enable Fast Mode")
-                        .primary_icon(IconName::FastForward)
-                        .primary_icon_color(Color::Accent)
-                        .primary_on_click(move |_window, cx| {
-                            weak_self_primary
-                                .update(cx, |this, cx| {
-                                    this.apply_fast_mode_speed(Speed::Fast, cx);
-                                })
-                                .log_err();
-                        })
-                        .secondary_message("Enable and Don't Show Again")
-                        .secondary_icon(IconName::Close)
-                        .secondary_on_click(move |_window, cx| {
-                            weak_self_secondary
-                                .update(cx, |this, cx| {
-                                    this.apply_fast_mode_speed(Speed::Fast, cx);
-                                })
-                                .log_err();
-                            let (provider_id, model_id) = &dismiss_target;
-                            set_fast_mode_warning_dismissed(provider_id, model_id, cx);
-                        })
-                })
             });
         });
     }
@@ -9732,8 +9781,8 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
-            .on_action(cx.listener(|this, _: &ToggleFastMode, _window, cx| {
-                this.toggle_fast_mode(cx);
+            .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
+                this.toggle_fast_mode(window, cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleThinkingMode, _window, cx| {
                 if this.thread.read(cx).status() != ThreadStatus::Idle {
@@ -10004,8 +10053,6 @@ pub(crate) fn open_link(
         cx.open_url(&url);
     }
 }
-
-struct FastModeWarning;
 
 const FAST_MODE_WARNING_NAMESPACE: &str = "fast-mode-warning-dismissed";
 
