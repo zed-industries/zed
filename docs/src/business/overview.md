@@ -24,10 +24,10 @@ For the organization:
   can't override these settings individually.
 - **Private by default:** Zed doesn't store your prompts or train on them
   without explicit opt-in.
-  [Data sharing for AI improvement](../ai/ai-improvement.md) is opt-in: members
-  can choose to share but are never enrolled automatically. Administrators can
-  [enforce this org-wide](./admin-controls.md#data-sharing), blocking members
-  from opting in at all.
+  [AI feedback and training data sharing](../ai/ai-improvement.md) is opt-in:
+  members can choose to share but are never enrolled automatically.
+  Administrators can [enforce this org-wide](./admin-controls.md#data-sharing),
+  blocking members from opting in at all.
 - **[Roles and permissions](../roles.md):** Owners, admins, and members have
   different access levels. Billing and org settings are only visible to the
   roles that need them.

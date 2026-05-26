@@ -40,4 +40,4 @@ The **Agent Thread Feedback** toggle controls whether members can submit feedbac
 
 ## Data sharing
 
-On Free and Pro, [data sharing with Zed for AI improvement](../ai/ai-improvement.md) is opt-in per member. On Business, it's off by default and controlled by the Agent Thread Feedback and Edit Prediction Feedback toggles above.
+On Free and Pro, [AI feedback and training data sharing](../ai/ai-improvement.md) is opt-in per member. On Business, it's off by default and controlled by the Agent Thread Feedback and Edit Prediction Feedback toggles above.

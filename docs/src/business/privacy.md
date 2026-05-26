@@ -36,9 +36,9 @@ Neither option is available to Zed Business members.
 
 ## What data still leaves the organization
 
-These controls cover what Zed stores and trains on. They don't change how AI inference works: when members use Zed's hosted models, prompts and code context are still sent to the relevant provider (Anthropic, OpenAI, Google, etc.) to generate responses. Zed maintains zero-data retention agreements with these providers. See [AI Improvement](../ai/ai-improvement.md#data-retention-and-training) for details.
+These controls cover what Zed stores and trains on. They don't change how AI inference works: when members use Zed's hosted models, prompts and code context are still sent to the relevant provider (Anthropic, OpenAI, Google, etc.) to generate responses. Zed maintains zero-data-retention and no-training commitments with these providers. See [AI Privacy](../ai/privacy-and-security.md#data-retention-and-training) for details.
 
-[Bring-your-own-key](../ai/llm-providers.md) and [external agents](../ai/external-agents.md) are subject to each provider's own terms; Zed has no visibility into how they handle data.
+[Bring-your-own-key](../ai/llm-providers.md), [external agents](../ai/external-agents.md), and [terminal threads](../ai/terminal-threads.md) are subject to each provider, agent, or CLI's own terms.
 
 ## Additional admin controls
 

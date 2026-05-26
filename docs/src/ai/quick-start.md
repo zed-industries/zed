@@ -58,7 +58,7 @@ For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 | Run multiple AI tasks at once                  | [Parallel Agents](./parallel-agents.md)                                                                                                        |
 | Generate commit messages                       | [Git commit generation](../git.md#ai-support-in-git)                                                                                           |
 | Control tools and permissions                  | [Agent Profiles](./agent-profiles.md), [Tool Permissions](./tool-permissions.md), and [MCP](./mcp.md)                                          |
-| Understand privacy and data controls           | [Privacy & Security](./privacy-and-security.md) and [AI Improvement](./ai-improvement.md)                                                      |
+| Understand privacy and data controls           | [AI Privacy](./privacy-and-security.md) and [Feedback and Training Data](./ai-improvement.md)                                                  |
 | Understand plans, usage, and billing           | [Plans & Pricing](../account/plans-and-pricing.md), [Zed-Hosted Models](../account/zed-hosted-models.md), and [Billing](../account/billing.md) |
 
 ## I want to turn AI off {#turn-ai-off}

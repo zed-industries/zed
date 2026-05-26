@@ -10,6 +10,10 @@ Each keystroke sends a new request to the edit prediction provider, which return
 
 The default provider is [Zeta, an open source model developed by Zed](https://zed.dev/blog/zeta2), but you can also use [other providers](#other-providers) like GitHub Copilot, Mercury Coder, and Codestral.
 
+For privacy and training data details, see
+[AI Privacy](./privacy-and-security.md) and
+[Feedback and Training Data](./ai-improvement.md#edit-predictions).
+
 ## Configuring Zeta
 
 To use Zeta, [sign in](../authentication.md#what-features-require-signing-in).

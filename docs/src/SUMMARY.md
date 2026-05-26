@@ -67,8 +67,8 @@
   - [Use a Gateway](./ai/use-a-gateway.md)
   - [Use a Local Model](./ai/use-a-local-model.md)
 - [Edit Prediction](./ai/edit-prediction.md)
-- [Privacy & Security](./ai/privacy-and-security.md)
-  - [AI Improvement](./ai/ai-improvement.md)
+- [AI Privacy](./ai/privacy-and-security.md)
+  - [Feedback and Training Data](./ai/ai-improvement.md)
 
 # Account & Billing
 

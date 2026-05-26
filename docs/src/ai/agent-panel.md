@@ -195,10 +195,13 @@ You can also open threads as Markdown by clicking on the file icon button, to th
 
 You can rate agent responses to help improve Zed's system prompt and tools.
 
-> Note that rating responses will send your data related to that response to Zed's servers.
-> See [AI Improvement](./ai-improvement.md) and [Privacy and Security](./privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.
+> **Warning:** Rating an AI response sends the conversation thread to Zed. The
+> conversation thread includes your messages, AI responses, and thread metadata.
+> See [Feedback and Training Data](./ai-improvement.md) and
+> [AI Privacy](./privacy-and-security.md) for more information.
 > **_If you don't want data persisted on Zed's servers, don't rate_**.
-> We will not collect data for improving our Agentic offering without you explicitly rating responses.
+> We will not collect data for improving Zed Agent without you explicitly rating
+> responses.
 
 To help improve Zed's system prompt and tools, rate responses with the thumbs up/down controls at the end of each response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
