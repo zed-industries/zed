@@ -1110,8 +1110,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
-                is_empty_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1138,8 +1137,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
-                is_empty_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1166,8 +1164,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
-                is_empty_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1195,8 +1192,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: false,
                 is_background: false,
                 is_title_generating: false,
-                is_draft: false,
-                is_empty_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -1224,8 +1220,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 is_live: true,
                 is_background: true,
                 is_title_generating: false,
-                is_empty_draft: false,
-                is_draft: false,
+                draft: None,
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
@@ -5440,7 +5435,7 @@ async fn test_draft_title_updates_from_editor_text(cx: &mut TestAppContext) {
                 .iter()
                 .find_map(|entry| match entry {
                     ListEntry::Thread(thread)
-                        if thread.is_draft && thread.metadata.thread_id == draft_id =>
+                        if thread.draft.is_some() && thread.metadata.thread_id == draft_id =>
                     {
                         Some(thread.metadata.display_title())
                     }
@@ -5577,7 +5572,7 @@ async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                ListEntry::Thread(t) if t.is_draft => Some(t.clone()),
+                ListEntry::Thread(t) if t.draft.is_some() => Some(t.clone()),
                 _ => None,
             })
             .collect()
@@ -5587,8 +5582,9 @@ async fn test_plus_button_reuses_empty_draft(cx: &mut TestAppContext) {
         1,
         "active empty draft should appear as exactly one placeholder row"
     );
-    assert!(
-        draft_rows[0].is_empty_draft,
+    assert_eq!(
+        draft_rows[0].draft,
+        Some(DraftKind::Empty),
         "the row should be the empty-draft placeholder"
     );
     assert_eq!(draft_rows[0].metadata.thread_id, first_id);
@@ -5640,7 +5636,7 @@ async fn test_plus_button_parks_nonempty_draft(cx: &mut TestAppContext) {
             .entries
             .iter()
             .filter_map(|entry| match entry {
-                ListEntry::Thread(t) if t.is_draft => Some(t.clone()),
+                ListEntry::Thread(t) if t.draft.is_some() => Some(t.clone()),
                 _ => None,
             })
             .collect()
@@ -5658,16 +5654,18 @@ async fn test_plus_button_parks_nonempty_draft(cx: &mut TestAppContext) {
         .iter()
         .find(|t| t.metadata.thread_id == first_id)
         .expect("parked draft should be present");
-    assert!(
-        !parked.is_empty_draft,
+    assert_eq!(
+        parked.draft,
+        Some(DraftKind::WithContent),
         "the parked draft has user content and is not an empty placeholder"
     );
     let new_empty = draft_rows
         .iter()
         .find(|t| t.metadata.thread_id == second_id)
         .expect("new empty draft should be present");
-    assert!(
-        new_empty.is_empty_draft,
+    assert_eq!(
+        new_empty.draft,
+        Some(DraftKind::Empty),
         "the freshly-created draft should be an empty placeholder"
     );
     assert_eq!(
@@ -6101,7 +6099,9 @@ async fn test_only_actively_viewed_empty_draft_is_visible_in_sidebar(cx: &mut Te
                     .entries
                     .iter()
                     .filter_map(|entry| match entry {
-                        ListEntry::Thread(t) if t.is_empty_draft => Some(t.metadata.thread_id),
+                        ListEntry::Thread(t) if t.draft == Some(DraftKind::Empty) => {
+                            Some(t.metadata.thread_id)
+                        }
                         _ => None,
                     })
                     .collect()

@@ -260,6 +260,12 @@ fn thread_metadata_would_render_sidebar_row(
         && draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DraftKind {
+    WithContent,
+    Empty,
+}
+
 #[derive(Clone)]
 struct ThreadEntry {
     metadata: ThreadMetadata,
@@ -270,8 +276,7 @@ struct ThreadEntry {
     is_live: bool,
     is_background: bool,
     is_title_generating: bool,
-    is_draft: bool,
-    is_empty_draft: bool,
+    draft: Option<DraftKind>,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
@@ -1468,7 +1473,9 @@ impl Sidebar {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
-                        let is_draft = row.is_draft();
+
+                        let draft = row.is_draft().then_some(DraftKind::WithContent);
+
                         ThreadEntry {
                             metadata: row,
                             icon,
@@ -1478,8 +1485,7 @@ impl Sidebar {
                             is_live: false,
                             is_background: false,
                             is_title_generating: false,
-                            is_draft,
-                            is_empty_draft: false,
+                            draft,
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
@@ -1575,7 +1581,7 @@ impl Sidebar {
                     });
                 }
                 for thread in &mut threads {
-                    if !thread.is_draft {
+                    if thread.draft.is_none() {
                         continue;
                     }
                     let workspace_for_label = match &thread.workspace {
@@ -1590,7 +1596,7 @@ impl Sidebar {
                     ) {
                         Some(label) => {
                             thread.metadata.title = Some(label);
-                            thread.is_empty_draft = false;
+                            thread.draft = Some(DraftKind::WithContent);
                         }
                         None => {
                             thread.metadata.title =
@@ -1599,11 +1605,11 @@ impl Sidebar {
                                     &thread.metadata.agent_id,
                                     cx,
                                 ));
-                            thread.is_empty_draft = true;
+                            thread.draft = Some(DraftKind::Empty);
                         }
                     }
                 }
-                threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
+                threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
 
                 // An empty-draft placeholder is only meaningful while the
                 // user is actually looking at that draft. We keep it iff
@@ -1611,7 +1617,7 @@ impl Sidebar {
                 // this exact thread; otherwise the row would persist as a
                 // stale "New {agent} Thread" entry while the user is busy
                 // in some other thread. Drafts with real content
-                // (`is_empty_draft == false`) are preserved unconditionally
+                // (`Some(DraftKind::WithContent)`) are preserved unconditionally
                 // — they represent user-typed state we shouldn't hide.
                 let pending_activation = self.pending_thread_activation;
                 let active_panel_thread_id = active_workspace
@@ -1619,7 +1625,7 @@ impl Sidebar {
                     .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
                     .and_then(|panel| panel.read(cx).active_thread_id(cx));
                 threads.retain(|thread| {
-                    if !thread.is_empty_draft {
+                    if thread.draft != Some(DraftKind::Empty) {
                         return true;
                     }
                     if pending_activation.is_some() {
@@ -5219,7 +5225,7 @@ impl Sidebar {
                     }
                     AgentThreadStatus::Completed | AgentThreadStatus::Error => {}
                 }
-                if thread.is_draft {
+                if thread.draft.is_some() {
                     let workspace = thread.workspace.clone();
                     let draft_id = thread.metadata.thread_id;
                     self.remove_draft(draft_id, &workspace, window, cx);
@@ -5342,7 +5348,7 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
-                    if thread.is_empty_draft {
+                    if thread.draft == Some(DraftKind::Empty) {
                         return None;
                     }
                     let workspace = match &thread.workspace {
@@ -5361,7 +5367,7 @@ impl Sidebar {
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
 
-                    let timestamp: SharedString = if thread.is_empty_draft {
+                    let timestamp: SharedString = if thread.draft == Some(DraftKind::Empty) {
                         SharedString::default()
                     } else {
                         format_history_entry_timestamp(Self::thread_display_time(&thread.metadata))
@@ -5385,7 +5391,7 @@ impl Sidebar {
                             })
                             .collect(),
                         diff_stats: thread.diff_stats,
-                        is_draft: thread.is_draft,
+                        is_draft: thread.draft.is_some(),
                         is_title_generating: thread.is_title_generating,
                         notified,
                         timestamp,
@@ -5685,8 +5691,8 @@ impl Sidebar {
 
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = is_active;
-        let is_draft = thread.is_draft;
-        let is_empty_draft = thread.is_empty_draft;
+        let is_draft = thread.draft.is_some();
+        let is_empty_draft = thread.draft == Some(DraftKind::Empty);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -5705,7 +5711,7 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        let timestamp: SharedString = if thread.is_empty_draft {
+        let timestamp: SharedString = if is_empty_draft {
             SharedString::default()
         } else {
             format_history_entry_timestamp(Self::thread_display_time(&thread.metadata)).into()
@@ -5807,8 +5813,6 @@ impl Sidebar {
                         })
                     });
 
-                // Skip the discard button for empty drafts so they can be
-                // dismissed without an explicit action (preserves HEAD's UX).
                 let contextual_action: Option<AnyElement> = if is_running {
                     Some(
                         IconButton::new("stop-thread", IconName::Stop)
@@ -5821,53 +5825,53 @@ impl Sidebar {
                             }))
                             .into_any_element(),
                     )
-                } else if is_draft && is_empty_draft {
-                    None
-                } else if is_draft {
-                    Some(
-                        IconButton::new("discard_thread", IconName::Close)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip(Tooltip::text("Discard Draft"))
-                            .on_click({
-                                let thread_workspace = thread_workspace.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.remove_draft(
-                                        thread_id_for_actions,
-                                        &thread_workspace,
-                                        window,
-                                        cx,
-                                    );
-                                })
-                            })
-                            .into_any_element(),
-                    )
                 } else {
-                    Some(
-                        IconButton::new("archive-thread", IconName::Archive)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |_window, cx| {
-                                    Tooltip::for_action_in(
-                                        "Archive Thread",
-                                        &ArchiveSelectedThread,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click({
-                                let session_id = session_id_for_delete.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    if let Some(ref session_id) = session_id {
-                                        this.archive_thread(session_id, window, cx);
+                    match thread.draft {
+                        Some(DraftKind::Empty) => None,
+                        Some(DraftKind::WithContent) => Some(
+                            IconButton::new("discard_thread", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip(Tooltip::text("Discard Draft"))
+                                .on_click({
+                                    let thread_workspace = thread_workspace.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.remove_draft(
+                                            thread_id_for_actions,
+                                            &thread_workspace,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })
+                                .into_any_element(),
+                        ),
+                        None => Some(
+                            IconButton::new("archive-thread", IconName::Archive)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |_window, cx| {
+                                        Tooltip::for_action_in(
+                                            "Archive Thread",
+                                            &ArchiveSelectedThread,
+                                            &focus_handle,
+                                            cx,
+                                        )
                                     }
                                 })
-                            })
-                            .into_any_element(),
-                    )
+                                .on_click({
+                                    let session_id = session_id_for_delete.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        if let Some(ref session_id) = session_id {
+                                            this.archive_thread(session_id, window, cx);
+                                        }
+                                    })
+                                })
+                                .into_any_element(),
+                        ),
+                    }
                 };
 
                 this.action_slot(
