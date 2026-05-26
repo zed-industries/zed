@@ -1500,6 +1500,10 @@
   // 4. Draw a background behind the color text..
   //      "lsp_document_colors": "background",
   "lsp_document_colors": "inlay",
+  // Whether to query and display LSP `textDocument/documentLink` links in the editor.
+  //
+  // Default: true
+  "lsp_document_links": true,
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show the project diagnostics button in the status bar.
