@@ -163,7 +163,11 @@ pub struct Model {
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 struct ModelBilling {
+    // Enterprise endpoints may omit these fields; default to
+    // non-premium with zero multiplier for graceful degradation.
+    #[serde(default)]
     is_premium: bool,
+    #[serde(default)]
     multiplier: f64,
     // List of plans a model is restricted to
     // Field is not present if a model is available for all plans
@@ -497,10 +501,91 @@ impl Global for GlobalCopilotChat {}
 
 pub struct CopilotChat {
     oauth_token: Option<String>,
+    session_token: Option<CachedSessionToken>,
     api_endpoint: Option<String>,
     configuration: CopilotChatConfiguration,
     models: Option<Vec<Model>>,
     client: Arc<dyn HttpClient>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedSessionToken {
+    token: String,
+    expires_at: u64,
+}
+
+const TOKEN_REFRESH_MARGIN_SECS: u64 = 5 * 60;
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+impl CachedSessionToken {
+    fn needs_refresh(&self) -> bool {
+        now_unix_secs() + TOKEN_REFRESH_MARGIN_SECS >= self.expires_at
+    }
+}
+
+#[derive(Deserialize)]
+struct TokenExchangeResponse {
+    token: String,
+    expires_at: u64,
+}
+
+/// Exchange a raw OAuth token (`ghu_...`) for a short-lived Copilot session
+/// token via `GET /copilot_internal/v2/token`.
+///
+/// All other Copilot clients (VS Code, Claude Code, OpenCode) perform this
+/// exchange. The session token carries integrator identity and is required
+/// for the full model catalog on enterprise endpoints. Without it, the
+/// server defaults to a degraded model list based on the OAuth app
+/// registration (e.g. integrator "zed" instead of the full catalog).
+///
+/// Session tokens have ~30 min TTL and should be refreshed before expiry.
+async fn exchange_session_token(
+    oauth_token: &str,
+    client: &Arc<dyn HttpClient>,
+) -> Result<CachedSessionToken> {
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri("https://api.github.com/copilot_internal/v2/token")
+        .header("Authorization", format!("token {}", oauth_token))
+        .header("Accept", "application/json")
+        .header("Copilot-Integration-Id", "vscode-chat")
+        .header(
+            "Editor-Version",
+            format!(
+                "Zed/{}",
+                option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
+            ),
+        )
+        .body(AsyncBody::empty())?;
+
+    let mut response = client.send(request).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Copilot token exchange failed: {}",
+        response.status()
+    );
+
+    let mut body = Vec::new();
+    response.body_mut().read_to_end(&mut body).await?;
+    let parsed: TokenExchangeResponse = serde_json::from_str(std::str::from_utf8(&body)?)
+        .context("Failed to parse token exchange response")?;
+
+    log::debug!(
+        "Copilot session token exchanged (expires_at={})",
+        parsed.expires_at
+    );
+
+    Ok(CachedSessionToken {
+        token: parsed.token,
+        expires_at: parsed.expires_at,
+    })
 }
 
 pub fn init(
@@ -576,6 +661,7 @@ impl CopilotChat {
 
         let this = Self {
             oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
+            session_token: None,
             api_endpoint: None,
             models: None,
             configuration,
@@ -602,11 +688,27 @@ impl CopilotChat {
         let oauth_token = oauth_token
             .ok_or_else(|| anyhow!("OAuth token is missing while updating Copilot Chat models"))?;
 
+        // Exchange raw OAuth token for a session token. The session token
+        // carries integrator identity and unlocks the full model catalog.
+        let effective_token = match exchange_session_token(&oauth_token, &client).await {
+            Ok(session) => {
+                let token = session.token.clone();
+                this.update(cx, |this, _| {
+                    this.session_token = Some(session);
+                })?;
+                token
+            }
+            Err(e) => {
+                log::warn!("Copilot session token exchange failed, falling back to OAuth token: {e}");
+                oauth_token.clone()
+            }
+        };
+
         let api_endpoint =
             Self::resolve_api_endpoint(&this, &oauth_token, &configuration, &client, cx).await?;
 
         let models_url = configuration.models_url(&api_endpoint);
-        let models = get_models(models_url.into(), oauth_token, client.clone()).await?;
+        let models = get_models(models_url.into(), effective_token, client.clone()).await?;
 
         this.update(cx, |this, cx| {
             this.models = Some(models);
@@ -711,6 +813,32 @@ impl CopilotChat {
 
         let oauth_token = oauth_token.context("No OAuth token available")?;
 
+        // Use cached session token if still valid, otherwise refresh.
+        let effective_token = {
+            let cached = this.read_with(cx, |this, _| this.session_token.clone());
+
+            if let Some(session) = cached.as_ref().filter(|s| !s.needs_refresh()) {
+                session.token.clone()
+            } else {
+                let stale_token = cached.map(|s| s.token.clone());
+                match exchange_session_token(&oauth_token, &client).await {
+                    Ok(fresh) => {
+                        let token = fresh.token.clone();
+                        let _ = this.update(cx, |this, _| {
+                            this.session_token = Some(fresh);
+                        });
+                        token
+                    }
+                    Err(e) => {
+                        log::warn!("Copilot session token exchange failed: {e}");
+                        // Fall back to stale session token if available,
+                        // otherwise to raw OAuth token.
+                        stale_token.unwrap_or_else(|| oauth_token.clone())
+                    }
+                }
+            }
+        };
+
         let api_endpoint = match api_endpoint {
             Some(endpoint) => endpoint,
             None => {
@@ -719,7 +847,7 @@ impl CopilotChat {
             }
         };
 
-        Ok((client, oauth_token, api_endpoint, configuration))
+        Ok((client, effective_token, api_endpoint, configuration))
     }
 
     async fn resolve_api_endpoint(
@@ -862,6 +990,10 @@ pub(crate) fn copilot_request_headers(
     builder
         .header("Authorization", format!("Bearer {}", oauth_token))
         .header("Content-Type", "application/json")
+        // Required by enterprise endpoint when using session tokens.
+        // Without this header, requests fail with 403 "token not
+        // authorized for this integration."
+        .header("Copilot-Integration-Id", "vscode-chat")
         .header(
             "Editor-Version",
             format!(
