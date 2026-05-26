@@ -24,7 +24,8 @@ use workspace::searchable::{self, Direction, FilteredSearchRange};
 use crate::motion::{self, MotionKind};
 use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
-    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
+    HelixAppendInsert, PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace,
+    Vim,
     motion::{Motion, right},
 };
 use std::ops::Range;
@@ -642,6 +643,7 @@ impl Vim {
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
+        self.helix_append_insert = None;
         self.update_editor(cx, |_, editor, cx| {
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |_map, selection| {
@@ -718,7 +720,15 @@ impl Vim {
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let original = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect();
+
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     let point = if selection.is_empty() {
@@ -729,6 +739,15 @@ impl Vim {
                     selection.collapse_to(point, SelectionGoal::None);
                 });
             });
+
+            let snapshot = editor.display_snapshot(cx);
+            let inserted = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.range())
+                .collect();
+            vim.helix_append_insert = Some(HelixAppendInsert { original, inserted });
         });
     }
 
@@ -2479,6 +2498,23 @@ mod test {
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
+
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a");
+
+        cx.assert_state("Theˇ quick brown", Mode::Insert);
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.set_state("The quick brownˇ", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("The quick brownˇ", Mode::HelixNormal);
+
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -2498,6 +2534,16 @@ mod test {
             Mode::Insert,
         );
 
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «Theˇ» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
         // test from the beginning of the selection
         cx.set_state(
             indoc! {"
@@ -2515,6 +2561,16 @@ mod test {
             fox jumps over
             the lazy dog."},
             Mode::Insert,
+        );
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «ˇThe» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
         );
     }
 
