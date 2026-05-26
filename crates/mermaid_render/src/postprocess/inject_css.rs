@@ -179,21 +179,29 @@ fn adjust_lightness(color: &mut gpui::Hsla, dark_mode: bool) {
     }
 }
 
+const ACCENT_FILL_OPACITY: f32 = 0.15;
+
 fn accent_css(theme: &MermaidTheme) -> String {
     // Each block is around 400 bytes, add some headroom
     let mut css = String::with_capacity(theme.accent_colors.len() * 420);
+    let text = crate::css_color(if theme.dark_mode {
+        gpui::white()
+    } else {
+        gpui::black()
+    });
+    
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
-        let mut bg = accent.background;
-        adjust_lightness(&mut bg, theme.dark_mode);
-        let fill = crate::css_color(bg);
-        let text = crate::css_color(crate::postprocess::util::text_color_for_background(bg));
+        // Use the raw player color as the fill; `fill-opacity` blends it toward
+        // the editor background so the stroke keeps its identity but text stays
+        // readable.
+        let fill = crate::css_color(accent.background);
         let class = format!(".zed-accent-{i}");
         write!(
             css,
             "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
              rect{class}, path{class}, circle{class}, polygon{class}, ellipse{class} \
-             {{ fill: {fill} !important; stroke: {stroke} !important; }}\n\
+             {{ fill: {fill} !important; fill-opacity: {ACCENT_FILL_OPACITY} !important; stroke: {stroke} !important; }}\n\
              {class} text, {class} tspan, text{class}, tspan{class} \
              {{ fill: {text} !important; }}\n",
         )
