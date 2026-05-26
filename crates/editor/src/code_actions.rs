@@ -224,14 +224,35 @@ impl Editor {
                 })
             }
             CodeActionsItem::CodeAction { action, provider } => {
-                if code_lens::try_handle_client_command(&action, self, &workspace, window, cx) {
-                    return Some(Task::ready(Ok(())));
-                }
+                let resolve_client_command =
+                    code_lens::resolve_client_command(&action, &workspace, cx);
+                let client_command_action = action.clone();
 
-                let apply_code_action =
-                    provider.apply_code_action(buffer, action, true, window, cx);
                 let workspace = workspace.downgrade();
                 Some(cx.spawn_in(window, async move |editor, cx| {
+                    if let Some(client_command) = resolve_client_command.await {
+                        let handled = editor.update_in(cx, |editor, window, cx| {
+                            if let Some(workspace) = workspace.upgrade() {
+                                return code_lens::handle_client_command(
+                                    client_command,
+                                    &client_command_action,
+                                    editor,
+                                    &workspace,
+                                    window,
+                                    cx,
+                                );
+                            }
+                            false
+                        })?;
+
+                        if handled {
+                            return Ok(());
+                        }
+                    }
+
+                    let apply_code_action = editor.update_in(cx, |_, window, cx| {
+                        provider.apply_code_action(buffer, action, true, window, cx)
+                    })?;
                     let project_transaction = apply_code_action.await?;
                     Self::open_project_transaction(
                         &editor,

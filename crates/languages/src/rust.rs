@@ -699,7 +699,7 @@ impl LspAdapter for RustLspAdapter {
         Ok(original)
     }
 
-    fn client_command(
+    async fn client_command(
         &self,
         command_name: &str,
         arguments: &[serde_json::Value],

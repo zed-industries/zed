@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
-    CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
+    ClientCommand, CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
     ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol,
     WorktreeDelegate,
@@ -245,6 +245,32 @@ impl extension::Extension for WasmExtension {
                     .await?
                     .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
+            }
+            .boxed()
+        })
+        .await?
+    }
+
+    async fn language_server_client_command(
+        &self,
+        language_server_id: LanguageServerName,
+        command: String,
+        arguments: Vec<serde_json::Value>,
+    ) -> Result<Option<ClientCommand>> {
+        self.call(|extension, store| {
+            async move {
+                let arguments = serde_json::to_string(&arguments)?;
+                let command = extension
+                    .call_language_server_client_command(
+                        store,
+                        &language_server_id,
+                        &command,
+                        &arguments,
+                    )
+                    .await?
+                    .map_err(|err| store.data().extension_error(err))?;
+
+                Ok(command.map(Into::into))
             }
             .boxed()
         })
