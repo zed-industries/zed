@@ -1046,12 +1046,7 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(
-        &mut self,
-        max_size: Pixels,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut Context<Self>) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
         let mut clamped = false;
         for entry in &mut self.panel_entries {
