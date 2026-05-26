@@ -665,15 +665,12 @@ fn handle_create_worktree_inner(
 
     workspace.set_active_worktree_creation(Some(display_name), false, cx);
 
-    let retry_worktree_name = worktree_name.clone();
-    let retry_branch_target = branch_target.clone();
-
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
             git_repos,
             non_git_paths,
-            worktree_name,
-            branch_target,
+            worktree_name.clone(),
+            branch_target.clone(),
             fetch_askpass_delegates,
             remote_branch_fetch_mode,
             previous_state,
@@ -693,8 +690,8 @@ fn handle_create_worktree_inner(
                         let toast = cx.new(|cx| {
                             WorktreeFetchFailedToast::new(
                                 workspace.weak_handle(),
-                                retry_worktree_name.clone(),
-                                retry_branch_target.clone(),
+                                worktree_name,
+                                branch_target,
                                 fallback_focused_dock,
                                 fetch_error,
                                 cx,

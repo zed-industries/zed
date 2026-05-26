@@ -422,14 +422,20 @@ impl WorktreePickerDelegate {
 
         if !self.has_multiple_repositories {
             if let Some(ref default_branch) = self.default_branch {
+                let is_different = self
+                    .current_branch_name
+                    .as_ref()
+                    .is_none_or(|current| current != &default_branch.branch_name);
                 entries.push(WorktreeEntry::CreateFromDefaultBranch {
                     default_branch: default_branch.clone(),
                 });
-                return entries;
+                if is_different {
+                    entries.push(WorktreeEntry::CreateFromCurrentBranch);
+                }
             }
+        } else {
+            entries.push(WorktreeEntry::CreateFromCurrentBranch);
         }
-
-        entries.push(WorktreeEntry::CreateFromCurrentBranch);
 
         entries
     }
