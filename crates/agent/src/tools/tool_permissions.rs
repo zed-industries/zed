@@ -182,10 +182,11 @@ fn resolve_lexical_global_skill_path(path: &Path) -> Option<PathBuf> {
 }
 
 /// If `path` names `~/.agents/skills` or one of its descendants, return a
-/// canonical absolute path suitable for creating it. Unlike
-/// [`resolve_global_skill_path`], the target path does not need to exist yet.
-/// Returns `None` for any other path, including siblings of the global skills
-/// tree or paths that would escape it with `..` or symlinks.
+/// canonical absolute path for it. Unlike [`resolve_global_skill_path`], the
+/// target path may or may not exist on disk yet — the caller decides whether
+/// to read, write, or create it. Returns `None` for any other path, including
+/// siblings of the global skills tree or paths that would escape it with `..`
+/// or symlinks.
 pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
     let normalized_path = resolve_lexical_global_skill_path(path)?;
     let canonical_path = canonicalize_with_ancestors(&normalized_path, fs).await?;
@@ -196,10 +197,6 @@ pub async fn resolve_creatable_global_skill_path(path: &Path, fs: &dyn Fs) -> Op
     } else {
         None
     }
-}
-
-pub async fn resolve_creatable_global_skill_directory(path: &Path, fs: &dyn Fs) -> Option<PathBuf> {
-    resolve_creatable_global_skill_path(path, fs).await
 }
 
 /// Returns the kind of sensitive settings or agent skills location this path targets, if any:
@@ -832,9 +829,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_resolve_creatable_global_skill_directory_allows_tilde_path(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_resolve_creatable_global_skill_path_allows_tilde_path(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -844,9 +839,9 @@ mod tests {
             .join("my-skill");
         let expected_path = agent_skills::global_skills_dir().join("my-skill");
 
-        let resolved = resolve_creatable_global_skill_directory(&input_path, fs.as_ref())
+        let resolved = resolve_creatable_global_skill_path(&input_path, fs.as_ref())
             .await
-            .expect("global skill directory should resolve");
+            .expect("global skill path should resolve");
 
         assert_eq!(resolved, expected_path);
     }
@@ -880,7 +875,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_resolve_creatable_global_skill_directory_rejects_other_home_paths(
+    async fn test_resolve_creatable_global_skill_path_rejects_other_home_paths(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -894,19 +889,19 @@ mod tests {
             .join("not-skills");
 
         assert!(
-            resolve_creatable_global_skill_directory(&sibling_path, fs.as_ref())
+            resolve_creatable_global_skill_path(&sibling_path, fs.as_ref())
                 .await
                 .is_none()
         );
         assert!(
-            resolve_creatable_global_skill_directory(&escaped_path, fs.as_ref())
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
                 .await
                 .is_none()
         );
     }
 
     #[gpui::test]
-    async fn test_resolve_creatable_global_skill_directory_rejects_symlink_escape(
+    async fn test_resolve_creatable_global_skill_path_rejects_symlink_escape(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -930,7 +925,7 @@ mod tests {
             .join("new-dir");
 
         assert!(
-            resolve_creatable_global_skill_directory(&escaped_path, fs.as_ref())
+            resolve_creatable_global_skill_path(&escaped_path, fs.as_ref())
                 .await
                 .is_none()
         );

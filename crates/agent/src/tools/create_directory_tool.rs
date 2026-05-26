@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    resolve_creatable_global_skill_directory, sensitive_settings_kind,
+    resolve_creatable_global_skill_path, sensitive_settings_kind,
 };
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
@@ -150,7 +150,7 @@ impl AgentTool for CreateDirectoryTool {
             }
 
             if let Some(global_skill_directory) =
-                resolve_creatable_global_skill_directory(Path::new(&input.path), fs.as_ref()).await
+                resolve_creatable_global_skill_path(Path::new(&input.path), fs.as_ref()).await
             {
                 futures::select! {
                     result = fs.create_dir(&global_skill_directory).fuse() => {
