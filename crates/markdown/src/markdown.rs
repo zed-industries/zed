@@ -2363,6 +2363,9 @@ impl Element for MarkdownElement {
                         cx,
                     );
                 }
+                MarkdownEvent::SubstitutedCode(text) => {
+                    self.push_markdown_code_span(&mut builder, text, range.clone(), cx);
+                }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
                     if html.starts_with("<!--") {
@@ -3951,6 +3954,25 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_escaped_pipes_in_inline_code_inside_tables(cx: &mut TestAppContext) {
+        let markdown = "\
+| Pattern | What it does |
+| --- | --- |
+| `^echo(\\s\\|$)` | command pattern |
+| `a\\|b` | alternation |
+| `(a\\|b)` | grouped alternation |
+| `a\\|\\|b` | empty middle alternative |";
+        let rendered = render_markdown(markdown, cx);
+        let text = rendered.text_for_range(0..markdown.len());
+
+        assert!(text.contains("^echo(\\s|$)"));
+        assert!(text.contains("a|b"));
+        assert!(text.contains("(a|b)"));
+        assert!(text.contains("a||b"));
+        assert!(!text.contains("\\|"));
+    }
+
     #[test]
     fn test_source_range_for_rendered_handles_split_chunks() {
         let mappings = vec![
@@ -4274,6 +4296,21 @@ mod tests {
                 .link_for_source_index(source.find("see").unwrap())
                 .is_none()
         );
+    }
+
+    #[gpui::test]
+    fn test_code_span_link_receives_decoded_inline_code(cx: &mut TestAppContext) {
+        let source = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/a-or-b");
     }
 
     #[gpui::test]
