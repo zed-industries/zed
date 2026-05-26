@@ -67,6 +67,8 @@ actions!(
         OpenDocs,
         /// Views open source licenses.
         OpenLicenses,
+        /// Opens the Zed status page.
+        OpenStatusPage,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -571,6 +573,8 @@ pub mod assistant {
             FocusAgent,
             /// Opens the skill creator window for creating a new skill.
             OpenSkillCreator,
+            /// Opens the skill creator window to import a skill from a GitHub URL.
+            CreateSkillFromUrl,
         ]
     );
 

@@ -217,6 +217,273 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
+/// `cat -n`-style numbered code block, already stripped of its line-number
+/// prefixes and ready to render. Line numbers are guaranteed to be contiguous
+/// starting at `first_number`, so we only store the first number and the line
+/// count rather than allocating a per-line `Vec`.
+struct ParsedCatNumberedCode {
+    code: String,
+    first_number: u32,
+    line_count: usize,
+}
+
+fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<ParsedCatNumberedCode> {
+    let (_tag, code) = parse_single_fenced_code_block(markdown)?;
+    parse_cat_numbered_code(code)
+}
+
+fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
+    let first_non_backtick = markdown.find(|character| character != '`')?;
+    if first_non_backtick < 3 {
+        return None;
+    }
+
+    let fence = &markdown[..first_non_backtick];
+    let after_opening_fence = &markdown[first_non_backtick..];
+    let tag_end = after_opening_fence.find('\n')?;
+    let tag = &after_opening_fence[..tag_end];
+    let after_tag = &after_opening_fence[tag_end + 1..];
+    let closing_fence = format!("\n{fence}\n");
+    let code = after_tag.strip_suffix(&closing_fence)?;
+    Some((tag, code))
+}
+
+/// Walks `code` exactly once: for each line it validates and strips the
+/// `NNN\t` prefix, then pushes the line's content into the accumulating
+/// code buffer (with `\n` between lines, no trailing newline). Verifies that
+/// the line numbers form a contiguous, increasing sequence.
+fn parse_cat_numbered_code(code: &str) -> Option<ParsedCatNumberedCode> {
+    if code.is_empty() {
+        return None;
+    }
+
+    let mut output = String::with_capacity(code.len());
+    let mut first_number = None;
+    let mut expected_number = None;
+    let mut line_count: usize = 0;
+    for raw_line in code.split_inclusive('\n') {
+        let line = strip_line_ending(raw_line);
+        let (number, text) = parse_cat_numbered_line(line)?;
+        if let Some(expected) = expected_number {
+            if number != expected {
+                return None;
+            }
+        } else {
+            first_number = Some(number);
+        }
+        expected_number = number.checked_add(1);
+        if line_count > 0 {
+            output.push('\n');
+        }
+        output.push_str(text);
+        line_count += 1;
+    }
+
+    Some(ParsedCatNumberedCode {
+        code: output,
+        first_number: first_number?,
+        line_count,
+    })
+}
+
+fn strip_line_ending(line: &str) -> &str {
+    let without_lf = line.strip_suffix('\n').unwrap_or(line);
+    without_lf.strip_suffix('\r').unwrap_or(without_lf)
+}
+
+fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
+    let (prefix, text) = line.split_once('\t')?;
+    let number = prefix.trim();
+    if number.is_empty()
+        || !prefix
+            .chars()
+            .all(|character| character == ' ' || character.is_ascii_digit())
+    {
+        return None;
+    }
+
+    Some((number.parse().ok()?, text))
+}
+
+fn render_cat_numbered_code_block(
+    parsed: ParsedCatNumberedCode,
+    language: Option<Arc<Language>>,
+    markdown_style: MarkdownStyle,
+    copy_button_id: String,
+    cx: &App,
+) -> AnyElement {
+    use std::fmt::Write as _;
+
+    let ParsedCatNumberedCode {
+        code,
+        first_number,
+        line_count,
+    } = parsed;
+
+    // Line numbers are contiguous (verified during parsing), so the largest
+    // line number is `first_number + line_count - 1`. Sizing the gutter to
+    // that number's digit count means every rendered line contributes exactly
+    // `gutter_width` bytes to the gutter, plus a newline between adjacent
+    // lines.
+    let last_number = first_number
+        .saturating_add(u32::try_from(line_count.saturating_sub(1)).unwrap_or(u32::MAX));
+    let gutter_width = last_number.to_string().len().max(1);
+    let gutter_capacity = line_count * gutter_width + line_count.saturating_sub(1);
+
+    let mut gutter = String::with_capacity(gutter_capacity);
+    for i in 0..line_count {
+        if i > 0 {
+            gutter.push('\n');
+        }
+        let line_number = first_number.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
+        // Writes to a `String` are infallible, so the `Result` can be ignored.
+        let _ = write!(&mut gutter, "{line_number:>gutter_width$}");
+    }
+
+    let mut code_text_style = markdown_style.base_text_style.clone();
+    code_text_style.refine(&markdown_style.code_block.text);
+
+    let mut gutter_text_style = code_text_style.clone();
+    gutter_text_style.color = cx.theme().colors().text_muted;
+
+    let gutter_len = gutter.len();
+    let gutter = StyledText::new(gutter).with_runs(vec![gutter_text_style.to_run(gutter_len)]);
+
+    // Share `code` between syntax highlighting, the rendered `StyledText`, and
+    // the copy button via a single `SharedString` (cheap `Arc` clones) instead
+    // of cloning the underlying `String`.
+    let code: SharedString = code.into();
+    let code_runs = highlight_code_runs(&code, language.as_ref(), code_text_style, &markdown_style);
+    let code_text = StyledText::new(code.clone()).with_runs(code_runs);
+
+    let code_block_id = format!("read-file-code-block-{copy_button_id}");
+    let code_scroll_id = format!("read-file-code-scroll-{copy_button_id}");
+    let mut container = div()
+        .id(code_block_id)
+        .group("read-file-code-block")
+        .relative()
+        .w_full()
+        .whitespace_nowrap();
+    container.style().refine(&markdown_style.code_block);
+
+    // `overflow_x_scroll` only actually scrolls when the container is laid out
+    // as a flex container: in GPUI the default `Display` is `Block`, and a
+    // block-level child fills its parent's content width instead of overflowing
+    // it, so there is nothing for the scroll viewport to scroll. Using `flex()`
+    // on the scroll wrapper plus `flex_none()` on the inner item lets the inner
+    // item take its natural width (the unwrapped code), which is what overflows.
+    // `restrict_scroll_to_axis` then keeps vertical wheel events flowing through
+    // to the outer thread scroller. This mirrors the standard markdown
+    // code-block path in `crates/markdown/src/markdown.rs`.
+    let mut code_scroll = div()
+        .id(code_scroll_id)
+        .flex()
+        .flex_1()
+        .min_w_0()
+        .overflow_x_scroll()
+        .child(div().flex_none().child(code_text));
+    code_scroll.style().restrict_scroll_to_axis = Some(true);
+
+    container
+        .child(
+            h_flex()
+                .items_start()
+                .min_w_0()
+                .w_full()
+                .child(div().flex_none().pr_3().child(gutter))
+                .child(code_scroll),
+        )
+        .child(
+            h_flex()
+                .w_4()
+                .absolute()
+                .top_0()
+                .right_0()
+                .justify_end()
+                .visible_on_hover("read-file-code-block")
+                .child(CopyButton::new(copy_button_id, code).tooltip_label("Copy Code")),
+        )
+        .into_any_element()
+}
+
+fn highlight_code_runs(
+    code: &str,
+    language: Option<&Arc<Language>>,
+    code_text_style: TextStyle,
+    markdown_style: &MarkdownStyle,
+) -> Vec<TextRun> {
+    if code.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(language) = language else {
+        return vec![code_text_style.to_run(code.len())];
+    };
+
+    let mut runs = Vec::new();
+    let mut offset = 0;
+    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
+        if range.start > offset {
+            runs.push(code_text_style.to_run(range.start - offset));
+        }
+
+        let mut run_style = code_text_style.clone();
+        if let Some(highlight) = markdown_style.syntax.get(highlight_id).cloned() {
+            run_style = run_style.highlight(highlight);
+        }
+        runs.push(run_style.to_run(range.len()));
+        offset = range.end;
+    }
+
+    if offset < code.len() {
+        runs.push(code_text_style.to_run(code.len() - offset));
+    }
+
+    runs
+}
+
+#[cfg(test)]
+mod numbered_code_block_tests {
+    use super::*;
+
+    #[test]
+    fn parses_cat_numbered_markdown_code_block() {
+        let parsed = parse_cat_numbered_markdown_code_block(
+            "```rs zed/crates/example.rs\n     2\tfn main() {\n     3\t    println!(\"hi\");\n     4\t}\n```\n",
+        )
+        .expect("cat-numbered block should parse");
+
+        assert_eq!(parsed.line_count, 3);
+        assert_eq!(parsed.first_number, 2);
+        assert_eq!(parsed.code, "fn main() {\n    println!(\"hi\");\n}");
+    }
+
+    #[test]
+    fn parses_cat_numbered_code_with_crlf_line_endings() {
+        let parsed = parse_cat_numbered_code("     1\tline one\r\n     2\tline two\r\n")
+            .expect("crlf-terminated cat-numbered code should parse");
+
+        assert_eq!(parsed.line_count, 2);
+        assert_eq!(parsed.first_number, 1);
+        assert_eq!(parsed.code, "line one\nline two");
+    }
+
+    #[test]
+    fn rejects_non_cat_numbered_code_block() {
+        assert!(parse_cat_numbered_markdown_code_block("```rs\nfn main() {}\n```\n").is_none());
+    }
+
+    #[test]
+    fn rejects_non_contiguous_cat_numbers() {
+        assert!(
+            parse_cat_numbered_markdown_code_block(
+                "```rs\n     2\tlet a = 1;\n     4\tlet b = 2;\n```\n"
+            )
+            .is_none()
+        );
+    }
+}
+
 /// Tracks the user's permission dropdown selection state for a specific tool call.
 ///
 /// Default (no entry in the map) means the last dropdown choice is selected,
@@ -365,6 +632,17 @@ pub struct TurnFields {
     pub turn_generation: usize,
     pub turn_started_at: Option<Instant>,
     pub turn_tokens: Option<u64>,
+}
+
+/// How a tool call is rendered relative to its surroundings.
+///
+/// `Standalone` draws its own border/margin/location header. `Embedded` is
+/// hosted by a container that provides its own framing (e.g. the subagent
+/// card or the main-agent awaiting-permission row).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum ToolCallLayout {
+    Standalone,
+    Embedded,
 }
 
 impl ThreadView {
@@ -2283,13 +2561,15 @@ impl ThreadView {
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
-        let subagents_awaiting_permission = self.render_subagents_awaiting_permission(cx);
-        let has_subagents_awaiting = subagents_awaiting_permission.is_some();
+        let awaiting_permission = self
+            .render_main_agent_awaiting_permission(window, cx)
+            .or_else(|| self.render_subagents_awaiting_permission(cx));
+        let has_awaiting_permission = awaiting_permission.is_some();
 
         if changed_buffers.is_empty()
             && plan.is_empty()
             && queue_is_empty
-            && !has_subagents_awaiting
+            && !has_awaiting_permission
         {
             return None;
         }
@@ -2329,11 +2609,9 @@ impl ThreadView {
                         blur_radius: px(2.),
                         spread_radius: px(0.),
                     }])
-                    .when_some(subagents_awaiting_permission, |this, element| {
-                        this.child(element)
-                    })
+                    .when_some(awaiting_permission, |this, element| this.child(element))
                     .when(
-                        has_subagents_awaiting
+                        has_awaiting_permission
                             && (!plan.is_empty() || !changed_buffers.is_empty() || !queue_is_empty),
                         |this| this.child(Divider::horizontal().color(DividerColor::Border)),
                     )
@@ -2721,6 +2999,93 @@ impl ThreadView {
                 )
                 .into_any(),
         )
+    }
+
+    /// Returns true when the entry has been measured and sits entirely below
+    /// the current viewport.
+    fn entry_is_below_viewport(&self, entry_ix: usize) -> bool {
+        let viewport_bounds = self.list_state.viewport_bounds();
+        self.list_state
+            .bounds_for_item(entry_ix)
+            .is_some_and(|entry_bounds| entry_bounds.top() >= viewport_bounds.bottom())
+    }
+
+    pub(crate) fn render_main_agent_awaiting_permission(
+        &self,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        if self.is_subagent() {
+            return None;
+        }
+
+        let active_session_id = self.thread.read(cx).session_id().clone();
+        let conversation = self.conversation.read(cx);
+        let tool_call_id = conversation.pending_tool_call_for_session(&active_session_id, cx)?;
+        let pending_count = conversation.pending_tool_call_count_for_session(&active_session_id);
+
+        let thread = self.thread.read(cx);
+        let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
+
+        if !self.entry_is_below_viewport(entry_ix) {
+            return None;
+        }
+
+        let focus_handle = self.focus_handle(cx);
+
+        let card = self.render_any_tool_call(
+            &active_session_id,
+            entry_ix,
+            tool_call,
+            &focus_handle,
+            ToolCallLayout::Embedded,
+            window,
+            cx,
+        );
+
+        let label: SharedString = if pending_count > 1 {
+            format!("Awaiting Confirmation ({pending_count})").into()
+        } else {
+            "Awaiting Confirmation".into()
+        };
+
+        let header = h_flex()
+            .p_1p5()
+            .pl_2()
+            .w_full()
+            .gap_1p5()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(
+                        h_flex()
+                            .w_2()
+                            .justify_center()
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
+                    )
+                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+            )
+            .child(
+                Button::new("main-agent-permission-scroll-to", "Scroll")
+                    .label_size(LabelSize::Small)
+                    .end_icon(
+                        Icon::new(IconName::ArrowDown)
+                            .size(IconSize::XSmall)
+                            .color(Color::Default),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.list_state.scroll_to(ListOffset {
+                            item_ix: entry_ix,
+                            offset_in_item: px(0.0),
+                        });
+                        cx.notify();
+                    })),
+            );
+
+        Some(v_flex().child(header).child(card).into_any())
     }
 
     fn render_message_queue_summary(
@@ -4864,7 +5229,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     &self.focus_handle(cx),
-                    false,
+                    ToolCallLayout::Standalone,
                     window,
                     cx,
                 );
@@ -6065,7 +6430,7 @@ impl ThreadView {
         terminal: &Entity<acp_thread::Terminal>,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
@@ -6282,7 +6647,7 @@ impl ThreadView {
             .and_then(|entry| entry.terminal(terminal));
 
         v_flex()
-            .when(!is_subagent, |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.my_1p5()
                     .mx_5()
                     .border_1()
@@ -6367,7 +6732,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6397,7 +6762,7 @@ impl ThreadView {
                         terminal,
                         tool_call,
                         focus_handle,
-                        is_subagent,
+                        layout,
                         window,
                         cx,
                     )
@@ -6408,7 +6773,7 @@ impl ThreadView {
                     entry_ix,
                     tool_call,
                     focus_handle,
-                    is_subagent,
+                    layout,
                     window,
                     cx,
                 ))
@@ -6422,7 +6787,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call: &ToolCall,
         focus_handle: &FocusHandle,
-        is_subagent: bool,
+        layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
@@ -6670,7 +7035,7 @@ impl ThreadView {
 
         v_flex()
             .map(|this| {
-                if is_subagent {
+                if layout == ToolCallLayout::Embedded {
                     this
                 } else if use_card_layout {
                     this.my_1p5()
@@ -6684,7 +7049,7 @@ impl ThreadView {
                     this.my_1()
                 }
             })
-            .when(!is_subagent, |this| {
+            .when(layout == ToolCallLayout::Standalone, |this| {
                 this.map(|this| {
                     if has_location && !use_card_layout {
                         this.ml_4()
@@ -7655,7 +8020,9 @@ impl ThreadView {
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
                         markdown.clone(),
+                        entry_ix,
                         context_ix,
+                        tool_call,
                         card_layout,
                         window,
                         cx,
@@ -7683,7 +8050,7 @@ impl ThreadView {
                 terminal,
                 tool_call,
                 focus_handle,
-                false,
+                ToolCallLayout::Standalone,
                 window,
                 cx,
             ),
@@ -7798,11 +8165,28 @@ impl ThreadView {
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
+        entry_ix: usize,
         context_ix: usize,
+        tool_call: &ToolCall,
         card_layout: bool,
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let markdown_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+        let output = self
+            .render_numbered_read_file_output(
+                markdown.clone(),
+                entry_ix,
+                context_ix,
+                tool_call,
+                markdown_style.clone(),
+                cx,
+            )
+            .unwrap_or_else(|| {
+                self.render_markdown(markdown, markdown_style, cx)
+                    .into_any()
+            });
+
         v_flex()
             .gap_2()
             .map(|this| {
@@ -7820,12 +8204,37 @@ impl ThreadView {
             })
             .text_xs()
             .text_color(cx.theme().colors().text_muted)
-            .child(self.render_markdown(
-                markdown,
-                MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                cx,
-            ))
+            .child(output)
             .into_any_element()
+    }
+
+    fn render_numbered_read_file_output(
+        &self,
+        markdown: Entity<Markdown>,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call: &ToolCall,
+        markdown_style: MarkdownStyle,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let is_read_file = tool_call
+            .tool_name
+            .as_ref()
+            .is_some_and(|tool_name| tool_name.as_ref() == "read_file");
+        if !is_read_file {
+            return None;
+        }
+
+        let markdown = markdown.read(cx);
+        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
+        let language = markdown.first_code_block_language();
+        Some(render_cat_numbered_code_block(
+            parsed,
+            language,
+            markdown_style,
+            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
+            cx,
+        ))
     }
 
     fn render_image_output(
@@ -8220,7 +8629,7 @@ impl ThreadView {
                                 entry_ix,
                                 tool_call,
                                 focus_handle,
-                                true,
+                                ToolCallLayout::Embedded,
                                 window,
                                 cx,
                             ))
@@ -8884,7 +9293,7 @@ impl ThreadView {
             .thread
             .read(cx)
             .connection()
-            .supports_session_additional_directories(cx)
+            .supports_session_additional_directories()
         {
             return None;
         }

@@ -1756,6 +1756,10 @@ impl Item for SplittableEditor {
         self.rhs_editor.read(cx).buffer_kind(cx)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+        self.rhs_editor.read(cx).active_project_path(cx)
+    }
+
     fn is_dirty(&self, cx: &App) -> bool {
         self.rhs_editor.read(cx).is_dirty(cx)
     }

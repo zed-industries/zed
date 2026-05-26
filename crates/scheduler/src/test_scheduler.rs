@@ -57,10 +57,14 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
+        let interactive = !std::env::var("SCHEDULER_NONINTERACTIVE").is_ok();
+
         (seed..seed + num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
-                eprintln!("Running seed: {seed}");
+                if interactive {
+                    eprintln!("Running seed: {seed}");
+                }
                 match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
                     Ok(result) => result,
                     Err(error) => {
