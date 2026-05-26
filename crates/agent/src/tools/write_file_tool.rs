@@ -237,6 +237,7 @@ impl AgentTool for WriteFileTool {
             run_session(
                 self.process_streaming_writes(&mut input, &event_stream, cx)
                     .await,
+                &event_stream,
                 cx,
             )
             .await

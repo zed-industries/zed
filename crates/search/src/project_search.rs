@@ -679,6 +679,10 @@ impl Item for ProjectSearchView {
         self.results_editor.for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.results_editor.read(cx).active_project_path(cx)
+    }
+
     fn can_save(&self, _: &App) -> bool {
         true
     }

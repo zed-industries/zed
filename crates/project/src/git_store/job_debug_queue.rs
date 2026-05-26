@@ -80,6 +80,18 @@ impl GitJobDebugQueue {
         });
     }
 
+    pub fn mark_unfinished_complete(&mut self, status: CompletedJobStatus) {
+        let ids = self
+            .pending
+            .iter()
+            .map(|job| job.id)
+            .chain(self.running.iter().map(|job| job.id))
+            .collect::<Vec<_>>();
+        for id in ids {
+            self.mark_complete(id, status);
+        }
+    }
+
     pub fn mark_complete(&mut self, id: JobId, status: CompletedJobStatus) {
         let (enqueued_at, started_at, description, key) =
             if let Some(index) = self.running.iter().position(|job| job.id == id) {

@@ -422,6 +422,23 @@ struct SidebarContents {
     has_open_projects: bool,
 }
 
+/// Identity-and-layout key for a [`ListEntry`] used to preserve measured list items
+/// across rebuilds. Equal shapes must render to the same height; add any new
+/// height-affecting state here.
+#[derive(Debug, PartialEq, Eq)]
+enum EntryShape {
+    ProjectHeader {
+        key: ProjectGroupKey,
+        // Toggles the "No threads yet" empty-state row when not collapsed.
+        has_threads: bool,
+        // Determines whether the "No threads yet" row is rendered (only shown when
+        // `!is_collapsed && !has_threads`).
+        is_collapsed: bool,
+    },
+    Thread(ThreadId),
+    Terminal(TerminalId),
+}
+
 impl SidebarContents {
     fn is_thread_notified(&self, thread_id: &agent_ui::ThreadId) -> bool {
         self.notified_threads.contains(thread_id)
@@ -1837,13 +1854,14 @@ impl Sidebar {
         }
 
         let had_notifications = self.has_notifications(cx);
-        let scroll_position = self.list_state.logical_scroll_top();
+        let previous_shapes: Vec<EntryShape> =
+            self.entry_shapes(multi_workspace.read(cx)).collect();
 
         self.rebuild_contents(cx);
         self.refresh_draft_editor_observations(cx);
 
-        self.list_state.reset(self.contents.entries.len());
-        self.list_state.scroll_to(scroll_position);
+        // Preserve measurements for unchanged entries so sticky headers do not flicker.
+        self.apply_list_state_diff(&previous_shapes, multi_workspace.read(cx));
 
         if had_notifications != self.has_notifications(cx) {
             multi_workspace.update(cx, |_, cx| {
@@ -1852,6 +1870,56 @@ impl Sidebar {
         }
 
         cx.notify();
+    }
+
+    /// Splices only the changed entry range, leaving unchanged item measurements intact.
+    fn apply_list_state_diff(
+        &self,
+        previous_shapes: &[EntryShape],
+        multi_workspace: &MultiWorkspace,
+    ) {
+        let mut new_iter = self.entry_shapes(multi_workspace);
+        let mut prefix_len = 0;
+        let leading_new = loop {
+            match (previous_shapes.get(prefix_len), new_iter.next()) {
+                (Some(prev), Some(next)) if *prev == next => prefix_len += 1,
+                (None, None) => return,
+                (_, leading) => break leading,
+            }
+        };
+
+        let new_tail: Vec<EntryShape> = leading_new.into_iter().chain(new_iter).collect();
+        let prev_tail = &previous_shapes[prefix_len..];
+        let suffix_len = prev_tail
+            .iter()
+            .rev()
+            .zip(new_tail.iter().rev())
+            .take_while(|(prev, next)| prev == next)
+            .count();
+
+        let old_changed = prefix_len..previous_shapes.len() - suffix_len;
+        let new_changed_count = new_tail.len() - suffix_len;
+        self.list_state.splice(old_changed, new_changed_count);
+    }
+
+    fn entry_shapes<'a>(
+        &'a self,
+        multi_workspace: &'a MultiWorkspace,
+    ) -> impl Iterator<Item = EntryShape> + 'a {
+        self.contents.entries.iter().map(move |entry| match entry {
+            ListEntry::ProjectHeader {
+                key, has_threads, ..
+            } => EntryShape::ProjectHeader {
+                key: key.clone(),
+                has_threads: *has_threads,
+                is_collapsed: multi_workspace
+                    .group_state_by_key(key)
+                    .map(|state| !state.expanded)
+                    .unwrap_or(false),
+            },
+            ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
+            ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
+        })
     }
 
     /// Re-establishes subscriptions to each visible draft's message editor

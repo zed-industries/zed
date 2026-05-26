@@ -651,7 +651,7 @@ pub fn parse_order_spec(spec: &str) -> Vec<BTreeSet<usize>> {
     order
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditLocation {
     pub filename: String,
     pub source_line_number: usize,
@@ -667,8 +667,8 @@ pub enum EditType {
     Insertion,
 }
 
-pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLocation> {
-    let mut edit_locations = vec![];
+pub fn edit_locations(patch: &Patch) -> Vec<EditLocation> {
+    let mut edit_locations = Vec::new();
 
     for (hunk_index, hunk) in patch.hunks.iter().enumerate() {
         let mut old_line_number = hunk.old_start;
@@ -723,6 +723,12 @@ pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLo
             };
         }
     }
+
+    edit_locations
+}
+
+pub fn locate_edited_line(patch: &Patch, mut edit_index: isize) -> Option<EditLocation> {
+    let mut edit_locations = edit_locations(patch);
 
     if edit_index < 0 {
         edit_index += edit_locations.len() as isize; // take from end
@@ -845,6 +851,8 @@ mod tests {
             -zinc
         "};
         let patch = Patch::parse_unified_diff(patch_str);
+        let locations = edit_locations(&patch);
+        assert_eq!(locations.len(), 4);
 
         assert_eq!(
             locate_edited_line(&patch, 0), // -blue
