@@ -14723,6 +14723,7 @@ dependencies = [
  "smol",
  "sysinfo 0.37.2",
  "task",
+ "tempfile",
  "theme",
  "theme_settings",
  "thiserror 2.0.17",
