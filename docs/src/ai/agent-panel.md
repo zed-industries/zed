@@ -200,8 +200,8 @@ You can rate agent responses to help improve Zed's system prompt and tools.
 > See [Feedback and Training Data](./ai-improvement.md) and
 > [AI Privacy](./privacy-and-security.md) for more information.
 > **_If you don't want data persisted on Zed's servers, don't rate_**.
-> We will not collect data for improving Zed Agent without you explicitly rating
-> responses.
+> We will not collect data for improving Zed's agent experience without you
+> explicitly rating responses.
 
 To help improve Zed's system prompt and tools, rate responses with the thumbs up/down controls at the end of each response.
 In case of a thumbs down, a new text area will show up where you can add more specifics about what happened.
