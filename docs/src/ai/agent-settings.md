@@ -77,6 +77,10 @@ Zed supports feature-specific model settings for Inline Assistant, Git commit ge
 
 See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
 
+## Model Temperature {#model-temperature}
+
+Most Zed AI features use the selected model's default generation behavior. Configure feature-specific models in settings when you need a different model for a workflow. For provider-specific model parameters such as custom model entries, context windows, or gateway routing, see [LLM Providers](./llm-providers.md) and the provider setup pages.
+
 ## Rules, Skills, and Instructions {#rules-skills-instructions}
 
 Reusable Rules have been replaced by [Skills](./skills.md). Always-on Rules have moved to [Instructions](./instructions.md), including personal `AGENTS.md` and project instruction files.

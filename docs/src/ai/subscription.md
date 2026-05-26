@@ -1,7 +1,6 @@
 ---
 title: Subscription (Moved)
 description: Zed-hosted model and subscription details have moved to Account & Billing.
-redirect_to: ../account/zed-hosted-models.md
 ---
 
 # Subscription

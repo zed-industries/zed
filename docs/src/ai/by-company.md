@@ -22,25 +22,25 @@ For detailed setup, follow the links in the `Setup` column. This page answers ro
 | -------------------- | ----------------- | ----------------------------------------------------- | --------------------- | ------------------------------------------------------------------------- |
 | ChatGPT Subscription | Configured in Zed | Subscription-backed OpenAI models for Zed AI features | ChatGPT Plus or Pro   | [Use an Existing Subscription](./use-an-existing-subscription.md#chatgpt) |
 | OpenAI API           | Configured in Zed | OpenAI models through API access                      | OpenAI API billing    | [Use API Access](./use-api-access.md#openai)                              |
-| Codex via ACP        | Hosted in Zed     | Codex in an external agent thread                     | Owned by Codex/OpenAI | [External Agents](./external-agents.md#common-agents)                     |
+| Codex via ACP        | Hosted in Zed     | Codex in an external agent thread                     | Owned by Codex/OpenAI | [External Agents](./external-agents.md#codex-cli)                         |
 | Codex CLI            | Run in terminal   | Native Codex CLI experience in a terminal thread      | Owned by Codex/OpenAI | [Terminal Threads](./terminal-threads.md)                                 |
 
 ## Anthropic / Claude / Claude Code {#anthropic-claude}
 
-| Path                 | Support level     | What you get                                       | Account / billing                       | Setup                                                 |
-| -------------------- | ----------------- | -------------------------------------------------- | --------------------------------------- | ----------------------------------------------------- |
-| Anthropic API        | Configured in Zed | Claude models through API access                   | Anthropic API billing                   | [Use API Access](./use-api-access.md#anthropic)       |
-| Claude Agent via ACP | Hosted in Zed     | Claude in an external agent thread                 | Owned by Claude/Anthropic               | [External Agents](./external-agents.md#common-agents) |
-| Claude Code CLI      | Run in terminal   | Native Claude Code experience in a terminal thread | Claude subscription or Claude Code auth | [Terminal Threads](./terminal-threads.md)             |
+| Path                 | Support level     | What you get                                       | Account / billing                       | Setup                                                |
+| -------------------- | ----------------- | -------------------------------------------------- | --------------------------------------- | ---------------------------------------------------- |
+| Anthropic API        | Configured in Zed | Claude models through API access                   | Anthropic API billing                   | [Use API Access](./use-api-access.md#anthropic)      |
+| Claude Agent via ACP | Hosted in Zed     | Claude in an external agent thread                 | Owned by Claude/Anthropic               | [External Agents](./external-agents.md#claude-agent) |
+| Claude Code CLI      | Run in terminal   | Native Claude Code experience in a terminal thread | Claude subscription or Claude Code auth | [Terminal Threads](./terminal-threads.md)            |
 
 Claude Pro and Max subscriptions are separate from Anthropic API credits. If you want Claude subscription-limit behavior, use Claude Agent or Claude Code where supported. See [Use an Existing Subscription](./use-an-existing-subscription.md#claude).
 
 ## Google / Gemini / Gemini CLI {#google-gemini}
 
-| Path          | Support level     | What you get                                      | Account / billing     | Setup                                           |
-| ------------- | ----------------- | ------------------------------------------------- | --------------------- | ----------------------------------------------- |
-| Google AI API | Configured in Zed | Gemini models through API access                  | Google AI API billing | [Use API Access](./use-api-access.md#google-ai) |
-| Gemini CLI    | Run in terminal   | Native Gemini CLI experience in a terminal thread | Owned by Gemini CLI   | [Terminal Threads](./terminal-threads.md)       |
+| Path          | Support level                    | What you get                                      | Account / billing     | Setup                                              |
+| ------------- | -------------------------------- | ------------------------------------------------- | --------------------- | -------------------------------------------------- |
+| Google AI API | Configured in Zed                | Gemini models through API access                  | Google AI API billing | [Use API Access](./use-api-access.md#google-ai)    |
+| Gemini CLI    | Hosted in Zed or run in terminal | Gemini CLI as an external agent or native CLI/TUI | Owned by Gemini CLI   | [External Agents](./external-agents.md#gemini-cli) |
 
 ## GitHub / Copilot {#github-copilot}
 
@@ -48,7 +48,7 @@ Claude Pro and Max subscriptions are separate from Anthropic API credits. If you
 | ----------------------- | ----------------- | ---------------------------------------------------- | --------------------------- | -------------------------------------------------------------------------------- |
 | GitHub Copilot Chat     | Configured in Zed | Copilot Chat models for Zed AI features              | GitHub Copilot/Copilot Chat | [Use an Existing Subscription](./use-an-existing-subscription.md#github-copilot) |
 | Copilot edit prediction | Built into Zed    | Edit prediction provider option                      | GitHub Copilot              | [Edit Prediction](./edit-prediction.md)                                          |
-| Copilot external agent  | Hosted in Zed     | Copilot in an external agent thread, where available | Owned by Copilot            | [External Agents](./external-agents.md#common-agents)                            |
+| Copilot external agent  | Hosted in Zed     | Copilot in an external agent thread, where available | Owned by Copilot            | [External Agents](./external-agents.md#copilot)                                  |
 | Copilot CLI             | Run in terminal   | Native CLI experience, where available               | Owned by Copilot            | [Terminal Threads](./terminal-threads.md)                                        |
 
 ## OpenCode / Zen / Go {#opencode}
@@ -56,24 +56,24 @@ Claude Pro and Max subscriptions are separate from Anthropic API credits. If you
 | Path                    | Support level     | What you get                                          | Account / billing                                    | Setup                                                                      |
 | ----------------------- | ----------------- | ----------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------- |
 | OpenCode provider       | Configured in Zed | OpenCode models for Zed AI features                   | OpenCode API key; Zen or Go affects available models | [Use an Existing Subscription](./use-an-existing-subscription.md#opencode) |
-| OpenCode external agent | Hosted in Zed     | OpenCode in an external agent thread, where available | Owned by OpenCode                                    | [External Agents](./external-agents.md#common-agents)                      |
+| OpenCode external agent | Hosted in Zed     | OpenCode in an external agent thread, where available | Owned by OpenCode                                    | [External Agents](./external-agents.md#opencode)                           |
 | `opencode` CLI          | Run in terminal   | Native OpenCode CLI experience                        | Owned by OpenCode                                    | [Terminal Threads](./terminal-threads.md)                                  |
 
 ## Cursor {#cursor}
 
-| Path                  | Support level   | What you get                                           | Account / billing           | Setup                                                 |
-| --------------------- | --------------- | ------------------------------------------------------ | --------------------------- | ----------------------------------------------------- |
-| Cursor external agent | Hosted in Zed   | Cursor in an external agent thread, where available    | Cursor account/subscription | [External Agents](./external-agents.md#common-agents) |
-| Cursor CLI/TUI        | Run in terminal | Native Cursor command-line experience, where available | Cursor account/subscription | [Terminal Threads](./terminal-threads.md)             |
+| Path                  | Support level   | What you get                                           | Account / billing           | Setup                                          |
+| --------------------- | --------------- | ------------------------------------------------------ | --------------------------- | ---------------------------------------------- |
+| Cursor external agent | Hosted in Zed   | Cursor in an external agent thread, where available    | Cursor account/subscription | [External Agents](./external-agents.md#cursor) |
+| Cursor CLI/TUI        | Run in terminal | Native Cursor command-line experience, where available | Cursor account/subscription | [Terminal Threads](./terminal-threads.md)      |
 
 Cursor subscriptions do not configure Zed's LLM provider settings. If you want to use a work Cursor subscription in Zed, use the Cursor external agent or a terminal-thread workflow where available.
 
 ## Pi Coding Agent {#pi}
 
-| Path            | Support level   | What you get                                       | Account / billing | Setup                                                 |
-| --------------- | --------------- | -------------------------------------------------- | ----------------- | ----------------------------------------------------- |
-| Pi Coding Agent | Hosted in Zed   | Pi in an external agent thread, where available    | Owned by Pi       | [External Agents](./external-agents.md#common-agents) |
-| Pi CLI/TUI      | Run in terminal | Native Pi command-line experience, where available | Owned by Pi       | [Terminal Threads](./terminal-threads.md)             |
+| Path            | Support level   | What you get                                       | Account / billing | Setup                                      |
+| --------------- | --------------- | -------------------------------------------------- | ----------------- | ------------------------------------------ |
+| Pi Coding Agent | Hosted in Zed   | Pi in an external agent thread, where available    | Owned by Pi       | [External Agents](./external-agents.md#pi) |
+| Pi CLI/TUI      | Run in terminal | Native Pi command-line experience, where available | Owned by Pi       | [Terminal Threads](./terminal-threads.md)  |
 
 Pi is an agent harness, not a Zed LLM subscription. Pi may support provider auth such as ChatGPT, Claude, or Copilot through its own setup flow.
 

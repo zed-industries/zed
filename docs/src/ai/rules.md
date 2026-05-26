@@ -1,7 +1,6 @@
 ---
 title: Rules (Replaced by Skills)
 description: Rules have been replaced by Skills and Instructions in Zed.
-redirect_to: ./skills.md
 ---
 
 # Rules

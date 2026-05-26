@@ -44,3 +44,7 @@ Use the child pages for provider-specific details and setup steps.
 ## Edit Prediction {#edit-prediction}
 
 [Edit Prediction](./edit-prediction.md) has its own provider setup under `edit_predictions`. LLM providers on this page apply to model-backed Zed AI features such as Zed Agent, Inline Assistant, Git commit generation, and thread summaries.
+
+## OpenAI-Compatible Providers {#openai-api-compatible}
+
+OpenAI-compatible provider setup has moved to [Use API Access](./use-api-access.md#openai-compatible).

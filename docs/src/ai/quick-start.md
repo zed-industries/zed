@@ -40,13 +40,11 @@ Provider keys saved through Zed are stored in the system keychain, not in `setti
 
 ## I want to change AI settings {#ai-settings}
 
-| If you want to...                                                           | Go to                                 |
-| --------------------------------------------------------------------------- | ------------------------------------- |
-| Configure LLM providers, external agents, or MCP servers                    | [Agent Settings](./agent-settings.md) |
-| Disable AI, configure tool permissions, or set up edit prediction providers | Settings Editor                       |
-| Edit advanced JSON-only settings                                            | Settings file                         |
-
-Open Agent Settings with {#action agent::OpenSettings}. Open the Settings Editor with {#action zed::OpenSettings}. Open your settings file with {#action zed::OpenSettingsFile}.
+| If you want to...                                                           | Go to                                                                    |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Configure LLM providers, external agents, or MCP servers                    | [Agent Settings](./agent-settings.md) with {#action agent::OpenSettings} |
+| Disable AI, configure tool permissions, or set up edit prediction providers | Settings Editor with {#action zed::OpenSettings}                         |
+| Edit advanced JSON-only settings                                            | Settings file with {#action zed::OpenSettingsFile}                       |
 
 For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 

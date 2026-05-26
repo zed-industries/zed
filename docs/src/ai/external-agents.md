@@ -30,6 +30,54 @@ Common external agents include:
 
 This list is curated, not exhaustive. Open the ACP Registry in Zed for the current list of available agents.
 
+## Claude Agent {#claude-agent}
+
+Use Claude Agent when you want Claude running as an ACP-integrated external agent in Zed.
+
+Install Claude Agent from the [ACP Registry](#registry), then start a Claude Agent thread from the Agent Panel or Threads Sidebar. Claude Agent owns its own authentication and billing. An Anthropic API key configured for [Zed Agent](./zed-agent.md) does not automatically configure Claude Agent.
+
+To choose your billing method, open a Claude Agent thread, run `/login`, and authenticate with an API key or with Claude Code where supported. Claude-specific files such as `CLAUDE.md` may be read by Claude Agent directly.
+
+## Codex {#codex-cli}
+
+Use Codex when you want Codex running as an ACP-integrated external agent in Zed.
+
+Install Codex from the [ACP Registry](#registry), then start a Codex thread from the Agent Panel or Threads Sidebar. Codex owns its own authentication and billing. An OpenAI API key configured for [Zed Agent](./zed-agent.md) does not automatically configure Codex.
+
+Codex may support ChatGPT login, Codex API keys, OpenAI API keys, or Codex-native configuration depending on the installed version and environment. To change authentication, use the Codex thread's native login/logout flow.
+
+## Gemini CLI {#gemini-cli}
+
+Use Gemini CLI when you want Gemini running as an ACP-integrated external agent in Zed.
+
+Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
+
+If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI may use that key. Zed-configured Google AI provider settings are separate from Gemini CLI's native configuration.
+
+## OpenCode {#opencode}
+
+Use OpenCode when you want OpenCode running as an ACP-integrated external agent in Zed.
+
+Install OpenCode from the [ACP Registry](#registry), then start an OpenCode thread from the Agent Panel or Threads Sidebar. OpenCode owns its own auth, model selection, and subscription behavior. To use OpenCode models in Zed Agent instead, configure [OpenCode API access](./use-api-access.md#opencode).
+
+## Copilot {#copilot}
+
+Use Copilot external agents where available when you want Copilot running as an ACP-integrated external agent in Zed.
+
+Copilot agent auth is owned by the Copilot integration. To use Copilot Chat models in Zed Agent or Copilot for edit prediction, see [Use an Existing Subscription](./use-an-existing-subscription.md#github-copilot).
+
+## Cursor {#cursor}
+
+Use Cursor external agents where available when you want Cursor running as an ACP-integrated external agent in Zed.
+
+Cursor subscriptions do not configure Zed's LLM provider settings. Use Cursor's external-agent or CLI/TUI setup where available.
+
+## Pi Coding Agent {#pi}
+
+Use Pi Coding Agent when you want Pi running as an ACP-integrated external agent in Zed.
+
+Pi is an agent harness, not a Zed LLM subscription. Configure any provider auth, subscriptions, tools, or model choices in Pi.
+
 ## Start an External Agent Thread {#start-thread}
 
 Open the [Agent Panel](./agent-panel.md), then use the agent selector or the new-thread menu to start a thread with an installed external agent.

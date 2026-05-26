@@ -64,33 +64,121 @@ External agents and terminal threads may run their own processes and use their o
 
 Use Anthropic API access when you have an Anthropic API key or API credits. Claude Pro and Max subscriptions are separate; see [Use an Existing Subscription](./use-an-existing-subscription.md#claude).
 
+1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys).
+2. Make sure your Anthropic account has API credits.
+3. Open Agent Settings with {#action agent::OpenSettings} and go to the Anthropic section.
+4. Enter your Anthropic API key.
+
+Zed also reads `ANTHROPIC_API_KEY` from the local Zed process environment.
+
 ### OpenAI API {#openai}
 
 Use OpenAI API access when you have an OpenAI API key or API billing. ChatGPT Plus and Pro subscriptions use a different setup path; see [Use an Existing Subscription](./use-an-existing-subscription.md#chatgpt).
+
+1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys).
+2. Make sure your OpenAI account has credits or billing enabled.
+3. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenAI section.
+4. Enter your OpenAI API key.
+
+Zed also reads `OPENAI_API_KEY` from the local Zed process environment.
+
+#### Custom OpenAI Models {#openai-custom-models}
+
+Add custom OpenAI models in your settings file when you need alternate model IDs, preview releases, or custom request parameters.
+
+```json [settings]
+{
+  "language_models": {
+    "openai": {
+      "available_models": [
+        {
+          "name": "gpt-5.2",
+          "display_name": "gpt-5.2 high",
+          "reasoning_effort": "high",
+          "max_tokens": 272000,
+          "max_completion_tokens": 20000
+        }
+      ]
+    }
+  }
+}
+```
+
+You must provide the model's context window in `max_tokens`. For reasoning-focused models, set `max_completion_tokens` to avoid high reasoning-token costs.
 
 ### Google AI {#google-ai}
 
 Use Google AI API access when you have a Gemini API key.
 
+1. Go to Google AI Studio and [create an API key](https://aistudio.google.com/app/apikey).
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the Google AI section.
+3. Enter your Google AI API key.
+
+Zed reads `GEMINI_API_KEY`, falling back to `GOOGLE_AI_API_KEY`, from the local Zed process environment.
+
 ### Mistral {#mistral}
 
 Use Mistral API access when you have a Mistral API key.
+
+1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/).
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the Mistral section.
+3. Enter your Mistral API key.
+
+Zed also reads `MISTRAL_API_KEY` from the local Zed process environment.
 
 ### DeepSeek {#deepseek}
 
 Use DeepSeek API access when you have paid API usage, top-ups, or an API key. In Zed, DeepSeek is API access, not subscription sign-in.
 
+1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys).
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the DeepSeek section.
+3. Enter your DeepSeek API key.
+
+Zed also reads `DEEPSEEK_API_KEY` from the local Zed process environment.
+
 ### xAI {#xai}
 
 Use xAI API access when you have an xAI API key.
+
+1. [Create an API key in the xAI Console](https://console.x.ai/team/default/api-keys).
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the xAI section.
+3. Enter your xAI API key.
+
+Zed also reads `XAI_API_KEY` from the local Zed process environment.
 
 ### OpenCode API {#opencode}
 
 Use OpenCode API access when you have an OpenCode API key. OpenCode Zen and Go affect which OpenCode models are available.
 
+1. Visit [OpenCode Console](https://opencode.ai/auth) and create an account.
+2. Free models are available without payment. To use Zen or Go models, make sure you have enough credits or an active subscription.
+3. Generate an API key from the API Keys section in the OpenCode Console.
+4. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenCode section.
+5. Enter your OpenCode API key.
+
+Zed also reads `OPENCODE_API_KEY` from the local Zed process environment.
+
+By default, models from all OpenCode subscription types are shown. You can hide subscriptions that are not relevant to you in the provider UI or in settings:
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "show_zen_models": true,
+      "show_go_models": false,
+      "show_free_models": false
+    }
+  }
+}
+```
+
 ### OpenAI-Compatible Endpoints {#openai-compatible}
 
 Use an OpenAI-compatible endpoint when you have a custom base URL, model ID, and API key.
+
+You can add a custom OpenAI-compatible provider from Agent Settings with {#action agent::OpenSettings}. Look for `Add Provider` in the LLM Providers section and fill in the provider name, API URL, model ID, and context window.
+
+You can also configure the provider in your settings file:
 
 ```json [settings]
 {
@@ -110,5 +198,16 @@ Use an OpenAI-compatible endpoint when you have a custom base URL, model ID, and
   }
 }
 ```
+
+By default, OpenAI-compatible models inherit these capabilities:
+
+- `tools`: `true`
+- `images`: `false`
+- `parallel_tool_calls`: `false`
+- `prompt_cache_key`: `false`
+- `chat_completions`: `true`
+- `interleaved_reasoning`: `false`
+
+If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
 
 Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`.
