@@ -24,6 +24,7 @@ import functools
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -47,6 +48,8 @@ BOT_START_DATE = "2026-02-18"
 NEEDS_TRIAGE_LABEL = "state:needs triage"
 DEFAULT_PROJECT_NUMBER = 76
 VALID_CLOSED_AS_VALUES = {"duplicate", "not_planned", "completed"}
+# HTTP statuses we'll retry on for GET requests
+TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
 # Add a new tuple when you deploy a new version of the bot that you want to
 # keep track of (e.g. the prompt gets a rewrite or the model gets swapped).
 # Newest first, please. The datetime is for the deployment time (merge to main).
@@ -67,10 +70,22 @@ def bot_version_for_time(date_string):
 
 
 def github_api_get(path, params=None):
+    """Fetch JSON from the GitHub REST API, retrying transient failures. Raises on non-2xx status."""
     url = f"{GITHUB_API}/{path.lstrip('/')}"
-    response = requests.get(url, headers=GITHUB_HEADERS, params=params)
-    response.raise_for_status()
-    return response.json()
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=GITHUB_HEADERS, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
+                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
+            )
+            if not transient or attempt == 2:
+                raise
+            wait = 2 ** attempt
+            print(f"  Transient GitHub API error ({e}); retrying in {wait}s")
+            time.sleep(wait)
 
 
 def github_search_issues(query):
@@ -409,11 +424,10 @@ def classify_as_assist(issue, bot_comment):
             bot_comment_time=bot_comment["created_at"])
         return
 
-    original = None
-    try:
-        original = find_canonical_among(issue["number"], suggested)
-    except (requests.RequestException, RuntimeError) as error:
-        print(f"  Warning: failed to query candidate timelines: {error}")
+    # Let exceptions from find_canonical_among propagate — a query failure here is
+    # not the same as "no canonical match" and shouldn't be silently downgraded to
+    # a Needs review entry. Failing the workflow surfaces the problem immediately.
+    original = find_canonical_among(issue["number"], suggested)
 
     if original:
         status = "Auto-classified"
@@ -483,6 +497,8 @@ def classify_open():
             errors += 1
 
     print(f"  Done: added {added}, skipped {skipped}, errors {errors}")
+    if errors > 0:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
