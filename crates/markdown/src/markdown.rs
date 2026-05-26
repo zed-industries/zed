@@ -2363,6 +2363,9 @@ impl Element for MarkdownElement {
                         cx,
                     );
                 }
+                MarkdownEvent::SubstitutedCode(text) => {
+                    self.push_markdown_code_span(&mut builder, text, range.clone(), cx);
+                }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
                     if html.starts_with("<!--") {
