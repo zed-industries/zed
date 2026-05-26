@@ -15,6 +15,8 @@ A skill is a folder containing a `SKILL.md` file with metadata and instructions.
 
 Zed includes a built-in `create-skill` skill that guides the agent through creating a new skill. Invoke it with `/create-skill`, or let the agent pick it up automatically when you ask it to help create a skill.
 
+Lastly, it's also possible to add a skill through importing it from an existing GitHub Markdown file. Open the command paeltte and look for the {#action agent::CreateSkillFromUrl} action. If your clipboard contains a supported GitHub `.md` URL, Zed pre-fills and fetches it automatically.
+
 See [Skill format](#skill-format) below for the folder structure and `SKILL.md` reference.
 
 ### From the skills.sh Registry {#from-the-registry}

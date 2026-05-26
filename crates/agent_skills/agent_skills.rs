@@ -242,17 +242,7 @@ pub fn parse_skill_frontmatter(
     content: &str,
     source: SkillSource,
 ) -> Result<Skill> {
-    if content.len() > MAX_SKILL_FILE_SIZE {
-        anyhow::bail!(
-            "SKILL.md file exceeds maximum size of {}KB",
-            MAX_SKILL_FILE_SIZE / 1024
-        );
-    }
-
-    let (metadata, _body) = extract_frontmatter(content)?;
-
-    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
-    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+    let (metadata, _body) = parse_skill_file_content(content)?;
 
     let directory_path = skill_file_path
         .parent()
@@ -268,6 +258,29 @@ pub fn parse_skill_frontmatter(
         disable_model_invocation: metadata.disable_model_invocation,
         embedded_body: None,
     })
+}
+
+/// Extract the YAML frontmatter and body from a SKILL.md file without
+/// validating the metadata fields.
+pub fn extract_skill_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
+    if content.len() > MAX_SKILL_FILE_SIZE {
+        anyhow::bail!(
+            "SKILL.md file exceeds maximum size of {}KB",
+            MAX_SKILL_FILE_SIZE / 1024
+        );
+    }
+
+    extract_frontmatter(content)
+}
+
+/// Parse and validate the YAML frontmatter and body from a SKILL.md file.
+pub fn parse_skill_file_content(content: &str) -> Result<(SkillMetadata, &str)> {
+    let (metadata, body) = extract_skill_frontmatter(content)?;
+
+    validate_name(&metadata.name).map_err(anyhow::Error::msg)?;
+    validate_description(&metadata.description).map_err(anyhow::Error::msg)?;
+
+    Ok((metadata, body))
 }
 
 fn extract_frontmatter(content: &str) -> Result<(SkillMetadata, &str)> {
@@ -847,6 +860,26 @@ Do the thing.
         assert_eq!(skill.directory_path, Path::new("/skills/my-skill"));
         // Default: skill is invocable by both model and user.
         assert!(!skill.disable_model_invocation);
+    }
+
+    #[test]
+    fn test_parse_skill_file_content_returns_body() {
+        let content = r#"---
+name: my-skill
+description: A test skill for testing purposes
+---
+
+# My Skill
+
+Do the thing.
+"#;
+
+        let (metadata, body) = parse_skill_file_content(content)
+            .expect("valid skill content should parse successfully");
+
+        assert_eq!(metadata.name, "my-skill");
+        assert_eq!(metadata.description, "A test skill for testing purposes");
+        assert_eq!(body.trim(), "# My Skill\n\nDo the thing.");
     }
 
     #[test]
