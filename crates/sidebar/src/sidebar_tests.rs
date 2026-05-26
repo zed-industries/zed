@@ -640,8 +640,8 @@ async fn test_thread_metadata_update_preserves_sticky_header_measurements(cx: &m
 
     let next_header_ix = sidebar.read_with(cx, |sidebar, _| {
         assert!(
-            sidebar.contents.project_header_indices.len() >= 2,
-            "test setup should render at least two project headers"
+            sidebar.contents.project_header_indices.len() == 2,
+            "test setup should render exctly two project headers"
         );
         sidebar.contents.project_header_indices[1]
     });
