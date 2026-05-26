@@ -486,6 +486,7 @@ dependencies = [
  "language_models",
  "languages",
  "log",
+ "lru",
  "lsp",
  "markdown",
  "menu",
@@ -4038,9 +4039,9 @@ dependencies = [
 
 [[package]]
 name = "cosmic-text"
-version = "0.17.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c5c9868e64aa6c5410629a83450e142c80e721c727a5bc0fb18107af6c2d66b"
+checksum = "be17b688510d934ce13f48a2beba700e11583e281e0fda99c22bb256a14eda73"
 dependencies = [
  "bitflags 2.10.0",
  "fontdb",
@@ -5063,6 +5064,7 @@ dependencies = [
  "gpui",
  "http 1.3.1",
  "http_client",
+ "indoc",
  "log",
  "menu",
  "paths",
@@ -5072,6 +5074,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
+ "serde_yaml",
  "settings",
  "shlex",
  "ui",
@@ -6291,7 +6294,6 @@ name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "cloud_api_types",
  "collections",
  "db",
@@ -7586,6 +7588,7 @@ dependencies = [
  "settings",
  "smallvec",
  "strum 0.27.2",
+ "sysinfo 0.37.2",
  "task",
  "telemetry",
  "theme",
@@ -16818,7 +16821,9 @@ dependencies = [
  "anyhow",
  "editor",
  "fs",
+ "futures 0.3.32",
  "gpui",
+ "http_client",
  "language",
  "menu",
  "platform_title_bar",
@@ -19071,9 +19076,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.26.8"
+version = "0.26.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "887bd495d0582c5e3e0d8ece2233666169fa56a9644d172fc22ad179ab2d0538"
+checksum = "4dab76d0b724ba557954125188cf0633a1ca43199ced82d95c7b9c32cc3de1f3"
 dependencies = [
  "cc",
  "regex",
@@ -19474,6 +19479,7 @@ dependencies = [
  "gpui_util",
  "icons",
  "itertools 0.14.0",
+ "log",
  "menu",
  "num-format",
  "schemars 1.0.4",
@@ -20358,9 +20364,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-c-api-impl"
-version = "36.0.6"
+version = "36.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c62ea3fa30e6b0cf61116b3035121b8f515c60ac118ebfdab2ee56d028ed1e"
+checksum = "e5e71e971a27df819171b79597c0f1826fc7cf2c168111c64dbc5505a1ffbda7"
 dependencies = [
  "anyhow",
  "log",
@@ -20407,9 +20413,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-internal-c-api-macros"
-version = "36.0.6"
+version = "36.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c8c61294155a6d23c202f08cf7a2f9392a866edd50517508208818be626ce9f"
+checksum = "20b9553165039d365931a998d9b60278cc968ba9d81531cecde8ffc3effa1fe3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -22304,6 +22310,7 @@ dependencies = [
  "collections",
  "component",
  "db",
+ "dirs",
  "fs",
  "futures 0.3.32",
  "futures-lite 1.13.0",
@@ -22799,7 +22806,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.4.0"
+version = "1.5.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

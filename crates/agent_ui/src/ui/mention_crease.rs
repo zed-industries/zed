@@ -1,18 +1,21 @@
-use std::{ops::RangeInclusive, path::PathBuf, time::Duration};
+use std::{path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
 use agent_client_protocol::schema as acp;
-use editor::{Editor, SelectionEffects, scroll::Autoscroll};
+use editor::Editor;
 use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
     pulsating_between,
 };
+use language::Buffer;
 use prompt_store::PromptId;
 use rope::Point;
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
+
+use crate::open_abs_path_at_point;
 
 #[derive(IntoElement)]
 pub struct MentionCrease {
@@ -164,12 +167,27 @@ fn open_mention_uri(
             abs_path,
             line_range,
             ..
+        } => {
+            open_file(
+                workspace,
+                abs_path,
+                Some(Point::new(*line_range.start(), 0)),
+                window,
+                cx,
+            );
         }
-        | MentionUri::Selection {
+        MentionUri::Selection {
             abs_path: Some(abs_path),
             line_range,
+            column,
         } => {
-            open_file(workspace, abs_path, Some(line_range), window, cx);
+            open_file(
+                workspace,
+                abs_path,
+                Some(Point::new(*line_range.start(), column.unwrap_or(0))),
+                window,
+                cx,
+            );
         }
         MentionUri::Directory { abs_path } => {
             reveal_in_project_panel(workspace, abs_path, cx);
@@ -205,12 +223,15 @@ fn open_skill_file(
 ) {
     // Built-in skills have synthetic paths that don't exist on disk.
     // Open a read-only buffer with the embedded content instead.
+    //
+    // The buffer is intentionally not registered with the project's buffer
+    // store: it has no on-disk backing, isn't searchable, and `Project::
+    // create_local_buffer` panics for remote projects (SSH/collab), which
+    // would crash Zed if a user clicked a built-in skill mention while
+    // connected to a remote project.
     if let Some(content) = agent_skills::builtin_skill_content(&skill_file_path) {
-        let project = workspace.project().clone();
-        let languages = project.read(cx).languages().clone();
-        let buffer = project.update(cx, |project, cx| {
-            project.create_local_buffer(content, None, false, cx)
-        });
+        let languages = workspace.project().read(cx).languages().clone();
+        let buffer = cx.new(|cx| Buffer::local(content, cx));
         // Set markdown highlighting asynchronously — the buffer
         // opens instantly and the highlighting appears once loaded.
         cx.spawn({
@@ -256,40 +277,23 @@ fn open_skill_file(
 fn open_file(
     workspace: &mut Workspace,
     abs_path: PathBuf,
-    line_range: Option<RangeInclusive<u32>>,
+    point: Option<Point>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let project = workspace.project();
+    if let Some(point) = point {
+        if open_abs_path_at_point(workspace, abs_path.clone(), point, window, cx) {
+            return;
+        }
+    }
 
+    let project = workspace.project();
     if let Some(project_path) =
         project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
     {
-        let item = workspace.open_path(project_path, None, true, window, cx);
-        if let Some(line_range) = line_range {
-            window
-                .spawn(cx, async move |cx| {
-                    let Some(editor) = item.await?.downcast::<Editor>() else {
-                        return Ok(());
-                    };
-                    editor
-                        .update_in(cx, |editor, window, cx| {
-                            let range = Point::new(*line_range.start(), 0)
-                                ..Point::new(*line_range.start(), 0);
-                            editor.change_selections(
-                                SelectionEffects::scroll(Autoscroll::center()),
-                                window,
-                                cx,
-                                |selections| selections.select_ranges(vec![range]),
-                            );
-                        })
-                        .ok();
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-        } else {
-            item.detach_and_log_err(cx);
-        }
+        workspace
+            .open_path(project_path, None, true, window, cx)
+            .detach_and_log_err(cx);
     } else if abs_path.exists() {
         workspace
             .open_abs_path(
