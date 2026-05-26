@@ -7350,7 +7350,7 @@ impl Component for PanelRepoFooter {
     }
 }
 
-fn open_output(
+pub(crate) fn open_output(
     operation: impl Into<SharedString>,
     workspace: &mut Workspace,
     output: &str,

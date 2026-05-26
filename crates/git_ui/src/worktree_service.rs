@@ -1,3 +1,5 @@
+use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -5,14 +7,20 @@ use anyhow::anyhow;
 use askpass::AskPassDelegate;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Entity, SharedString, TaskExt, WeakEntity};
+use gpui::{
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    TaskExt, WeakEntity,
+};
 use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition};
+use ui::prelude::*;
+use workspace::{
+    MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, dock::DockPosition,
+};
 use zed_actions::NewWorktreeBranchTarget;
 
 use git::repository::{FetchOptions, Remote};
@@ -20,7 +28,7 @@ use git::repository::{FetchOptions, Remote};
 use util::ResultExt as _;
 
 use crate::askpass_modal::AskPassModal;
-use crate::git_panel::show_error_toast;
+use crate::git_panel::{open_output, show_error_toast};
 use crate::worktree_names;
 
 /// Whether a worktree operation is creating a new one or switching to an
@@ -29,6 +37,185 @@ use crate::worktree_names;
 enum WorktreeOperation {
     Create,
     Switch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemoteBranchFetchMode {
+    Fetch,
+    UseLocal,
+}
+
+impl RemoteBranchFetchMode {
+    fn should_fetch(self) -> bool {
+        matches!(self, Self::Fetch)
+    }
+}
+
+#[derive(Debug)]
+struct WorktreeFetchError {
+    remote_name: String,
+    branch_name: String,
+    source: anyhow::Error,
+}
+
+impl WorktreeFetchError {
+    fn remote_branch_name(&self) -> String {
+        format!("{}/{}", self.remote_name, self.branch_name)
+    }
+
+    fn output(&self) -> String {
+        format!("git fetch {} failed:\n{:#}", self.remote_name, self.source)
+    }
+}
+
+impl fmt::Display for WorktreeFetchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "git fetch {} failed while creating worktree from {}: {}",
+            self.remote_name,
+            self.remote_branch_name(),
+            self.source
+        )
+    }
+}
+
+impl Error for WorktreeFetchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+struct WorktreeFetchFailedToast {
+    workspace: WeakEntity<Workspace>,
+    worktree_name: Option<String>,
+    branch_target: NewWorktreeBranchTarget,
+    focused_dock: Option<DockPosition>,
+    remote_branch_name: String,
+    operation: SharedString,
+    output: String,
+    focus_handle: FocusHandle,
+}
+
+impl WorktreeFetchFailedToast {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        worktree_name: Option<String>,
+        branch_target: NewWorktreeBranchTarget,
+        focused_dock: Option<DockPosition>,
+        fetch_error: &WorktreeFetchError,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        Self {
+            workspace,
+            worktree_name,
+            branch_target,
+            focused_dock,
+            remote_branch_name: fetch_error.remote_branch_name(),
+            operation: format!("fetch {}", fetch_error.remote_name).into(),
+            output: fetch_error.output(),
+            focus_handle: cx.focus_handle(),
+        }
+    }
+}
+
+impl Focusable for WorktreeFetchFailedToast {
+    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for WorktreeFetchFailedToast {}
+
+impl ToastView for WorktreeFetchFailedToast {
+    fn action(&self) -> Option<workspace::ToastAction> {
+        None
+    }
+
+    fn auto_dismiss(&self) -> bool {
+        false
+    }
+}
+
+impl Render for WorktreeFetchFailedToast {
+    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let workspace_for_retry = self.workspace.clone();
+        let worktree_name = self.worktree_name.clone();
+        let branch_target = self.branch_target.clone();
+        let focused_dock = self.focused_dock;
+
+        let workspace_for_log = self.workspace.clone();
+        let operation = self.operation.clone();
+        let output = self.output.clone();
+
+        h_flex()
+            .id("worktree-fetch-failed-toast")
+            .elevation_3(cx)
+            .gap_2()
+            .py_1p5()
+            .pl_2p5()
+            .pr_1p5()
+            .flex_none()
+            .bg(cx.theme().colors().surface_background)
+            .shadow_lg()
+            .child(
+                Icon::new(IconName::XCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
+            )
+            .child(Label::new(format!(
+                "git fetch failed for {}",
+                self.remote_branch_name
+            )))
+            .child(
+                Button::new(
+                    "use-local-worktree-base",
+                    format!("Use local {}", self.remote_branch_name),
+                )
+                .color(Color::Muted)
+                .on_click(cx.listener(move |_, _event, window, cx| {
+                    cx.emit(DismissEvent);
+                    if let Some(workspace) = workspace_for_retry.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            handle_create_worktree_inner(
+                                workspace,
+                                &zed_actions::CreateWorktree {
+                                    worktree_name: worktree_name.clone(),
+                                    branch_target: branch_target.clone(),
+                                },
+                                window,
+                                focused_dock,
+                                RemoteBranchFetchMode::UseLocal,
+                                cx,
+                            );
+                        });
+                    }
+                })),
+            )
+            .child(
+                Button::new("view-worktree-fetch-log", "Show Error Logs")
+                    .color(Color::Muted)
+                    .on_click(cx.listener(move |_, _event, window, cx| {
+                        cx.emit(DismissEvent);
+                        let output = output.clone();
+                        let operation = operation.clone();
+                        workspace_for_log
+                            .update(cx, move |workspace, cx| {
+                                open_output(operation, workspace, &output, window, cx)
+                            })
+                            .ok();
+                    })),
+            )
+            .child(
+                IconButton::new("dismiss-worktree-fetch-failed-toast", IconName::Close)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener(|_, _event, _window, cx| {
+                        cx.emit(DismissEvent);
+                    })),
+            )
+    }
 }
 
 /// Classifies the project's visible worktrees into git-managed repositories
@@ -381,6 +568,24 @@ pub fn handle_create_worktree(
     fallback_focused_dock: Option<DockPosition>,
     cx: &mut gpui::Context<Workspace>,
 ) {
+    handle_create_worktree_inner(
+        workspace,
+        action,
+        window,
+        fallback_focused_dock,
+        RemoteBranchFetchMode::Fetch,
+        cx,
+    );
+}
+
+fn handle_create_worktree_inner(
+    workspace: &mut Workspace,
+    action: &zed_actions::CreateWorktree,
+    window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
+    remote_branch_fetch_mode: RemoteBranchFetchMode,
+    cx: &mut gpui::Context<Workspace>,
+) {
     let project = workspace.project().clone();
 
     if project.read(cx).repositories(cx).is_empty() {
@@ -433,21 +638,25 @@ pub fn handle_create_worktree(
 
     let worktree_name = action.worktree_name.clone();
     let branch_target = action.branch_target.clone();
-    let fetch_askpass_delegates = remote_branch_to_fetch(&branch_target)
-        .map(|(remote_name, _branch_name)| {
-            git_repos
-                .iter()
-                .map(|_| {
-                    create_worktree_askpass_delegate(
-                        workspace_handle.clone(),
-                        format!("git fetch {remote_name}"),
-                        window,
-                        cx,
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let fetch_askpass_delegates = if remote_branch_fetch_mode.should_fetch() {
+        remote_branch_to_fetch(&branch_target)
+            .map(|(remote_name, _branch_name)| {
+                git_repos
+                    .iter()
+                    .map(|_| {
+                        create_worktree_askpass_delegate(
+                            workspace_handle.clone(),
+                            format!("git fetch {remote_name}"),
+                            window,
+                            cx,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let display_name: SharedString = worktree_name
         .as_deref()
         .unwrap_or("worktree")
@@ -456,6 +665,9 @@ pub fn handle_create_worktree(
 
     workspace.set_active_worktree_creation(Some(display_name), false, cx);
 
+    let retry_worktree_name = worktree_name.clone();
+    let retry_branch_target = branch_target.clone();
+
     cx.spawn_in(window, async move |_workspace_entity, mut cx| {
         let result = do_create_worktree(
             git_repos,
@@ -463,6 +675,7 @@ pub fn handle_create_worktree(
             worktree_name,
             branch_target,
             fetch_askpass_delegates,
+            remote_branch_fetch_mode,
             previous_state,
             workspace_handle.clone(),
             window_handle,
@@ -476,7 +689,21 @@ pub fn handle_create_worktree(
             workspace_handle
                 .update(cx, |workspace, cx| {
                     workspace.set_active_worktree_creation(None, false, cx);
-                    show_error_toast(cx.entity(), "worktree create", anyhow!("{err:#}"), cx);
+                    if let Some(fetch_error) = err.downcast_ref::<WorktreeFetchError>() {
+                        let toast = cx.new(|cx| {
+                            WorktreeFetchFailedToast::new(
+                                workspace.weak_handle(),
+                                retry_worktree_name.clone(),
+                                retry_branch_target.clone(),
+                                fallback_focused_dock,
+                                fetch_error,
+                                cx,
+                            )
+                        });
+                        workspace.toggle_status_toast(toast, cx);
+                    } else {
+                        show_error_toast(cx.entity(), "worktree create", anyhow!("{err:#}"), cx);
+                    }
                 })
                 .ok();
         }
@@ -562,6 +789,7 @@ async fn do_create_worktree(
     worktree_name: Option<String>,
     branch_target: NewWorktreeBranchTarget,
     fetch_askpass_delegates: Vec<AskPassDelegate>,
+    remote_branch_fetch_mode: RemoteBranchFetchMode,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
     window_handle: Option<gpui::WindowHandle<MultiWorkspace>>,
@@ -606,14 +834,26 @@ async fn do_create_worktree(
         }
     }
 
-    if let Some((remote_name, _branch_name)) = remote_branch_to_fetch(&branch_target) {
-        fetch_remote_for_worktree_base(
+    if remote_branch_fetch_mode.should_fetch()
+        && let Some((remote_name, branch_name)) = remote_branch_to_fetch(&branch_target)
+    {
+        let remote_name = remote_name.to_string();
+        let branch_name = branch_name.to_string();
+        if let Err(error) = fetch_remote_for_worktree_base(
             &git_repos,
-            remote_name.to_string(),
+            remote_name.clone(),
             fetch_askpass_delegates,
             cx,
         )
-        .await?;
+        .await
+        {
+            return Err(WorktreeFetchError {
+                remote_name,
+                branch_name,
+                source: error,
+            }
+            .into());
+        }
     }
 
     let mut rng = rand::rng();
