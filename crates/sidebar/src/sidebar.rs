@@ -5493,6 +5493,7 @@ impl Sidebar {
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = is_active;
         let is_draft = thread.is_draft;
+        let is_empty_draft = thread.is_empty_draft;
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -5604,25 +5605,32 @@ impl Sidebar {
                         }),
                 )
             })
-            .when(is_hovered && !is_running && is_draft, |this| {
-                this.action_slot(
-                    IconButton::new("discard_thread", IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text("Discard Draft"))
-                        .on_click({
-                            let thread_workspace = thread_workspace.clone();
-                            cx.listener(move |this, _, window, cx| {
-                                this.remove_draft(
-                                    thread_id_for_actions,
-                                    &thread_workspace,
-                                    window,
-                                    cx,
-                                );
-                            })
-                        }),
-                )
-            })
+            // The empty-draft placeholder has nothing to discard — it has
+            // no user content and exists only to mirror the panel state.
+            // Suppress the close button so the row doesn't suggest a
+            // destructive action that's actually a no-op.
+            .when(
+                is_hovered && !is_running && is_draft && !is_empty_draft,
+                |this| {
+                    this.action_slot(
+                        IconButton::new("discard_thread", IconName::Close)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Discard Draft"))
+                            .on_click({
+                                let thread_workspace = thread_workspace.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.remove_draft(
+                                        thread_id_for_actions,
+                                        &thread_workspace,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                            }),
+                    )
+                },
+            )
             .on_click({
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
