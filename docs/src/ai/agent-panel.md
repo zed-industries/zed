@@ -288,7 +288,7 @@ You can also extend the set of available tools via [MCP Servers](./mcp.md).
 ### Profiles {#profiles}
 
 Profiles act as a way to group tools.
-Zed offers three built-in profiles and you can create as many custom ones as you want.
+Zed offers four built-in profiles and you can create as many custom ones as you want.
 
 #### Built-in Profiles {#built-in-profiles}
 
@@ -298,6 +298,21 @@ Zed offers three built-in profiles and you can create as many custom ones as you
   Best for asking questions about your code base without the concern of the agent making changes.
 - `Minimal`: A profile with no tools.
   Best for general conversations with the LLM where no knowledge of your code base is necessary.
+- `Plan`: A read-only profile that researches the codebase and writes an implementation plan to `.zed/plans/<slug>.md`.
+  Source files are not modified. See [Plan Mode](#plan-mode) below.
+
+#### Plan Mode {#plan-mode}
+
+Plan Mode is designed for kicking off non-trivial work. The agent researches your codebase, asks clarifying questions when needed, and produces a Markdown plan with goals, file references, a TODO list, and a decisions log. You can edit the plan inline like any other file in the editor — it is the source of truth for the implementation that follows.
+
+The typical workflow is:
+
+1. Select the `Plan` profile (or press {#kb agent::CycleModeSelector} to cycle to it) and describe the feature.
+2. Answer any clarifying questions the agent asks, then review the plan it writes to `.zed/plans/<slug>.md`. Edit it directly if anything is off.
+3. Iterate by sending follow-up prompts — they update the same plan file.
+4. When you're happy with it, click the **Build** button next to the send button. The agent switches to the `Write` profile and executes the plan. The chevron next to Build lets you pick which model performs the build.
+
+Plans live in `.zed/plans/` in your first worktree. They are plain Markdown, so you can commit them to share design intent with reviewers, or gitignore the directory if you prefer to keep them local.
 
 You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure` button > the one you want to check out.
 

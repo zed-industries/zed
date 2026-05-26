@@ -23,6 +23,7 @@ mod message_editor;
 mod mode_selector;
 mod model_selector;
 mod model_selector_popover;
+mod plan_file_toolbar;
 mod profile_selector;
 mod terminal_codegen;
 mod terminal_inline_assistant;
@@ -81,6 +82,7 @@ pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
 pub(crate) use model_selector_popover::ModelSelectorPopover;
+pub use plan_file_toolbar::PlanFileToolbar;
 pub use thread_import::{
     AcpThreadImportOnboarding, CrossChannelImportOnboarding, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,

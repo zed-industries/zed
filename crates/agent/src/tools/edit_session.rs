@@ -36,6 +36,22 @@ use util::{Deferred, ResultExt};
 pub(crate) enum EditSessionMode {
     Write,
     Edit,
+    /// Like `Write`, but for files the agent maintains as part of its own workflow
+    /// (e.g. Plan Mode's `.zed/plans/<slug>.md`). User-facing edit authorization
+    /// is bypassed and the file is not tracked in the action log's review tray.
+    AgentInternalWrite,
+}
+
+impl EditSessionMode {
+    /// Returns whether this mode writes the full file contents (as opposed to
+    /// applying granular edits). Used by code paths that share write semantics
+    /// between the user-facing `write_file` tool and agent-internal writes.
+    pub(crate) fn is_write_like(self) -> bool {
+        matches!(
+            self,
+            EditSessionMode::Write | EditSessionMode::AgentInternalWrite
+        )
+    }
 }
 
 /// A single edit operation that replaces old text with new text
@@ -380,14 +396,15 @@ enum EditPipelineEntry {
 
 impl Pipeline {
     fn new(mode: EditSessionMode, file_changed_since_last_read: bool) -> Self {
-        match mode {
-            EditSessionMode::Write => Self::Write(WritePipeline {
+        if mode.is_write_like() {
+            Self::Write(WritePipeline {
                 content_written: false,
-            }),
-            EditSessionMode::Edit => Self::Edit(EditPipeline {
+            })
+        } else {
+            Self::Edit(EditPipeline {
                 current_edit: None,
                 file_changed_since_last_read,
-            }),
+            })
         }
     }
 }
@@ -654,9 +671,14 @@ impl EditSession {
             ToolCallUpdateFields::new().locations(vec![ToolCallLocation::new(abs_path.clone())]),
         );
 
-        cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
-            .await
-            .map_err(|e| e.to_string())?;
+        // Agent-internal writes (e.g. Plan Mode's `.zed/plans/`) bypass the
+        // user-facing edit authorization prompt: the file is the agent's own
+        // working area, not a user source file.
+        if !matches!(mode, EditSessionMode::AgentInternalWrite) {
+            cx.update(|cx| context.authorize(tool_name, &path, event_stream, cx))
+                .await
+                .map_err(|e| e.to_string())?;
+        }
 
         let buffer = context
             .project
@@ -677,10 +699,16 @@ impl EditSession {
             }
         }) as Box<dyn FnOnce()>);
 
-        context.action_log.update(cx, |log, cx| match mode {
-            EditSessionMode::Write => log.buffer_created(buffer.clone(), cx),
-            EditSessionMode::Edit => log.buffer_read(buffer.clone(), cx),
-        });
+        // Agent-internal writes don't appear in the conversation's edits
+        // review tray. The user reviews the plan by opening the markdown
+        // file in an editor pane, not by Reject/Keep on a diff.
+        if !matches!(mode, EditSessionMode::AgentInternalWrite) {
+            context.action_log.update(cx, |log, cx| match mode {
+                EditSessionMode::Write => log.buffer_created(buffer.clone(), cx),
+                EditSessionMode::Edit => log.buffer_read(buffer.clone(), cx),
+                EditSessionMode::AgentInternalWrite => unreachable!(),
+            });
+        }
 
         let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let old_text = cx
@@ -992,9 +1020,10 @@ async fn resolve_dirty_buffer(
         })
     });
 
-    let prompt_kind = match mode {
-        EditSessionMode::Edit => super::tool_permissions::DirtyBufferPromptKind::Edit,
-        EditSessionMode::Write => super::tool_permissions::DirtyBufferPromptKind::Overwrite,
+    let prompt_kind = if mode.is_write_like() {
+        super::tool_permissions::DirtyBufferPromptKind::Overwrite
+    } else {
+        super::tool_permissions::DirtyBufferPromptKind::Edit
     };
     let prompt = cx.update(|cx| {
         super::tool_permissions::authorize_dirty_buffer(prompt_kind, event_stream, cx)
@@ -1013,14 +1042,15 @@ async fn resolve_dirty_buffer(
         event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
-        return match mode {
-            EditSessionMode::Edit => Ok(()),
-            EditSessionMode::Write => Err(
+        return if mode.is_write_like() {
+            Err(
                 "The user saved their unsaved changes while the prompt was visible; \
                  the file overwrite was cancelled to preserve them. Ask the user how \
                  they'd like to proceed before retrying."
                     .to_string(),
-            ),
+            )
+        } else {
+            Ok(())
         };
     };
 
@@ -1063,62 +1093,60 @@ fn resolve_path(
 ) -> Result<ProjectPath, String> {
     let project = project.read(cx);
 
-    match mode {
-        EditSessionMode::Edit => {
-            let path = project
-                .find_project_path(&path, cx)
-                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+    if matches!(mode, EditSessionMode::Edit) {
+        let path = project
+            .find_project_path(&path, cx)
+            .ok_or_else(|| "Can't edit file: path not found".to_string())?;
 
-            let entry = project
-                .entry_for_path(&path, cx)
-                .ok_or_else(|| "Can't edit file: path not found".to_string())?;
+        let entry = project
+            .entry_for_path(&path, cx)
+            .ok_or_else(|| "Can't edit file: path not found".to_string())?;
 
-            if entry.is_file() {
-                Ok(path)
-            } else {
-                Err("Can't edit file: path is a directory".to_string())
-            }
-        }
-        EditSessionMode::Write => {
-            if let Some(path) = project.find_project_path(&path, cx)
-                && let Some(entry) = project.entry_for_path(&path, cx)
-            {
-                if entry.is_file() {
-                    return Ok(path);
-                } else {
-                    return Err("Can't write to file: path is a directory".to_string());
-                }
-            }
-
-            let parent_path = path
-                .parent()
-                .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
-
-            let parent_project_path = project.find_project_path(&parent_path, cx);
-
-            let parent_entry = parent_project_path
-                .as_ref()
-                .and_then(|path| project.entry_for_path(path, cx))
-                .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
-
-            if !parent_entry.is_dir() {
-                return Err("Can't create file: parent is not a directory".to_string());
-            }
-
-            let file_name = path
-                .file_name()
-                .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| RelPath::unix(file_name).ok())
-                .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
-
-            let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: parent.path.join(file_name),
-                ..parent
-            });
-
-            new_file_path.ok_or_else(|| "Can't create file".to_string())
-        }
+        return if entry.is_file() {
+            Ok(path)
+        } else {
+            Err("Can't edit file: path is a directory".to_string())
+        };
     }
+
+    // Write-like: locate the file, or create it under an existing parent directory.
+    if let Some(path) = project.find_project_path(&path, cx)
+        && let Some(entry) = project.entry_for_path(&path, cx)
+    {
+        return if entry.is_file() {
+            Ok(path)
+        } else {
+            Err("Can't write to file: path is a directory".to_string())
+        };
+    }
+
+    let parent_path = path
+        .parent()
+        .ok_or_else(|| "Can't create file: incorrect path".to_string())?;
+
+    let parent_project_path = project.find_project_path(&parent_path, cx);
+
+    let parent_entry = parent_project_path
+        .as_ref()
+        .and_then(|path| project.entry_for_path(path, cx))
+        .ok_or_else(|| "Can't create file: parent directory doesn't exist")?;
+
+    if !parent_entry.is_dir() {
+        return Err("Can't create file: parent is not a directory".to_string());
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .and_then(|file_name| RelPath::unix(file_name).ok())
+        .ok_or_else(|| "Can't create file: invalid filename".to_string())?;
+
+    let new_file_path = parent_project_path.map(|parent| ProjectPath {
+        path: parent.path.join(file_name),
+        ..parent
+    });
+
+    new_file_path.ok_or_else(|| "Can't create file".to_string())
 }
 
 #[cfg(test)]

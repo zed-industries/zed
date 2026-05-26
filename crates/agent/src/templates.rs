@@ -96,6 +96,30 @@ mod tests {
         assert!(rendered.contains("## Planning"));
         assert!(rendered.contains("## Session Title"));
         assert!(rendered.contains("test-model"));
+        // The Plan Mode section is only injected when `write_plan_file` is available.
+        assert!(!rendered.contains("## Plan Mode"));
+    }
+
+    #[test]
+    fn test_system_prompt_template_with_plan_mode() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec![
+                "read_file".into(),
+                "grep".into(),
+                "update_plan".into(),
+                "write_plan_file".into(),
+            ],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+        assert!(rendered.contains("## Plan Mode"));
+        assert!(rendered.contains("`.zed/plans/<slug>.md`"));
+        assert!(rendered.contains("## Decisions Log"));
     }
 
     #[test]
