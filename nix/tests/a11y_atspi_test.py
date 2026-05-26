@@ -180,6 +180,20 @@ def run_tests():
     assert not toggled, f"Expected switch to be OFF after second toggle, got {toggled}"
     print("  OK: switch is OFF")
 
+    # --- Window bounds / Component extents ---
+    print("\n--- Component extents tests ---")
+
+    counter = get_counter(app)
+    component = counter.queryComponent()
+    extents = component.getExtents(pyatspi.DESKTOP_COORDS)
+    print(f"  Counter extents (desktop coords): x={extents.x}, y={extents.y}, "
+          f"width={extents.width}, height={extents.height}")
+    assert extents.width > 0 and extents.height > 0, (
+        f"Expected non-zero extents from Component interface, got {extents}. "
+        f"This likely means a11y_update_window_bounds is not reporting bounds."
+    )
+    print("  OK: counter has non-zero extents")
+
     print("\n=== ALL TESTS PASSED ===")
 
 

@@ -1915,7 +1915,33 @@ impl PlatformWindow for X11Window {
     }
 
     fn a11y_update_window_bounds(&self) {
-        // X11 could report window bounds, but for now it's a no-op
+        let mut state = self.0.state.borrow_mut();
+        let scale = state.scale_factor;
+        let bounds = state.bounds;
+        let [left, right, top, bottom] = state.last_insets;
+
+        let x = f32::from(bounds.origin.x);
+        let y = f32::from(bounds.origin.y);
+        let width = f32::from(bounds.size.width);
+        let height = f32::from(bounds.size.height);
+
+        let outer = accesskit::Rect {
+            x0: (x * scale) as f64,
+            y0: (y * scale) as f64,
+            x1: ((x + width) * scale) as f64,
+            y1: ((y + height) * scale) as f64,
+        };
+
+        let inner = accesskit::Rect {
+            x0: (x * scale) as f64 + left as f64,
+            y0: (y * scale) as f64 + top as f64,
+            x1: ((x + width) * scale) as f64 - right as f64,
+            y1: ((y + height) * scale) as f64 - bottom as f64,
+        };
+
+        if let Some(adapter) = state.accesskit_adapter.as_mut() {
+            adapter.set_root_window_bounds(outer, inner);
+        }
     }
 }
 
