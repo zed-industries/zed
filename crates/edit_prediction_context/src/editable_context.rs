@@ -11,7 +11,7 @@ use text::Anchor;
 use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 
-use crate::git_log_context::build_git_log_index;
+use crate::{bm25_context::collect_bm25_context, git_log_context::build_git_log_index};
 
 /// This module contains collectors for editable context:
 /// excerpts or full files that are likely to be edited.
@@ -69,18 +69,43 @@ pub async fn collect_editable_context(
         collect_edit_history_file_context(&mut ranges_by_buffer, &edit_history, cx);
     }
     if context_sources.contains(&ContextSource::GitLog) {
-        collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
+        collect_git_log_context(
+            &mut ranges_by_buffer,
+            project.clone(),
+            active_buffer.clone(),
+            cx,
+        )
+        .await;
     }
+
+    let mut related_files = Vec::new();
+    if context_sources.contains(&ContextSource::Bm25) {
+        related_files.extend(
+            collect_bm25_context(
+                project.clone(),
+                active_buffer,
+                cursor_position,
+                &edit_history,
+                next_context_order(&ranges_by_buffer),
+                cx,
+            )
+            .await,
+        );
+    }
+
     if context_sources.contains(&ContextSource::OracleFile) {
         collect_oracle_file_context(&mut ranges_by_buffer, project.clone(), oracle_paths, cx).await;
     }
 
     Ok(cx.update(|cx| {
         let project = project.read(cx);
-        let mut related_files = ranges_by_buffer
-            .into_values()
-            .filter_map(|(buffer, ranges)| related_file_for_ranges(&project, &buffer, ranges, cx))
-            .collect::<Vec<_>>();
+        related_files.extend(
+            ranges_by_buffer
+                .into_values()
+                .filter_map(|(buffer, ranges)| {
+                    related_file_for_ranges(&project, &buffer, ranges, cx)
+                }),
+        );
         related_files.sort_by_key(|file| {
             file.excerpts
                 .iter()
@@ -611,6 +636,7 @@ fn context_source_order(context_source: ContextSource) -> usize {
         ContextSource::EditHistory => 3,
         ContextSource::EditHistoryFile => 4,
         ContextSource::GitLog => 5,
-        ContextSource::OracleFile => 6,
+        ContextSource::Bm25 => 6,
+        ContextSource::OracleFile => 7,
     }
 }

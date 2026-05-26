@@ -254,6 +254,7 @@ pub enum ContextSource {
     EditHistory,
     EditHistoryFile,
     GitLog,
+    Bm25,
     OracleFile,
 }
 

@@ -27,6 +27,7 @@ pub enum ContextRetrievalType {
     EditHistory,
     EditHistoryFile,
     GitLog,
+    Bm25,
     OracleFile,
     #[default]
     All,
@@ -42,6 +43,7 @@ impl std::fmt::Display for ContextRetrievalType {
             ContextRetrievalType::EditHistory => write!(f, "edit-history"),
             ContextRetrievalType::EditHistoryFile => write!(f, "edit-history-file"),
             ContextRetrievalType::GitLog => write!(f, "git-log"),
+            ContextRetrievalType::Bm25 => write!(f, "bm25"),
             ContextRetrievalType::OracleFile => write!(f, "oracle-file"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
@@ -68,6 +70,7 @@ impl ContextRetrievalType {
             ContextRetrievalType::EditHistory => Some(vec![ContextSource::EditHistory]),
             ContextRetrievalType::EditHistoryFile => Some(vec![ContextSource::EditHistoryFile]),
             ContextRetrievalType::GitLog => Some(vec![ContextSource::GitLog]),
+            ContextRetrievalType::Bm25 => Some(vec![ContextSource::Bm25]),
             ContextRetrievalType::OracleFile => Some(vec![ContextSource::OracleFile]),
             ContextRetrievalType::Lsp | ContextRetrievalType::None => None,
         }

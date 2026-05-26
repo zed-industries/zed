@@ -20,6 +20,7 @@ use util::rel_path::RelPath;
 use util::{RangeExt as _, ResultExt};
 
 mod assemble_excerpts;
+mod bm25_context;
 #[cfg(test)]
 mod edit_prediction_context_tests;
 mod editable_context;
