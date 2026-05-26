@@ -27,8 +27,8 @@
 //!     - "3. Ship it"
 
 use gpui::{
-    App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled, Window,
-    WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size, text,
+    AccessibleAction, App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled,
+    Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size, text,
 };
 use gpui_platform::application;
 
@@ -79,8 +79,9 @@ impl Render for A11yDemo {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(text!("Accessibility Demo")),
             )
-            // Buttons — screen readers use the built-in Click action,
-            // so plain on_click is all that's needed.
+            // Counter — uses a SpinButton role with Increment/Decrement
+            // actions so screen readers can adjust the value directly.
+            // Click also works via the built-in handler.
             .child(
                 div()
                     .flex()
@@ -88,24 +89,43 @@ impl Render for A11yDemo {
                     .gap_3()
                     .child(
                         div()
-                            .id("increment")
+                            .id("counter")
                             .focusable()
                             .tab_stop(true)
-                            .role(Role::Button)
-                            .aria_label(SharedString::from(format!(
-                                "Count is {}. Click to increment.",
-                                self.count
-                            )))
+                            .role(Role::SpinButton)
+                            .aria_label(SharedString::from(format!("Counter: {}", self.count)))
+                            .aria_numeric_value(self.count as f64)
+                            .aria_min_numeric_value(0.0)
+                            .on_a11y_action(AccessibleAction::Increment, {
+                                let this = cx.entity().downgrade();
+                                move |_, _, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.count += 1;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .on_a11y_action(AccessibleAction::Decrement, {
+                                let this = cx.entity().downgrade();
+                                move |_, _, cx| {
+                                    this.update(cx, |this, cx| {
+                                        this.count = (this.count - 1).max(0);
+                                        cx.notify();
+                                    })
+                                    .ok();
+                                }
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.count += 1;
+                                cx.notify();
+                            }))
                             .px_3()
                             .py_1()
                             .rounded_md()
                             .bg(rgb(0x89b4fa))
                             .text_color(rgb(0x1e1e2e))
                             .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.count += 1;
-                                cx.notify();
-                            }))
                             .child(text!(format!("Count: {}", self.count))),
                     )
                     .child(

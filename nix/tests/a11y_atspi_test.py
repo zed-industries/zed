@@ -1,8 +1,8 @@
 """AT-SPI integration test for the GPUI a11y example app.
 
 Walks the AT-SPI tree, finds the GPUI app, and exercises the counter
-button, reset button, and toggle switch — asserting accessible state
-after each interaction.
+(spin button with increment/decrement), reset button, and toggle switch
+— asserting accessible state after each interaction.
 """
 
 import sys
@@ -41,15 +41,24 @@ def find_by_role(root, role):
     return results
 
 
-def click(node):
-    """Perform the Click action on a node."""
+def do_action_by_name(node, action_name):
+    """Perform a named action on a node."""
     actions = node.queryAction()
     for i in range(actions.nActions):
-        if actions.getName(i) == "click":
+        if actions.getName(i).lower() == action_name.lower():
             actions.doAction(i)
             time.sleep(0.5)
             return
-    raise AssertionError(f"No 'click' action on node: {node.name} (role={node.getRoleName()})")
+    available = [actions.getName(i) for i in range(actions.nActions)]
+    raise AssertionError(
+        f"No '{action_name}' action on node: {node.name} "
+        f"(role={node.getRoleName()}). Available: {available}"
+    )
+
+
+def click(node):
+    """Perform the Click action on a node."""
+    do_action_by_name(node, "click")
 
 
 def get_toggled_state(node):
@@ -58,10 +67,10 @@ def get_toggled_state(node):
     return state_set.contains(pyatspi.STATE_CHECKED) or state_set.contains(pyatspi.STATE_PRESSED)
 
 
-def get_increment_button(app):
-    button = find_by_role_and_label(app, pyatspi.ROLE_PUSH_BUTTON, "Count is")
-    assert button is not None, "Increment button not found"
-    return button
+def get_counter(app):
+    counter = find_by_role_and_label(app, pyatspi.ROLE_SPIN_BUTTON, "Counter:")
+    assert counter is not None, "Counter (spin button) not found"
+    return counter
 
 
 def get_reset_button(app):
@@ -88,13 +97,19 @@ def get_toggle_switch(app):
 
 
 def assert_count(app, expected):
-    """Assert the increment button's label contains the expected count."""
-    button = get_increment_button(app)
-    expected_str = f"Count is {expected}."
-    assert expected_str in button.name, (
-        f"Expected label to contain '{expected_str}', got: '{button.name}'"
+    """Assert the counter's label contains the expected count."""
+    counter = get_counter(app)
+    expected_str = f"Counter: {expected}"
+    assert expected_str in counter.name, (
+        f"Expected label to contain '{expected_str}', got: '{counter.name}'"
     )
     print(f"  OK: count is {expected}")
+
+
+def get_numeric_value(node):
+    """Get the current numeric value from the AT-SPI Value interface."""
+    value = node.queryValue()
+    return value.currentValue
 
 
 def run_tests():
@@ -102,18 +117,39 @@ def run_tests():
     app = find_app()
     print(f"Found app: {app.name}")
 
-    # --- Counter button ---
-    print("\n--- Counter button tests ---")
+    # --- Counter (spin button) ---
+    print("\n--- Counter spin button tests ---")
 
     print("Checking initial count is 0...")
     assert_count(app, 0)
 
+    # Verify the Value interface reports 0
+    counter = get_counter(app)
+    val = get_numeric_value(counter)
+    print(f"  Value interface reports: {val}")
+    assert val == 0.0, f"Expected numeric value 0.0, got {val}"
+    print("  OK: numeric value is 0")
+
+    # Test click (increments)
     for i in range(1, 4):
-        print(f"Clicking increment (expecting {i})...")
-        button = get_increment_button(app)
-        click(button)
+        print(f"Clicking counter (expecting {i})...")
+        counter = get_counter(app)
+        click(counter)
         assert_count(app, i)
 
+    # Verify the Value interface tracks the count
+    counter = get_counter(app)
+    val = get_numeric_value(counter)
+    assert val == 3.0, f"Expected numeric value 3.0, got {val}"
+    print("  OK: numeric value is 3 after 3 clicks")
+
+    # List available actions for diagnostics
+    counter = get_counter(app)
+    actions = counter.queryAction()
+    available = [actions.getName(i) for i in range(actions.nActions)]
+    print(f"  Available actions on counter: {available}")
+
+    # Test reset button
     print("Clicking reset...")
     reset = get_reset_button(app)
     click(reset)

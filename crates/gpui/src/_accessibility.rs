@@ -142,7 +142,7 @@
 //! div()
 //!     .id("todo-list")
 //!     .role(Role::Document)
-//!     .children(todo_divs)  // ERROR: multiple nodes with the same global ID
+//!     .children(todo_divs);  // ERROR: multiple nodes with the same global ID
 //! ```
 //!
 //! Here, when we map the iterator, since we have only written [`text!`] once,
@@ -161,7 +161,7 @@
 //! div()
 //!     .id("todo-list")
 //!     .role(Role::Document)
-//!     .children(todo_divs)
+//!     .children(todo_divs);
 //! ```
 //!
 //! Occasionally, you will need to create a [`Text`] element with *no* ID. You
@@ -187,15 +187,11 @@
 //!
 //! To respond to an accessible action, use
 //! [`div().on_a11y_action()`][InteractiveElement::on_a11y_action]:
-//! ```rust,no_run
-//! # use gpui::*;
-//! # fn my_cool_slider() -> Div { div() }
-//! let mut position = 0;  // stored in component state somewhere
-//!
-//! let slider = div()
+//! ```rust,ignore
+//! div()
 //!     .id("my-slider")
 //!     .role(Role::Slider)
-//!     .on_a11y_action(AccessibleAction::Increment, |_extra, _window, cx| {
+//!     .on_a11y_action(AccessibleAction::Increment, |_extra, _window, _cx| {
 //!         position += 1;
 //!         cx.notify();
 //!     })
