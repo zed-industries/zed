@@ -104,4 +104,4 @@ Paid DeepSeek usage is API access in Zed, not subscription sign-in.
 
 ## Other API Providers {#other-api-providers}
 
-For Anthropic, OpenAI API, Google AI, Mistral, DeepSeek, xAI, OpenCode API, and OpenAI-compatible endpoints, see [Use API Access](./use-api-access.md).
+For Mistral, xAI, and OpenAI-compatible endpoints that are not listed above, see [Use API Access](./use-api-access.md).
