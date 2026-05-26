@@ -235,7 +235,15 @@ fn draft_display_label_for_thread_metadata(
         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
         ThreadEntryWorkspace::Closed { .. } => None,
     };
+
     agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
+        .or_else(|| {
+            Some(agent_ui::draft_prompt_store::empty_draft_placeholder_label(
+                workspace,
+                &metadata.agent_id,
+                cx,
+            ))
+        })
 }
 
 fn thread_metadata_would_render_sidebar_row(
@@ -1413,14 +1421,8 @@ impl Sidebar {
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
-            let hidden_draft_thread_ids: HashSet<ThreadId> = group_workspaces
-                .iter()
-                .filter_map(|ws| {
-                    ws.read(cx)
-                        .panel::<AgentPanel>(cx)
-                        .and_then(|panel| panel.read(cx).ephemeral_draft_thread_id(cx))
-                })
-                .collect();
+
+            let hidden_draft_thread_ids: HashSet<ThreadId> = HashSet::default();
 
             if should_load_threads {
                 let thread_store = ThreadMetadataStore::global(cx);
