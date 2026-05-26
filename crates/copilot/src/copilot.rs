@@ -511,8 +511,14 @@ impl Copilot {
             };
         }
 
-        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
-            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        for env_var in [
+            copilot_chat::COPILOT_OAUTH_ENV_VAR,
+            copilot_chat::GITHUB_COPILOT_OAUTH_ENV_VAR,
+        ] {
+            if let Ok(oauth_token) = env::var(env_var) {
+                env.insert(env_var.to_string(), oauth_token);
+                break;
+            }
         }
 
         if env.is_empty() { None } else { Some(env) }
