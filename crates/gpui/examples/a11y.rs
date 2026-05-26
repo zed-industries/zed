@@ -1,10 +1,31 @@
 //! Accessibility (AccessKit) demo app.
 //!
 //! Run with: `cargo run -p gpui --example a11y`
+//! 
+//! Or on Linux: `cargo run -p gpui --features gpui_platform/wayland,gpui_platform/x11 --example a11y`
 //!
-//! Demonstrates core ARIA roles and properties using the GPUI accessibility
-//! integration. Use with a screen reader (e.g. Orca on Linux) or an
-//! accessibility inspector (e.g. Accerciser) to verify the a11y tree.
+//! This app uses GPUI's accessibility APIs to attach structured information to
+//! the element tree, which allows assistive technology to see and interact with
+//! the UI programmatically. 
+//! 
+//! The app behaves as follows:
+//! - It opens a single window.
+//! - The window's title is "GPUI Accessibility Demo".
+//! - The window has a sequence of UI elements, stacked vertically:
+//!   - A heading with the text "Accessibility Demo".
+//!   - A row containing two buttons:
+//!     - The first button has the text "Count <i>", where "<i>" is the number 
+//!       of times the button has been pressed.
+//!     - The second button has the text "Reset", and resets the count to 0.
+//!   - A row containing two elements:
+//!     - A switch, that can be toggled, and starts disabled. Toggling the switch 
+//!       does nothing.
+//!     - The text "Enable feature".
+//!   - A "to-do" list, with three items, each represented with a `Text` element:
+//!     - "1. Write code"
+//!     - "2. Run tests"
+//!     - "3. Ship it"
+
 
 use gpui::{
     App, Bounds, Context, FocusHandle, KeyBinding, Role, SharedString, Toggled, Window,

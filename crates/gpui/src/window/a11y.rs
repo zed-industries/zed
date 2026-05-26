@@ -29,7 +29,7 @@
 //!     - Can this node have a value directly assigned? (e.g. a slider)
 //! - Allowing the system to interact with the UI by dispatching actions to
 //!   nodes. Note that AccessKit has its own [`Action`] type, which is not the
-//!   [`gpui::Action`] trait.
+//!   [`crate::Action`] trait.
 //! - Activate and deactivate accessibility features when requested by the
 //!   system.
 //!
@@ -81,8 +81,6 @@
 //! [`div()`]: crate::div
 //! [`Interactivity::paint`]: crate::Interactivity::paint
 //! [`InteractiveElement::on_a11y_action`]: crate::InteractiveElement::on_a11y_action
-//! [`a11y_role()`]: crate::Element::a11y_role
-//! [`write_a11y_info()`]: crate::Element::write_a11y_info
 //! [`NodeId`]: accesskit::NodeId
 //! [`Drawable::prepaint`]: crate::Drawable::prepaint
 
@@ -137,13 +135,13 @@ pub(crate) struct A11y {
     /// Whether a11y features are active for *this specific frame*.
     ///
     /// At the start of each frame, we load [`Self::active_flag`] (using
-    /// [`Self::snapshot_active_flag`]) and use this to determine whether we
+    /// [`Self::sync_active_flag`]) and use this to determine whether we
     /// should construct a [`TreeUpdate`] for this frame. It's important that
     /// this value is stable within a frame, because the builder API exposed by
     /// this type maintains a stack of nodes and each must be pushed and popped
     /// exactly once.
     ///
-    /// At the end of the frame, we re-call [`Self::snapshot_active_flag`] to
+    /// At the end of the frame, we re-call [`Self::sync_active_flag`] to
     /// determine whether we should actually send the finished [`TreeUpdate`].
     active_this_frame: bool,
     pub(crate) nodes: A11yNodeBuilder,
