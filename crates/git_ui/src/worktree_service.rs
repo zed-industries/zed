@@ -290,8 +290,8 @@ fn remote_branch_to_fetch(branch_target: &NewWorktreeBranchTarget) -> Option<(&s
 fn create_worktree_askpass_delegate(
     workspace: WeakEntity<Workspace>,
     operation: impl Into<SharedString>,
-    window: &mut gpui::Window,
-    cx: &mut gpui::Context<Workspace>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
 ) -> AskPassDelegate {
     let operation = operation.into();
     let window = window.window_handle();
