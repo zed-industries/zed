@@ -3482,7 +3482,7 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 0,
-                _pad: 0,
+                pad: 0,
             });
         }
     }
@@ -3527,7 +3527,7 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 1,
-                _pad: 0,
+                pad: 0,
             });
         }
     }

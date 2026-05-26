@@ -962,10 +962,7 @@ struct Shadow {
     element_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    // Trailing padding to keep this struct at 112 bytes, matching the Rust + Metal layout.
-    // Without it the WGSL struct would pad to 112 while the C/Rust struct would be 108,
-    // corrupting every instance after the first.
-    _pad: u32,
+    pad: u32, // align to 8 bytes
 }
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
