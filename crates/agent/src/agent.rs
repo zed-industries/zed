@@ -44,8 +44,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _, future};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
-    TaskExt, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EntityId, EventEmitter, SharedString, Subscription,
+    Task, TaskExt, WeakEntity,
 };
 use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{
@@ -71,6 +71,7 @@ pub struct ProjectSnapshot {
     pub timestamp: DateTime<Utc>,
 }
 
+#[derive(Clone)]
 pub struct RulesLoadingError {
     pub message: SharedString,
 }
@@ -336,6 +337,7 @@ enum SkillsState {
     Watching,
 }
 
+impl EventEmitter<RulesLoadingError> for NativeAgent {}
 impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
@@ -732,6 +734,7 @@ impl NativeAgent {
                     .get(&project_id)
                     .context("project state not found")?;
                 anyhow::Ok(Self::build_project_context(
+                    cx.weak_entity(),
                     &state.project,
                     this.prompt_store.as_ref(),
                     this.fs.clone(),
@@ -804,6 +807,7 @@ impl NativeAgent {
     }
 
     fn build_project_context(
+        this: WeakEntity<Self>,
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
         fs: Arc<dyn Fs>,
@@ -900,17 +904,16 @@ impl NativeAgent {
             Task::ready(vec![])
         };
 
-        cx.spawn(async move |_cx| {
+        cx.spawn(async move |cx| {
             let (worktrees, default_user_rules) =
                 future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
 
             let worktrees = worktrees
                 .into_iter()
-                .map(|(worktree, _rules_error)| {
-                    // TODO: show error message
-                    // if let Some(rules_error) = rules_error {
-                    //     this.update(cx, |_, cx| cx.emit(rules_error)).ok();
-                    // }
+                .map(|(worktree, rules_error)| {
+                    if let Some(rules_error) = rules_error {
+                        this.update(cx, |_, cx| cx.emit(rules_error)).log_err();
+                    }
                     worktree
                 })
                 .collect::<Vec<_>>();
@@ -923,14 +926,13 @@ impl NativeAgent {
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
-                    Err(_err) => {
-                        // TODO: show error message
-                        // this.update(cx, |_, cx| {
-                        //     cx.emit(RulesLoadingError {
-                        //         message: format!("{err:?}").into(),
-                        //     });
-                        // })
-                        // .ok();
+                    Err(err) => {
+                        this.update(cx, |_, cx| {
+                            cx.emit(RulesLoadingError {
+                                message: format!("{err:?}").into(),
+                            });
+                        })
+                        .log_err();
                         None
                     }
                 })
