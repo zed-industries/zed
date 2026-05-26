@@ -50,11 +50,11 @@ impl ContextRetrievalType {
     fn editable_context_sources(self) -> Option<Vec<ContextSource>> {
         match self {
             ContextRetrievalType::Editable | ContextRetrievalType::All => Some(vec![
-                ContextSource::CurrentFile,
+                ContextSource::CursorExcerpt,
                 ContextSource::EditHistory,
                 ContextSource::GitLog,
             ]),
-            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CurrentFile]),
+            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CursorExcerpt]),
             ContextRetrievalType::EditHistory => Some(vec![ContextSource::EditHistory]),
             ContextRetrievalType::GitLog => Some(vec![ContextSource::GitLog]),
             ContextRetrievalType::Lsp | ContextRetrievalType::None => None,

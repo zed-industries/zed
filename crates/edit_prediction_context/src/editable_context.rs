@@ -47,8 +47,8 @@ pub async fn collect_editable_context(
 ) -> anyhow::Result<Vec<RelatedFile>> {
     let mut ranges_by_buffer = RangesByBuffer::default();
 
-    if context_sources.contains(&ContextSource::CurrentFile) {
-        collect_current_cursor_context(
+    if context_sources.contains(&ContextSource::CursorExcerpt) {
+        collect_cursor_excerpt_context(
             &mut ranges_by_buffer,
             active_buffer.clone(),
             cursor_position,
@@ -200,7 +200,7 @@ fn push_covered_range(covered_ranges: &mut Vec<Range<u32>>, range: Range<u32>) {
     *covered_ranges = merged_ranges;
 }
 
-fn collect_current_cursor_context(
+fn collect_cursor_excerpt_context(
     ranges_by_buffer: &mut RangesByBuffer,
     active_buffer: Entity<Buffer>,
     cursor_position: Anchor,
@@ -220,7 +220,7 @@ fn collect_current_cursor_context(
         active_buffer,
         cursor_range,
         0,
-        ContextSource::CurrentFile,
+        ContextSource::CursorExcerpt,
     );
 }
 
@@ -467,7 +467,7 @@ fn push_context_source(context_sources: &mut Vec<ContextSource>, context_source:
 fn context_source_order(context_source: ContextSource) -> usize {
     match context_source {
         ContextSource::Lsp => 0,
-        ContextSource::CurrentFile => 1,
+        ContextSource::CursorExcerpt => 1,
         ContextSource::EditHistory => 2,
         ContextSource::GitLog => 3,
     }

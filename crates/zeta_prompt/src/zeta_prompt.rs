@@ -249,7 +249,7 @@ pub struct RelatedExcerpt {
 pub enum ContextSource {
     #[default]
     Lsp,
-    CurrentFile,
+    CursorExcerpt,
     EditHistory,
     GitLog,
 }
