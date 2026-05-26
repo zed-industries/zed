@@ -2728,10 +2728,9 @@ impl ThreadView {
         }
 
         let active_session_id = self.thread.read(cx).session_id().clone();
-        let tool_call_id = self
-            .conversation
-            .read(cx)
-            .pending_tool_call_for_session(&active_session_id, cx)?;
+        let conversation = self.conversation.read(cx);
+        let tool_call_id = conversation.pending_tool_call_for_session(&active_session_id, cx)?;
+        let pending_count = conversation.pending_tool_call_count_for_session(&active_session_id);
 
         let thread = self.thread.read(cx);
         let (entry_ix, tool_call) = thread.tool_call(&tool_call_id)?;
@@ -2752,36 +2751,35 @@ impl ThreadView {
             cx,
         );
 
+        let label: SharedString = if pending_count > 1 {
+            format!("Awaiting Confirmation ({pending_count})").into()
+        } else {
+            "Awaiting Confirmation".into()
+        };
+
         let header = h_flex()
-            .py_1()
-            .px_2()
+            .p_1p5()
+            .pl_2()
             .w_full()
             .gap_1p5()
+            .justify_between()
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
                 h_flex()
-                    .w_2()
-                    .justify_center()
-                    .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
-            )
-            .child(
-                LoadingLabel::new("Awaiting Confirmation")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .child(div().flex_1())
-            .child(
-                h_flex()
-                    .id("main-agent-permission-scroll-to")
-                    .cursor_pointer()
-                    .gap_0p5()
+                    .gap_1p5()
                     .child(
-                        Label::new("Scroll to")
-                            .size(LabelSize::Small)
-                            .color(Color::Default),
+                        h_flex()
+                            .w_2()
+                            .justify_center()
+                            .child(GeneratingSpinnerElement::new(SpinnerVariant::Sand)),
                     )
-                    .child(
+                    .child(Label::new(label).size(LabelSize::Small).color(Color::Muted)),
+            )
+            .child(
+                Button::new("main-agent-permission-scroll-to", "Scroll")
+                    .label_size(LabelSize::Small)
+                    .end_icon(
                         Icon::new(IconName::ArrowDown)
                             .size(IconSize::XSmall)
                             .color(Color::Default),
