@@ -68,7 +68,7 @@
   - [Use a Local Model](./ai/use-a-local-model.md)
 - [Edit Prediction](./ai/edit-prediction.md)
 - [Privacy & Security](./ai/privacy-and-security.md)
-- [AI Improvement](./ai/ai-improvement.md)
+  - [AI Improvement](./ai/ai-improvement.md)
 
 # Account & Billing
 
