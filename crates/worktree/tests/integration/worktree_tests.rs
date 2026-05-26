@@ -1,4 +1,4 @@
-mod worktree_settings;
+mod worktree_settings_tests;
 
 use anyhow::Result;
 use encoding_rs;
