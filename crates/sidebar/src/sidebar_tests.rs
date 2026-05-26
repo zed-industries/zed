@@ -15263,7 +15263,7 @@ async fn test_open_thread_from_archive_re_entry_guard_shows_toast(cx: &mut TestA
     // that would cancel the first (potentially mid-restore, before the
     // backup rollback could run). Verify both halves of the contract:
     //   1. A second call while a task is in flight surfaces a toast.
-    //   2. The existing `restoring_tasks` entry is left intact, i.e. the
+    //   2. The existing `restoring_threads` entry is left intact, i.e. the
     //      first task is not replaced.
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -15295,13 +15295,10 @@ async fn test_open_thread_from_archive_re_entry_guard_shows_toast(cx: &mut TestA
     });
     let thread_id = metadata.thread_id;
 
-    // Pretend a restore is already in flight by injecting a placeholder
-    // task. `Task::ready(())` never actually runs, but its mere presence
-    // in the map is what the re-entry guard keys on.
+    // Pretend a restore is already in flight by inserting the thread id
+    // directly into the per-window set the re-entry guard keys on.
     sidebar.update_in(cx, |sidebar, _window, _cx| {
-        sidebar
-            .restoring_tasks
-            .insert(thread_id, gpui::Task::ready(()));
+        sidebar.restoring_threads.insert(thread_id);
     });
 
     let notifications_before = workspace.read_with(cx, |ws, _| ws.notification_ids().len());
@@ -15318,14 +15315,12 @@ async fn test_open_thread_from_archive_re_entry_guard_shows_toast(cx: &mut TestA
         "a re-entry while a restore is in flight must surface one toast"
     );
 
-    // The original placeholder task must still be there — if the second
-    // call had inserted its own task, the placeholder would have been
-    // dropped. We can't compare `Task` values directly, but we can
-    // confirm the entry exists.
+    // The original entry must still be there — if the second call had
+    // overwritten or removed it, the re-entry contract would be broken.
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(
-            sidebar.restoring_tasks.contains_key(&thread_id),
-            "re-entry must not remove or replace the in-flight task entry"
+            sidebar.restoring_threads.contains(&thread_id),
+            "re-entry must not remove or replace the in-flight entry"
         );
     });
 }

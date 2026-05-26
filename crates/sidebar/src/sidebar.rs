@@ -8,10 +8,9 @@ use agent_ui::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore,
 };
 use agent_ui::thread_metadata_store::{
-    ArchivedGitWorktree, ThreadMetadata, ThreadMetadataStore, WorktreePaths,
-    worktree_info_from_thread_paths,
+    ThreadMetadata, ThreadMetadataStore, WorktreePaths, worktree_info_from_thread_paths,
 };
-use agent_ui::thread_worktree_archive;
+use agent_ui::thread_worktree_archive::{self, ArchivedGitWorktree};
 use agent_ui::threads_archive_view::{
     ThreadsArchiveView, ThreadsArchiveViewEvent, format_history_entry_timestamp,
     fuzzy_match_positions,
@@ -22,6 +21,7 @@ use agent_ui::{
     NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
     channels_with_threads, import_threads_from_other_channels,
 };
+use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use editor::Editor;
 use feature_flags::{
@@ -528,16 +528,35 @@ fn workspace_has_terminal_metadata_except(
 /// touched many worktrees or deep paths.
 const OVERWRITE_PROMPT_PATH_LIMIT: usize = 5;
 
+/// Headline shown as the platform alert's `message` (bold/large on macOS).
+/// Kept terse so it renders well at the title's font size; the path list
+/// goes into `detail` instead.
+const OVERWRITE_PROMPT_HEADLINE: &str =
+    "Restoring this thread will overwrite existing files. Continue?";
+
+/// Button labels for the overwrite prompt. The cancel-first ordering is
+/// deliberate: it makes Cancel the default button (Return) AND the
+/// escape-key target on macOS NSAlert, so a stray keypress can't trigger
+/// an unrecoverable data-loss operation. Looked up by label rather than
+/// by positional index so reordering or adding buttons can't silently
+/// flip the meaning of [`prompt_overwrite_if_needed`]'s return value.
+const OVERWRITE_PROMPT_BUTTONS: &[&str] = &[
+    OVERWRITE_PROMPT_CANCEL_LABEL,
+    OVERWRITE_PROMPT_PROCEED_LABEL,
+];
+const OVERWRITE_PROMPT_CANCEL_LABEL: &str = "Cancel";
+const OVERWRITE_PROMPT_PROCEED_LABEL: &str = "Overwrite";
+
 /// Builds the body shown in the "will overwrite existing contents" prompt
 /// for an archived-thread restore. Lists up to
 /// [`OVERWRITE_PROMPT_PATH_LIMIT`] paths and folds any extras into a
 /// `... and N more` line so the native alert stays readable. The full
 /// list is also written to the log so triage isn't dependent on what fits
 /// in the dialog.
-fn format_overwrite_prompt(paths: &[PathBuf]) -> String {
+fn format_overwrite_prompt_detail(paths: &[PathBuf]) -> String {
     debug_assert!(
         !paths.is_empty(),
-        "format_overwrite_prompt called with no paths; caller should not prompt at all"
+        "format_overwrite_prompt_detail called with no paths; caller should not prompt at all"
     );
     // Always log the full list, regardless of whether we're about to
     // truncate. The dialog is for the user; the log is for triage and
@@ -558,12 +577,9 @@ fn format_overwrite_prompt(paths: &[PathBuf]) -> String {
         .collect();
     let extra = paths.len().saturating_sub(OVERWRITE_PROMPT_PATH_LIMIT);
     if extra > 0 {
-        rendered.push(format!("... and {extra} more"));
+        rendered.push(format!("… and {extra} more"));
     }
-    format!(
-        "Restoring this thread will overwrite the existing contents of:\n\n{}",
-        rendered.join("\n")
-    )
+    format!("This will overwrite:\n\n{}", rendered.join("\n"))
 }
 
 /// Notification ID used for the "this thread is already being restored"
@@ -600,18 +616,38 @@ enum OverwriteDecision {
 /// existing on-disk content the destructive restore would clobber.
 /// Touches no files; safe to abort after this without disturbing the
 /// archived state.
+///
+/// Worktrees are checked in parallel (via `try_join_all` over per-task
+/// `AsyncApp` clones) because each row's check is an independent fs probe
+/// against a different path. For threads with N worktrees on slow or
+/// networked storage this matters; for the common N ≤ 3 case the
+/// difference is in the noise.
+///
+/// Per-row errors are wrapped with the offending `worktree_path` so the
+/// caller's user-visible toast can name which worktree's probe failed,
+/// not just "something".
 async fn preflight_overwrite_paths(
     archived_worktrees: &[ArchivedGitWorktree],
     remote_connection: Option<&RemoteConnectionOptions>,
-    cx: &mut AsyncApp,
+    cx: &AsyncApp,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let mut paths_to_overwrite = Vec::new();
-    for row in archived_worktrees {
-        if thread_worktree_archive::restore_would_overwrite(row, remote_connection, cx).await? {
-            paths_to_overwrite.push(row.worktree_path.clone());
+    let probes = archived_worktrees.iter().map(|row| {
+        let mut cx = cx.clone();
+        async move {
+            let overwrites =
+                thread_worktree_archive::restore_would_overwrite(row, remote_connection, &mut cx)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "checking worktree path {} for existing content",
+                            row.worktree_path.display()
+                        )
+                    })?;
+            anyhow::Ok(overwrites.then(|| row.worktree_path.clone()))
         }
-    }
-    Ok(paths_to_overwrite)
+    });
+    let results = futures::future::try_join_all(probes).await?;
+    Ok(results.into_iter().flatten().collect())
 }
 
 /// If `paths_to_overwrite` is empty, returns [`OverwriteDecision::Proceed`]
@@ -620,11 +656,18 @@ async fn preflight_overwrite_paths(
 /// choice. Prompt failures (e.g. window closed mid-prompt) log and
 /// resolve to Abort.
 ///
+/// The headline ([`OVERWRITE_PROMPT_HEADLINE`]) is passed as the alert's
+/// `message` and the path list as `detail`, so the platform renders the
+/// question prominently and the path list at body weight — not the
+/// other way around.
+///
 /// "Cancel" is placed first so Escape / Return both default to the
-/// non-destructive option; this is intentionally safer than the
-/// prevailing `[Destructive, Cancel]` order used elsewhere in Zed
-/// because the consequence here is unrecoverable user-data loss rather
-/// than something reversible like leaving a channel.
+/// non-destructive option on macOS NSAlert (Cancel is the keyEquivalent
+/// for Escape AND the first-added button, which is the default response).
+/// This is intentionally safer than the prevailing `[Destructive, Cancel]`
+/// order used elsewhere in Zed because the consequence here is
+/// unrecoverable user-data loss rather than something reversible like
+/// leaving a channel.
 async fn prompt_overwrite_if_needed(
     paths_to_overwrite: &[PathBuf],
     cx: &mut gpui::AsyncWindowContext,
@@ -632,21 +675,30 @@ async fn prompt_overwrite_if_needed(
     if paths_to_overwrite.is_empty() {
         return OverwriteDecision::Proceed;
     }
-    let message = format_overwrite_prompt(paths_to_overwrite);
+    let detail = format_overwrite_prompt_detail(paths_to_overwrite);
     // `Critical` rather than `Warning` because the prompt gates an
     // unrecoverable data-loss operation; we want the platform alert
     // icon (e.g. a stop sign on macOS), not a generic warning triangle.
     let result = cx
         .prompt(
             gpui::PromptLevel::Critical,
-            &message,
-            None,
-            &["Cancel", "Overwrite"],
+            OVERWRITE_PROMPT_HEADLINE,
+            Some(&detail),
+            OVERWRITE_PROMPT_BUTTONS,
         )
         .await;
     match result {
-        Ok(1) => OverwriteDecision::Proceed,
-        Ok(_) => OverwriteDecision::Abort,
+        Ok(idx) => {
+            // Match by label so reordering or adding buttons doesn't
+            // silently flip Proceed/Abort. An out-of-range index (which
+            // shouldn't be reachable: the platform must return one of
+            // the indices we passed) falls into the Abort arm, which is
+            // the conservative default.
+            match OVERWRITE_PROMPT_BUTTONS.get(idx).copied() {
+                Some(OVERWRITE_PROMPT_PROCEED_LABEL) => OverwriteDecision::Proceed,
+                Some(_) | None => OverwriteDecision::Abort,
+            }
+        }
         Err(error) => {
             log::error!("Failed to prompt for overwrite confirmation: {error:#}");
             OverwriteDecision::Abort
@@ -654,29 +706,49 @@ async fn prompt_overwrite_if_needed(
     }
 }
 
+/// One worktree's outcome from [`run_destructive_restore_pass`]: the
+/// archived row (so the caller's cleanup loop knows which DB record to
+/// drop) paired with the on-disk path the restore actually ended up at.
+/// Borrowing the row keeps the cleanup side-by-side with the
+/// `archived_worktrees` slice owned by the caller, without copying.
+struct RestoreOutcome<'a> {
+    archived: &'a ArchivedGitWorktree,
+    restored_path: PathBuf,
+}
+
 /// Runs the destructive `restore_worktree_via_git` for every archived
-/// worktree in order, stopping at the first failure. Returns the
-/// `(original_path, restored_path)` pairs for completed restores on
-/// success, or the first error encountered on failure.
+/// worktree in order, stopping at the first failure. Returns one
+/// [`RestoreOutcome`] per fully-restored worktree on success, or the
+/// first error encountered on failure (with the failing worktree's
+/// path attached as context so the user-visible toast can name it).
 ///
 /// We deliberately do NOT delete each archived worktree's DB record
 /// inside this loop. If we did, a later worktree's failure would strand
 /// the thread: the successful rows would have no archived metadata left
 /// to retry from, leaving on-disk worktrees orphaned and the thread
 /// permanently broken. Cleanup happens only after the DB-visible state
-/// is committed in the caller.
-async fn run_destructive_restore_pass(
-    archived_worktrees: &[ArchivedGitWorktree],
+/// is committed in the caller, and is driven off the returned outcomes
+/// rather than the input slice so an enhancement that allows partial
+/// success can't accidentally delete records for un-restored worktrees.
+async fn run_destructive_restore_pass<'a>(
+    archived_worktrees: &'a [ArchivedGitWorktree],
     remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
-) -> anyhow::Result<Vec<(PathBuf, PathBuf)>> {
-    let mut path_replacements = Vec::with_capacity(archived_worktrees.len());
+) -> anyhow::Result<Vec<RestoreOutcome<'a>>> {
+    let mut outcomes = Vec::with_capacity(archived_worktrees.len());
     for row in archived_worktrees {
         let restored_path =
-            thread_worktree_archive::restore_worktree_via_git(row, remote_connection, cx).await?;
-        path_replacements.push((row.worktree_path.clone(), restored_path));
+            thread_worktree_archive::restore_worktree_via_git(row, remote_connection, cx)
+                .await
+                .with_context(|| {
+                    format!("restoring worktree at {}", row.worktree_path.display())
+                })?;
+        outcomes.push(RestoreOutcome {
+            archived: row,
+            restored_path,
+        });
     }
-    Ok(path_replacements)
+    Ok(outcomes)
 }
 
 /// Commits the DB-visible state changes for a successful restore:
@@ -886,7 +958,13 @@ pub struct Sidebar {
     /// thread entries are not present in the list).
     live_thread_statuses: HashMap<acp::SessionId, (AgentThreadStatus, ThreadId)>,
     view: SidebarView,
-    restoring_tasks: HashMap<agent_ui::ThreadId, Task<()>>,
+    /// Threads with a restore currently in flight in *this* window. Used as
+    /// a synchronous re-entry guard at the top of
+    /// [`Sidebar::open_thread_from_archive`] so a double-click on Restore
+    /// surfaces a toast instead of spawning a second task that would race
+    /// the first. Cross-window serialization is handled separately by
+    /// [`ThreadMetadataStore::try_claim_restore`].
+    restoring_threads: HashSet<agent_ui::ThreadId>,
     recent_projects_popover_handle: PopoverMenuHandle<SidebarRecentProjects>,
     project_header_menu_handles: HashMap<usize, PopoverMenuHandle<ContextMenu>>,
     project_header_menu_ix: Option<usize>,
@@ -1008,7 +1086,7 @@ impl Sidebar {
             pending_thread_activation: None,
             live_thread_statuses: HashMap::new(),
             view: SidebarView::default(),
-            restoring_tasks: HashMap::new(),
+            restoring_threads: HashSet::new(),
             recent_projects_popover_handle: PopoverMenuHandle::default(),
             project_header_menu_handles: HashMap::new(),
             project_header_menu_ix: None,
@@ -3647,7 +3725,7 @@ impl Sidebar {
         weak_archive_view: &Option<WeakEntity<ThreadsArchiveView>>,
         cx: &mut Context<Self>,
     ) {
-        self.restoring_tasks.remove(&thread_id);
+        self.restoring_threads.remove(&thread_id);
         if let Some(weak_archive_view) = weak_archive_view {
             weak_archive_view
                 .update(cx, |view, cx| {
@@ -3729,7 +3807,7 @@ impl Sidebar {
         // spawning a second task that would cancel the first and risk
         // leaving the worktree in a half-restored state. We check before
         // any synchronous work so the early branches below also benefit.
-        if self.restoring_tasks.contains_key(&thread_id) {
+        if self.restoring_threads.contains(&thread_id) {
             self.show_restore_toast(
                 NotificationId::unique::<AlreadyRestoringToast>(),
                 "This thread is already being restored.",
@@ -3782,32 +3860,56 @@ impl Sidebar {
         };
         let path_list = metadata.folder_paths().clone();
 
-        // Mark this thread as restoring synchronously, BEFORE spawning, so the
-        // per-window re-entry guard at the top of this function rejects a
-        // double-click before the foreground executor has a chance to run the
-        // spawned body. The map's value type is `Task<()>` for historical
-        // reasons, but it's only ever read for presence — we insert a
-        // `Task::ready(())` placeholder here and detach the real task.
-        //
-        // The reason not to store the real task is that the spawned body's
-        // own error handlers call `finish_restore_ui` -> `restoring_tasks
-        // .remove(...)`. If the map held the real task, that remove would
-        // drop the task we're currently inside — which GPUI tolerates but
-        // is a fragile pattern. Detaching the real task makes the remove a
-        // no-op on a `Task::ready(())`, with no "drop the task we're inside"
-        // hazard.
-        self.restoring_tasks.insert(thread_id, Task::ready(()));
+        // Mark this thread as restoring synchronously, BEFORE spawning, so
+        // the per-window re-entry guard at the top of this function rejects
+        // a double-click before the foreground executor has a chance to run
+        // the spawned body. The real `Task` is detached — we only need a
+        // "this thread has a restore in flight" bit here, which the
+        // `restoring_threads` set models directly.
+        self.restoring_threads.insert(thread_id);
 
         cx.spawn_in(window, async move |this, cx| {
             let result: anyhow::Result<()> = async {
                 let archived_worktrees = task.await?;
 
-                // Empty-archive activation has no destructive on-disk
-                // work to serialize against — skip the cross-window claim
-                // entirely and run the simple activation path.
+                // Acquire the cross-window claim before either branch below,
+                // so even the empty-archive activation path is serialized
+                // across windows. The per-window guard above only catches
+                // same-window re-entries. Passing an empty `restore_paths`
+                // for the empty-archive case still acts as a per-thread
+                // lock (the claim records the thread even with no paths).
+                let restore_paths: Vec<PathBuf> = archived_worktrees
+                    .iter()
+                    .map(|row| row.worktree_path.clone())
+                    .collect();
+                let _restore_guard = match ThreadMetadataStore::try_claim_restore(
+                    &store,
+                    thread_id,
+                    metadata.remote_connection.as_ref(),
+                    restore_paths,
+                    cx,
+                ) {
+                    Some(guard) => guard,
+                    None => {
+                        this.update_in(cx, |this, _window, cx| {
+                            this.fail_restore_with_toast(
+                                thread_id,
+                                &weak_archive_view,
+                                NotificationId::unique::<AlreadyRestoringToast>(),
+                                "This thread is already being restored.",
+                                cx,
+                            );
+                        })
+                        .ok();
+                        return anyhow::Ok(());
+                    }
+                };
+
+                // Empty-archive activation: no destructive on-disk work,
+                // just unarchive and route to the right workspace.
                 if archived_worktrees.is_empty() {
                     this.update_in(cx, |this, window, cx| {
-                        this.restoring_tasks.remove(&thread_id);
+                        this.finish_restore_ui(thread_id, &weak_archive_view, cx);
                         if metadata.archived {
                             ThreadMetadataStore::global(cx)
                                 .update(cx, |store, cx| store.unarchive(thread_id, cx));
@@ -3846,38 +3948,9 @@ impl Sidebar {
                     return anyhow::Ok(());
                 }
 
-                // Acquire the cross-window claim. The per-window guard at
-                // the top of `open_thread_from_archive` catches same-
-                // window re-entries; this handles cross-window races.
-                let restore_paths: Vec<PathBuf> = archived_worktrees
-                    .iter()
-                    .map(|row| row.worktree_path.clone())
-                    .collect();
-                let _restore_guard = match ThreadMetadataStore::try_claim_restore(
-                    &store,
-                    thread_id,
-                    metadata.remote_connection.as_ref(),
-                    restore_paths,
-                    cx,
-                ) {
-                    Some(guard) => guard,
-                    None => {
-                        this.update_in(cx, |this, _window, cx| {
-                            this.fail_restore_with_toast(
-                                thread_id,
-                                &weak_archive_view,
-                                NotificationId::unique::<AlreadyRestoringToast>(),
-                                "This thread is already being restored.",
-                                cx,
-                            );
-                        })
-                        .ok();
-                        return anyhow::Ok(());
-                    }
-                };
-
                 // Preflight (read-only). Bailing here leaves the archived
-                // state untouched.
+                // state untouched. Toast text mirrors the log so the user
+                // and triage see the same description of the failed phase.
                 let paths_to_overwrite = match preflight_overwrite_paths(
                     &archived_worktrees,
                     metadata.remote_connection.as_ref(),
@@ -3891,7 +3964,13 @@ impl Sidebar {
                             "Failed to check worktree path for existing content: {error:#}"
                         );
                         this.update_in(cx, |this, _window, cx| {
-                            this.fail_restore_worktree(thread_id, &weak_archive_view, &error, cx);
+                            this.fail_restore_with_toast(
+                                thread_id,
+                                &weak_archive_view,
+                                NotificationId::unique::<RestoreWorktreeErrorToast>(),
+                                format!("Failed to check worktree before restore: {error:#}"),
+                                cx,
+                            );
                         })
                         .ok();
                         return anyhow::Ok(());
@@ -3912,14 +3991,14 @@ impl Sidebar {
                 }
 
                 // Destructive pass.
-                let path_replacements = match run_destructive_restore_pass(
+                let outcomes = match run_destructive_restore_pass(
                     &archived_worktrees,
                     metadata.remote_connection.as_ref(),
                     cx,
                 )
                 .await
                 {
-                    Ok(replacements) => replacements,
+                    Ok(outcomes) => outcomes,
                     Err(error) => {
                         log::error!("Failed to restore worktree: {error:#}");
                         this.update_in(cx, |this, _window, cx| {
@@ -3929,6 +4008,20 @@ impl Sidebar {
                         return anyhow::Ok(());
                     }
                 };
+
+                // Materialize the path pairs `commit_db_state_after_restore`
+                // expects. We keep the outcomes around for the cleanup loop
+                // below so the DB record deletion is driven off real
+                // successes, not the input slice.
+                let path_replacements: Vec<(PathBuf, PathBuf)> = outcomes
+                    .iter()
+                    .map(|outcome| {
+                        (
+                            outcome.archived.worktree_path.clone(),
+                            outcome.restored_path.clone(),
+                        )
+                    })
+                    .collect();
 
                 // Commit the DB-visible state through `AsyncApp` so it
                 // survives the user closing the window between the
@@ -3947,7 +4040,7 @@ impl Sidebar {
                             updated_metadata.remote_connection.clone(),
                         );
                         this.update_in(cx, |this, window, cx| {
-                            this.restoring_tasks.remove(&thread_id);
+                            this.finish_restore_ui(thread_id, &weak_archive_view, cx);
                             this.open_workspace_and_activate_thread(
                                 updated_metadata,
                                 new_paths,
@@ -3979,18 +4072,19 @@ impl Sidebar {
                     None => {}
                 }
 
-                // Finally, drop the archive records. This happens last so
-                // a failure or cancellation between the visible state
-                // changes above and this loop only leaves the user with
-                // some stale DB rows (recoverable by a later cleanup
-                // pass), not a thread stuck in an inconsistent
-                // "unarchived but archive rows missing" state.
+                // Finally, drop the archive records for everything that
+                // was actually restored. Driving cleanup off `outcomes`
+                // rather than `archived_worktrees` is a structural
+                // safeguard: today they're length-equal (because the
+                // destructive pass is all-or-nothing), but if it ever
+                // gains partial-success behaviour, this loop won't
+                // accidentally delete records for un-restored worktrees.
                 // `cleanup_archived_worktree_record` swallows its own
-                // errors, so a cleanup failure leaks a DB row but doesn't
-                // break the thread.
-                for row in &archived_worktrees {
+                // errors, so a cleanup failure leaks a DB row but
+                // doesn't break the thread.
+                for outcome in &outcomes {
                     thread_worktree_archive::cleanup_archived_worktree_record(
-                        row,
+                        outcome.archived,
                         metadata.remote_connection.as_ref(),
                         cx,
                     )
@@ -7417,7 +7511,7 @@ impl Sidebar {
                     this.open_thread_from_archive(thread.clone(), window, cx);
                 }
                 ThreadsArchiveViewEvent::CancelRestore { thread_id } => {
-                    this.restoring_tasks.remove(thread_id);
+                    this.restoring_threads.remove(thread_id);
                 }
                 ThreadsArchiveViewEvent::Import => {
                     this.show_thread_import_modal(window, cx);

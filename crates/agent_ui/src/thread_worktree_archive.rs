@@ -18,7 +18,13 @@ use settings::Settings;
 use util::{ResultExt, paths::PathStyle};
 use workspace::{AppState, MultiWorkspace, Workspace};
 
-use crate::thread_metadata_store::{ArchivedGitWorktree, ThreadId, ThreadMetadataStore};
+use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore};
+
+// Re-export so callers performing destructive ops (preflight, restore,
+// cleanup) can import the row type from the same module as the operations
+// that consume it, instead of reaching back into `thread_metadata_store`
+// for what is, from their perspective, an opaque archive record.
+pub use crate::thread_metadata_store::ArchivedGitWorktree;
 
 /// The plan for archiving a single git worktree root.
 ///

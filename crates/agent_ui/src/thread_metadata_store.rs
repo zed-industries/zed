@@ -526,6 +526,28 @@ pub struct ThreadMetadataStore {
 ///
 /// `Option::None` represents the local machine, mirroring how
 /// `RemoteConnectionOptions` is `Option`-al at the call site.
+///
+/// ## Precondition: `path` must already be in canonical form
+///
+/// Comparison is byte-wise via `Path::eq`, so two on-disk-identical
+/// locations that differ only in:
+///
+/// - case folding (e.g. `/Home/me/x` vs `/home/me/x` on APFS/NTFS),
+/// - redundant segments (e.g. `/a/./b` vs `/a/b`),
+/// - or symlink expansion (e.g. `/var/x` vs `/private/var/x` on macOS)
+///
+/// produce distinct keys, which means a same-location claim could go
+/// undetected. Callers are responsible for passing paths that have
+/// already been normalized to whatever form the DB uses to store them.
+/// In practice the only producer is
+/// [`ArchivedGitWorktree::worktree_path`], which is recorded once when
+/// the worktree is archived and round-tripped verbatim through SQLite;
+/// every restore for a given worktree therefore gets the same byte
+/// sequence and the collision check is sound for that single source.
+///
+/// If a second producer is ever added, it MUST canonicalize first or
+/// route through the same persisted field, otherwise collision detection
+/// silently false-negatives.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RestorePathKey {
     remote: Option<RemoteConnectionIdentity>,
@@ -566,28 +588,24 @@ impl ActiveRestores {
     /// restoring, or if any (remote, path) pair is already claimed by
     /// another in-flight restore.
     ///
-    /// `paths` is expected to be free of duplicates; the data model has one
-    /// archived-worktree row per on-disk path, so a duplicate would indicate
-    /// a caller bug (e.g. building the path list off the wrong field).
-    /// `release` decrements `paths_in_use` per element rather than
-    /// dedup-on-remove, so a duplicate would mean the slot is dropped
-    /// after the first remove and the second is a silent no-op — not
-    /// dangerous, but worth surfacing in debug builds.
+    /// `paths` is deduped internally before any state mutation, so passing
+    /// the same path twice is harmless (a single claim is recorded and
+    /// `release` cleans it up cleanly).
     fn try_claim(
         &mut self,
         thread_id: ThreadId,
         remote: Option<&RemoteConnectionOptions>,
         paths: Vec<PathBuf>,
     ) -> bool {
-        debug_assert!(
-            paths.iter().collect::<HashSet<_>>().len() == paths.len(),
-            "try_claim received duplicate paths for thread {thread_id:?}: {paths:?}"
-        );
         if self.by_thread.contains_key(&thread_id) {
             return false;
         }
         let remote_identity = remote.map(RemoteConnectionIdentity::from);
-        let keys: Vec<Arc<RestorePathKey>> = paths
+        // Collect into a `HashSet` first so duplicates collapse before we
+        // touch any of the shared state. Storing the deduplicated set as
+        // the per-thread record means `release` decrements `paths_in_use`
+        // exactly once per distinct key.
+        let keys: HashSet<Arc<RestorePathKey>> = paths
             .into_iter()
             .map(|path| {
                 Arc::new(RestorePathKey {
@@ -602,7 +620,7 @@ impl ActiveRestores {
         for key in &keys {
             self.paths_in_use.insert(key.clone());
         }
-        self.by_thread.insert(thread_id, keys);
+        self.by_thread.insert(thread_id, keys.into_iter().collect());
         true
     }
 
@@ -635,26 +653,26 @@ impl Drop for RestoreGuard {
             return;
         };
         let thread_id = self.thread_id;
-        // `try_update` rather than `update` so a drop that lands inside an
-        // active `App` borrow logs instead of aborting the process. In the
-        // current design that shouldn't happen — callers detach the spawned
-        // restore task so its locals (including this guard) drop outside
-        // any outer `update` closure — but a future caller that violates
-        // that pattern would otherwise crash the app. The cost of being
-        // wrong is a leaked claim, surfaced via the warning below; the
-        // cost of using `update` would be a panic.
-        if let Err(error) = self.cx.try_update(|cx| {
-            store.update(cx, |store, _| {
-                store.active_restores.release(thread_id);
-            });
-        }) {
-            log::warn!(
-                "RestoreGuard could not release claim for {thread_id:?}: {error:#}; \
-                 the thread will remain marked as restoring until process exit. \
-                 This usually means the guard was dropped inside an active \
-                 App::update borrow — drop the guard between updates instead."
-            );
-        }
+        let cx = self.cx.clone();
+        // Defer the release onto the next foreground tick instead of running
+        // it inline. The guard normally drops outside any `App::update`
+        // borrow (the restore task is detached, so its locals drop on the
+        // executor between updates), but if a future caller ever drops it
+        // mid-update an inline release would either panic on a double
+        // borrow or — with `try_update` — silently leak the claim until
+        // process exit. Deferring is uniformly safe: by the time the
+        // executor turns to this task, any outer borrow has been released.
+        self.cx
+            .foreground_executor()
+            .spawn(async move {
+                cx.try_update(|cx| {
+                    store.update(cx, |store, _| {
+                        store.active_restores.release(thread_id);
+                    });
+                })
+                .log_err();
+            })
+            .detach();
     }
 }
 
@@ -4438,6 +4456,11 @@ mod tests {
         );
 
         drop(first_guard);
+        // `RestoreGuard::drop` schedules the release on the foreground
+        // executor (so a drop inside an active `App::update` can't panic
+        // on a double borrow). Pump the executor so the deferred release
+        // runs before we observe the claim.
+        cx.run_until_parked();
 
         cx.update(|cx| {
             assert!(
@@ -4484,6 +4507,9 @@ mod tests {
         );
 
         drop(guard_a);
+        // Wait for the deferred release scheduled by `RestoreGuard::drop`.
+        cx.run_until_parked();
+        let mut async_cx = cx.to_async();
 
         let guard_b = ThreadMetadataStore::try_claim_restore(
             &store,
@@ -4558,21 +4584,24 @@ mod tests {
         drop(guard_b);
     }
 
-    /// Dropping a [`RestoreGuard`] inside an active `App::update` borrow
-    /// is contractually disallowed in current callers (the restore task is
-    /// detached, so its locals — including the guard — drop outside any
-    /// outer `update`). If a future caller ever violates that, `Drop` must
-    /// log a warning and leak the claim rather than panic on a double
-    /// borrow. This test reaches into the unsupported shape to confirm
-    /// that fallback.
+    /// Dropping a [`RestoreGuard`] inside an active `App::update` borrow is
+    /// contractually unusual (current callers detach the spawned restore
+    /// task, so guard locals drop outside any outer `update`). When it does
+    /// happen, the release must NOT panic on a double borrow, and the claim
+    /// must NOT leak forever — [`RestoreGuard::drop`] schedules the release
+    /// on the foreground executor so it lands on the next tick, after any
+    /// outer borrow has been released.
     ///
-    /// This test asserts the **worst-case ceiling**, not desired behavior.
-    /// If future work makes `RestoreGuard::drop` recover the claim from
-    /// inside an active borrow (e.g. by deferring the release onto a
-    /// later turn of the executor), this test should be deleted, not
-    /// updated to chase the new behavior.
+    /// This test verifies that contract:
+    ///   1. Dropping the guard inside an `App::update` does not panic.
+    ///   2. The claim is still held immediately after the drop (the release
+    ///      hasn't run yet).
+    ///   3. After pumping the executor, the claim is released and a fresh
+    ///      claim succeeds.
     #[gpui::test]
-    async fn test_restore_guard_drop_inside_app_borrow_logs_and_leaks(cx: &mut TestAppContext) {
+    async fn test_restore_guard_drop_inside_app_borrow_releases_on_next_tick(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let thread_id = ThreadId::new();
@@ -4588,32 +4617,28 @@ mod tests {
                 store.read(cx).is_restoring(thread_id),
                 "precondition: claim must be held inside the outer borrow"
             );
-            // Dropping inside the borrow must not panic the app. The
-            // `try_update` inside `RestoreGuard::Drop` returns `Err` and
-            // logs; the claim leaks. That's the documented worst-case for
-            // a misused guard.
+            // Dropping inside the borrow must not panic. The release is
+            // deferred onto the foreground executor, so the claim is still
+            // observable until we pump.
             drop(guard);
             assert!(
                 store.read(cx).is_restoring(thread_id),
-                "claim leaks when the guard is dropped during an active borrow"
+                "deferred release should not have run yet while the outer borrow is held"
             );
         });
 
-        // After the borrow releases, the claim still leaks — we don't try
-        // to recover. Confirm a fresh claim is rejected so the contract is
-        // visible.
+        // Pump the executor so the deferred release task runs.
         cx.run_until_parked();
         cx.update(|cx| {
             assert!(
-                store.read(cx).is_restoring(thread_id),
-                "leaked claim must remain held after pumping the executor"
+                !store.read(cx).is_restoring(thread_id),
+                "deferred release must clear the claim once the executor runs"
             );
         });
         let mut async_cx = cx.to_async();
-        assert!(
+        let fresh =
             ThreadMetadataStore::try_claim_restore(&store, thread_id, None, vec![], &mut async_cx)
-                .is_none(),
-            "a fresh claim must be rejected while the leaked claim is still held"
-        );
+                .expect("a fresh claim must succeed after the deferred release runs");
+        drop(fresh);
     }
 }

@@ -166,14 +166,27 @@ impl AsyncApp {
         lock.update(f)
     }
 
-    /// Like [`AsyncApp::update`], but returns an error instead of panicking if
-    /// the app is already mutably borrowed (e.g. when called from a `Drop`
-    /// impl that happens to fire inside an active `update` closure). Use this
-    /// in destructors that may run while a borrow is held so they can log and
-    /// skip their work rather than abort the process.
+    /// Like [`AsyncApp::update`], but returns an error instead of panicking
+    /// when the call cannot run synchronously right now. Returns `Err` if:
+    ///
+    /// - the underlying `App` has been dropped,
+    /// - the `App` is mutably borrowed elsewhere (e.g. this `try_update` is
+    ///   reached from a `Drop` impl that happens to fire inside an active
+    ///   `update` closure), or
+    /// - the `App` is in the middle of quitting, mirroring the behaviour of
+    ///   the other `*_window` async APIs in this file.
+    ///
+    /// This is intended for destructors and other infallibly-running code
+    /// paths that need to give up gracefully rather than abort the process.
+    /// Regular async code should prefer [`AsyncApp::update`]; the borrow
+    /// failure case there usually indicates a real re-entry bug, and
+    /// papering over it with `try_update` would just hide it.
     pub fn try_update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
         let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.try_borrow_mut()?;
+        if lock.quitting {
+            bail!("app is quitting");
+        }
         Ok(lock.update(f))
     }
 
