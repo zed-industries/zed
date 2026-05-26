@@ -271,10 +271,6 @@ struct ThreadEntry {
     is_background: bool,
     is_title_generating: bool,
     is_draft: bool,
-    /// True when this entry is a draft whose editor (and persisted prompt)
-    /// contain no content. We surface these in the sidebar with a
-    /// synthesized "New {agent} Thread" label but suppress their
-    /// timestamp — an empty draft has no meaningful age to display.
     is_empty_draft: bool,
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
@@ -1448,8 +1444,6 @@ impl Sidebar {
                             is_background: false,
                             is_title_generating: false,
                             is_draft,
-                            // Defaulted here; resolved below when we compute
-                            // the draft title so the two stay in sync.
                             is_empty_draft: false,
                             highlight_positions: Vec::new(),
                             worktrees,
@@ -1549,13 +1543,11 @@ impl Sidebar {
                     if !thread.is_draft {
                         continue;
                     }
-                    // Resolve title and empty-state together so the sidebar
-                    // can both render a meaningful label and suppress the
-                    // timestamp for drafts with no content.
                     let workspace_for_label = match &thread.workspace {
                         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
                         ThreadEntryWorkspace::Closed { .. } => None,
                     };
+
                     match agent_ui::draft_prompt_store::display_label_for_draft(
                         workspace_for_label,
                         thread.metadata.thread_id,
@@ -1586,13 +1578,6 @@ impl Sidebar {
                 // in some other thread. Drafts with real content
                 // (`is_empty_draft == false`) are preserved unconditionally
                 // — they represent user-typed state we shouldn't hide.
-                //
-                // While a thread activation is pending (e.g. the user just
-                // clicked a thread in an uninitialized workspace), the
-                // panel briefly boots with its ephemeral empty draft as
-                // the active view before the target thread loads. Hiding
-                // placeholders during that window prevents a one-frame
-                // "New {agent} Thread" flicker.
                 let pending_activation = self.pending_thread_activation;
                 let active_panel_thread_id = active_workspace
                     .as_ref()
@@ -5144,10 +5129,6 @@ impl Sidebar {
                     None
                 }
                 ListEntry::Thread(thread) => {
-                    // The active empty-draft placeholder is shown in the
-                    // sidebar to mirror the panel's current state, but it
-                    // is not a useful navigation target in the thread
-                    // switcher — the user is already there. Skip it.
                     if thread.is_empty_draft {
                         return None;
                     }
@@ -5166,8 +5147,7 @@ impl Sidebar {
                         }
                     }?;
                     let notified = self.contents.is_thread_notified(&thread.metadata.thread_id);
-                    // Mirror the sidebar-row rule: empty drafts have no
-                    // meaningful age, so we omit the timestamp.
+
                     let timestamp: SharedString = if thread.is_empty_draft {
                         SharedString::default()
                     } else {
@@ -5510,9 +5490,6 @@ impl Sidebar {
             .title_bar_background
             .blend(color.panel_background.opacity(0.25));
 
-        // Empty drafts (no editor content, no persisted prompt) don't have
-        // a meaningful age, so we suppress the timestamp. ThreadItem treats
-        // an empty SharedString as "no timestamp" and hides the label.
         let timestamp: SharedString = if thread.is_empty_draft {
             SharedString::default()
         } else {
@@ -5605,10 +5582,6 @@ impl Sidebar {
                         }),
                 )
             })
-            // The empty-draft placeholder has nothing to discard — it has
-            // no user content and exists only to mirror the panel state.
-            // Suppress the close button so the row doesn't suggest a
-            // destructive action that's actually a no-op.
             .when(
                 is_hovered && !is_running && is_draft && !is_empty_draft,
                 |this| {
