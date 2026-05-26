@@ -1586,6 +1586,14 @@ impl Sidebar {
                 // in some other thread. Drafts with real content
                 // (`is_empty_draft == false`) are preserved unconditionally
                 // — they represent user-typed state we shouldn't hide.
+                //
+                // While a thread activation is pending (e.g. the user just
+                // clicked a thread in an uninitialized workspace), the
+                // panel briefly boots with its ephemeral empty draft as
+                // the active view before the target thread loads. Hiding
+                // placeholders during that window prevents a one-frame
+                // "New {agent} Thread" flicker.
+                let pending_activation = self.pending_thread_activation;
                 let active_panel_thread_id = active_workspace
                     .as_ref()
                     .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
@@ -1593,6 +1601,9 @@ impl Sidebar {
                 threads.retain(|thread| {
                     if !thread.is_empty_draft {
                         return true;
+                    }
+                    if pending_activation.is_some() {
+                        return false;
                     }
                     Some(thread.metadata.thread_id) == active_panel_thread_id
                 });
