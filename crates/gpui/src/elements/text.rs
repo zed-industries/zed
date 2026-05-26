@@ -455,14 +455,27 @@ impl TextLayout {
                 }
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
-                let (text, runs) = if let Some(truncate_width) = truncate_width {
-                    line_wrapper.truncate_line(
-                        text.clone(),
-                        truncate_width,
-                        &truncation_affix,
-                        &runs,
-                        truncate_from,
-                    )
+                let (text, runs) = if truncate_width.is_some() {
+                    if let Some(max_lines) = text_style.line_clamp
+                        && let Some(wrap_width) = wrap_width
+                    {
+                        line_wrapper.truncate_wrapped_line(
+                            text.clone(),
+                            wrap_width,
+                            max_lines,
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    } else {
+                        line_wrapper.truncate_line(
+                            text.clone(),
+                            truncate_width.unwrap_or(Pixels::MAX),
+                            &truncation_affix,
+                            &runs,
+                            truncate_from,
+                        )
+                    }
                 } else {
                     (text.clone(), Cow::Borrowed(&*runs))
                 };

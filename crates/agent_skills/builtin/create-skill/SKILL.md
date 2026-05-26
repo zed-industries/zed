@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Helps users create new agent skills for Zed. Use this when a user wants to create a skill, asks about SKILL.md structure, or wants to package reusable agent instructions.
+description: Helps you create new agent skills for Zed. Use this to create a skill, ask about SKILLs.md, or package reusable agent instructions.
 ---
 
 # Creating a Zed Agent Skill

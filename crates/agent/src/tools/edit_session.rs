@@ -277,6 +277,7 @@ pub(crate) enum EditSessionResult {
 
 pub(crate) async fn run_session(
     result: EditSessionResult,
+    event_stream: &ToolCallEventStream,
     cx: &mut AsyncApp,
 ) -> Result<EditSessionOutput, EditSessionOutput> {
     match result {
@@ -302,6 +303,11 @@ pub(crate) async fn run_session(
                 .ensure_buffer_saved(&session.buffer, cx)
                 .await;
             let (_new_text, diff) = session.compute_new_text_and_diff(cx).await;
+            if diff.is_empty() {
+                event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                    acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+                ]));
+            }
             Err(EditSessionOutput::Error {
                 error,
                 input_path: Some(session.input_path),
@@ -311,11 +317,16 @@ pub(crate) async fn run_session(
         EditSessionResult::Failed {
             error,
             session: None,
-        } => Err(EditSessionOutput::Error {
-            error,
-            input_path: None,
-            diff: String::new(),
-        }),
+        } => {
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(error.clone())),
+            ]));
+            Err(EditSessionOutput::Error {
+                error,
+                input_path: None,
+                diff: String::new(),
+            })
+        }
     }
 }
 
