@@ -1672,6 +1672,7 @@ mod tests {
             !repo_contains_worktree(&repository, &worktree_path, &mut cx).await,
             "worktree should be removed after successful delete"
         );
+    }
 
     #[gpui::test]
     async fn test_remote_default_branch_is_preferred_create_target(cx: &mut TestAppContext) {
