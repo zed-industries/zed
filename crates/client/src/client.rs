@@ -1685,9 +1685,6 @@ impl Client {
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
         self.cloud_client.clear_credentials();
-        if let Some(llm_token) = cx.update(|cx| try_global_llm_token(cx)) {
-            llm_token.clear().await;
-        }
         self.disconnect(cx);
 
         if self.has_credentials(cx).await {

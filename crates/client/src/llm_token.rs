@@ -2,9 +2,10 @@ use super::{Client, UserStore};
 use cloud_api_client::LlmApiToken;
 use cloud_api_types::websocket_protocol::MessageToClient;
 use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, OUTDATED_LLM_TOKEN_HEADER_NAME};
+use futures::StreamExt;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _, Subscription,
-    TaskExt,
+    Task, TaskExt,
 };
 use std::sync::Arc;
 
@@ -32,11 +33,6 @@ pub fn global_llm_token(cx: &App) -> LlmApiToken {
         .clone()
 }
 
-pub fn try_global_llm_token(cx: &App) -> Option<LlmApiToken> {
-    cx.try_global::<GlobalRefreshLlmTokenListener>()
-        .map(|listener| listener.0.read(cx).llm_api_token.clone())
-}
-
 struct GlobalRefreshLlmTokenListener(Entity<RefreshLlmTokenListener>);
 
 impl Global for GlobalRefreshLlmTokenListener {}
@@ -47,6 +43,7 @@ pub struct RefreshLlmTokenListener {
     client: Arc<Client>,
     user_store: Entity<UserStore>,
     llm_api_token: LlmApiToken,
+    _clear_llm_token_on_sign_out: Task<()>,
     _subscription: Subscription,
 }
 
@@ -78,10 +75,24 @@ impl RefreshLlmTokenListener {
             }
         });
 
+        let llm_api_token = LlmApiToken::default();
+        let mut status = client.status();
+        let clear_llm_token_on_sign_out = cx.spawn({
+            let llm_api_token = llm_api_token.clone();
+            async move |_this, _cx| {
+                while let Some(status) = status.next().await {
+                    if status.is_signed_out() {
+                        llm_api_token.clear().await;
+                    }
+                }
+            }
+        });
+
         Self {
             client,
             user_store,
-            llm_api_token: LlmApiToken::default(),
+            llm_api_token,
+            _clear_llm_token_on_sign_out: clear_llm_token_on_sign_out,
             _subscription: subscription,
         }
     }
