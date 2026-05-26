@@ -1578,6 +1578,26 @@ impl Sidebar {
                 }
                 threads.retain(|thread| !thread.is_draft || thread.metadata.title.is_some());
 
+                // A group can contain several linked-worktree workspaces,
+                // each with its own agent panel and therefore its own
+                // ephemeral empty draft. Showing all of them produces a
+                // wall of identical "New {agent} Thread" placeholders, so
+                // we only surface the placeholder belonging to the
+                // currently active workspace. Drafts with actual content
+                // (`is_empty_draft == false`) are preserved across all
+                // workspaces because they represent real user state.
+                threads.retain(|thread| {
+                    if !thread.is_empty_draft {
+                        return true;
+                    }
+                    match &thread.workspace {
+                        ThreadEntryWorkspace::Open(workspace) => active_workspace
+                            .as_ref()
+                            .is_some_and(|active| active == workspace),
+                        ThreadEntryWorkspace::Closed { .. } => false,
+                    }
+                });
+
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
                 let mut live_info_by_session: HashMap<&acp::SessionId, &ActiveThreadInfo> =
