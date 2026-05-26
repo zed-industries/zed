@@ -13,16 +13,16 @@ Zed supports three agent paths. Choose the path based on how you want agentic wo
 | [External Agents](./external-agents.md)   | Agent Panel and Threads Sidebar | ACP agent process and its own auth/config                             | You want Claude, Codex, OpenCode, Copilot, Cursor, Pi, or another ACP-integrated agent |
 | [Terminal Threads](./terminal-threads.md) | Threads Sidebar and terminal    | Native CLI/TUI auth/config                                            | You want the tool's command-line experience organized in Zed                           |
 
-An agent path is sometimes called a harness: it is the way agentic work is started, displayed, configured, and controlled. It is separate from the LLM provider that supplies a model.
+An agent path is sometimes called a harness. It is the way agentic work is started, displayed, configured, and controlled in Zed.
 
 ## Agent Path vs. LLM Provider {#agent-path-vs-llm-provider}
 
-| Concept      | What it answers              | Examples                                                             |
-| ------------ | ---------------------------- | -------------------------------------------------------------------- |
-| Agent path   | How agentic work runs in Zed | Zed Agent, external agents, terminal threads                         |
-| LLM provider | Where models come from       | Zed-hosted models, API access, subscriptions, gateways, local models |
+| Question                                  | Start here                          |
+| ----------------------------------------- | ----------------------------------- |
+| Which agent or CLI should run the work?   | This page                           |
+| Which model should power Zed AI features? | [LLM Providers](./llm-providers.md) |
 
-Zed Agent uses [LLM Providers](./llm-providers.md) configured in Zed. External agents and terminal threads may use their own provider configuration.
+The [Zed Agent](./zed-agent.md) uses models configured in Zed. [External agents](./external-agents.md) and [terminal threads](./terminal-threads.md) may use their own model setup.
 
 ## Thread Types {#thread-types}
 

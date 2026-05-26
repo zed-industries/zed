@@ -42,6 +42,10 @@ By default, new projects open in your current window's threads sidebar. To open 
 
 The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
 
+### Panel Layout
+
+Use **Zed > Panel Layout > Agentic** when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Zed > Panel Layout > Classic** to restore the editor-oriented layout.
+
 ### 3. Configure Your Editor
 
 Open the Settings Editor with `Cmd+,` (macOS) or `Ctrl+,` (Linux/Windows). Search for any setting and change it directly.

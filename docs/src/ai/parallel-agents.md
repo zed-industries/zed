@@ -9,7 +9,7 @@ Parallel Agents lets you run multiple agent threads at once, each working indepe
 
 Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar}.
 
-> **Note:** From version 0.233.0 onward, the Agent Panel and Threads Sidebar are on the left by default. The Project Panel, Git Panel, and other panels move to the right, keeping the thread list and conversation next to each other. To rearrange panels, right-click any panel icon.
+Use **Zed > Panel Layout > Agentic** to place the Agent Panel and Threads Sidebar on the left, with the Project Panel, Git Panel, and other panels on the right. Use **Zed > Panel Layout > Classic** to restore the editor-oriented layout. You can still rearrange individual panels by right-clicking any panel icon.
 
 ## Threads Sidebar {#threads-sidebar}
 

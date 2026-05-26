@@ -7,6 +7,8 @@ description: "How Zed handles multiple projects in windows, including the thread
 
 Zed lets you work on multiple projects in a single window. Projects appear in the threads sidebar on the left, and you can switch between them while keeping your context intact.
 
+Use **Zed > Panel Layout > Agentic** to keep the Threads Sidebar and Agent Panel together on the left. Use **Zed > Panel Layout > Classic** to restore the editor-oriented layout.
+
 ## How Projects Open
 
 By default, when you open a folder in Zed, it opens as a new project in your current window's threads sidebar rather than creating a new window. This keeps related work together and preserves your agent threads and layout.

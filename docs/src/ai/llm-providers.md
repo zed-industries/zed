@@ -5,9 +5,9 @@ description: Choose how Zed gets language models: Zed-hosted models, API access,
 
 # LLM Providers
 
-LLM providers are model access paths. They answer where the selected language model comes from.
+Use this page to choose which models power Zed-owned AI features, including [Zed Agent](./zed-agent.md), [Inline Assistant](./inline-assistant.md), Git commit generation, thread summaries, and similar model-backed features.
 
-Agent paths answer how agentic work runs in Zed. The [Zed Agent](./zed-agent.md) uses LLM providers configured in Zed. [External agents](./external-agents.md) and [terminal threads](./terminal-threads.md) may use their own provider configuration.
+[External agents](./external-agents.md) and [terminal threads](./terminal-threads.md) are different: Zed hosts the thread, but the external agent or CLI usually owns its own model setup.
 
 ## Choose a Model Access Path {#choose-a-model-access-path}
 
