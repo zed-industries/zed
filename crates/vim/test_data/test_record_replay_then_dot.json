@@ -1,0 +1,24 @@
+{"Put":{"state":"ˇhello world"}}
+{"Key":"q"}
+{"Key":"a"}
+{"Key":"i"}
+{"Key":"X"}
+{"Key":"escape"}
+{"Key":"q"}
+{"Key":"@"}
+{"Key":"a"}
+{"Key":"."}
+{"Get":{"state":"ˇXXXhello world","mode":"Normal"}}
+{"Put":{"state":"ˇhello world"}}
+{"Key":"q"}
+{"Key":"b"}
+{"Key":"r"}
+{"Key":"a"}
+{"Key":"l"}
+{"Key":"r"}
+{"Key":"b"}
+{"Key":"q"}
+{"Key":"@"}
+{"Key":"b"}
+{"Key":"."}
+{"Get":{"state":"aaˇblo world","mode":"Normal"}}
