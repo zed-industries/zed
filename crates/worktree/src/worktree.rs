@@ -4446,6 +4446,9 @@ impl BackgroundScanner {
                     }
 
                     if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        log::debug!(
+                            "detected update within git repo at {dot_git_abs_path:?}: {abs_path:?}"
+                        );
                         dot_git_abs_paths.push(dot_git_abs_path);
                     }
                 }
@@ -4526,7 +4529,7 @@ impl BackgroundScanner {
                         .is_some_and(|entry| entry.kind == EntryKind::Dir)
                 });
                 if !parent_dir_is_loaded {
-                    log::debug!("ignoring event {relative_path:?} within unloaded directory");
+                    log::debug!("filtering event {relative_path:?} within unloaded directory");
                     skip_ix(&mut ranges_to_drop, ix);
                     continue;
                 }
@@ -4567,13 +4570,15 @@ impl BackgroundScanner {
         self.state.lock().await.snapshot.scan_id += 1;
 
         let (scan_job_tx, scan_job_rx) = async_channel::unbounded();
-        log::debug!(
-            "received fs events {:?}",
-            relative_paths
-                .iter()
-                .map(|event_root| &event_root.path)
-                .collect::<Vec<_>>()
-        );
+        if !relative_paths.is_empty() {
+            log::debug!(
+                "will update project paths {:?}",
+                relative_paths
+                    .iter()
+                    .map(|event_root| &event_root.path)
+                    .collect::<Vec<_>>()
+            );
+        }
         self.reload_entries_for_paths(
             &root_path,
             &root_canonical_path,
