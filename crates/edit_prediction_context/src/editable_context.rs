@@ -1,8 +1,12 @@
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{App, AppContext as _, AsyncApp, Entity, EntityId};
 use language::{Buffer, BufferSnapshot, Point, ToPoint as _};
 use project::{Project, ProjectPath};
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use text::Anchor;
 use util::{paths::PathStyle, rel_path::RelPath};
 use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
@@ -10,7 +14,7 @@ use zeta_prompt::{ContextSource, RelatedExcerpt, RelatedFile};
 use crate::git_log_context::build_git_log_index;
 
 /// This module contains collectors for editable context:
-/// excerpts in files that are likely to be edited.
+/// excerpts or full files that are likely to be edited.
 
 const CURSOR_CONTEXT_LINE_COUNT: u32 = 20;
 const EDIT_HISTORY_CONTEXT_LINE_COUNT: u32 = 20;
@@ -42,6 +46,7 @@ pub async fn collect_editable_context(
     active_buffer: Entity<Buffer>,
     cursor_position: Anchor,
     edit_history: Vec<EditHistoryContextEntry>,
+    oracle_paths: Vec<Arc<Path>>,
     context_sources: Vec<ContextSource>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<Vec<RelatedFile>> {
@@ -55,11 +60,20 @@ pub async fn collect_editable_context(
             cx,
         );
     }
+    if context_sources.contains(&ContextSource::CurrentFile) {
+        collect_current_file_context(&mut ranges_by_buffer, active_buffer.clone(), cx);
+    }
     if context_sources.contains(&ContextSource::EditHistory) {
-        collect_edit_history_context(&mut ranges_by_buffer, edit_history, cx);
+        collect_edit_history_context(&mut ranges_by_buffer, &edit_history, cx);
+    }
+    if context_sources.contains(&ContextSource::EditHistoryFile) {
+        collect_edit_history_file_context(&mut ranges_by_buffer, &edit_history, cx);
     }
     if context_sources.contains(&ContextSource::GitLog) {
         collect_git_log_context(&mut ranges_by_buffer, project.clone(), active_buffer, cx).await;
+    }
+    if context_sources.contains(&ContextSource::OracleFile) {
+        collect_oracle_file_context(&mut ranges_by_buffer, project.clone(), oracle_paths, cx).await;
     }
 
     Ok(cx.update(|cx| {
@@ -224,28 +238,161 @@ fn collect_cursor_excerpt_context(
     );
 }
 
-fn collect_edit_history_context(
+fn collect_current_file_context(
     ranges_by_buffer: &mut RangesByBuffer,
-    edit_history: Vec<EditHistoryContextEntry>,
+    active_buffer: Entity<Buffer>,
     cx: &mut AsyncApp,
 ) {
-    for (index, entry) in edit_history.into_iter().enumerate() {
+    collect_full_buffer_context(
+        ranges_by_buffer,
+        active_buffer,
+        0,
+        ContextSource::CurrentFile,
+        cx,
+    );
+}
+
+fn collect_edit_history_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    edit_history: &[EditHistoryContextEntry],
+    cx: &mut AsyncApp,
+) {
+    for (index, entry) in edit_history.iter().enumerate() {
         let edit_history_range = entry.buffer.read_with(cx, |buffer, _cx| {
             expanded_anchor_range(
                 &buffer.snapshot(),
-                entry.edited_range,
+                entry.edited_range.clone(),
                 EDIT_HISTORY_CONTEXT_LINE_COUNT,
             )
         });
 
         push_context_range(
             ranges_by_buffer,
-            entry.buffer,
+            entry.buffer.clone(),
             edit_history_range,
             index + 1,
             ContextSource::EditHistory,
         );
     }
+}
+
+fn collect_edit_history_file_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    edit_history: &[EditHistoryContextEntry],
+    cx: &mut AsyncApp,
+) {
+    let next_order = next_context_order(ranges_by_buffer);
+    let mut seen_buffers = HashSet::default();
+    let mut index = 0;
+
+    for entry in edit_history {
+        if !seen_buffers.insert(entry.buffer.entity_id()) {
+            continue;
+        }
+
+        collect_full_buffer_context(
+            ranges_by_buffer,
+            entry.buffer.clone(),
+            next_order + index,
+            ContextSource::EditHistoryFile,
+            cx,
+        );
+        index += 1;
+    }
+}
+
+async fn collect_oracle_file_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    project: Entity<Project>,
+    oracle_paths: Vec<Arc<Path>>,
+    cx: &mut AsyncApp,
+) {
+    let next_order = next_context_order(ranges_by_buffer);
+    let mut seen_buffers = HashSet::default();
+    let mut index = 0;
+
+    for path in oracle_paths {
+        let buffer = match open_buffer_for_path(&project, &path, cx).await {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => {
+                log::debug!("failed to find oracle file path: {}", path.display());
+                continue;
+            }
+            Err(error) => {
+                log::debug!(
+                    "failed to open oracle file path {}: {error:#}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+
+        if !seen_buffers.insert(buffer.entity_id()) {
+            continue;
+        }
+
+        collect_full_buffer_context(
+            ranges_by_buffer,
+            buffer,
+            next_order + index,
+            ContextSource::OracleFile,
+            cx,
+        );
+        index += 1;
+    }
+}
+
+async fn open_buffer_for_path(
+    project: &Entity<Project>,
+    path: &Path,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<Option<Entity<Buffer>>> {
+    let path = path.to_path_buf();
+    let path_without_prefix: PathBuf = path.components().skip(1).collect();
+    let project_path = project.update(cx, |project, cx| {
+        project.find_project_path(&path, cx).or_else(|| {
+            if path_without_prefix.as_os_str().is_empty() {
+                None
+            } else {
+                project.find_project_path(&path_without_prefix, cx)
+            }
+        })
+    });
+
+    let Some(project_path) = project_path else {
+        return Ok(None);
+    };
+
+    project
+        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+        .await
+        .map(Some)
+}
+
+fn collect_full_buffer_context(
+    ranges_by_buffer: &mut RangesByBuffer,
+    buffer: Entity<Buffer>,
+    order: usize,
+    context_source: ContextSource,
+    cx: &mut AsyncApp,
+) {
+    let range = buffer.read_with(cx, |buffer, _cx| full_file_anchor_range(&buffer.snapshot()));
+    push_context_range(ranges_by_buffer, buffer, range, order, context_source);
+}
+
+fn full_file_anchor_range(snapshot: &BufferSnapshot) -> Range<Anchor> {
+    let start = snapshot.anchor_before(Point::new(0, 0));
+    let max_point = snapshot.max_point();
+    let end = snapshot.anchor_after(max_point);
+    start..end
+}
+
+fn next_context_order(ranges_by_buffer: &RangesByBuffer) -> usize {
+    ranges_by_buffer
+        .values()
+        .flat_map(|(_, ranges)| ranges.iter().map(|range| range.order))
+        .max()
+        .map_or(0, |order| order + 1)
 }
 
 async fn collect_git_log_context(
@@ -286,11 +433,7 @@ async fn collect_git_log_context(
         }
     };
 
-    let next_order = ranges_by_buffer
-        .values()
-        .flat_map(|(_, ranges)| ranges.iter().map(|range| range.order))
-        .max()
-        .map_or(0, |order| order + 1);
+    let next_order = next_context_order(ranges_by_buffer);
 
     for (index, related_path) in index
         .get_related(active_path.as_std_path(), GIT_LOG_CONTEXT_FILE_COUNT)
@@ -317,10 +460,9 @@ async fn collect_git_log_context(
 
         let range = buffer.read_with(cx, |buffer, _cx| {
             let snapshot = buffer.snapshot();
-            let start = snapshot.anchor_before(Point::new(0, 0));
-            let end_row = GIT_LOG_CONTEXT_LINE_COUNT.min(snapshot.max_point().row);
-            let end = snapshot.anchor_after(Point::new(end_row, snapshot.line_len(end_row)));
-            start..end
+            let max_row = GIT_LOG_CONTEXT_LINE_COUNT.min(snapshot.max_point().row);
+            let end = snapshot.anchor_after(Point::new(max_row, snapshot.line_len(max_row)));
+            snapshot.anchor_before(Point::new(0, 0))..end
         });
 
         push_context_range(
@@ -468,7 +610,10 @@ fn context_source_order(context_source: ContextSource) -> usize {
     match context_source {
         ContextSource::Lsp => 0,
         ContextSource::CursorExcerpt => 1,
-        ContextSource::EditHistory => 2,
-        ContextSource::GitLog => 3,
+        ContextSource::CurrentFile => 2,
+        ContextSource::EditHistory => 3,
+        ContextSource::EditHistoryFile => 4,
+        ContextSource::GitLog => 5,
+        ContextSource::OracleFile => 6,
     }
 }

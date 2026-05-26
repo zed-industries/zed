@@ -7,14 +7,17 @@ use crate::{
 use anyhow::Context as _;
 use clap::ValueEnum;
 use collections::HashSet;
-use edit_prediction::{DebugEvent, EditPredictionStore};
+use edit_prediction::{DebugEvent, EditPredictionStore, udiff::refresh_worktree_entries};
 use futures::{FutureExt as _, StreamExt as _, channel::mpsc};
 use gpui::{AsyncApp, Entity};
 use language::Buffer;
 use project::Project;
-use std::sync::Arc;
-use std::time::Duration;
-use zeta_prompt::ContextSource;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+use zeta_prompt::{ContextSource, udiff::DiffLine};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub enum ContextRetrievalType {
@@ -22,7 +25,9 @@ pub enum ContextRetrievalType {
     Editable,
     CurrentFile,
     EditHistory,
+    EditHistoryFile,
     GitLog,
+    OracleFile,
     #[default]
     All,
     None,
@@ -35,7 +40,9 @@ impl std::fmt::Display for ContextRetrievalType {
             ContextRetrievalType::Editable => write!(f, "editable"),
             ContextRetrievalType::CurrentFile => write!(f, "current-file"),
             ContextRetrievalType::EditHistory => write!(f, "edit-history"),
+            ContextRetrievalType::EditHistoryFile => write!(f, "edit-history-file"),
             ContextRetrievalType::GitLog => write!(f, "git-log"),
+            ContextRetrievalType::OracleFile => write!(f, "oracle-file"),
             ContextRetrievalType::All => write!(f, "all"),
             ContextRetrievalType::None => write!(f, "none"),
         }
@@ -51,12 +58,17 @@ impl ContextRetrievalType {
         match self {
             ContextRetrievalType::Editable | ContextRetrievalType::All => Some(vec![
                 ContextSource::CursorExcerpt,
+                ContextSource::CurrentFile,
                 ContextSource::EditHistory,
+                ContextSource::EditHistoryFile,
                 ContextSource::GitLog,
+                ContextSource::OracleFile,
             ]),
-            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CursorExcerpt]),
+            ContextRetrievalType::CurrentFile => Some(vec![ContextSource::CurrentFile]),
             ContextRetrievalType::EditHistory => Some(vec![ContextSource::EditHistory]),
+            ContextRetrievalType::EditHistoryFile => Some(vec![ContextSource::EditHistoryFile]),
             ContextRetrievalType::GitLog => Some(vec![ContextSource::GitLog]),
+            ContextRetrievalType::OracleFile => Some(vec![ContextSource::OracleFile]),
             ContextRetrievalType::Lsp | ContextRetrievalType::None => None,
         }
     }
@@ -120,12 +132,21 @@ pub async fn run_context_retrieval(
     }
 
     if let Some(context_sources) = context_type.editable_context_sources() {
+        let oracle_paths = if context_sources.contains(&ContextSource::OracleFile) {
+            let oracle_paths = oracle_paths_from_expected_patches(example);
+            refresh_paths(&project, &oracle_paths, &mut cx).await?;
+            oracle_paths
+        } else {
+            Vec::new()
+        };
+
         let editable_context = ep_store
             .update(&mut cx, |store, cx| {
                 store.collect_editable_context(
                     project.clone(),
                     state.buffer.clone(),
                     state.cursor_position,
+                    oracle_paths,
                     context_sources,
                     cx,
                 )
@@ -163,6 +184,51 @@ fn merge_context_files(
             context_files.push(new_file);
         }
     }
+}
+
+fn oracle_paths_from_expected_patches(example: &Example) -> Vec<Arc<Path>> {
+    let mut seen_paths = HashSet::default();
+    let mut paths = Vec::new();
+
+    for patch in &example.spec.expected_patches {
+        for path in paths_from_diff(patch) {
+            if seen_paths.insert(path.clone()) {
+                paths.push(path.into());
+            }
+        }
+    }
+
+    paths
+}
+
+fn paths_from_diff(diff: &str) -> Vec<PathBuf> {
+    diff.lines()
+        .filter_map(|line| match DiffLine::parse(line) {
+            DiffLine::OldPath { path } | DiffLine::NewPath { path }
+                if path.as_ref() != "/dev/null" =>
+            {
+                Some(Path::new(path.as_ref()).to_path_buf())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+async fn refresh_paths(
+    project: &Entity<Project>,
+    paths: &[Arc<Path>],
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+
+    let Some(worktree) = project.read_with(cx, |project, cx| project.visible_worktrees(cx).next())
+    else {
+        return Ok(());
+    };
+
+    refresh_worktree_entries(&worktree, paths.iter().map(|path| path.as_ref()), cx).await
 }
 
 async fn wait_for_language_servers_to_start(

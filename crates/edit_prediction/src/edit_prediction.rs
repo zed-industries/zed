@@ -2896,6 +2896,7 @@ impl EditPredictionStore {
         project: Entity<Project>,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
+        oracle_paths: Vec<Arc<Path>>,
         context_sources: Vec<ContextSource>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<RelatedFile>>> {
@@ -2926,6 +2927,7 @@ impl EditPredictionStore {
                 buffer,
                 cursor_position,
                 edit_history,
+                oracle_paths,
                 context_sources,
                 cx,
             )

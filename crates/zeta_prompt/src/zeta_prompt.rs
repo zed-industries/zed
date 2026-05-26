@@ -250,8 +250,11 @@ pub enum ContextSource {
     #[default]
     Lsp,
     CursorExcerpt,
+    CurrentFile,
     EditHistory,
+    EditHistoryFile,
     GitLog,
+    OracleFile,
 }
 
 pub fn prompt_input_contains_special_tokens(input: &ZetaPromptInput, format: ZetaFormat) -> bool {
