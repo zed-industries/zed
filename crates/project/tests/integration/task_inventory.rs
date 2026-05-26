@@ -410,6 +410,72 @@ async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_debug_scenarios_include_all_worktrees(cx: &mut TestAppContext) {
+    init_test(cx);
+    let inventory = cx.update(|cx| Inventory::new(cx));
+    let worktree_1 = WorktreeId::from_usize(1);
+    let worktree_2 = WorktreeId::from_usize(2);
+
+    inventory.update(cx, |inventory, _| {
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id: worktree_1,
+                    path: rel_path(".zed"),
+                }),
+                Some(
+                    r#"
+                        [{
+                            "label": "worktree one",
+                            "adapter": "CodeLLDB",
+                            "request": "launch",
+                            "program": "one",
+                        }]
+                    "#,
+                ),
+            )
+            .unwrap();
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id: worktree_2,
+                    path: rel_path(".zed"),
+                }),
+                Some(
+                    r#"
+                        [{
+                            "label": "worktree two",
+                            "adapter": "CodeLLDB",
+                            "request": "launch",
+                            "program": "two",
+                        }]
+                    "#,
+                ),
+            )
+            .unwrap();
+    });
+
+    let task_contexts = TaskContexts {
+        active_worktree_context: Some((worktree_1, Default::default())),
+        other_worktree_contexts: vec![(worktree_2, Default::default())],
+        ..Default::default()
+    };
+
+    let labels = inventory
+        .update(cx, |this, cx| {
+            this.list_debug_scenarios(&task_contexts, vec![], vec![], false, cx)
+        })
+        .await
+        .1
+        .into_iter()
+        .map(|(_, scenario)| scenario.label)
+        .sorted()
+        .collect::<Vec<_>>();
+
+    assert_eq!(labels, ["worktree one", "worktree two"]);
+}
+
+#[gpui::test]
 async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
     init_test(cx);
     let inventory = cx.update(|cx| Inventory::new(cx));
