@@ -722,14 +722,13 @@ pub struct SiblingThreadRequest {
 }
 
 /// Information returned when a sibling thread is successfully created.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct SiblingThreadInfo {
     /// The title assigned to the thread.
     pub title: SharedString,
     /// The agent ID used for the thread.
     pub agent_id: String,
     /// The model ID used for the thread, if known.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 }
 
@@ -1825,11 +1824,11 @@ impl Thread {
 
         // Sibling-thread tools are exposed at every depth: a subagent should
         // still be able to kick off independent sibling work on behalf of the
-        // user, even when it can no longer nest further subagents.
-        if cx.has_flag::<CreateThreadToolFeatureFlag>() {
-            self.add_tool(CreateThreadTool::new(environment.clone()));
-            self.add_tool(ListAgentsAndModelsTool::new(environment));
-        }
+        // user, even when it can no longer nest further subagents. Visibility
+        // to the model is gated by `CreateThreadToolFeatureFlag` in
+        // `Thread::enabled_tools`.
+        self.add_tool(CreateThreadTool::new(environment.clone()));
+        self.add_tool(ListAgentsAndModelsTool::new(environment));
     }
 
     pub fn add_tool<T: AgentTool>(&mut self, tool: T) {
@@ -3155,6 +3154,9 @@ impl Thread {
                 | GetCodeActionsTool::NAME
                 | ApplyCodeActionTool::NAME
                 | GoToDefinitionTool::NAME => cx.has_flag::<LspToolFeatureFlag>(),
+                CreateThreadTool::NAME | ListAgentsAndModelsTool::NAME => {
+                    cx.has_flag::<CreateThreadToolFeatureFlag>()
+                }
                 _ => true,
             })
             .collect::<BTreeMap<_, _>>();

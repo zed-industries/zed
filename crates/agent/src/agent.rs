@@ -298,7 +298,10 @@ impl LanguageModels {
 ///
 /// `agent_ui::AgentPanel` installs an implementation of this trait on the
 /// `NativeAgent` when it sets up a connection. Tools in a native-agent thread
-/// then discover and use the host via `NativeThreadEnvironment`.
+/// then discover and use the host via `NativeThreadEnvironment`. The UI side
+/// is responsible for keeping the installed host current; a host whose
+/// backing UI has been torn down will fail its first request with a clear
+/// error rather than being detected up front.
 pub trait SiblingThreadHost {
     fn create_sibling_thread(
         &self,

@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     fmt,
     path::PathBuf,
     rc::Rc,
@@ -49,7 +50,9 @@ use crate::{
     OpenAgentDiff, ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell,
     ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    conversation_view::{AcpThreadViewEvent, ThreadView, reset_fast_mode_warnings},
+    conversation_view::{
+        AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
+    },
     ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
 };
 use crate::{
@@ -67,6 +70,7 @@ use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
+use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
 
 use fs::Fs;
 use gpui::{
@@ -862,8 +866,9 @@ fn thread_metadata_to_debug_json(
     })
 }
 
-/// Optional parameters for `AgentPanel::create_thread_with_options`. The
-/// default value matches today's behavior of the bare `create_thread` method.
+/// Optional parameters for `AgentPanel::create_thread_with_options`. All
+/// fields default to the panel's current selection so the agent tool only
+/// needs to override what it actually cares about.
 #[derive(Default)]
 pub struct CreateThreadOptions {
     /// Title to assign to the new thread up front.
@@ -1809,6 +1814,7 @@ impl AgentPanel {
             Some(metadata.folder_paths().clone()),
             metadata.title.clone(),
             initial_content,
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -2812,6 +2818,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             source,
             window,
             cx,
@@ -3009,6 +3016,7 @@ impl AgentPanel {
             None,
             options.title.clone(),
             options.initial_content,
+            options.model,
             source,
             window,
             cx,
@@ -3028,25 +3036,6 @@ impl AgentPanel {
             }
         }
         let thread_id = thread.conversation_view.read(cx).thread_id;
-        if let Some(model) = options.model.as_ref() {
-            let model = model.clone();
-            let conversation_view = thread.conversation_view.downgrade();
-            cx.spawn(async move |_this, cx| {
-                // The underlying native thread is created asynchronously, so defer
-                // the model selection until it's available.
-                cx.background_executor()
-                    .timer(std::time::Duration::from_millis(0))
-                    .await;
-                conversation_view
-                    .update(cx, |conversation_view, cx| {
-                        if let Some(native_thread) = conversation_view.as_native_thread(cx) {
-                            apply_native_model_override(&native_thread, &model, cx);
-                        }
-                    })
-                    .ok();
-            })
-            .detach();
-        }
         self.retained_threads
             .insert(thread_id, thread.conversation_view);
         thread_id
@@ -3305,6 +3294,7 @@ impl AgentPanel {
             work_dirs,
             title,
             initial_content,
+            None,
             source,
             window,
             cx,
@@ -4356,6 +4346,7 @@ impl AgentPanel {
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
+        model_override: Option<String>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4372,6 +4363,7 @@ impl AgentPanel {
             work_dirs,
             title,
             initial_content,
+            model_override,
             source,
             window,
             cx,
@@ -4406,6 +4398,7 @@ impl AgentPanel {
             work_dirs,
             title,
             initial_content,
+            None,
             source,
             window,
             cx,
@@ -4421,6 +4414,7 @@ impl AgentPanel {
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         initial_content: Option<AgentInitialContent>,
+        model_override: Option<String>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -4495,6 +4489,27 @@ impl AgentPanel {
         // already established by the time the observe fires.
         self.ensure_sibling_host_installed(&conversation_view, window, cx);
 
+        if let Some(model) = model_override {
+            // The native thread is constructed asynchronously after the
+            // connection establishes. Wait for the first `RootThreadUpdated`
+            // event that yields a native thread, then apply the override once.
+            let applied = Cell::new(false);
+            cx.subscribe(
+                &conversation_view,
+                move |_this, view, _event: &RootThreadUpdated, cx| {
+                    if applied.get() {
+                        return;
+                    }
+                    let Some(native_thread) = view.read(cx).as_native_thread(cx) else {
+                        return;
+                    };
+                    apply_native_model_override(&native_thread, &model, cx);
+                    applied.set(true);
+                },
+            )
+            .detach();
+        }
+
         AgentThread { conversation_view }
     }
 
@@ -4504,18 +4519,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !cx.has_flag::<CreateThreadToolFeatureFlag>() {
+            return;
+        }
         let Some(native_connection) = conversation_view.read(cx).as_native_connection(cx) else {
             return;
         };
-        let native_agent = native_connection.0.clone();
-        if native_agent.read(cx).sibling_thread_host().is_some() {
-            return;
-        }
         let host = Rc::new(AgentPanelSiblingHost::new(
             cx.weak_entity(),
             window.window_handle(),
         )) as Rc<dyn agent::SiblingThreadHost>;
-        native_agent.update(cx, |native_agent, _cx| {
+        native_connection.0.update(cx, |native_agent, _cx| {
             native_agent.set_sibling_thread_host(host);
         });
     }
@@ -4608,9 +4622,30 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             let agent_choice = match request.agent_id.as_deref() {
                 None => None,
                 Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
-                Some(id) => Some(Agent::Custom {
-                    id: project::AgentId(id.to_string().into()),
-                }),
+                Some(id) => {
+                    // Reject unknown agent ids up front so the model gets a
+                    // structured error pointing at `list_agents_and_models`,
+                    // rather than a thread that silently fails to launch in
+                    // the user's sidebar.
+                    let known = panel
+                        .read_with(cx, |panel, cx| {
+                            let store = panel.project.read(cx).agent_server_store().clone();
+                            store
+                                .read(cx)
+                                .external_agents()
+                                .any(|known_id| known_id.0.as_ref() == id)
+                        })
+                        .unwrap_or(false);
+                    if !known {
+                        return Err(anyhow!(
+                            "Unknown agent id {id:?}. Call `list_agents_and_models` \
+                             to see the agents available for `create_thread`."
+                        ));
+                    }
+                    Some(Agent::Custom {
+                        id: project::AgentId(id.to_string().into()),
+                    })
+                }
             };
 
             let initial_content = AgentInitialContent::ContentBlock {
@@ -5070,6 +5105,7 @@ impl AgentPanel {
             None,
             None,
             Some(initial_content),
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6392,6 +6428,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6431,6 +6468,7 @@ impl AgentPanel {
             None,
             None,
             None,
+            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6460,6 +6498,7 @@ impl AgentPanel {
         let thread = self.create_agent_thread_with_server(
             ext_agent,
             Some(server),
+            None,
             None,
             None,
             None,
@@ -12662,6 +12701,79 @@ mod tests {
             assert_eq!(
                 text, "Existing work in workspace B",
                 "destination panel's content should be preserved"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_create_thread_with_options_retains_thread_and_restores_agent(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let _stub_connection =
+            crate::test_support::set_stub_agent_connection(StubAgentConnection::new());
+
+        // Baseline: panel's selected_agent is the stub.
+        panel.update(&mut cx, |panel, _cx| {
+            panel.selected_agent = Agent::Stub;
+        });
+
+        // Case 1: no agent override. The new thread should land in
+        // `retained_threads` and `selected_agent` should be unchanged.
+        let no_override_id = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.create_thread_with_options(
+                CreateThreadOptions::default(),
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            )
+        });
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.retained_threads.contains_key(&no_override_id),
+                "thread created via create_thread_with_options should be retained"
+            );
+            assert_eq!(
+                panel.selected_agent,
+                Agent::Stub,
+                "selected_agent should be unchanged when no agent override is requested"
+            );
+        });
+
+        // Case 2: an explicit agent override that differs from the panel's
+        // selection. `create_agent_thread_inner` updates `selected_agent` as a
+        // side effect; `create_thread_with_options` must restore it so the
+        // user's last-used agent isn't silently flipped by an agent-initiated
+        // call.
+        let override_agent = Agent::Custom {
+            id: "override-agent".into(),
+        };
+        let override_id = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.create_thread_with_options(
+                CreateThreadOptions {
+                    agent: Some(override_agent.clone()),
+                    ..CreateThreadOptions::default()
+                },
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            )
+        });
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert!(
+                panel.retained_threads.contains_key(&override_id),
+                "thread created with an agent override should also be retained"
+            );
+            assert_ne!(
+                no_override_id, override_id,
+                "each call should produce a distinct ThreadId"
+            );
+            assert_eq!(
+                panel.selected_agent,
+                Agent::Stub,
+                "selected_agent should be restored to the original after an agent override"
             );
         });
     }
