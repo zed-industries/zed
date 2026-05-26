@@ -624,6 +624,63 @@ If a provider exposes models that only work with the Responses API, set `chat_co
 Note that LLM API keys aren't stored in your settings file.
 So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
 
+#### OrcaRouter {#openai-api-compatible-orcarouter}
+
+[OrcaRouter](https://www.orcarouter.ai) is a meta-router that exposes 150+ upstream LLMs (OpenAI, Anthropic, Google, DeepSeek, xAI, Qwen, MiniMax, and others) through a single OpenAI-compatible endpoint at `https://api.orcarouter.ai/v1`.
+
+1. Sign in at the [OrcaRouter Console](https://www.orcarouter.ai/console) and generate an API key (keys start with `sk-orca-`)
+2. Set it as an environment variable: `ORCA_ROUTER_API_KEY=sk-orca-...` (Zed derives the env var name from the `openai_compatible` map key by converting it to UPPER_SNAKE_CASE)
+3. Add the following snippet under `language_models` in your [settings file](../configuring-zed.md#settings-files):
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "OrcaRouter": {
+        "api_url": "https://api.orcarouter.ai/v1",
+        "available_models": [
+          {
+            "name": "orcarouter/auto",
+            "display_name": "OrcaRouter Auto",
+            "max_tokens": 200000,
+            "capabilities": {
+              "tools": true,
+              "images": true,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
+          },
+          {
+            "name": "openai/gpt-5",
+            "display_name": "GPT-5 via OrcaRouter",
+            "max_tokens": 400000,
+            "capabilities": {
+              "tools": true,
+              "images": true,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
+          },
+          {
+            "name": "anthropic/claude-opus-4.7",
+            "display_name": "Claude Opus 4.7 via OrcaRouter",
+            "max_tokens": 200000,
+            "capabilities": {
+              "tools": true,
+              "images": true,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+The `orcarouter/auto` entry routes each request to an appropriate upstream model based on prompt characteristics. The full catalog of supported model IDs is at [orcarouter.ai/models](https://www.orcarouter.ai/models); any model listed there can be added to `available_models` using the same shape.
+
 ### OpenCode {#opencode}
 
 OpenCode offers multiple ways to access AI models:
