@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use acp_thread::{AgentConnection, LoadError};
 use agent_servers::AcpConnection;
@@ -8,7 +8,7 @@ use collections::HashMap;
 use futures::{FutureExt, future::Shared};
 use gpui::{App, AppContext, Context, Entity, EventEmitter, SharedString, Subscription, Task};
 
-use project::{AgentServerStore, AgentServersUpdated, ExternalAgentLoadingStatusTx, Project};
+use project::{AgentServerStore, AgentServersUpdated, Project};
 use watch::Receiver;
 
 use crate::Agent;
@@ -150,7 +150,7 @@ impl AgentConnectionStore {
             return entry.clone();
         }
 
-        let (mut new_version_rx, mut loading_status_rx, loading_status_tx, connect_task) =
+        let (mut new_version_rx, mut loading_status_rx, connect_task) =
             self.start_connection(server, cx);
         let connect_task = connect_task.shared();
 
@@ -166,7 +166,6 @@ impl AgentConnectionStore {
             let entry = entry.downgrade();
             async move |this, cx| match connect_task.await {
                 Ok(connected_state) => {
-                    send_loading_status(&loading_status_tx, None);
                     this.update(cx, move |this, cx| {
                         if this.entries.get(&key) != entry.upgrade().as_ref() {
                             return;
@@ -185,7 +184,6 @@ impl AgentConnectionStore {
                     .ok();
                 }
                 Err(error) => {
-                    send_loading_status(&loading_status_tx, None);
                     this.update(cx, move |this, cx| {
                         if this.entries.get(&key) != entry.upgrade().as_ref() {
                             return;
@@ -293,18 +291,16 @@ impl AgentConnectionStore {
     ) -> (
         Receiver<Option<String>>,
         Receiver<Option<String>>,
-        ExternalAgentLoadingStatusTx,
         Task<Result<AgentConnectedState, LoadError>>,
     ) {
         let (new_version_tx, new_version_rx) = watch::channel::<Option<String>>(None);
         let (loading_status_tx, loading_status_rx) = watch::channel::<Option<String>>(None);
-        let loading_status_tx = Arc::new(parking_lot::Mutex::new(loading_status_tx));
 
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
         let delegate = AgentServerDelegate::new(
             agent_server_store,
             Some(new_version_tx),
-            Some(loading_status_tx.clone()),
+            Some(loading_status_tx),
         );
 
         let connect_task = server.connect(delegate, self.project.clone(), cx);
@@ -315,17 +311,6 @@ impl AgentConnectionStore {
                 Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
             },
         });
-        (
-            new_version_rx,
-            loading_status_rx,
-            loading_status_tx,
-            connect_task,
-        )
-    }
-}
-
-fn send_loading_status(tx: &ExternalAgentLoadingStatusTx, status: Option<String>) {
-    if tx.lock().send(status).is_err() {
-        log::debug!("failed to update external agent loading status; receiver dropped");
+        (new_version_rx, loading_status_rx, connect_task)
     }
 }
