@@ -8,8 +8,8 @@ use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorSty
 use fs::Fs;
 use futures::AsyncReadExt;
 use gpui::{
-    App, Bounds, Entity, FocusHandle, Focusable, Subscription, Task, TextStyle, Tiling,
-    TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point,
+    App, Bounds, Entity, FocusHandle, Focusable, ScrollHandle, Subscription, Task, TextStyle,
+    Tiling, TitlebarOptions, WeakEntity, WindowBounds, WindowHandle, WindowOptions, actions, point,
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
@@ -23,7 +23,7 @@ use std::time::Duration;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
-    prelude::*,
+    WithScrollbar, prelude::*, utils::platform_title_bar_height,
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
@@ -172,6 +172,9 @@ pub fn open_skill_creator(
         }
 
         let window_size = gpui::size(px(900.), px(1050.));
+        // Allow the window to be resized noticeably smaller than the
+        // default so that the form scrolls inside the available space.
+        let window_min_size = gpui::size(px(500.), px(420.));
 
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
@@ -196,7 +199,7 @@ pub fn open_skill_creator(
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     window_background: cx.theme().window_background_appearance(),
                     window_decorations: Some(window_decorations),
-                    window_min_size: Some(window_size),
+                    window_min_size: Some(window_min_size),
                     kind: gpui::WindowKind::Floating,
                     ..Default::default()
                 },
@@ -252,6 +255,7 @@ pub struct SkillCreator {
     url_import_debounce_task: Option<Task<()>>,
     // Held so replacing it or switching back to the form cancels an in-flight import.
     url_import_task: Option<Task<()>>,
+    scroll_handle: ScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -427,6 +431,7 @@ impl SkillCreator {
             save_task: None,
             url_import_debounce_task: None,
             url_import_task: None,
+            scroll_handle: ScrollHandle::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -803,7 +808,7 @@ impl SkillCreator {
 
     fn render_url_import(&self) -> impl IntoElement {
         v_flex()
-            .min_h_0()
+            .flex_shrink_0()
             .gap_2()
             .child(
                 h_flex()
@@ -839,10 +844,15 @@ impl SkillCreator {
     }
 
     fn render_form_fields(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // `flex_grow` lets the form fields absorb extra vertical space when
+        // the window is tall; `flex_shrink_0` keeps them at their natural
+        // (content + body min-height) size when the window is short, which
+        // causes the surrounding scroll container to start scrolling rather
+        // than squeezing the body editor below its minimum height.
         v_flex()
             .id("skill-creator-form-fields")
-            .flex_1()
-            .min_h_0()
+            .flex_grow()
+            .flex_shrink_0()
             .gap_4()
             .child(
                 v_flex()
@@ -857,7 +867,8 @@ impl SkillCreator {
             .child(Divider::horizontal())
             .child(
                 v_flex()
-                    .flex_1()
+                    .flex_grow()
+                    .flex_shrink_0()
                     .gap_2()
                     .child(Label::new("Skill Content"))
                     .child(self.render_body_field(window, cx)),
@@ -1048,13 +1059,14 @@ impl SkillCreator {
             )
     }
 
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let needs_traffic_light_clearance = cfg!(target_os = "macos");
+        let header_height = platform_title_bar_height(window);
 
         h_flex()
             .w_full()
-            .h_10()
+            .h(header_height)
             .px_4()
             .when(needs_traffic_light_clearance, |this| this.pl(px(84.)))
             .border_b_1()
@@ -1132,20 +1144,28 @@ impl Render for SkillCreator {
                 .text_color(theme.colors().text)
                 .bg(theme.colors().panel_background)
                 .children(self.title_bar.clone())
-                .child(self.render_header(cx))
+                .child(self.render_header(window, cx))
                 .child(
-                    v_flex()
-                        .id("skill-creator-form")
-                        .tab_index(0)
-                        .tab_group()
-                        .tab_stop(false)
+                    div()
                         .flex_1()
                         .min_h_0()
-                        .gap_4()
-                        .p_4()
-                        .child(self.render_url_import())
-                        .child(Divider::horizontal())
-                        .child(self.render_form_fields(window, cx)),
+                        .w_full()
+                        .vertical_scrollbar_for(&self.scroll_handle, window, cx)
+                        .child(
+                            v_flex()
+                                .id("skill-creator-form")
+                                .tab_index(0)
+                                .tab_group()
+                                .tab_stop(false)
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll_handle)
+                                .gap_4()
+                                .p_4()
+                                .child(self.render_url_import())
+                                .child(Divider::horizontal())
+                                .child(self.render_form_fields(window, cx)),
+                        ),
                 )
                 .child(
                     h_flex()
