@@ -35,14 +35,6 @@ impl FeatureFlag for AgentSharingFeatureFlag {
 }
 register_feature_flag!(AgentSharingFeatureFlag);
 
-pub struct AgentPanelTerminalFeatureFlag;
-
-impl FeatureFlag for AgentPanelTerminalFeatureFlag {
-    const NAME: &'static str = "agent-panel-terminal";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentPanelTerminalFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -66,6 +58,18 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     }
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
+
+pub struct UpdateTitleToolFeatureFlag;
+
+impl FeatureFlag for UpdateTitleToolFeatureFlag {
+    const NAME: &'static str = "update-title-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(UpdateTitleToolFeatureFlag);
 
 pub struct LspToolFeatureFlag;
 
@@ -131,15 +135,3 @@ impl FeatureFlag for AutoWatchFeatureFlag {
     type Value = PresenceFlag;
 }
 register_feature_flag!(AutoWatchFeatureFlag);
-
-pub struct SkillsFeatureFlag;
-
-impl FeatureFlag for SkillsFeatureFlag {
-    const NAME: &'static str = "skills";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-register_feature_flag!(SkillsFeatureFlag);

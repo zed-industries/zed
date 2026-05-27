@@ -16,6 +16,51 @@ use crate::{
     StringOrContents, Thinking, Tool, ToolChoice, ToolResultContent, ToolResultPart, Usage,
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AnthropicPromptCacheMode {
+    Disabled,
+    Legacy,
+    #[default]
+    Automatic,
+}
+
+fn set_cache_control(content: &mut RequestContent, cache_control: Option<CacheControl>) -> bool {
+    match content {
+        RequestContent::RedactedThinking { .. } => false,
+        RequestContent::Text {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Thinking {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::Image {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::ToolUse {
+            cache_control: target,
+            ..
+        }
+        | RequestContent::ToolResult {
+            cache_control: target,
+            ..
+        } => {
+            *target = cache_control;
+            true
+        }
+    }
+}
+
+fn mark_last_cacheable_content(content: &mut [RequestContent], cache_control: CacheControl) {
+    for content in content.iter_mut().rev() {
+        if set_cache_control(content, Some(cache_control)) {
+            break;
+        }
+    }
+}
+
 fn to_anthropic_content(content: MessageContent) -> Option<RequestContent> {
     match content {
         MessageContent::Text(text) => {
@@ -111,6 +156,7 @@ pub fn into_anthropic(
     default_temperature: f32,
     max_output_tokens: u64,
     mode: AnthropicModelMode,
+    cache_mode: AnthropicPromptCacheMode,
 ) -> crate::Request {
     let mut new_messages: Vec<Message> = Vec::new();
     let mut system_message = String::new();
@@ -125,7 +171,7 @@ pub fn into_anthropic(
 
         match message.role {
             Role::User | Role::Assistant => {
-                let anthropic_message_content: Vec<RequestContent> = message
+                let mut anthropic_message_content: Vec<RequestContent> = message
                     .content
                     .into_iter()
                     .filter_map(to_anthropic_content)
@@ -137,6 +183,16 @@ pub fn into_anthropic(
                 };
                 if anthropic_message_content.is_empty() {
                     continue;
+                }
+
+                if cache_mode == AnthropicPromptCacheMode::Legacy && message.cache {
+                    mark_last_cacheable_content(
+                        &mut anthropic_message_content,
+                        CacheControl {
+                            cache_type: CacheControlType::Ephemeral,
+                            ttl: None,
+                        },
+                    );
                 }
 
                 if let Some(last_message) = new_messages.last_mut()
@@ -166,10 +222,12 @@ pub fn into_anthropic(
     // requires that longer TTLs appear earlier in the prefix, and the prefix
     // order is tools → system → messages, so long-TTL tools/system before a
     // short-TTL conversation breakpoint is a valid mix.
-    let long_lived_cache = any_message_wants_cache.then_some(CacheControl {
-        cache_type: CacheControlType::Ephemeral,
-        ttl: Some(CacheTtl::OneHour),
-    });
+    let long_lived_cache = (cache_mode == AnthropicPromptCacheMode::Automatic
+        && any_message_wants_cache)
+        .then_some(CacheControl {
+            cache_type: CacheControlType::Ephemeral,
+            ttl: Some(CacheTtl::OneHour),
+        });
 
     let system = if system_message.is_empty() {
         None
@@ -208,10 +266,12 @@ pub fn into_anthropic(
         // tail. Omitting `ttl` uses the default (short) TTL, which refreshes
         // for free on every cache hit — ideal for the rapidly-changing
         // conversation suffix.
-        cache_control: any_message_wants_cache.then_some(CacheControl {
-            cache_type: CacheControlType::Ephemeral,
-            ttl: None,
-        }),
+        cache_control: (cache_mode == AnthropicPromptCacheMode::Automatic
+            && any_message_wants_cache)
+            .then_some(CacheControl {
+                cache_type: CacheControlType::Ephemeral,
+                ttl: None,
+            }),
         thinking: if request.thinking_allowed {
             match mode {
                 AnthropicModelMode::Thinking { budget_tokens } => {
@@ -511,6 +571,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
         );
 
         // No message content block should carry cache_control anymore; the
@@ -572,6 +633,79 @@ mod tests {
     }
 
     #[test]
+    fn test_legacy_caching_marks_last_message_content_block() {
+        let request = LanguageModelRequest {
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![
+                        MessageContent::Text("Some prompt".to_string()),
+                        MessageContent::Image(LanguageModelImage::empty()),
+                    ],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            stop: vec![],
+            temperature: None,
+            tools: vec![language_model_core::LanguageModelRequestTool {
+                name: "do_thing".into(),
+                description: "Does a thing.".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                use_input_streaming: false,
+            }],
+            tool_choice: None,
+            thinking_allowed: true,
+            thinking_effort: None,
+            speed: None,
+        };
+
+        let anthropic_request = into_anthropic(
+            request,
+            "claude-3-5-sonnet".to_string(),
+            0.7,
+            4096,
+            AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Legacy,
+        );
+
+        assert!(anthropic_request.cache_control.is_none());
+        assert!(matches!(
+            anthropic_request.system,
+            Some(StringOrContents::String(_))
+        ));
+        assert_eq!(anthropic_request.tools.len(), 1);
+        assert!(anthropic_request.tools[0].cache_control.is_none());
+        assert_eq!(anthropic_request.messages.len(), 1);
+        assert!(matches!(
+            anthropic_request.messages[0].content[0],
+            RequestContent::Text {
+                cache_control: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            anthropic_request.messages[0].content[1],
+            RequestContent::Image {
+                cache_control: Some(CacheControl {
+                    cache_type: CacheControlType::Ephemeral,
+                    ttl: None,
+                }),
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn test_no_cache_control_when_caching_disabled() {
         let request = LanguageModelRequest {
             messages: vec![
@@ -611,6 +745,7 @@ mod tests {
             0.7,
             4096,
             AnthropicModelMode::Default,
+            AnthropicPromptCacheMode::Automatic,
         );
 
         assert!(anthropic_request.cache_control.is_none());
@@ -654,6 +789,7 @@ mod tests {
             AnthropicModelMode::Thinking {
                 budget_tokens: Some(10000),
             },
+            AnthropicPromptCacheMode::Automatic,
         )
     }
 

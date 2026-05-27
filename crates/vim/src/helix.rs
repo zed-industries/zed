@@ -1004,8 +1004,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_visual = self.mode.is_visual();
-        let Some(data) = self.collect_helix_jump_data(is_visual, window, cx) else {
+        let allow_targets_in_selection = self.mode.has_selection();
+        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        else {
             return;
         };
 
@@ -1031,7 +1032,7 @@ impl Vim {
 
     fn collect_helix_jump_data(
         &mut self,
-        is_visual: bool,
+        allow_targets_in_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
@@ -1044,7 +1045,11 @@ impl Vim {
             let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
-            let skip_data = Self::selection_skip_offsets(buffer_snapshot, &selections, is_visual);
+            let skip_data = Self::selection_skip_offsets(
+                buffer_snapshot,
+                &selections,
+                allow_targets_in_selection,
+            );
 
             // Get the primary cursor position for alternating forward/backward labeling
             let cursor_offset = selections
@@ -1254,7 +1259,7 @@ impl Vim {
     fn selection_skip_offsets(
         buffer: &MultiBufferSnapshot,
         selections: &[Selection<Point>],
-        is_visual: bool,
+        allow_targets_in_selection: bool,
     ) -> HelixJumpSkipData {
         let mut skip_points = Vec::with_capacity(selections.len());
         let mut skip_ranges = Vec::new();
@@ -1263,8 +1268,7 @@ impl Vim {
             let head_offset = buffer.point_to_offset(selection.head());
             skip_points.push(head_offset);
 
-            // In visual mode, don't skip ranges so we can shrink the selection
-            if !is_visual && selection.start != selection.end {
+            if !allow_targets_in_selection && selection.start != selection.end {
                 let mut start = buffer.point_to_offset(selection.start);
                 let mut end = buffer.point_to_offset(selection.end);
                 if start > end {
@@ -2478,6 +2482,12 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+
+        cx.set_state("«aaˇ»", Mode::HelixSelect);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -3486,6 +3496,19 @@ mod test {
         jump_to_word(&mut cx, "three");
 
         cx.assert_state("one two «threeˇ»", Mode::HelixNormal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_includes_line_selection_targets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("alpha beta\nˇfoo bar baz\nqux quux", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("x");
+        jump_to_word(&mut cx, "bar");
+
+        cx.assert_state("alpha beta\nfoo «barˇ» baz\nqux quux", Mode::HelixNormal);
         assert_eq!(cx.active_operator(), None);
     }
 

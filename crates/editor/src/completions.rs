@@ -598,6 +598,7 @@ impl Editor {
                 },
                 insert_text_mode: Some(InsertTextMode::AS_IS),
                 confirm: None,
+                group: None,
             }));
 
             completions.extend(
@@ -775,7 +776,8 @@ impl Editor {
 
         let candidate_id = {
             let entries = completions_menu.entries.borrow();
-            let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let entry = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
+            let mat = entry.as_match()?;
             if self.show_edit_predictions_in_menu() {
                 self.discard_edit_prediction(EditPredictionDiscardReason::Rejected, cx);
             }
@@ -974,6 +976,11 @@ impl Editor {
             // so we should automatically call signature_help
             self.show_signature_help(&ShowSignatureHelp, window, cx);
         }
+
+        // After the code completion is finished, we should finalize the last transaction.
+        // This ensure vim/helix not group the edits together.
+        self.buffer
+            .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
 
         Some(cx.spawn_in(window, async move |editor, cx| {
             let additional_edits_tx = apply_edits.await?;
@@ -1342,6 +1349,7 @@ fn snippet_completions(
                     confirm: None,
                     match_start: Some(start),
                     snippet_deduplication_key: Some((snippet_index, prefix_index)),
+                    group: None,
                 }
             }));
         }

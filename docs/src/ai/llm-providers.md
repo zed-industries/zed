@@ -23,6 +23,7 @@ Zed supports these providers with your own API keys:
 
 - [Amazon Bedrock](#amazon-bedrock)
 - [Anthropic](#anthropic)
+- [ChatGPT Subscription](#chatgpt-subscription)
 - [DeepSeek](#deepseek)
 - [GitHub Copilot Chat](#github-copilot-chat)
 - [Google AI](#google-ai)
@@ -224,6 +225,18 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
   }
 }
 ```
+
+### ChatGPT Subscription {#chatgpt-subscription}
+
+Use your existing ChatGPT Plus or Pro subscription to access OpenAI models directly in Zed — no separate API key required.
+
+1. Open the settings view ({#action agent::OpenSettings}) and go to the ChatGPT Subscription section
+2. Click **Sign in** and complete the OpenAI authentication in your browser
+3. Once signed in, models appear in the model dropdown, including GPT-5.5 and GPT-5.3 Codex
+
+To sign out, click **Sign Out** in the ChatGPT Subscription settings.
+
+> **Note:** Model availability depends on your ChatGPT subscription tier. Some models may require ChatGPT Pro.
 
 ### DeepSeek {#deepseek}
 
@@ -642,6 +655,8 @@ By default, models from all subscription types are shown. Optionally, you can hi
   }
 }
 ```
+
+**Note:** Zed only bundles configuration for long-term OpenCode Free models! Free models that are only available for a limited time are not included in Zed. To use such models, create a Custom Model using the configuration settings published on [the OpenCode website](https://opencode.ai/docs/zen#pricing) and on [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
 
 #### Custom Models {#opencode-custom-models}
 

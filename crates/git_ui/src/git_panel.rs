@@ -65,7 +65,7 @@ use project::{
 use prompt_store::{BuiltInPrompt, PromptId, PromptStore, RULES_FILE_NAMES};
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle};
+use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -75,18 +75,19 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, PopoverMenu,
-    RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip,
-    WithScrollbar, prelude::*,
+    ButtonLike, Checkbox, ContextMenu, Divider, ElevationIndex, IndentGuideColors, KeyBinding,
+    PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab,
+    TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 use workspace::{
-    Workspace,
+    Item, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId, NotifyResultExt},
 };
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 actions!(
     git_panel,
@@ -121,6 +122,10 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// Activates the Changes tab.
+        ActivateChangesTab,
+        /// Activates the History tab.
+        ActivateHistoryTab,
     ]
 );
 
@@ -694,6 +699,7 @@ pub struct GitPanel {
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history_shas: Vec<Oid>,
     focused_history_entry: Option<usize>,
+    history_keyboard_nav: bool,
     _repo_subscriptions: Vec<Subscription>,
 
     _settings_subscription: Subscription,
@@ -890,6 +896,7 @@ impl GitPanel {
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history_shas: Vec::new(),
                 focused_history_entry: None,
+                history_keyboard_nav: false,
                 _repo_subscriptions: Vec::new(),
                 _settings_subscription,
                 git_access: GitAccess::Yes,
@@ -1040,6 +1047,10 @@ impl GitPanel {
     fn focus_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.focus_handle.contains_focused(window, cx) {
             cx.emit(Event::Focus);
+        }
+        if self.active_tab == GitPanelTab::History && self.focused_history_entry.is_some() {
+            self.history_keyboard_nav = true;
+            cx.notify();
         }
     }
 
@@ -1351,7 +1362,7 @@ impl GitPanel {
             let git_repo = self.active_repository.as_ref()?;
 
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
-                && let Some(project_path) = project_diff.read(cx).active_path(cx)
+                && let Some(project_path) = project_diff.read(cx).active_project_path(cx)
                 && Some(&entry.repo_path)
                     == git_repo
                         .read(cx)
@@ -3446,6 +3457,54 @@ impl GitPanel {
         }
     }
 
+    pub(crate) fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(1.0), cx);
+    }
+
+    pub(crate) fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.handle_font_size_action(action.persist, px(-1.0), cx);
+    }
+
+    fn handle_font_size_action(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, cx| {
+                let git_commit_buffer_font_size =
+                    ThemeSettings::get_global(cx).git_commit_buffer_font_size(cx) + delta;
+
+                let _ = settings.theme.git_commit_buffer_font_size.insert(
+                    f32::from(theme_settings::clamp_font_size(git_commit_buffer_font_size)).into(),
+                );
+            });
+        } else {
+            theme_settings::adjust_git_commit_buffer_font_size(cx, |size| size + delta);
+        }
+    }
+
+    pub(crate) fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                settings.theme.git_commit_buffer_font_size = None;
+            });
+        } else {
+            theme_settings::reset_git_commit_buffer_font_size(cx);
+        }
+    }
+
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.view_mode.tree_state_mut() {
             let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
@@ -3945,7 +4004,7 @@ impl GitPanel {
         };
 
         let repo_path = repo.read(cx).work_directory_abs_path.display().to_string();
-        let text = repo.read(cx).job_debug_queue().to_debug_string();
+        let queue_value = repo.read(cx).job_debug_queue().to_debug_value();
         let title = format!("Git Job Queue: {repo_path}");
 
         let json_language = self.project.read(cx).languages().language_for_name("JSON");
@@ -3955,6 +4014,27 @@ impl GitPanel {
         window
             .spawn(cx, async move |cx| {
                 let json_language = json_language.await.ok();
+
+                // Best-effort: gather runtime diagnostics off the main thread.
+                // Any failure inside `gather` is logged and produces an empty
+                // section; this `.await` itself cannot meaningfully fail and
+                // must never prevent us from showing the queue dump.
+                let diagnostics = cx
+                    .background_spawn(crate::git_runtime_diagnostics::gather())
+                    .await;
+
+                let mut combined = queue_value;
+                if let serde_json::Value::Object(ref mut map) = combined
+                    && let serde_json::Value::Object(diag_map) = diagnostics
+                    && !diag_map.is_empty()
+                {
+                    map.insert(
+                        "runtime_diagnostics".into(),
+                        serde_json::Value::Object(diag_map),
+                    );
+                }
+
+                let text = serde_json::to_string_pretty(&combined).unwrap_or_default();
 
                 let buffer = project
                     .update(cx, |project, cx| {
@@ -4524,7 +4604,9 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = self.active_repository.clone()?;
-        let panel_editor_style = panel_editor_style(true, window, cx);
+        let settings = ThemeSettings::get_global(cx);
+        let panel_editor_style =
+            git_commit_editor_style(settings.git_commit_buffer_font_size(cx), cx);
         let enable_coauthors = self.render_co_authors(cx);
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
         let branch = active_repository.read(cx).branch.clone();
@@ -4556,7 +4638,7 @@ impl GitPanel {
                 .text(cx)
                 .lines()
                 .next()
-                .is_some_and(|title| title.len() > max_title_length)
+                .is_some_and(|title| commit_title_exceeds_limit(title, max_title_length))
         } else {
             false
         };
@@ -4927,11 +5009,15 @@ impl GitPanel {
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
 
+        let focus_handle = self.focus_handle.clone();
         let tab = |id: ElementId,
                    active: bool,
                    show_changes: bool,
                    label: SharedString,
-                   set_active_tab: GitPanelTab| {
+                   set_active_tab: GitPanelTab,
+                   tooltip_action: Box<dyn Action>| {
+            let focus_handle = focus_handle.clone();
+
             h_flex()
                 .cursor_pointer()
                 .id(id)
@@ -4946,7 +5032,7 @@ impl GitPanel {
                     s.bg(cx.theme().colors().editor_background.opacity(0.6))
                         .border_color(cx.theme().colors().border.opacity(0.6))
                 })
-                .child(Label::new(label).when(!active, |this| this.color(Color::Muted)))
+                .child(Label::new(label.clone()).when(!active, |this| this.color(Color::Muted)))
                 .when(show_changes && self.changes_count > 0, |this| {
                     this.child(
                         Label::new(format!("({})", self.changes_count))
@@ -4954,9 +5040,14 @@ impl GitPanel {
                             .color(Color::Muted),
                     )
                 })
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.set_active_tab(set_active_tab, cx)),
-                )
+                .tooltip(Tooltip::for_action_title_in(
+                    format!("Toggle {} Tab", label),
+                    tooltip_action.as_ref(),
+                    &focus_handle,
+                ))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.set_active_tab(set_active_tab, window, cx)
+                }))
         };
 
         h_flex()
@@ -4969,6 +5060,7 @@ impl GitPanel {
                 true,
                 "Changes".into(),
                 GitPanelTab::Changes,
+                ActivateChangesTab.boxed_clone(),
             ))
             .child(Divider::vertical().color(ui::DividerColor::BorderFaded))
             .child(tab(
@@ -4977,6 +5069,7 @@ impl GitPanel {
                 false,
                 "History".into(),
                 GitPanelTab::History,
+                ActivateHistoryTab.boxed_clone(),
             ))
     }
 
@@ -5005,6 +5098,7 @@ impl GitPanel {
             Some(i) => (i + 1).min(count - 1),
         };
         self.focused_history_entry = Some(new_index);
+        self.history_keyboard_nav = true;
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
@@ -5020,6 +5114,7 @@ impl GitPanel {
             Some(i) => i.saturating_sub(1),
         };
         self.focused_history_entry = Some(new_index);
+        self.history_keyboard_nav = true;
         self.commit_history_scroll_handle
             .scroll_to_item(new_index, ScrollStrategy::Top);
         cx.notify();
@@ -5046,17 +5141,37 @@ impl GitPanel {
         );
     }
 
-    fn set_active_tab(&mut self, tab: GitPanelTab, cx: &mut Context<Self>) {
+    fn activate_changes_tab(
+        &mut self,
+        _: &ActivateChangesTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::Changes, window, cx);
+    }
+
+    fn activate_history_tab(
+        &mut self,
+        _: &ActivateHistoryTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_active_tab(GitPanelTab::History, window, cx);
+    }
+
+    fn set_active_tab(&mut self, tab: GitPanelTab, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == tab {
             return;
         }
         self.active_tab = tab;
         match tab {
             GitPanelTab::History => {
+                self.focus_handle.focus(window, cx);
                 self.load_commit_history(cx);
                 self.focused_history_entry = Some(0);
             }
             GitPanelTab::Changes => {
+                self.focus_handle.focus(window, cx);
                 self.commit_history_shas.clear();
                 self.focused_history_entry = None;
                 self._repo_subscriptions.clear();
@@ -5160,6 +5275,7 @@ impl GitPanel {
 
         let focused_history_entry = self.focused_history_entry;
         let is_panel_focused = self.focus_handle.is_focused(window);
+        let show_focus_border = self.history_keyboard_nav;
 
         let ahead_count = active_repository
             .read(cx)
@@ -5179,6 +5295,7 @@ impl GitPanel {
                     uniform_list("commit_history_list", item_count, {
                         let workspace = workspace;
                         let repo_weak = repo_weak;
+                        let git_panel = cx.weak_entity();
                         move |range, window, cx| {
                             let local_offset = time::UtcOffset::current_local_offset()
                                 .unwrap_or(time::UtcOffset::UTC);
@@ -5269,11 +5386,14 @@ impl GitPanel {
                                         .gap_0p5()
                                         .border_1()
                                         .border_color(gpui::transparent_black())
-                                        .when(is_focused && is_panel_focused, |this| {
-                                            this.border_color(
-                                                cx.theme().colors().panel_focused_border,
-                                            )
-                                        })
+                                        .when(
+                                            is_focused && is_panel_focused && show_focus_border,
+                                            |this| {
+                                                this.border_color(
+                                                    cx.theme().colors().panel_focused_border,
+                                                )
+                                            },
+                                        )
                                         .hover(|s| s.bg(cx.theme().colors().element_hover))
                                         .child(
                                             h_flex()
@@ -5320,6 +5440,18 @@ impl GitPanel {
                                                 short_sha.clone(),
                                                 cx,
                                             )
+                                        })
+                                        .on_mouse_down(gpui::MouseButton::Left, {
+                                            let git_panel = git_panel.clone();
+                                            move |_, _, cx| {
+                                                git_panel
+                                                    .update(cx, |panel, cx| {
+                                                        panel.focused_history_entry = Some(index);
+                                                        panel.history_keyboard_nav = false;
+                                                        cx.notify();
+                                                    })
+                                                    .ok();
+                                            }
                                         })
                                         .on_click(move |_, window, cx| {
                                             CommitView::open(
@@ -5453,6 +5585,22 @@ impl GitPanel {
                         }),
                 )
                 .into_any_element()
+        } else if worktree_count == 0 {
+            let focus_handle = self.focus_handle.clone();
+            ProjectEmptyState::new(
+                "Git Panel",
+                focus_handle.clone(),
+                KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
+            )
+            .on_open_project(|_, window, cx| {
+                telemetry::event!("Git Panel Add Project Clicked");
+                window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
+            })
+            .on_clone_repo(|_, window, cx| {
+                telemetry::event!("Git Panel Clone Repo Clicked");
+                window.dispatch_action(git::Clone.boxed_clone(), cx);
+            })
+            .into_any_element()
         } else {
             Empty.into_any_element()
         }
@@ -6529,6 +6677,11 @@ impl Render for GitPanel {
             })
             .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::activate_changes_tab))
+            .on_action(cx.listener(Self::activate_history_tab))
             .size_full()
             .overflow_hidden()
             .bg(cx.theme().colors().panel_background)
@@ -6691,42 +6844,20 @@ pub fn panel_editor_container(_window: &mut Window, cx: &mut App) -> Div {
         .bg(cx.theme().colors().editor_background)
 }
 
-pub(crate) fn panel_editor_style(monospace: bool, window: &Window, cx: &App) -> EditorStyle {
+pub(crate) fn git_commit_editor_style(font_size: gpui::Pixels, cx: &App) -> EditorStyle {
     let settings = ThemeSettings::get_global(cx);
-
-    let (font_family, font_fallbacks, font_features, font_size, font_weight, line_height) =
-        if monospace {
-            let font_size = settings.buffer_font_size(cx);
-            (
-                settings.buffer_font.family.clone(),
-                settings.buffer_font.fallbacks.clone(),
-                settings.buffer_font.features.clone(),
-                AbsoluteLength::from(font_size),
-                settings.buffer_font.weight,
-                font_size * settings.buffer_line_height.value(),
-            )
-        } else {
-            (
-                settings.ui_font.family.clone(),
-                settings.ui_font.fallbacks.clone(),
-                settings.ui_font.features.clone(),
-                AbsoluteLength::from(TextSize::Small.rems(cx)),
-                settings.ui_font.weight,
-                window.line_height(),
-            )
-        };
 
     EditorStyle {
         background: cx.theme().colors().editor_background,
         local_player: cx.theme().players().local(),
         text: TextStyle {
             color: cx.theme().colors().text,
-            font_family,
-            font_fallbacks,
-            font_features,
-            font_size,
-            font_weight,
-            line_height: line_height.into(),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: AbsoluteLength::from(font_size),
+            font_weight: settings.buffer_font.weight,
+            line_height: (font_size * settings.buffer_line_height.value()).into(),
             ..Default::default()
         },
         syntax: cx.theme().syntax().clone(),
@@ -6857,9 +6988,6 @@ impl RenderOnce for PanelRepoFooter {
             .map(|project| project.read(cx).git_store().read(cx).repositories().len() == 1)
             .unwrap_or(true);
 
-        const MAX_BRANCH_LEN: usize = 16;
-        const MAX_REPO_LEN: usize = 16;
-        const LABEL_CHARACTER_BUDGET: usize = MAX_BRANCH_LEN + MAX_REPO_LEN;
         const MAX_SHORT_SHA_LEN: usize = 8;
         let branch_name = self
             .branch
@@ -6879,36 +7007,6 @@ impl RenderOnce for PanelRepoFooter {
 
         let active_repo_name = self.active_repository.clone();
 
-        let branch_actual_len = branch_name.len();
-        let repo_actual_len = active_repo_name.len();
-
-        // ideally, show the whole branch and repo names but
-        // when we can't, use a budget to allocate space between the two
-        let (repo_display_len, branch_display_len) =
-            if branch_actual_len + repo_actual_len <= LABEL_CHARACTER_BUDGET {
-                (repo_actual_len, branch_actual_len)
-            } else if branch_actual_len <= MAX_BRANCH_LEN {
-                let repo_space = (LABEL_CHARACTER_BUDGET - branch_actual_len).min(MAX_REPO_LEN);
-                (repo_space, branch_actual_len)
-            } else if repo_actual_len <= MAX_REPO_LEN {
-                let branch_space = (LABEL_CHARACTER_BUDGET - repo_actual_len).min(MAX_BRANCH_LEN);
-                (repo_actual_len, branch_space)
-            } else {
-                (MAX_REPO_LEN, MAX_BRANCH_LEN)
-            };
-
-        let truncated_repo_name = if repo_actual_len <= repo_display_len {
-            active_repo_name.to_string()
-        } else {
-            util::truncate_and_trailoff(active_repo_name.trim_ascii(), repo_display_len)
-        };
-
-        let truncated_branch_name = if branch_actual_len <= branch_display_len {
-            branch_name
-        } else {
-            util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
-        };
-
         let repo_selector = PopoverMenu::new("repository-switcher")
             .menu({
                 let project = project;
@@ -6918,7 +7016,7 @@ impl RenderOnce for PanelRepoFooter {
                 }
             })
             .trigger_with_tooltip(
-                Button::new("repo-selector", truncated_repo_name)
+                Button::new("repo-selector", active_repo_name)
                     .size(ButtonSize::None)
                     .label_size(LabelSize::Small)
                     .truncate(true),
@@ -6937,7 +7035,7 @@ impl RenderOnce for PanelRepoFooter {
             })
             .into_any_element();
 
-        let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
+        let branch_selector_button = Button::new("branch-selector", branch_name)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .truncate(true)
@@ -6980,15 +7078,16 @@ impl RenderOnce for PanelRepoFooter {
                         },
                     ))
                     .when(!single_repo, |this| {
-                        this.child(repo_selector).when(show_separator, |this| {
-                            this.child(
-                                Label::new("/").size(LabelSize::Small).color(Color::Custom(
-                                    cx.theme().colors().text_muted.opacity(0.4),
-                                )),
-                            )
-                        })
+                        this.child(div().child(repo_selector).min_w_0()).when(
+                            show_separator,
+                            |this| {
+                                this.child(Label::new("/").size(LabelSize::Small).color(
+                                    Color::Custom(cx.theme().colors().text_muted.opacity(0.4)),
+                                ))
+                            },
+                        )
                     })
-                    .child(branch_selector),
+                    .child(div().child(branch_selector).min_w_0()),
             )
             .children(if let Some(git_panel) = self.git_panel {
                 git_panel.update(cx, |git_panel, cx| git_panel.render_remote_button(cx))
@@ -7251,7 +7350,7 @@ impl Component for PanelRepoFooter {
     }
 }
 
-fn open_output(
+pub(crate) fn open_output(
     operation: impl Into<SharedString>,
     workspace: &mut Workspace,
     output: &str,
@@ -7358,6 +7457,10 @@ fn format_git_error_toast_message(error: &anyhow::Error) -> String {
     } else {
         error.to_string().trim().to_string()
     }
+}
+
+pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool {
+    max_length > 0 && title.chars().count() > max_length
 }
 
 #[cfg(test)]
@@ -8277,8 +8380,8 @@ mod tests {
                 .item_of_type::<ProjectDiff>(cx)
                 .expect("ProjectDiff should exist")
                 .read(cx)
-                .active_path(cx)
-                .expect("active_path should exist");
+                .active_project_path(cx)
+                .expect("active_project_path should exist");
 
             assert_eq!(active_path.path, rel_path("untracked").into_arc());
         });
@@ -8838,6 +8941,43 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_commit_title_exceeds_limit() {
+        // ASCII only
+        let within_ascii = "abcde";
+        let exceeds_ascii = "abcdef";
+        assert!(!commit_title_exceeds_limit(within_ascii, 5));
+        assert!(commit_title_exceeds_limit(exceeds_ascii, 5));
+
+        // Multi-byte characters are counted as grapheme clusters
+        let within_japanese = "あいうえお"; // 5 chars, 15 bytes
+        let exceeds_japanese = "あいうえおか"; // 6 chars, 18 bytes
+        assert!(!commit_title_exceeds_limit(within_japanese, 5));
+        assert!(commit_title_exceeds_limit(exceeds_japanese, 5));
+
+        // Mixed ASCII + multi-byte
+        let within_mixed = "abcあ";
+        let exceeds_mixed = "abcああ";
+        assert!(!commit_title_exceeds_limit(within_mixed, 4));
+        assert!(commit_title_exceeds_limit(exceeds_mixed, 4));
+
+        // Emoji counts as one character each
+        let within_emoji = "🚀";
+        let exceeds_emoji = "🚀🚀";
+        assert!(!commit_title_exceeds_limit(within_emoji, 1));
+        assert!(commit_title_exceeds_limit(exceeds_emoji, 1));
+
+        // A max_length of 0 disables the limit check
+        assert!(!commit_title_exceeds_limit(
+            "anything goes when disabled",
+            0
+        ));
+        assert!(!commit_title_exceeds_limit("", 0));
+
+        // Empty title never exceeds a positive limit
+        assert!(!commit_title_exceeds_limit("", 72));
+    }
+
     #[gpui::test]
     async fn test_dispatch_context_with_focus_states(cx: &mut TestAppContext) {
         init_test(cx);
@@ -9008,27 +9148,6 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
-        });
-    }
-
-    #[gpui::test]
-    async fn test_panel_editor_style_uses_buffer_font_size(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.update(|cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.theme.buffer_font_size = Some(20.0.into());
-                });
-            });
-        });
-
-        cx.add_window(|window, cx| {
-            let style = panel_editor_style(true, window, cx);
-
-            assert_eq!(style.text.font_size.to_pixels(window.rem_size()), px(20.0));
-
-            Editor::single_line(window, cx)
         });
     }
 }
