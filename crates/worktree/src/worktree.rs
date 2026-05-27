@@ -271,6 +271,7 @@ struct BackgroundScannerState {
     /// if the same inode is discovered at a new path, or if the given
     /// path is re-created after being deleted.
     removed_entries: HashMap<u64, Entry>,
+    removed_entries_by_path: HashMap<Arc<RelPath>, Entry>,
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
     scanning_enabled: bool,
@@ -1191,6 +1192,7 @@ impl LocalWorktree {
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
                         removed_entries: Default::default(),
+                        removed_entries_by_path: Default::default(),
                         changed_paths: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
@@ -3032,7 +3034,28 @@ impl BackgroundScannerState {
         }
     }
 
+    fn removed_entry_id_for_path(&mut self, path: &RelPath, inode: u64) -> Option<ProjectEntryId> {
+        let removed_entry = self.removed_entries_by_path.remove(path)?;
+        if removed_entry.inode != inode {
+            return None;
+        }
+        if self
+            .removed_entries
+            .get(&removed_entry.inode)
+            .map(|entry| entry.id)
+            == Some(removed_entry.id)
+        {
+            self.removed_entries.remove(&removed_entry.inode);
+        }
+        Some(removed_entry.id)
+    }
+
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
+        if let Some(entry_id) = self.removed_entry_id_for_path(&entry.path, entry.inode) {
+            entry.id = entry_id;
+            return;
+        }
+
         if let Some(mtime) = entry.mtime {
             // If an entry with the same inode was removed from the worktree during this scan,
             // then it *might* represent the same file or directory. But the OS might also have
@@ -3043,6 +3066,7 @@ impl BackgroundScannerState {
             // * if the path is the same, the file may just have been updated
             if let Some(removed_entry) = self.removed_entries.remove(&entry.inode) {
                 if removed_entry.mtime == Some(mtime) || removed_entry.path == entry.path {
+                    self.removed_entries_by_path.remove(&removed_entry.path);
                     entry.id = removed_entry.id;
                 }
             } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
@@ -3057,6 +3081,10 @@ impl BackgroundScannerState {
         path: &RelPath,
         metadata: &fs::Metadata,
     ) -> ProjectEntryId {
+        if let Some(entry_id) = self.removed_entry_id_for_path(path, metadata.inode) {
+            return entry_id;
+        }
+
         // If an entry with the same inode was removed from the worktree during this scan,
         // then it *might* represent the same file or directory. But the OS might also have
         // re-used the inode for a completely different file or directory.
@@ -3066,6 +3094,7 @@ impl BackgroundScannerState {
         // * if the path is the same, the file may just have been updated
         if let Some(removed_entry) = self.removed_entries.remove(&metadata.inode) {
             if removed_entry.mtime == Some(metadata.mtime) || *removed_entry.path == *path {
+                self.removed_entries_by_path.remove(&removed_entry.path);
                 return removed_entry.id;
             }
         } else if let Some(existing_entry) = self.snapshot.entry_for_path(path) {
@@ -3179,6 +3208,9 @@ impl BackgroundScannerState {
                     .unwrap_or_else(|| self.snapshot.absolutize(&entry.path));
                 removed_dir_abs_paths.push(watch_path);
             }
+
+            self.removed_entries_by_path
+                .insert(entry.path.clone(), entry.clone());
 
             match self.removed_entries.entry(entry.inode) {
                 hash_map::Entry::Occupied(mut e) => {
@@ -4618,6 +4650,7 @@ impl BackgroundScanner {
             for (_, entry) in mem::take(&mut state.removed_entries) {
                 state.scanned_dirs.remove(&entry.id);
             }
+            state.removed_entries_by_path.clear();
         }
         self.send_status_update(false, SmallVec::new(), &relative_paths)
             .await;
