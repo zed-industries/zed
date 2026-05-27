@@ -42,6 +42,8 @@ const DESCRIPTION_FIELD_TAB_INDEX: isize = 3;
 const DISABLE_MODEL_INVOCATION_TAB_INDEX: isize = 4;
 const SCOPE_FIELD_TAB_INDEX: isize = 5;
 const BODY_FIELD_TAB_INDEX: isize = 6;
+const CANCEL_BUTTON_TAB_INDEX: isize = 7;
+const SAVE_BUTTON_TAB_INDEX: isize = 8;
 const URL_IMPORT_DEBOUNCE: Duration = Duration::from_millis(100);
 const URL_IMPORT_ERROR_BODY_MAX_LEN: usize = 2048;
 
@@ -248,6 +250,8 @@ pub struct SkillCreator {
     // Held so replacing it or switching back to the form cancels an in-flight import.
     url_import_task: Option<Task<()>>,
     scroll_handle: ScrollHandle,
+    cancel_button_focus_handle: FocusHandle,
+    save_button_focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -424,6 +428,8 @@ impl SkillCreator {
             url_import_debounce_task: None,
             url_import_task: None,
             scroll_handle: ScrollHandle::new(),
+            cancel_button_focus_handle: cx.focus_handle(),
+            save_button_focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         }
     }
@@ -1012,10 +1018,24 @@ impl SkillCreator {
             ))
     }
 
-    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_footer(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let valid = self.is_valid(cx);
         let saving = self.saving;
         let main_action = if saving { "Saving…" } else { "Save Skill" };
+
+        // Draw a faint outline around whichever button currently holds
+        // keyboard focus, so tabbing to Cancel/Save is clearly visible. The
+        // ring border is always present (transparent when unfocused) so
+        // focusing a button never shifts the surrounding layout.
+        let focus_ring = |focus_handle: &FocusHandle| {
+            let focused = focus_handle.is_focused(window) && window.last_input_was_keyboard();
+            let border_color = if focused {
+                cx.theme().colors().border_focused
+            } else {
+                cx.theme().colors().border_transparent
+            };
+            div().rounded_sm().border_1().border_color(border_color)
+        };
 
         v_flex()
             .w_full()
@@ -1036,21 +1056,39 @@ impl SkillCreator {
                     .gap_1()
                     .justify_end()
                     .child(
-                        Button::new("cancel-skill", "Cancel")
-                            .disabled(saving)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(Cancel), cx);
-                            }),
+                        focus_ring(&self.cancel_button_focus_handle).child(
+                            Button::new("cancel-skill", "Cancel")
+                                .track_focus(
+                                    &self
+                                        .cancel_button_focus_handle
+                                        .clone()
+                                        .tab_index(CANCEL_BUTTON_TAB_INDEX)
+                                        .tab_stop(true),
+                                )
+                                .disabled(saving)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(Cancel), cx);
+                                }),
+                        ),
                     )
                     .child(
-                        Button::new("save-skill", main_action)
-                            .style(ButtonStyle::Filled)
-                            .layer(ui::ElevationIndex::ModalSurface)
-                            .disabled(!valid || saving)
-                            .loading(saving)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(SaveSkill), cx);
-                            }),
+                        focus_ring(&self.save_button_focus_handle).child(
+                            Button::new("save-skill", main_action)
+                                .track_focus(
+                                    &self
+                                        .save_button_focus_handle
+                                        .clone()
+                                        .tab_index(SAVE_BUTTON_TAB_INDEX)
+                                        .tab_stop(true),
+                                )
+                                .style(ButtonStyle::Filled)
+                                .layer(ui::ElevationIndex::ModalSurface)
+                                .disabled(!valid || saving)
+                                .loading(saving)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(SaveSkill), cx);
+                                }),
+                        ),
                     ),
             )
     }
@@ -1161,7 +1199,7 @@ impl Render for SkillCreator {
                                 .child(self.render_form_fields(window, cx)),
                         ),
                 )
-                .child(self.render_footer(cx)),
+                .child(self.render_footer(window, cx)),
             window,
             cx,
             Tiling::default(),
