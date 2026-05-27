@@ -35,6 +35,44 @@ fn test_background_executor_spawn() {
 }
 
 #[test]
+fn test_scheduler_drops_with_stalled_detached_foreground_task() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let (sender, receiver) = oneshot::channel::<()>();
+
+    scheduler
+        .foreground()
+        .spawn(async move {
+            receiver.await.ok();
+        })
+        .detach();
+    scheduler.run();
+
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+    drop(sender);
+}
+
+#[test]
+fn test_scheduler_drops_with_stalled_detached_background_task() {
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
+    let weak_scheduler = Arc::downgrade(&scheduler);
+    let (sender, receiver) = oneshot::channel::<()>();
+
+    scheduler
+        .background()
+        .spawn(async move {
+            receiver.await.ok();
+        })
+        .detach();
+    scheduler.run();
+
+    drop(scheduler);
+    assert!(weak_scheduler.upgrade().is_none());
+    drop(sender);
+}
+
+#[test]
 fn test_foreground_ordering() {
     let mut traces = HashSet::new();
 
