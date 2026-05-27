@@ -13,7 +13,6 @@ path = "src/extensions_ui.rs"
 
 [dependencies]
 anyhow.workspace = true
-client.workspace = true
 cloud_api_types.workspace = true
 collections.workspace = true
 db.workspace = true

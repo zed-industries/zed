@@ -732,6 +732,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "menu::Confirm",
+      "shift-r": "agent::RenameSelectedThread",
     },
   },
   {
@@ -1575,6 +1576,24 @@
     "bindings": {
       "tab": "git_graph::FocusNextTabStop",
       "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

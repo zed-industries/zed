@@ -362,6 +362,59 @@ impl DevContainerManifest {
         }
     }
 
+    async fn copy_local_feature(
+        &self,
+        feature_ref: &str,
+        destination: &Path,
+    ) -> Result<(), DevContainerError> {
+        let source_path = normalize_path(&self.config_directory.join(feature_ref));
+
+        if !self.fs.is_dir(&source_path).await {
+            log::error!(
+                "Local feature directory '{}' not found at {:?}",
+                feature_ref,
+                source_path
+            );
+            return Err(DevContainerError::ResourceFetchFailed);
+        }
+
+        let items = fs::read_dir_items(&*self.fs, &source_path)
+            .await
+            .map_err(|e| {
+                log::error!(
+                    "Failed to read local feature directory {:?}: {e}",
+                    source_path
+                );
+                DevContainerError::FilesystemError
+            })?;
+
+        for (item_path, is_dir) in &items {
+            let relative = item_path.strip_prefix(&source_path).map_err(|e| {
+                log::error!("Failed to compute relative path for {:?}: {e}", item_path);
+                DevContainerError::FilesystemError
+            })?;
+            let dest_path = destination.join(relative);
+
+            if *is_dir {
+                self.fs.create_dir(&dest_path).await.map_err(|e| {
+                    log::error!("Failed to create directory {:?}: {e}", dest_path);
+                    DevContainerError::FilesystemError
+                })?;
+            } else {
+                let content = self.fs.load_bytes(item_path).await.map_err(|e| {
+                    log::error!("Failed to read file {:?}: {e}", item_path);
+                    DevContainerError::FilesystemError
+                })?;
+                self.fs.write(&dest_path, &content).await.map_err(|e| {
+                    log::error!("Failed to write file {:?}: {e}", dest_path);
+                    DevContainerError::FilesystemError
+                })?;
+            }
+        }
+
+        Ok(())
+    }
+
     async fn download_feature_and_dockerfile_resources(&mut self) -> Result<(), DevContainerError> {
         let dev_container = match &self.config {
             ConfigStatus::Deserialized(_) => {
@@ -458,59 +511,66 @@ impl DevContainerManifest {
                 DevContainerError::FilesystemError
             })?;
 
-            let oci_ref = parse_oci_feature_ref(feature_ref).ok_or_else(|| {
-                log::error!(
-                    "Feature '{}' is not a supported OCI feature reference",
-                    feature_ref
-                );
-                DevContainerError::DevContainerParseFailed
-            })?;
-            let TokenResponse { token } =
-                get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
-                    .await
-                    .map_err(|e| {
-                        log::error!("Failed to get OCI token for feature '{}': {e}", feature_ref);
-                        DevContainerError::ResourceFetchFailed
-                    })?;
-            let manifest = get_oci_manifest(
-                &oci_ref.registry,
-                &oci_ref.path,
-                &token,
-                &self.http_client,
-                &oci_ref.version,
-                None,
-            )
-            .await
-            .map_err(|e| {
-                log::error!(
-                    "Failed to fetch OCI manifest for feature '{}': {e}",
-                    feature_ref
-                );
-                DevContainerError::ResourceFetchFailed
-            })?;
-            let digest = &manifest
-                .layers
-                .first()
-                .ok_or_else(|| {
+            if is_local_feature_ref(feature_ref) {
+                self.copy_local_feature(feature_ref, &feature_dir).await?;
+            } else {
+                let oci_ref = parse_oci_feature_ref(feature_ref).ok_or_else(|| {
                     log::error!(
-                        "OCI manifest for feature '{}' contains no layers",
+                        "Feature '{}' is not a supported OCI feature reference",
+                        feature_ref
+                    );
+                    DevContainerError::DevContainerParseFailed
+                })?;
+                let TokenResponse { token } =
+                    get_oci_token(&oci_ref.registry, &oci_ref.path, &self.http_client)
+                        .await
+                        .map_err(|e| {
+                            log::error!(
+                                "Failed to get OCI token for feature '{}': {e}",
+                                feature_ref
+                            );
+                            DevContainerError::ResourceFetchFailed
+                        })?;
+                let manifest = get_oci_manifest(
+                    &oci_ref.registry,
+                    &oci_ref.path,
+                    &token,
+                    &self.http_client,
+                    &oci_ref.version,
+                    None,
+                )
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Failed to fetch OCI manifest for feature '{}': {e}",
                         feature_ref
                     );
                     DevContainerError::ResourceFetchFailed
-                })?
-                .digest;
-            download_oci_tarball(
-                &token,
-                &oci_ref.registry,
-                &oci_ref.path,
-                digest,
-                "application/vnd.devcontainers.layer.v1+tar",
-                &feature_dir,
-                &self.http_client,
-                &self.fs,
-                None,
-            )
-            .await?;
+                })?;
+                let digest = &manifest
+                    .layers
+                    .first()
+                    .ok_or_else(|| {
+                        log::error!(
+                            "OCI manifest for feature '{}' contains no layers",
+                            feature_ref
+                        );
+                        DevContainerError::ResourceFetchFailed
+                    })?
+                    .digest;
+                download_oci_tarball(
+                    &token,
+                    &oci_ref.registry,
+                    &oci_ref.path,
+                    digest,
+                    "application/vnd.devcontainers.layer.v1+tar",
+                    &feature_dir,
+                    &self.http_client,
+                    &self.fs,
+                    None,
+                )
+                .await?;
+            }
 
             let feature_json_path = &feature_dir.join("devcontainer-feature.json");
             if !self.fs.is_file(feature_json_path).await {
@@ -537,7 +597,7 @@ impl DevContainerManifest {
 
             let feature_manifest = FeatureManifest::new(consecutive_id, feature_dir, feature_json);
 
-            log::debug!("Downloaded OCI feature content for '{}'", feature_ref);
+            log::debug!("Prepared feature content for '{}'", feature_ref);
 
             let env_content = feature_manifest
                 .write_feature_env(&self.fs, options)
@@ -1176,7 +1236,7 @@ RUN sed -i -E 's/((^|\s)PATH=)([^\$]*)$/\1\${{PATH:-\3}}/g' /etc/profile || true
                     Some((
                         source.clone(),
                         DockerComposeVolume {
-                            name: source.clone(),
+                            name: Some(source.clone()),
                         },
                     ))
                 } else {
@@ -2565,6 +2625,10 @@ fn extract_feature_id(feature_ref: &str) -> &str {
     }
 }
 
+fn is_local_feature_ref(feature_ref: &str) -> bool {
+    feature_ref.starts_with("./") || feature_ref.starts_with("../")
+}
+
 /// Generates a shell command that looks up a user's passwd entry.
 ///
 /// Mirrors the CLI's `getEntPasswdShellCommand` in `commonUtils.ts`.
@@ -2836,7 +2900,7 @@ mod test {
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
             DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, resolve_compose_dockerfile,
+            image_from_dockerfile, is_local_feature_ref, resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -3059,6 +3123,16 @@ mod test {
             extract_feature_id("ghcr.io/devcontainers/features/rust@sha256:abc123"),
             "rust"
         );
+    }
+
+    #[test]
+    fn should_identify_local_feature_refs() {
+        assert!(is_local_feature_ref("./lsp-devtools"));
+        assert!(is_local_feature_ref("./some/nested/feature"));
+        assert!(is_local_feature_ref("../sibling-feature"));
+        assert!(!is_local_feature_ref("ghcr.io/devcontainers/features/go:1"));
+        assert!(!is_local_feature_ref("ghcr.io/user/repo/node:18.0.0"));
+        assert!(!is_local_feature_ref("https://example.com/feature.tgz"));
     }
 
     #[gpui::test]
@@ -4145,7 +4219,7 @@ ENV DOCKER_BUILDKIT=1
             volumes: HashMap::from([(
                 "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
                 DockerComposeVolume {
-                    name: "dind-var-lib-docker-42dad4b4ca7b8ced".to_string(),
+                    name: Some("dind-var-lib-docker-42dad4b4ca7b8ced".to_string()),
                 },
             )]),
         };
@@ -5154,6 +5228,116 @@ chmod +x ./install.sh
                     ),
                 ])
         }))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_spawns_devcontainer_with_local_feature(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        env_logger::try_init().ok();
+        let given_devcontainer_contents = r#"
+            {
+              "name": "cli-local-feature-test",
+              "image": "test_image:latest",
+              "features": {
+                "./lsp-devtools": {
+                  "version": "0.1.0"
+                }
+              }
+            }
+            "#;
+
+        let (test_dependencies, mut devcontainer_manifest) =
+            init_default_devcontainer_manifest(cx, given_devcontainer_contents)
+                .await
+                .unwrap();
+
+        test_dependencies
+            .fs
+            .insert_tree(
+                format!("{TEST_PROJECT_PATH}/.devcontainer/lsp-devtools"),
+                serde_json::json!({
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools",
+                        "options": {
+                            "version": {
+                                "type": "string",
+                                "default": "latest"
+                            }
+                        }
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\necho 'Installing lsp-devtools'",
+                }),
+            )
+            .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+
+        let _devcontainer_up = devcontainer_manifest.build_and_run().await.unwrap();
+
+        let files = test_dependencies.fs.files();
+
+        let feature_dockerfile = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "Dockerfile.extended")
+            })
+            .expect("Dockerfile.extended should be generated");
+        let feature_dockerfile = test_dependencies.fs.load(feature_dockerfile).await.unwrap();
+
+        assert!(
+            feature_dockerfile.contains("lsp-devtools_0"),
+            "Dockerfile.extended should reference the local feature. Got:\n{}",
+            feature_dockerfile
+        );
+
+        let install_wrapper = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features-install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("Install wrapper should be generated for local feature");
+        let install_wrapper = test_dependencies.fs.load(install_wrapper).await.unwrap();
+        assert!(
+            install_wrapper.contains("./lsp-devtools"),
+            "Install wrapper should reference the local feature path. Got:\n{}",
+            install_wrapper
+        );
+
+        let feature_env = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "devcontainer-features.env")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("Feature env file should be generated for local feature");
+        let feature_env = test_dependencies.fs.load(feature_env).await.unwrap();
+        assert!(
+            feature_env.contains("VERSION=0.1.0"),
+            "Feature env should contain user-provided version override. Got:\n{}",
+            feature_env
+        );
+
+        let install_sh = files
+            .iter()
+            .find(|f| {
+                f.file_name()
+                    .is_some_and(|s| s.display().to_string() == "install.sh")
+                    && f.to_str().is_some_and(|s| s.contains("/lsp-devtools_"))
+            })
+            .expect("install.sh should be copied from the local feature directory");
+        let install_sh = test_dependencies.fs.load(install_sh).await.unwrap();
+        assert!(
+            install_sh.contains("Installing lsp-devtools"),
+            "install.sh should have the original content. Got:\n{}",
+            install_sh
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

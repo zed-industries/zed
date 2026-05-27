@@ -10,12 +10,12 @@ use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
-    active_language, all_language_names, pages::{
-        open_audio_test_window, render_edit_prediction_setup_page,
+    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
+    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
+    pages::{
+        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
-    }, ActionLink, DynamicItem, SettingField,
-    SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink, PROJECT,
-    USER,
+    },
 };
 
 const DEFAULT_STRING: String = String::new();
