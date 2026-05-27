@@ -1,4 +1,4 @@
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
@@ -19,8 +19,7 @@ use crate::{
     hover_links::HoverLink,
 };
 
-static EMPTY_LENS_FALLBACK_TITLE: LazyLock<SharedString> =
-    LazyLock::new(|| SharedString::new_static("0 references"));
+static EMPTY_LENS_FALLBACK_TITLE: SharedString = SharedString::new_static("0 references");
 const CODE_LENS_SEPARATOR: &str = " | ";
 
 #[derive(Clone, Debug)]
@@ -540,7 +539,7 @@ fn rendered_text_matches(a: &CodeLensLine, b: &CodeLensLine) -> bool {
 fn displayed_title(item: &CodeLensItem) -> Option<&SharedString> {
     item.title
         .as_ref()
-        .or_else(|| item.action.resolved.then_some(&*EMPTY_LENS_FALLBACK_TITLE))
+        .or_else(|| item.action.resolved.then_some(&EMPTY_LENS_FALLBACK_TITLE))
 }
 
 fn group_lenses_by_row(
@@ -574,7 +573,7 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
             .iter()
             .filter_map(|item| {
                 let title = displayed_title(item)?;
-                let action = item.title.is_some().then_some(item.action.clone());
+                let action = item.title.is_some().then(|| item.action.clone());
                 Some((title, action))
             })
             .collect::<Vec<_>>();
