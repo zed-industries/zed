@@ -245,6 +245,11 @@ impl A11yNodeBuilder {
         self.focus = ROOT_NODE_ID;
     }
 
+    /// Returns whether a node with the given ID has been pushed in this frame.
+    pub(crate) fn has_node(&self, id: NodeId) -> bool {
+        id == ROOT_NODE_ID || self.seen_ids.contains(&id)
+    }
+
     /// Set the focused node for this frame.
     pub(crate) fn set_focus(&mut self, id: NodeId) {
         #[cfg(debug_assertions)]
