@@ -91,6 +91,8 @@ As of February 19, 2026, Zed Pro serves newer model versions in place of the ret
 
 ## Usage {#usage}
 
+Because Zed-hosted Gemini models do not use Google context caching, Gemini usage is billed only as input and output tokens; there is no separate cached-input price for these models. This preserves zero-data-retention behavior for hosted Gemini requests. For background, see Google's Vertex AI documentation on [context caching](https://cloud.google.com/vertex-ai/generative-ai/docs/context-cache/context-cache-overview) and [zero data retention](https://cloud.google.com/vertex-ai/generative-ai/docs/vertex-ai-zero-data-retention).
+
 Any usage of a Zed-hosted model will be billed at the Zed Price (rightmost column above). See [Plans and Usage](./plans-and-usage.md) for details on Zed's plans and limits for use of hosted models.
 
 > LLMs can enter unproductive loops that require user intervention. Monitor longer-running tasks and interrupt if needed.
