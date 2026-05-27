@@ -45,10 +45,17 @@ impl CommandAliasTarget {
             .cloned()
             .unwrap_or_default();
 
-        let exclude = action_names
+        let mut exclude = action_names
             .iter()
             .map(|name| serde_json::json!({ "const": *name }))
             .collect::<Vec<Value>>();
+
+        // Since we accept any arbitrary string, besides the list of registered
+        // action names, we'll add any string that uses a `::` pattern to the
+        // list of exclusions, ensuring we display a warning in that case,
+        // otherwise the user might be led into thinking they've typed a valid
+        // action name when that's not the case.
+        exclude.push(serde_json::json!({ "pattern": "::" }));
 
         alternatives.push(serde_json::json!({
             "type": "string",
