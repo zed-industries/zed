@@ -722,6 +722,7 @@ fn main() {
         zed::watch_user_agents_md(app_state.fs.clone(), cx);
 
         repl::init(app_state.fs.clone(), cx);
+        send_code::init(cx);
         recent_projects::init(cx);
         dev_container::init(cx);
 

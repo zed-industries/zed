@@ -1,0 +1,15 @@
+(expression_statement) @eval
+(import_statement) @eval
+(export_statement) @eval
+(function_declaration) @eval
+(generator_function_declaration) @eval
+(class_declaration) @eval
+(lexical_declaration) @eval
+(variable_declaration) @eval
+(if_statement) @eval
+(for_statement) @eval
+(for_in_statement) @eval
+(while_statement) @eval
+(do_statement) @eval
+(try_statement) @eval
+(switch_statement) @eval

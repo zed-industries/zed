@@ -1,3 +1,4 @@
+sync-build-install.md
 **/*.db
 **/*.proptest-regressions
 **/cargo-target

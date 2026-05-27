@@ -180,6 +180,9 @@ pub struct SettingsContent {
 
     pub repl: Option<ReplSettingsContent>,
 
+    /// Configuration for sending code from the editor to a terminal or external REPL.
+    pub send_code: Option<SendCodeSettingsContent>,
+
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -1232,6 +1235,23 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 0
     pub output_max_height_lines: Option<usize>,
+}
+
+/// Settings for sending code from the editor to a terminal.
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct SendCodeSettingsContent {
+    /// Whether the SendCode actions are enabled.
+    ///
+    /// Default: true
+    pub enabled: Option<bool>,
+
+    /// Whether to wrap multi-line sends in bracketed paste escape sequences.
+    /// Disable for REPLs whose readline does not interpret bracketed paste
+    /// (e.g. R's default readline).
+    ///
+    /// Default: true
+    pub bracketed_paste: Option<bool>,
 }
 
 /// Settings for configuring the which-key popup behaviour.

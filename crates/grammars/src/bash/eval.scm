@@ -1,0 +1,12 @@
+(command) @eval
+(pipeline) @eval
+(list) @eval
+(compound_statement) @eval
+(function_definition) @eval
+(if_statement) @eval
+(for_statement) @eval
+(while_statement) @eval
+(case_statement) @eval
+(variable_assignment) @eval
+(declaration_command) @eval
+(subshell) @eval

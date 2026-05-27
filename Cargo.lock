@@ -15911,6 +15911,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "send_code"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "gpui",
+ "language",
+ "log",
+ "settings",
+ "terminal",
+ "terminal_view",
+ "tree-sitter-bash",
+ "workspace",
+]
+
+[[package]]
 name = "seq-macro"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22602,6 +22617,7 @@ dependencies = [
  "rope",
  "search",
  "semver",
+ "send_code",
  "serde",
  "serde_json",
  "session",
