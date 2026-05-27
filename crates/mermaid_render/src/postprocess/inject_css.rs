@@ -113,22 +113,22 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         .iter()
         .map(|c| crate::css_color(*c))
         .collect();
-    let text_colors: Vec<String> = theme
+    let fills: Vec<String> = theme
         .git_branch_colors
         .iter()
-        .map(|c| crate::css_color(crate::postprocess::util::text_color_for_background(*c)))
+        .map(|c| crate::css_color(blend_over_background(*c, theme.background, ACCENT_FILL_OPACITY)))
         .collect();
-    // Current blocks total 5,392 bytes with #rrggbbaa colors; round to 5,400.
+    let text = crate::css_color(theme.text_color);
     let mut css = String::with_capacity(5_400);
 
-    let emit = |css: &mut String, selector: &str, color: &str, txt: &str| {
+    let emit = |css: &mut String, selector: &str, color: &str, fill: &str, txt: &str| {
         let section_index = selector
             .trim_start_matches(".section-root.section-")
             .trim_start_matches(".section-");
         write!(
             css,
             "{selector} rect, {selector} path, {selector} circle, {selector} polygon \
-             {{ fill: {color} !important; }}\n\
+             {{ fill: {fill} !important; stroke: {color} !important; }}\n\
              {selector} text, {selector} span, \
              text{selector}, tspan{selector} \
              {{ fill: {txt} !important; color: {txt} !important; }}\n\
@@ -143,28 +143,29 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
         &mut css,
         ".section-root.section--1",
         &colors[0],
-        &text_colors[0],
+        &fills[0],
+        &text,
     );
-    emit(&mut css, ".section--1", &colors[1], &text_colors[1]);
+    emit(&mut css, ".section--1", &colors[1], &fills[1], &text);
     for (i, selector) in MINDMAP_SECTION_SELECTORS.iter().enumerate() {
         let ci = 2 + (i % 6);
-        emit(&mut css, selector, &colors[ci], &text_colors[ci]);
+        emit(&mut css, selector, &colors[ci], &fills[ci], &text);
     }
     css
 }
 
 fn git_branch_css(theme: &MermaidTheme) -> String {
-    // Each block is around 145 bytes, add some headroom
-    let mut css = String::with_capacity(8 * 160);
+    let text = crate::css_color(theme.text_color);
+    let mut css = String::with_capacity(8 * 200);
     for i in 0..8 {
         let c = crate::css_color(theme.git_branch_colors[i]);
-        let lbl = crate::css_color(theme.git_branch_label_colors[i]);
+        let label_fill = crate::css_color(blend_over_background(theme.git_branch_colors[i], theme.background, ACCENT_FILL_OPACITY));
         write!(
             css,
             ".commit{i} {{ stroke: {c}; fill: {c}; }}\n\
              .arrow{i} {{ stroke: {c}; }}\n\
-             .label{i} {{ fill: {c}; }}\n\
-             .branch-label{i} {{ fill: {lbl}; }}\n"
+             .label{i} {{ fill: {label_fill}; stroke: {c}; }}\n\
+             .branch-label{i} {{ fill: {text}; }}\n"
         )
         .expect("write to String cannot fail");
     }
@@ -181,23 +182,31 @@ fn adjust_lightness(color: &mut gpui::Hsla, dark_mode: bool) {
 
 const ACCENT_FILL_OPACITY: f32 = 0.15;
 
+fn blend_over_background(foreground: gpui::Hsla, background: gpui::Hsla, opacity: f32) -> gpui::Hsla {
+    let fg = gpui::Rgba::from(foreground);
+    let bg = gpui::Rgba::from(background);
+    let blended = gpui::Rgba {
+        r: fg.r * opacity + bg.r * (1.0 - opacity),
+        g: fg.g * opacity + bg.g * (1.0 - opacity),
+        b: fg.b * opacity + bg.b * (1.0 - opacity),
+        a: 1.0,
+    };
+    gpui::Hsla::from(blended)
+}
+
 fn accent_css(theme: &MermaidTheme) -> String {
-    // Each block is around 400 bytes, add some headroom
     let mut css = String::with_capacity(theme.accent_colors.len() * 420);
     let text = crate::css_color(theme.text_color);
 
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
-        // Use the raw player color as the fill; `fill-opacity` blends it toward
-        // the editor background so the stroke keeps its identity but text stays
-        // readable.
-        let fill = crate::css_color(accent.background);
+        let fill = crate::css_color(blend_over_background(accent.background, theme.background, ACCENT_FILL_OPACITY));
         let class = format!(".zed-accent-{i}");
         write!(
             css,
             "{class} rect, {class} path, {class} circle, {class} polygon, {class} ellipse, \
              rect{class}, path{class}, circle{class}, polygon{class}, ellipse{class} \
-             {{ fill: {fill} !important; fill-opacity: {ACCENT_FILL_OPACITY} !important; stroke: {stroke} !important; }}\n\
+             {{ fill: {fill} !important; stroke: {stroke} !important; }}\n\
              {class} text, {class} tspan, text{class}, tspan{class} \
              {{ fill: {text} !important; }}\n",
         )
@@ -219,6 +228,31 @@ fn chart_color_css(theme: &MermaidTheme) -> String {
              .plot path{class} {{ stroke: {color} !important; }}\n"
         )
         .expect("write to String cannot fail");
+    }
+    css
+}
+
+fn timeline_css(theme: &MermaidTheme) -> String {
+    let mut css = String::with_capacity(8 * 300);
+    let text = crate::css_color(theme.text_color);
+    for i in 0..8 {
+        let c = crate::css_color(theme.git_branch_colors[i]);
+        let fill = crate::css_color(blend_over_background(theme.git_branch_colors[i], theme.background, ACCENT_FILL_OPACITY));
+        write!(
+            css,
+            "rect.task-type-{i}, rect.section-type-{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n"
+        ).expect("write to String cannot fail");
+    }
+    for i in 0..4 {
+        let c = crate::css_color(theme.git_branch_colors[i % 8]);
+        let fill = crate::css_color(blend_over_background(theme.git_branch_colors[i % 8], theme.background, ACCENT_FILL_OPACITY));
+        write!(
+            css,
+            ".section{i} {{ fill: {fill} !important; }}\n\
+             .task{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n\
+             .taskText{i} {{ fill: {text} !important; }}\n\
+             .taskTextOutside{i} {{ fill: {text} !important; }}\n"
+        ).expect("write to String cannot fail");
     }
     css
 }
@@ -329,6 +363,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .node polygon {{ fill: {primary}; stroke: {border}; }}
         .label-container path {{ fill: {primary}; stroke: {border}; }}
         {mindmap_css}
+        .mindmap-node line, .timeline-node line {{ stroke: transparent !important; }}
         g.stateGroup rect {{ fill: {primary} !important; stroke: {border} !important; }}
         g.stateGroup text {{ fill: {text} !important; }}
         g.stateGroup .state-title {{ fill: {text} !important; }}
@@ -381,14 +416,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .legend text {{ fill: {text} !important; }}
         .pieOuterCircle {{ stroke: {border} !important; }}
         .pieCircle {{ stroke: {border} !important; }}
-        rect.task-type-0, rect.section-type-0 {{ fill: {primary} !important; }}
-        rect.task-type-1, rect.section-type-1 {{ fill: {secondary} !important; }}
-        rect.task-type-2, rect.section-type-2 {{ fill: {tertiary} !important; }}
-        rect.task-type-3, rect.section-type-3 {{ fill: {primary} !important; }}
-        rect.task-type-4, rect.section-type-4 {{ fill: {secondary} !important; }}
-        rect.task-type-5, rect.section-type-5 {{ fill: {tertiary} !important; }}
-        rect.task-type-6, rect.section-type-6 {{ fill: {primary} !important; }}
-        rect.task-type-7, rect.section-type-7 {{ fill: {secondary} !important; }}
+        {timeline_css}
         text.journey-section, text.task {{ fill: {text} !important; }}
         .relationshipLabelBox {{ fill: {tertiary} !important; opacity: 0.7; background-color: {tertiary} !important; }}
         .labelBkg {{ background-color: {tertiary} !important; }}
@@ -408,14 +436,8 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .aggregation {{ fill: transparent !important; stroke: {line} !important; stroke-width: 1; }}
         .dependency {{ fill: {line} !important; stroke: {line} !important; stroke-width: 1; }}
         .lollipop {{ fill: {primary} !important; stroke: {line} !important; stroke-width: 1; }}
-        .section0 {{ fill: {tertiary} !important; }}
-        .section2 {{ fill: {primary} !important; }}
-        .section1, .section3 {{ fill: {secondary} !important; opacity: 0.2; }}
         .sectionTitle0, .sectionTitle1, .sectionTitle2, .sectionTitle3 {{ fill: {text} !important; }}
         .sectionTitle {{ font-family: {font} !important; }}
-        .task0, .task1, .task2, .task3 {{ fill: {primary} !important; stroke: {border} !important; }}
-        .taskText0, .taskText1, .taskText2, .taskText3 {{ fill: {text} !important; }}
-        .taskTextOutside0, .taskTextOutside1, .taskTextOutside2, .taskTextOutside3 {{ fill: {text} !important; }}
         .taskTextOutsideRight {{ fill: {text} !important; font-family: {font} !important; }}
         .taskTextOutsideLeft {{ fill: {text} !important; }}
         .active0, .active1, .active2, .active3 {{ fill: {secondary} !important; stroke: {border} !important; }}
@@ -449,6 +471,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         git_branch_css = git_branch_css(theme),
         accent_css = accent_css(theme),
         chart_color_css = chart_color_css(theme),
+        timeline_css = timeline_css(theme),
     );
 
     scope_css(&raw_css, svg_id)

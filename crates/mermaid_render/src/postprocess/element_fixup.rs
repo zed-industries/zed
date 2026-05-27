@@ -84,6 +84,13 @@ fn is_bad_rect(e: &BytesStart) -> Result<bool> {
     Ok(false)
 }
 
+fn is_hardcoded_text_fill(val: &str) -> bool {
+    matches!(
+        val,
+        "" | "#333" | "black" | "#000" | "#000000" | "white" | "#fff" | "#ffffff"
+    )
+}
+
 fn push_font_style(style: &mut String, font_family: &str) {
     write!(style, "font-family: {font_family};").expect("write to String cannot fail");
 }
@@ -189,7 +196,7 @@ impl<'a, I: Iterator<Item = Result<Event<'a>>>> ElementFixup<I> {
             match attr.key.local_name().as_ref() {
                 b"fill" if fix_fill => {
                     let val = attr.unescape_value()?;
-                    if val.as_ref() == "#333" || val.is_empty() {
+                    if is_hardcoded_text_fill(&val) {
                         new_elem.push_attribute(("fill", self.text_color_css.as_str()));
                     } else {
                         new_elem.push_attribute(attr);

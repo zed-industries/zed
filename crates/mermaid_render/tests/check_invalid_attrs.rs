@@ -392,3 +392,4 @@ fn no_empty_attributes_or_nan_with_rgb_theme() {
         );
     }
 }
+
