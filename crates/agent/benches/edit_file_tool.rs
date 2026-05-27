@@ -52,7 +52,6 @@ impl Drop for BenchmarkHarness {
         self.thread.take();
 
         if let Some(cx) = self.cx.take() {
-            // todo! make ActionLog hold a weak buffer entity
             // `ActionLog` holds buffers strongly via `tracked_buffers`, and spawns a background
             // diff-maintenance task that also captures a strong `Entity<Buffer>`. Releasing the
             // last handle to the action log only marks its entity for deferred release; the
