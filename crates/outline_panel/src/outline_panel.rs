@@ -3969,9 +3969,9 @@ impl OutlinePanel {
                                 outline_panel.add_search_entries(
                                     &mut generation_state,
                                     search,
-                                    entry.clone(),
+                                    &entry,
                                     depth,
-                                    query.clone(),
+                                    query.is_some(),
                                     is_singleton,
                                     cx,
                                 );
@@ -4442,9 +4442,9 @@ impl OutlinePanel {
         &mut self,
         state: &mut GenerationState,
         search: &SearchPrecomputed,
-        parent_entry: FsEntry,
+        parent_entry: &FsEntry,
         parent_depth: usize,
-        filter_query: Option<String>,
+        track_matches: bool,
         is_singleton: bool,
         cx: &mut Context<Self>,
     ) {
@@ -4453,7 +4453,7 @@ impl OutlinePanel {
         };
         let kind = search_state.kind;
 
-        let (buffer_id, excerpts) = match &parent_entry {
+        let (buffer_id, excerpts) = match parent_entry {
             FsEntry::Directory(_) => return,
             FsEntry::ExternalFile(external) => (external.buffer_id, &external.excerpts),
             FsEntry::File(file) => (file.buffer_id, &file.excerpts),
@@ -4480,25 +4480,19 @@ impl OutlinePanel {
             .collect::<Vec<_>>();
 
         let depth = if is_singleton { 0 } else { parent_depth + 1 };
-        let new_search_entries = buffer_matches
-            .iter()
-            .filter(|(match_range, _)| {
-                excerpt_ranges.iter().any(|excerpt_range| {
-                    excerpt_range.overlaps(match_range, &search.multi_buffer_snapshot)
-                })
+        for (match_range, search_data) in buffer_matches.iter().filter(|(match_range, _)| {
+            excerpt_ranges.iter().any(|excerpt_range| {
+                excerpt_range.overlaps(match_range, &search.multi_buffer_snapshot)
             })
-            .map(|(match_range, search_data)| SearchEntry {
-                match_range: match_range.clone(),
-                kind,
-                render_data: Arc::clone(search_data),
-            })
-            .collect::<Vec<_>>();
-
-        for new_search_entry in new_search_entries {
+        }) {
             self.push_entry(
                 state,
-                filter_query.is_some(),
-                PanelEntry::Search(new_search_entry),
+                track_matches,
+                PanelEntry::Search(SearchEntry {
+                    match_range: match_range.clone(),
+                    kind,
+                    render_data: Arc::clone(search_data),
+                }),
                 depth,
                 cx,
             );
