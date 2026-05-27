@@ -114,13 +114,13 @@
 ((call
   function: (identifier) @function.builtin)
   (#any-of? @function.builtin
-    "abs" "aiter" "all" "anext" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes" "callable" "chr"
-    "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate" "eval" "exec"
-    "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help" "hex" "id"
-    "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max" "memoryview"
-    "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr" "reversed"
-    "round" "set" "setattr" "sentinel" "slice" "sorted" "staticmethod" "str" "sum" "super" "tuple" "type"
-    "vars" "zip" "__import__"))
+    "abs" "aiter" "all" "anext" "any" "ascii" "bin" "bool" "breakpoint" "bytearray" "bytes"
+    "callable" "chr" "classmethod" "compile" "complex" "delattr" "dict" "dir" "divmod" "enumerate"
+    "eval" "exec" "filter" "float" "format" "frozenset" "getattr" "globals" "hasattr" "hash" "help"
+    "hex" "id" "input" "int" "isinstance" "issubclass" "iter" "len" "list" "locals" "map" "max"
+    "memoryview" "min" "next" "object" "oct" "open" "ord" "pow" "print" "property" "range" "repr"
+    "reversed" "round" "set" "setattr" "sentinel" "slice" "sorted" "staticmethod" "str" "sum"
+    "super" "tuple" "type" "vars" "zip" "__import__"))
 
 ; Literals
 [
@@ -341,6 +341,6 @@
     (binary_operator
       left: (identifier) @type.builtin))
   (#any-of? @type.builtin
-    "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "frozendict" "int" "list" "memoryview"
-    "object" "range" "set" "slice" "str" "tuple")
+    "bool" "bytearray" "bytes" "complex" "dict" "float" "frozenset" "frozendict" "int" "list"
+    "memoryview" "object" "range" "set" "slice" "str" "tuple")
 ]
