@@ -1299,7 +1299,7 @@ fn into_copilot_responses(
 
             Role::Assistant => {
                 append_reasoning_details_to_response_items(
-                    message.reasoning_details.as_ref(),
+                    message.reasoning_details.as_deref(),
                     &mut replayed_reasoning_item_indexes,
                     &mut input_items,
                 );
@@ -1608,7 +1608,7 @@ mod tests {
                     MessageContent::Text("Done".into()),
                 ],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "r1",
@@ -1621,7 +1621,7 @@ mod tests {
                             "encrypted_content": "ENC"
                         }
                     ]
-                })),
+                }))),
             }],
             ..Default::default()
         };

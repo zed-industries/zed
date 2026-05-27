@@ -83,6 +83,7 @@ agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
+criterion.workspace = true
 ctor.workspace = true
 db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
@@ -107,3 +108,8 @@ theme = { workspace = true, "features" = ["test-support"] }
 unindent = { workspace = true }
 
 zlog.workspace = true
+
+[[bench]]
+name = "edit_file_tool"
+harness = false
+required-features = ["test-support"]

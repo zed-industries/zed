@@ -13,7 +13,7 @@ On macOS, Linux, and Windows you can [download Zed directly](https://zed.dev/dow
 
 Other platforms are not yet available:
 
-- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+- Web ([tracking discussion](https://github.com/zed-industries/zed/discussions/26195))
 
 ### Developing Zed
 
