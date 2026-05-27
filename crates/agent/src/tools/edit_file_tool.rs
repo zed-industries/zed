@@ -25,11 +25,13 @@ const DEFAULT_UI_TEXT: &str = "Editing file";
 ///
 /// Before using this tool, use the `read_file` tool to understand the file's contents and context
 /// To create a new file or overwrite an existing one with completely new contents, use the `write_file` tool instead.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
     /// The full path of the file to edit in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories.
+    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -43,6 +45,10 @@ pub struct EditFileToolInput {
     ///
     /// <example>
     /// `frontend/db.js`
+    /// </example>
+    ///
+    /// <example>
+    /// To edit a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
     /// </example>
     pub path: PathBuf,
 
@@ -455,6 +461,63 @@ mod tests {
         assert_eq!(error, "Can't edit file: path not found");
         assert!(diff.is_empty());
         assert_eq!(input_path, None);
+    }
+
+    #[gpui::test]
+    async fn test_streaming_edit_global_skill_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({})).await;
+        let skill_dir = agent_skills::global_skills_dir().join("my-skill");
+        fs.insert_tree(&skill_dir, json!({ "SKILL.md": "old content\n" }))
+            .await;
+        let (edit_tool, _project, _action_log, fs, _thread) =
+            setup_test_with_fs(cx, fs, &[path!("/root").as_ref()]).await;
+
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .join("SKILL.md");
+        let skill_file = agent_skills::global_skills_dir()
+            .join("my-skill")
+            .join("SKILL.md");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            edit_tool.clone().run(
+                ToolInput::resolved(EditFileToolInput {
+                    path: input_path,
+                    edits: vec![Edit {
+                        old_text: "old content".into(),
+                        new_text: "new content".into(),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        event_rx.expect_update_fields().await;
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let EditFileToolOutput::Success { new_text, .. } = task.await.unwrap() else {
+            panic!("expected success");
+        };
+        assert_eq!(new_text, "new content\n");
+        assert_eq!(fs.load(&skill_file).await.unwrap(), "new content\n");
     }
 
     #[gpui::test]
