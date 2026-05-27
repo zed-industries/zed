@@ -48,8 +48,10 @@ A successful run prints both `BRANCH:` and `CHANNEL:` env vars; that's your mapp
 
 You need three things: the **merge commit SHA**, the **target branch**, and the **channel name**.
 
+If the user requested multiple PRs and/or commits, gather the metadata for all of them first and cherry-pick them in chronological order, oldest to newest. For PRs, order by `mergedAt`; for raw commits, order by commit date. Matching the order changes landed on `main` reduces avoidable merge conflicts, especially when later PRs depend on earlier ones.
+
 ```
-gh pr view <PR_NUMBER> --json title,number,mergeCommit,url
+gh pr view <PR_NUMBER> --json title,number,mergeCommit,mergedAt,url
 ```
 
 If the user said the workflow failed, fetch its log to see exactly which command failed and which file conflicted:
