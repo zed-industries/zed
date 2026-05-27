@@ -128,23 +128,13 @@ impl PathList {
     }
 
     pub fn serialize(&self) -> SerializedPathList {
-        use std::fmt::Write as _;
+        let paths = self
+            .paths
+            .iter()
+            .map(|path| path.to_string_lossy())
+            .join("\n");
 
-        let mut paths = String::new();
-        for path in self.paths.iter() {
-            if !paths.is_empty() {
-                paths.push('\n');
-            }
-            paths.push_str(&path.to_string_lossy());
-        }
-
-        let mut order = String::new();
-        for ix in self.order.iter() {
-            if !order.is_empty() {
-                order.push(',');
-            }
-            write!(&mut order, "{}", *ix).unwrap();
-        }
+        let order = self.order.iter().join(",");
         SerializedPathList { paths, order }
     }
 }
