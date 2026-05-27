@@ -10,12 +10,12 @@ use theme::SystemAppearance;
 use ui::IntoElement;
 
 use crate::{
-    ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
-    SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
-    pages::{
+    active_language, all_language_names, pages::{
         open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
-    },
+    }, ActionLink, DynamicItem, SettingField,
+    SettingItem, SettingsFieldMetadata, SettingsPage, SettingsPageItem, SubPageLink, PROJECT,
+    USER,
 };
 
 const DEFAULT_STRING: String = String::new();
@@ -7506,6 +7506,15 @@ fn ai_page(cx: &App) -> SettingsPage {
     fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Skills".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.skills"),
+                description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                in_json: false,
+                files: USER | PROJECT,
+                render: render_skills_setup_page,
+            }),
             SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
