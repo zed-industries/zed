@@ -85,7 +85,7 @@ fn start_hang_detection(cx: &App, report_longer_then: Duration) {
     thread::Builder::new()
         .name("HangDetection".to_string())
         .spawn(move || {
-            // allow "bad" tasks during startup. Not because we should but since here 
+            // allow "bad" tasks during startup. Not because we should but since here
             // they are not observed by the user and to lower on clutter from the reporter
             thread::sleep(Duration::from_millis(200));
             let mut reporter = Reporter::new(Duration::from_secs(1));

@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use client::{Client, telemetry::MINIDUMP_ENDPOINT};
 use feature_flags::FeatureFlagAppExt;
 use futures::{AsyncReadExt, TryStreamExt};
-use gpui::{App, TaskExt, AppContext};
+use gpui::{App, AppContext, TaskExt};
 use http_client::{AsyncBody, HttpClient, Request};
 use project::Project;
 use proto::{CrashReport, GetCrashFilesResponse};
