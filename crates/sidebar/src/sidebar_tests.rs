@@ -9692,8 +9692,10 @@ mod property_test {
 
             for workspace in group_workspaces {
                 for snapshot in root_repository_snapshots(workspace, cx) {
-                    let repo_path_list =
-                        PathList::new(&[snapshot.original_repo_abs_path.to_path_buf()]);
+                    let Some(main_worktree_abs_path) = snapshot.main_worktree_abs_path() else {
+                        continue;
+                    };
+                    let repo_path_list = PathList::new(&[main_worktree_abs_path.to_path_buf()]);
                     if repo_path_list != path_list {
                         continue;
                     }
@@ -10981,7 +10983,7 @@ async fn test_remote_archive_thread_with_disconnected_remote(
     // Disconnect the remote connection before archiving. We don't
     // `run_until_parked` here because the disconnect itself triggers
     // reconnection work that can't complete in the test environment.
-    remote_client.update_in(cx, |client, _window, cx| {
+    remote_client.update(cx, |client, cx| {
         client.simulate_disconnect(cx).detach();
     });
 

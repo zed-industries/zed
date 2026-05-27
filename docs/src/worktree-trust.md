@@ -8,6 +8,8 @@ description: "Configure which folders Zed trusts for running code and extensions
 A worktree in Zed is either a directory or a single file that Zed opens as a standalone "project".
 Zed opens a worktree each time you run `zed some/path`, drag a file or directory into Zed, or open your user settings file.
 
+> Note: This is broader than a [Git worktree](./git.md#git-worktrees). A Git worktree is a linked checkout managed by Git; Zed's trust model applies to every opened file or folder root, including Git worktrees.
+
 Every worktree opened may contain a `.zed/settings.json` file with extra configuration options that may require installing and spawning language servers or MCP servers.
 To let users choose based on their own threat model and risk tolerance, all worktrees start in Restricted Mode. Restricted Mode prevents downloading and running related items from `.zed/settings.json`. Until a worktree is trusted, Zed does not run related untrusted actions and waits for user confirmation. This gives users a chance to review project settings, MCP servers, and language servers.
 
