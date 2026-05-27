@@ -74,6 +74,20 @@ impl Matrix {
 
         self.cells[col * self.rows + row] = value;
     }
+
+    fn adjacent_columns_mut(&mut self, current_col: usize) -> (&[f64], &mut [f64]) {
+        if current_col == 0 || current_col >= self.cols {
+            panic!("column out of bounds");
+        }
+
+        let current_col_start = current_col * self.rows;
+        let previous_col_start = current_col_start - self.rows;
+        let (before_current, current_and_after) = self.cells.split_at_mut(current_col_start);
+        (
+            &before_current[previous_col_start..current_col_start],
+            &mut current_and_after[..self.rows],
+        )
+    }
 }
 
 impl Debug for Matrix {
@@ -141,24 +155,27 @@ impl StreamingDiff {
         for j in self.new_text_ix + 1..=self.new.len() {
             self.current_equal_runs.fill(0);
             let relative_j = j - self.new_text_ix;
+            let new_char = self.new[j - 1];
+            let old = &self.old;
+            let previous_equal_runs = &self.previous_equal_runs;
+            let current_equal_runs = &mut self.current_equal_runs;
+            let (previous_scores, current_scores) = self.scores.adjacent_columns_mut(relative_j);
 
-            self.scores
-                .set(0, relative_j, j as f64 * Self::INSERTION_SCORE);
-            for i in 1..=self.old.len() {
-                let insertion_score = self.scores.get(i, relative_j - 1) + Self::INSERTION_SCORE;
-                let deletion_score = self.scores.get(i - 1, relative_j) + Self::DELETION_SCORE;
-                let equality_score = if self.old[i - 1] == self.new[j - 1] {
-                    let equal_run = self.previous_equal_runs[i - 1] + 1;
-                    self.current_equal_runs[i] = equal_run;
+            current_scores[0] = j as f64 * Self::INSERTION_SCORE;
+            for i in 1..=old.len() {
+                let insertion_score = previous_scores[i] + Self::INSERTION_SCORE;
+                let deletion_score = current_scores[i - 1] + Self::DELETION_SCORE;
+                let equality_score = if old[i - 1] == new_char {
+                    let equal_run = previous_equal_runs[i - 1] + 1;
+                    current_equal_runs[i] = equal_run;
 
                     let exponent = cmp::min(equal_run as i32 / 4, Self::MAX_EQUALITY_EXPONENT);
-                    self.scores.get(i - 1, relative_j - 1) + Self::EQUALITY_BASE.powi(exponent)
+                    previous_scores[i - 1] + Self::EQUALITY_BASE.powi(exponent)
                 } else {
                     f64::NEG_INFINITY
                 };
 
-                let score = insertion_score.max(deletion_score).max(equality_score);
-                self.scores.set(i, relative_j, score);
+                current_scores[i] = insertion_score.max(deletion_score).max(equality_score);
             }
 
             std::mem::swap(&mut self.previous_equal_runs, &mut self.current_equal_runs);
