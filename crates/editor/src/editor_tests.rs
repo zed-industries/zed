@@ -7439,7 +7439,6 @@ fn test_move_line_up_down_autoindent_special_cases(cx: &mut TestAppContext) {
         editor.move_line_up(&MoveLineUp, window, cx);
         assert_eq!(editor.text(cx), "{\n    line2\n    line1\n}\n");
     });
-
 }
 
 #[gpui::test]

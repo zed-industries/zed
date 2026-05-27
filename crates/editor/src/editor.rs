@@ -13738,10 +13738,8 @@ impl Editor {
                                 .take_while(|c| c.is_whitespace())
                                 .count();
 
-                            let suggested_indents = buffer.suggested_indents(
-                                std::iter::once(prev_row.0),
-                                cx,
-                            );
+                            let suggested_indents =
+                                buffer.suggested_indents(std::iter::once(prev_row.0), cx);
                             let mut indent_amount = suggested_indents
                                 .get(&prev_row)
                                 .map(|indent| indent.len as usize)
@@ -13751,11 +13749,12 @@ impl Editor {
                                 });
 
                             // Bracket checking, for adding to indent
-                            if prev_line.trim_start().starts_with('}') ||
-                            prev_line.trim_start().starts_with("end") ||
-                            prev_line.trim_start().starts_with("]") ||
-                            prev_line.trim_start().starts_with(")") ||
-                            prev_line.trim_start().starts_with("</") {
+                            if prev_line.trim_start().starts_with('}')
+                                || prev_line.trim_start().starts_with("end")
+                                || prev_line.trim_start().starts_with("]")
+                                || prev_line.trim_start().starts_with(")")
+                                || prev_line.trim_start().starts_with("</")
+                            {
                                 if settings.hard_tabs {
                                     indent_amount += 1;
                                 } else {
@@ -13774,7 +13773,8 @@ impl Editor {
                             let trimmed_text = text
                                 .split('\n')
                                 .map(|line| {
-                                    let to_skip = line.chars()
+                                    let to_skip = line
+                                        .chars()
                                         .take(current_indent_amount)
                                         .take_while(|c| c.is_whitespace())
                                         .map(|c| c.len_utf8())
@@ -13807,8 +13807,10 @@ impl Editor {
                         |mut selection| {
                             selection.start.row -= row_delta;
                             selection.end.row -= row_delta;
-                            selection.start.column = selection.start.column.saturating_add_signed(col_delta);
-                            selection.end.column = selection.end.column.saturating_add_signed(col_delta);
+                            selection.start.column =
+                                selection.start.column.saturating_add_signed(col_delta);
+                            selection.end.column =
+                                selection.end.column.saturating_add_signed(col_delta);
                             selection
                         },
                     ));
@@ -13910,7 +13912,7 @@ impl Editor {
                                 buffer
                                     .text_for_range(
                                         Point::new(row.0, 0)
-                                        ..Point::new(row.0, buffer.line_len(row)),
+                                            ..Point::new(row.0, buffer.line_len(row)),
                                     )
                                     .flat_map(|s| s.chars())
                                     .collect::<String>()
@@ -13935,9 +13937,9 @@ impl Editor {
 
                                 let trimmed = next_line.trim_start();
                                 if trimmed.starts_with('}')
-                                || trimmed.starts_with(')')
-                                || trimmed.starts_with("end")
-                                || trimmed.starts_with("</")
+                                    || trimmed.starts_with(')')
+                                    || trimmed.starts_with("end")
+                                    || trimmed.starts_with("</")
                                 {
                                     indent_amount += if settings.hard_tabs {
                                         1
@@ -13951,9 +13953,9 @@ impl Editor {
                                 let prev_line = read_line(end_row);
                                 let trimmed = prev_line.trim_start();
                                 if trimmed.starts_with('}')
-                                || trimmed.starts_with(')')
-                                || trimmed.starts_with("end")
-                                || trimmed.starts_with("</")
+                                    || trimmed.starts_with(')')
+                                    || trimmed.starts_with("end")
+                                    || trimmed.starts_with("</")
                                 {
                                     let prev_line_indent =
                                         prev_line.chars().take_while(|c| c.is_whitespace()).count();
@@ -14017,8 +14019,10 @@ impl Editor {
                         |mut selection| {
                             selection.start.row += row_delta;
                             selection.end.row += row_delta;
-                            selection.start.column = selection.start.column.saturating_add_signed(col_delta);
-                            selection.end.column = selection.end.column.saturating_add_signed(col_delta);
+                            selection.start.column =
+                                selection.start.column.saturating_add_signed(col_delta);
+                            selection.end.column =
+                                selection.end.column.saturating_add_signed(col_delta);
                             selection
                         },
                     ));
