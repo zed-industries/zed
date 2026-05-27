@@ -645,7 +645,6 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<AcceptNextWordEditPrediction>(),
             TypeId::of::<AcceptNextLineEditPrediction>(),
-            TypeId::of::<AcceptEditPrediction>(),
             TypeId::of::<ShowEditPrediction>(),
             TypeId::of::<NextEditPrediction>(),
             TypeId::of::<PreviousEditPrediction>(),
