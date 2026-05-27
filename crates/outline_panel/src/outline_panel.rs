@@ -3147,14 +3147,12 @@ impl OutlinePanel {
              e: &SearchEvent,
              window: &mut Window,
              cx: &mut Context<Self>| {
-                if matches!(e, SearchEvent::MatchesInvalidated) {
-                    let update_cached_items = outline_panel.update_search_matches(window, cx);
-                    if update_cached_items {
-                        outline_panel.selected_entry.invalidate();
-                        outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-                    }
-                };
-                outline_panel.autoscroll(cx);
+                if matches!(e, SearchEvent::MatchesInvalidated)
+                    && outline_panel.update_search_matches(window, cx)
+                {
+                    outline_panel.selected_entry.invalidate();
+                    outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+                }
             },
         );
         self.active_item = Some(ActiveItem {
@@ -3650,7 +3648,6 @@ impl OutlinePanel {
                         outline_panel.select_entry(new_selected_entry, false, window, cx);
                     }
 
-                    outline_panel.autoscroll(cx);
                     cx.notify();
                 })
                 .ok();
