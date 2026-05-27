@@ -1413,10 +1413,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
             .await;
     if should_install {
         node_runtime
-            .npm_install_packages(
-                paths::copilot_dir(),
-                &[(PACKAGE_NAME, &latest_version.to_string())],
-            )
+            .npm_install_latest_packages(paths::copilot_dir(), &[PACKAGE_NAME])
             .await?;
     }
 

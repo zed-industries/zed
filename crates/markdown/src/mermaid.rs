@@ -162,12 +162,16 @@ fn hsla_to_hex(color: Hsla) -> String {
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 
+fn mermaid_font_family(font_family: &str) -> &str {
+    gpui::font_name_with_fallbacks(font_family, "system-ui")
+}
+
 fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_rs_renderer::Theme {
     let colors = cx.theme().colors();
     let theme_settings = ThemeSettings::get_global(cx);
     let mut theme = mermaid_rs_renderer::Theme::modern();
 
-    theme.font_family = theme_settings.ui_font.family.to_string();
+    theme.font_family = mermaid_font_family(theme_settings.ui_font.family.as_ref()).to_string();
     theme.background = hsla_to_hex(colors.editor_background);
     theme.primary_color = hsla_to_hex(colors.surface_background);
     theme.primary_text_color = hsla_to_hex(colors.text);
@@ -581,7 +585,7 @@ mod tests {
     };
     use crate::{
         CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownOptions,
-        MarkdownStyle,
+        MarkdownStyle, WrapButtonVisibility,
     };
     use collections::HashMap;
     use gpui::{Context, Hsla, IntoElement, Render, RenderImage, TestAppContext, Window, size};
@@ -640,6 +644,7 @@ mod tests {
                 MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     },
                 )
@@ -684,6 +689,15 @@ mod tests {
             .iter()
             .position(|diagram| diagram == &new_content)?;
         MermaidState::get_fallback_image(idx, old_full_order, new_full_order.len(), cache)
+    }
+
+    #[test]
+    fn test_mermaid_font_family_resolves_zed_virtual_fonts() {
+        assert_eq!(super::mermaid_font_family(".ZedSans"), "IBM Plex Sans");
+        assert_eq!(super::mermaid_font_family("Zed Plex Sans"), "IBM Plex Sans");
+        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex");
+        assert_eq!(super::mermaid_font_family(".SystemUIFont"), "system-ui");
+        assert_eq!(super::mermaid_font_family("Custom Font"), "Custom Font");
     }
 
     #[test]
@@ -911,6 +925,7 @@ mod tests {
                 MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
                     .code_block_renderer(CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
                         border: false,
                     })
             },
