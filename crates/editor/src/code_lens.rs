@@ -158,7 +158,7 @@ fn try_show_references(
     let nav_entry = editor.navigation_entry(editor.selections.newest_anchor().head(), cx);
     let links = locations
         .into_iter()
-        .map(|location| HoverLink::InlayHint(location, server_id))
+        .map(|location| HoverLink::LspLocation(location, server_id))
         .collect();
     editor
         .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
