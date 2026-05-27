@@ -116,7 +116,13 @@ fn mindmap_section_css(theme: &MermaidTheme) -> String {
     let fills: Vec<String> = theme
         .git_branch_colors
         .iter()
-        .map(|c| crate::css_color(blend_over_background(*c, theme.background, ACCENT_FILL_OPACITY)))
+        .map(|c| {
+            crate::css_color(blend_over_background(
+                *c,
+                theme.background,
+                ACCENT_FILL_OPACITY,
+            ))
+        })
         .collect();
     let text = crate::css_color(theme.text_color);
     let mut css = String::with_capacity(5_400);
@@ -159,7 +165,11 @@ fn git_branch_css(theme: &MermaidTheme) -> String {
     let mut css = String::with_capacity(8 * 200);
     for i in 0..8 {
         let c = crate::css_color(theme.git_branch_colors[i]);
-        let label_fill = crate::css_color(blend_over_background(theme.git_branch_colors[i], theme.background, ACCENT_FILL_OPACITY));
+        let label_fill = crate::css_color(blend_over_background(
+            theme.git_branch_colors[i],
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ));
         write!(
             css,
             ".commit{i} {{ stroke: {c}; fill: {c}; }}\n\
@@ -182,7 +192,11 @@ fn adjust_lightness(color: &mut gpui::Hsla, dark_mode: bool) {
 
 const ACCENT_FILL_OPACITY: f32 = 0.15;
 
-fn blend_over_background(foreground: gpui::Hsla, background: gpui::Hsla, opacity: f32) -> gpui::Hsla {
+fn blend_over_background(
+    foreground: gpui::Hsla,
+    background: gpui::Hsla,
+    opacity: f32,
+) -> gpui::Hsla {
     let fg = gpui::Rgba::from(foreground);
     let bg = gpui::Rgba::from(background);
     let blended = gpui::Rgba {
@@ -200,7 +214,11 @@ fn accent_css(theme: &MermaidTheme) -> String {
 
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);
-        let fill = crate::css_color(blend_over_background(accent.background, theme.background, ACCENT_FILL_OPACITY));
+        let fill = crate::css_color(blend_over_background(
+            accent.background,
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ));
         let class = format!(".zed-accent-{i}");
         write!(
             css,
@@ -237,7 +255,11 @@ fn timeline_css(theme: &MermaidTheme) -> String {
     let text = crate::css_color(theme.text_color);
     for i in 0..8 {
         let c = crate::css_color(theme.git_branch_colors[i]);
-        let fill = crate::css_color(blend_over_background(theme.git_branch_colors[i], theme.background, ACCENT_FILL_OPACITY));
+        let fill = crate::css_color(blend_over_background(
+            theme.git_branch_colors[i],
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ));
         write!(
             css,
             "rect.task-type-{i}, rect.section-type-{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n"
@@ -245,14 +267,19 @@ fn timeline_css(theme: &MermaidTheme) -> String {
     }
     for i in 0..4 {
         let c = crate::css_color(theme.git_branch_colors[i % 8]);
-        let fill = crate::css_color(blend_over_background(theme.git_branch_colors[i % 8], theme.background, ACCENT_FILL_OPACITY));
+        let fill = crate::css_color(blend_over_background(
+            theme.git_branch_colors[i % 8],
+            theme.background,
+            ACCENT_FILL_OPACITY,
+        ));
         write!(
             css,
             ".section{i} {{ fill: {fill} !important; }}\n\
              .task{i} {{ fill: {fill} !important; stroke: {c} !important; }}\n\
              .taskText{i} {{ fill: {text} !important; }}\n\
              .taskTextOutside{i} {{ fill: {text} !important; }}\n"
-        ).expect("write to String cannot fail");
+        )
+        .expect("write to String cannot fail");
     }
     css
 }
