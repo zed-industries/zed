@@ -373,6 +373,14 @@ struct OpenAiSubscribedLanguageModel {
     request_limiter: RateLimiter,
 }
 
+fn codex_session_id(request: &LanguageModelRequest) -> String {
+    request.thread_id.clone().unwrap_or_else(|| {
+        let mut session_id_bytes = [0u8; 16];
+        rand::rng().fill_bytes(&mut session_id_bytes);
+        URL_SAFE_NO_PAD.encode(session_id_bytes)
+    })
+}
+
 impl LanguageModel for OpenAiSubscribedLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
@@ -469,6 +477,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             request.speed = None;
         }
 
+        let session_id = codex_session_id(&request);
+
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
@@ -513,6 +523,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             let mut extra_headers: Vec<(String, String)> = vec![
                 ("originator".into(), "zed".into()),
                 ("OpenAI-Beta".into(), "responses=experimental".into()),
+                ("session-id".into(), session_id),
             ];
             if let Some(ref id) = creds.account_id {
                 if !id.is_empty() {
