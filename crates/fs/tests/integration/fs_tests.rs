@@ -1,3 +1,5 @@
+mod fake_git_repo_tests;
+
 use std::{
     collections::BTreeSet,
     ffi::OsString,

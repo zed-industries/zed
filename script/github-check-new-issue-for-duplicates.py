@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Comment on newly opened issues that might be duplicates of an existing issue.
+Comment on newly opened issues with possible duplicates and triage hints.
 
-This script is run by a GitHub Actions workflow when a new bug or crash report
-is opened. It:
-1. Checks eligibility (must be bug/crash type, non-staff author)
+This script is run by a GitHub Actions workflow when a new issue is opened. It:
+1. Checks eligibility (bug/crash type or untyped, non-staff author)
 2. Detects relevant areas using Claude + the area label taxonomy
 3. Parses known "duplicate magnets" from tracking issue #46355
-4. Searches for similar recent issues by title keywords, area labels, and error patterns
-5. Asks Claude to analyze potential duplicates (magnets + search results)
-6. Posts a comment on the issue if high-confidence duplicates are found
+4. Searches for similar issues — open (last 60 days) and recently closed (last 30 days)
+5. Asks Claude to sort open candidates into likely and possible duplicates, and
+   surface recently closed issues that may be useful triage context
+6. Posts a comment if anything is found: a user-facing duplicate alert for likely
+   duplicates, and/or a collapsed triager-facing section for possible duplicates
+   and recently closed related issues
 
 Requires:
     requests (pip install requests)
@@ -28,6 +30,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta
 
 import requests
@@ -48,6 +51,9 @@ STOPWORDS = {
     "the", "this", "when", "while", "with", "won't", "work", "working", "zed",
 }
 
+# HTTP statuses we'll retry on for GET requests
+TRANSIENT_HTTP_STATUSES = {429, 500, 502, 503, 504}
+
 
 def log(message):
     """Print to stderr so it doesn't interfere with JSON output on stdout."""
@@ -55,11 +61,22 @@ def log(message):
 
 
 def github_api_get(path, params=None):
-    """Fetch JSON from the GitHub API. Raises on non-2xx status."""
+    """Fetch JSON from the GitHub API, retrying transient failures. Raises on non-2xx status."""
     url = f"{GITHUB_API}/{path.lstrip('/')}"
-    response = requests.get(url, headers=GITHUB_HEADERS, params=params)
-    response.raise_for_status()
-    return response.json()
+    for attempt in range(3):
+        try:
+            response = requests.get(url, headers=GITHUB_HEADERS, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            transient = isinstance(e, (requests.ConnectionError, requests.Timeout)) or (
+                isinstance(e, requests.HTTPError) and e.response.status_code in TRANSIENT_HTTP_STATUSES
+            )
+            if not transient or attempt == 2:
+                raise
+            wait = 2 ** attempt
+            log(f"  Transient GitHub API error ({e}); retrying in {wait}s")
+            time.sleep(wait)
 
 
 def github_search_issues(query, per_page=15):
@@ -86,17 +103,23 @@ def post_comment(issue_number: int, body):
     log(f"  Posted comment on #{issue_number}")
 
 
-def build_duplicate_comment(matches):
-    """Build the comment body for potential duplicates."""
-    match_list = "\n".join(f"- #{m['number']}" for m in matches)
-    explanations = "\n\n".join(
-        f"**#{m['number']}:** {m['explanation']}\n\n**Shared root cause:** {m['shared_root_cause']}"
-        if m.get('shared_root_cause')
-        else f"**#{m['number']}:** {m['explanation']}"
-        for m in matches
-    )
+def build_comment(likely_duplicates, possible_duplicates, related_closed_issues):
+    """Compose the full comment body. Returns empty string if there's nothing to post.
 
-    return f"""This issue appears to be a duplicate of:
+    The comment has two sections, each optional:
+    - User-facing duplicate alert, rendered when likely_duplicates is non-empty.
+    - Collapsed triage context, rendered when there are possible duplicates or
+      related closed issues to surface for triagers.
+    """
+    sections = []
+
+    if likely_duplicates:
+        match_list = "\n".join(f"- #{m['number']}" for m in likely_duplicates)
+        explanations = "\n\n".join(
+            f"**#{m['number']}:** {m['explanation']}\n\n**Shared root cause:** {m['shared_root_cause']}"
+            for m in likely_duplicates
+        )
+        sections.append(f"""This issue appears to be a duplicate of:
 
 {match_list}
 
@@ -111,10 +134,36 @@ No action needed. A maintainer will review this shortly.
 
 {explanations}
 
-</details>
+</details>""")
 
----
-<sub>This is an automated analysis and might be incorrect.</sub>"""
+    if possible_duplicates or related_closed_issues:
+        parts = []
+        if possible_duplicates:
+            lines = [
+                f"- #{m['number']} — {m['explanation']}\n"
+                f"  - Possible shared root cause: {m['shared_root_cause']}"
+                for m in possible_duplicates
+            ]
+            parts.append("**Possibly related open issues:**\n\n" + "\n".join(lines))
+        if related_closed_issues:
+            lines = [
+                f"- #{m['number']} (closed as {m['state_reason']}) — {m['explanation']}"
+                for m in related_closed_issues
+            ]
+            parts.append("**Recently closed, possibly related:**\n\n" + "\n".join(lines))
+        body = "\n\n".join(parts)
+        sections.append(f"""<details>
+<summary>Additional recent context for triagers</summary>
+
+{body}
+
+</details>""")
+
+    if not sections:
+        return ""
+
+    sections.append("---\n<sub>This is an automated analysis and might be incorrect.</sub>")
+    return "\n\n".join(sections)
 
 
 def call_claude(api_key, system, user_content, max_tokens=1024):
@@ -165,8 +214,8 @@ def fetch_issue(issue_number: int):
 
 def should_skip(issue):
     """Check if issue should be skipped in duplicate detection process."""
-    if issue["type"] not in ["Bug", "Crash"]:
-        log(f"  Skipping: issue type '{issue['type']}' is not a bug/crash report")
+    if issue["type"] and issue["type"] not in ["Bug", "Crash"]:
+        log(f"  Skipping: issue type '{issue['type']}' is not blank and not a bug/crash report")
         return True
 
     if issue["author"] and check_team_membership(REPO_OWNER, STAFF_TEAM_SLUG, issue["author"]):
@@ -218,23 +267,32 @@ def format_taxonomy_for_claude(area_labels):
     return "\n".join(sorted(lines))
 
 
-def detect_areas(anthropic_key, issue, taxonomy):
-    """Use Claude to detect relevant areas for the issue."""
+def detect_areas(anthropic_key, issue, area_labels):
+    """Use Claude to detect which area labels apply to the issue.
+
+    Claude may ignore the format instruction or hallucinate names, so the response
+    is validated against the canonical set of area labels.
+    """
     log("Detecting areas with Claude")
+
+    taxonomy = format_taxonomy_for_claude(area_labels)
+    valid_areas = {label["name"] for label in area_labels}
 
     system_prompt = """You analyze GitHub issues to identify which area labels apply.
 
-Given an issue and a taxonomy of areas, output ONLY a comma-separated list of matching area names.
+Respond with ONLY a comma-separated list of matching area names. No prose, no explanation,
+no markdown, no preamble — just the names.
+
 - Output at most 3 areas, ranked by relevance
 - Use exact area names from the taxonomy
-- If no areas clearly match, output: none
+- If no areas clearly match, respond with: none
 - For languages/*, tooling/*, or parity/*, use the specific sub-label (e.g., "languages/rust",
-tooling/eslint, parity/vscode)
+  tooling/eslint, parity/vscode)
 
-Example outputs:
-- "editor, parity/vim"
-- "ai, ai/agent panel"
-- "none"
+Examples of valid responses (each line is a complete response on its own):
+  editor, parity/vim
+  ai, ai/agent panel
+  none
 """
 
     user_content = f"""## Area Taxonomy
@@ -251,7 +309,14 @@ Example outputs:
 
     if response.lower() == "none":
         return []
-    return [area.strip() for area in response.split(",")]
+
+    valid, dropped = [], []
+    for area in response.split(","):
+        area = area.strip()
+        (valid if area in valid_areas else dropped).append(area)
+    if dropped:
+        log(f"  Dropped {len(dropped)} unknown area(s) from Claude response: {dropped}")
+    return valid
 
 
 def parse_duplicate_magnets():
@@ -344,53 +409,76 @@ def filter_magnets_by_areas(magnets, detected_areas):
     return list(filter(matches, magnets))
 
 
-def search_for_similar_issues(issue, detected_areas, max_searches=6):
-    """Search for similar issues that might be duplicates.
+def search_for_similar_issues(issue, detected_areas, max_searches_per_state=6):
+    """Search for similar issues — both open and recently closed.
 
-    Searches by title keywords, area labels (last 60 days), and error patterns.
-    max_searches caps the total number of queries to keep token usage and context size under control.
+    Runs two passes:
+    - Open issues: title keywords / error pattern unrestricted, area searches last 60 days.
+    - Closed issues: closed within the last 30 days (across all query types).
+
+    max_searches_per_state caps queries per state to keep token usage and context size bounded.
     """
     log("Searching for similar issues")
 
     sixty_days_ago = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
-    base_query = f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open"
-    seen_issues = {}
-    queries = []
+    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
 
     title_keywords = [word for word in issue["title"].split() if word.lower() not in STOPWORDS and len(word) > 2]
-
-    if title_keywords:
-        keywords_query = " ".join(title_keywords)
-        queries.append(("title_keywords", f"{base_query} {keywords_query}"))
-
-    for area in detected_areas:
-        queries.append(("area_label", f'{base_query} label:"area:{area}" created:>{sixty_days_ago}'))
+    keywords_query = " ".join(title_keywords) if title_keywords else None
 
     # error pattern search: capture 5–90 chars after keyword, colon optional
     error_pattern = r"(?i:\b(?:error|panicked|panic|failed)\b)\s*([^\n]{5,90})"
-    match = re.search(error_pattern, issue["body"])
-    if match:
-        error_snippet = match.group(1).strip()
-        queries.append(("error_pattern", f'{base_query} in:body "{error_snippet}"'))
+    error_match = re.search(error_pattern, issue["body"])
+    error_snippet = error_match.group(1).strip() if error_match else None
 
-    for search_type, query in queries[:max_searches]:
-        log(f"  Search ({search_type}): {query}")
-        try:
-            results = github_search_issues(query, per_page=15)
-            for item in results:
-                number = item["number"]
-                if number != issue["number"] and number not in seen_issues:
-                    body = item.get("body") or ""
-                    seen_issues[number] = {
-                        "number": number,
-                        "title": item["title"],
-                        "state": item.get("state", ""),
-                        "created_at": item.get("created_at", ""),
-                        "body_preview": body[:1000],
-                        "source": search_type,
-                    }
-        except requests.RequestException as e:
-            log(f"  Search failed: {e}")
+    def build_queries(base, area_window=None):
+        queries = []
+        if keywords_query:
+            queries.append(("title_keywords", f"{base} {keywords_query}"))
+        for area in detected_areas:
+            area_q = f'{base} label:"area:{area}"'
+            if area_window:
+                area_q += f" created:>{area_window}"
+            queries.append(("area_label", area_q))
+        if error_snippet:
+            queries.append(("error_pattern", f'{base} in:body "{error_snippet}"'))
+        return queries
+
+    open_queries = build_queries(
+        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:open",
+        area_window=sixty_days_ago,
+    )
+    # closed pass: filter by close date so we catch issues closed recently regardless of
+    # when they were opened. closed:> already restricts the result set, so the per-query
+    # area window is unnecessary.
+    closed_queries = build_queries(
+        f"repo:{REPO_OWNER}/{REPO_NAME} is:issue is:closed closed:>{thirty_days_ago}",
+    )
+
+    seen_issues = {}
+    for state_label, queries in (
+        ("open", open_queries[:max_searches_per_state]),
+        ("closed", closed_queries[:max_searches_per_state]),
+    ):
+        for search_type, query in queries:
+            log(f"  Search ({state_label} / {search_type}): {query}")
+            try:
+                results = github_search_issues(query, per_page=15)
+                for item in results:
+                    number = item["number"]
+                    if number != issue["number"] and number not in seen_issues:
+                        body = item.get("body") or ""
+                        seen_issues[number] = {
+                            "number": number,
+                            "title": item["title"],
+                            "state": item.get("state", ""),
+                            "state_reason": item.get("state_reason"),
+                            "created_at": item.get("created_at", ""),
+                            "body_preview": body[:1000],
+                            "source": search_type,
+                        }
+            except requests.RequestException as e:
+                log(f"  Search failed: {e}")
 
     similar_issues = list(seen_issues.values())
     log(f"  Found {len(similar_issues)} similar issues")
@@ -398,29 +486,41 @@ def search_for_similar_issues(issue, detected_areas, max_searches=6):
 
 
 def analyze_duplicates(anthropic_key, issue, magnets, search_results):
-    """Use Claude to analyze potential duplicates."""
-    log("Analyzing duplicates with Claude")
+    """Use Claude to identify duplicates (open) and surface related closed issues.
 
+    Returns (likely_duplicates, possible_duplicates, related_closed_issues).
+    """
     top_magnets = magnets[:10]
-    enrich_magnets(top_magnets)
     magnet_numbers = {m["number"] for m in top_magnets}
 
+    open_results = [r for r in search_results if r["state"] == "open" and r["number"] not in magnet_numbers]
+    closed_results = [r for r in search_results if r["state"] == "closed" and r["number"] not in magnet_numbers]
+
+    if not top_magnets and not open_results and not closed_results:
+        return [], [], []
+
+    log("Analyzing candidates with Claude")
+    enrich_magnets(top_magnets)
+
     candidates = [
-        {"number": m["number"], "title": m["title"], "body_preview": m["body_preview"], "source": "known_duplicate_magnet"}
+        {"number": m["number"], "title": m["title"], "body_preview": m["body_preview"],
+         "state": "open", "state_reason": None, "source": "known_duplicate_magnet"}
         for m in top_magnets
     ] + [
-        {"number": r["number"], "title": r["title"], "body_preview": r["body_preview"], "source": "search_result"}
-        for r in search_results[:10]
-        if r["number"] not in magnet_numbers
+        {"number": r["number"], "title": r["title"], "body_preview": r["body_preview"],
+         "state": r["state"], "state_reason": r["state_reason"], "source": "search_result"}
+        for r in open_results[:10] + closed_results[:5]
     ]
 
-    if not candidates:
-        return [], "No candidates to analyze"
+    system_prompt = """You analyze GitHub issues to (a) identify duplicates among OPEN candidates
+and (b) surface recently CLOSED candidates that are useful triage context.
 
-    system_prompt = """You analyze GitHub issues to identify potential duplicates.
+Each candidate has a "state" field ("open" or "closed"), and closed candidates carry a
+"state_reason" ("completed", "not_planned", or "duplicate").
 
-Given a new issue and a list of existing issues, identify which existing issues are duplicates — meaning
-they are caused by the SAME BUG in the code, not just similar symptoms.
+# (a) Duplicates — OPEN candidates only
+
+A duplicate means: caused by the SAME BUG in the code, not just similar symptoms.
 
 CRITICAL DISTINCTION — shared symptoms vs shared root cause:
 - "models missing", "can't sign in", "editor hangs", "venv not detected" are SYMPTOMS that many
@@ -428,13 +528,14 @@ CRITICAL DISTINCTION — shared symptoms vs shared root cause:
   identify a specific shared root cause.
 - A duplicate means: if a developer fixed the existing issue, the new issue would also be fixed.
 - If the issues just happen to be in the same feature area, or describe similar-sounding problems
-  with different specifics (different error messages, different triggers, different platforms, different
-  configurations), they are NOT duplicates.
+  with different specifics (different error messages, different triggers, different platforms,
+  different configurations), they are NOT duplicates.
 
-For each potential duplicate, assess confidence:
-- "high": Almost certainly the same bug. You can name a specific shared root cause, and the
-  reproduction steps / error messages / triggers are consistent.
-- "medium": Likely the same bug based on specific technical details, but some uncertainty remains.
+Sort duplicates into two buckets:
+- "likely_duplicates": Almost certainly the same bug. You can name a specific shared root cause, and
+  the reproduction steps / error messages / triggers are consistent.
+- "possible_duplicates": Likely the same bug based on specific technical details, but some
+  uncertainty remains.
 - Do NOT include issues that merely share symptoms, affect the same feature area, or sound similar
   at a surface level.
 
@@ -444,24 +545,48 @@ Examples of things that are NOT duplicates:
 - Two issues about "Zed hangs" — one triggered by network drives, the other by large projects.
 - Two issues about "can't sign in" — one caused by a missing system package, the other by a server-side error.
 
-Output only valid JSON (no markdown code blocks) with this structure:
+For OPEN duplicates (either bucket), false positives are MUCH worse than false negatives — they
+waste the time of both the issue author and the maintainers. When in doubt, omit.
+
+# (b) Related closed issues — CLOSED candidates only
+
+The goal is to give triagers extra context, NOT to claim a duplicate. The bar is lower than for
+duplicates: include a closed candidate if a triager would plausibly want to see it when reviewing
+the new issue. Examples worth surfacing:
+- A recently fixed (state_reason "completed") issue describing the same symptom — triager may ask
+  the reporter to retest on the latest build.
+- A cluster of similar issues closed as "not_planned" — signals a known limitation or design choice.
+- A previously triaged duplicate (state_reason "duplicate") in the same code area.
+
+Include at most 5 closed candidates, prioritized by relevance.
+
+# Output format
+
+Output only valid JSON (no markdown code blocks):
 {
-  "matches": [
+  "likely_duplicates": [
     {
       "number": 12345,
-      "confidence": "high|medium",
       "shared_root_cause": "The specific bug/root cause shared by both issues",
       "explanation": "Brief explanation with concrete evidence from both issues"
     }
   ],
-  "summary": "One sentence summary of findings"
+  "possible_duplicates": [
+    {
+      "number": 12345,
+      "shared_root_cause": "The specific bug/root cause shared by both issues",
+      "explanation": "Brief explanation with concrete evidence from both issues"
+    }
+  ],
+  "related_closed_issues": [
+    {
+      "number": 12345,
+      "explanation": "Brief explanation of why this is useful triage context"
+    }
+  ]
 }
 
-When in doubt, return an empty matches array. A false positive (flagging a non-duplicate) is much
-worse than a false negative (missing a real duplicate), because it wastes the time of both the
-issue author and the maintainers.
-
-Return empty matches array if none found or if you can only identify shared symptoms."""
+Return empty arrays where nothing relevant is found."""
 
     user_content = f"""## New Issue #{issue['number']}
 **Title:** {issue['title']}
@@ -474,17 +599,23 @@ Return empty matches array if none found or if you can only identify shared symp
 
     response = call_claude(anthropic_key, system_prompt, user_content, max_tokens=2048)
 
+    # Claude sometimes wraps JSON in a ```json ... ``` fence despite the prompt forbidding it
+    fence = re.match(r"^\s*```(?:json)?\s*\n?(.*?)\n?```\s*$", response, re.DOTALL)
+    if fence:
+        response = fence.group(1)
+
     try:
         data = json.loads(response)
     except json.JSONDecodeError as e:
-        log(f"  Failed to parse response: {e}")
-        log(f"  Raw response: {response}")
-        return [], "Failed to parse analysis"
+        log(f"  Failed to parse Claude response as JSON: {e}")
+        log(f"  Raw response:\n{response}")
+        sys.exit(1)
 
-    matches = data.get("matches", [])
-    summary = data.get("summary", "Analysis complete")
-    log(f"  Found {len(matches)} potential matches")
-    return matches, summary
+    likely = data.get("likely_duplicates", [])
+    possible = data.get("possible_duplicates", [])
+    closed = data.get("related_closed_issues", [])
+    log(f"  Found {len(likely) + len(possible) + len(closed)} potential matches")
+    return likely, possible, closed
 
 
 if __name__ == "__main__":
@@ -515,35 +646,39 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # detect areas
-    taxonomy = format_taxonomy_for_claude(fetch_area_labels())
-    detected_areas = detect_areas(anthropic_key, issue, taxonomy)
+    detected_areas = detect_areas(anthropic_key, issue, fetch_area_labels())
 
-    # search for potential duplicates
+    # search for potential duplicates and related closed issues
     all_magnets = parse_duplicate_magnets()
     relevant_magnets = filter_magnets_by_areas(all_magnets, detected_areas)
     search_results = search_for_similar_issues(issue, detected_areas)
 
-    # analyze potential duplicates
-    if relevant_magnets or search_results:
-        matches, summary = analyze_duplicates(anthropic_key, issue, relevant_magnets, search_results)
-    else:
-        matches, summary = [], "No potential duplicates to analyze"
+    # analyze candidates
+    likely_duplicates, possible_duplicates, related_closed_issues = analyze_duplicates(
+        anthropic_key, issue, relevant_magnets, search_results
+    )
 
-    # post comment if high-confidence matches found
-    high_confidence_matches = [m for m in matches if m["confidence"] == "high"]
+    # resolve close reason from our search results (the source of truth) so we don't depend
+    # on Claude to faithfully echo it back
+    results_by_number = {r["number"]: r for r in search_results}
+    for m in related_closed_issues:
+        m["state_reason"] = results_by_number[m["number"]]["state_reason"]
+
+    comment_body = build_comment(likely_duplicates, possible_duplicates, related_closed_issues)
     commented = False
 
-    if high_confidence_matches:
-        comment_body = build_duplicate_comment(high_confidence_matches)
+    if comment_body:
         if args.dry_run:
             log("Dry run - would post comment:\n" + "-" * 40 + "\n" + comment_body + "\n" + "-" * 40)
         else:
-            log("Posting comment for high-confidence match(es)")
+            log("Posting comment")
             try:
                 post_comment(issue["number"], comment_body)
                 commented = True
             except requests.RequestException as e:
                 log(f"  Failed to post comment: {e}")
+                log(f"  Comment we were trying to post:\n{comment_body}")
+                sys.exit(1)
 
     print(json.dumps({
         "skipped": False,
@@ -556,7 +691,8 @@ if __name__ == "__main__":
         "detected_areas": detected_areas,
         "magnets_count": len(relevant_magnets),
         "search_results_count": len(search_results),
-        "matches": matches,
-        "summary": summary,
+        "likely_duplicates": likely_duplicates,
+        "possible_duplicates": possible_duplicates,
+        "related_closed_issues": related_closed_issues,
         "commented": commented,
     }))

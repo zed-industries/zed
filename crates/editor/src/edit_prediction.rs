@@ -1956,6 +1956,7 @@ impl Editor {
 
         let mut element = h_flex()
             .items_start()
+            .debug_selector(|| "edit_prediction_diff_popover".into())
             .child(
                 h_flex()
                     .bg(cx.theme().colors().editor_background)
@@ -1979,6 +1980,7 @@ impl Editor {
                         offset: point(px(1.), px(1.)),
                         blur_radius: px(2.),
                         spread_radius: px(0.),
+                        inset: false,
                     }])
                     .bg(Editor::edit_prediction_line_popover_bg_color(cx))
                     .border(BORDER_WIDTH)
@@ -2022,6 +2024,7 @@ impl Editor {
                 right: -right_margin,
                 ..Default::default()
             });
+        let popover_right_bound = cmp::min(text_bounds.right(), viewport_bounds.right());
 
         let x_after_longest = Pixels::from(
             ScrollPixelOffset::from(
@@ -2031,14 +2034,12 @@ impl Editor {
 
         let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        // Fully visible if it can be displayed within the window (allow overlapping other
-        // panes). However, this is only allowed if the popover starts within text_bounds.
         let can_position_to_the_right = x_after_longest < text_bounds.right()
-            && x_after_longest + element_bounds.width < viewport_bounds.right();
+            && element_bounds.width <= popover_right_bound - text_bounds.left();
 
         let mut origin = if can_position_to_the_right {
             point(
-                x_after_longest,
+                x_after_longest.min(popover_right_bound - element_bounds.width),
                 text_bounds.origin.y
                     + Pixels::from(
                         edit_start.row().as_f64() * ScrollPixelOffset::from(line_height)
