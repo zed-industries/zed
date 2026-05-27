@@ -502,7 +502,7 @@ impl Model {
                     Some(131_072)
                 }
             }
-            Self::BigPickle => Some(128_000),
+            Self::BigPickle => Some(32_000),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::GrokBuild0_1 => Some(256_000),
             Self::Qwen3_5Plus | Self::Qwen3_6Plus => Some(65_536),
