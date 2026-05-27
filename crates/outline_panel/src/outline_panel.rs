@@ -415,6 +415,12 @@ struct SearchData {
     highlights_data: HighlightStyleData,
 }
 
+struct SearchPrecomputed {
+    multi_buffer_snapshot: MultiBufferSnapshot,
+    matches_by_buffer: HashMap<BufferId, Vec<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>>,
+    folded_buffers: HashSet<BufferId>,
+}
+
 impl PartialEq for PanelEntry {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -3651,6 +3657,60 @@ impl OutlinePanel {
                     expanded: bool,
                     depth: usize,
                 }
+
+                let search_precomputed =
+                    if let ItemsDisplayMode::Search(search_state) = &outline_panel.mode {
+                        let multi_buffer_snapshot =
+                            active_editor.read(cx).buffer().read(cx).snapshot(cx);
+                        let mut folded_buffers = HashSet::default();
+                        let mut not_folded_buffers = HashSet::default();
+                        let mut matches_by_buffer = HashMap::default();
+
+                        for (match_range, search_data) in &search_state.matches {
+                            let Some((start_anchor, _)) =
+                                multi_buffer_snapshot.anchor_to_buffer_anchor(match_range.start)
+                            else {
+                                continue;
+                            };
+                            let start_buffer_id = start_anchor.buffer_id;
+                            let end_buffer_id = multi_buffer_snapshot
+                                .anchor_to_buffer_anchor(match_range.end)
+                                .map(|(anchor, _)| anchor.buffer_id);
+
+                            let mut any_folded = false;
+                            for buffer_id in
+                                [Some(start_buffer_id), end_buffer_id].into_iter().flatten()
+                            {
+                                if folded_buffers.contains(&buffer_id) {
+                                    any_folded = true;
+                                } else if !not_folded_buffers.contains(&buffer_id) {
+                                    if active_editor.read(cx).is_buffer_folded(buffer_id, cx) {
+                                        folded_buffers.insert(buffer_id);
+                                        any_folded = true;
+                                    } else {
+                                        not_folded_buffers.insert(buffer_id);
+                                    }
+                                }
+                            }
+                            if any_folded {
+                                continue;
+                            }
+
+                            matches_by_buffer
+                                .entry(start_buffer_id)
+                                .or_insert_with(Vec::new)
+                                .push((match_range.clone(), Arc::clone(search_data)));
+                        }
+
+                        Some(SearchPrecomputed {
+                            multi_buffer_snapshot,
+                            matches_by_buffer,
+                            folded_buffers,
+                        })
+                    } else {
+                        None
+                    };
+
                 let mut parent_dirs = Vec::<ParentStats>::new();
                 for entry in outline_panel.fs_entries.clone() {
                     let is_expanded = outline_panel.is_expanded(&entry);
@@ -3880,10 +3940,12 @@ impl OutlinePanel {
 
                     match outline_panel.mode {
                         ItemsDisplayMode::Search(_) => {
-                            if is_singleton || query.is_some() || (should_add && is_expanded) {
+                            if (is_singleton || query.is_some() || (should_add && is_expanded))
+                                && let Some(search) = &search_precomputed
+                            {
                                 outline_panel.add_search_entries(
                                     &mut generation_state,
-                                    &active_editor,
+                                    search,
                                     entry.clone(),
                                     depth,
                                     query.clone(),
@@ -4350,63 +4412,59 @@ impl OutlinePanel {
     fn add_search_entries(
         &mut self,
         state: &mut GenerationState,
-        active_editor: &Entity<Editor>,
+        search: &SearchPrecomputed,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
         is_singleton: bool,
         cx: &mut Context<Self>,
     ) {
-        let ItemsDisplayMode::Search(search_state) = &mut self.mode else {
+        let ItemsDisplayMode::Search(search_state) = &self.mode else {
+            return;
+        };
+        let kind = search_state.kind;
+
+        let (buffer_id, excerpts) = match &parent_entry {
+            FsEntry::Directory(_) => return,
+            FsEntry::ExternalFile(external) => (external.buffer_id, &external.excerpts),
+            FsEntry::File(file) => (file.buffer_id, &file.excerpts),
+        };
+
+        if search.folded_buffers.contains(&buffer_id) {
+            return;
+        }
+        let Some(buffer_matches) = search.matches_by_buffer.get(&buffer_id) else {
             return;
         };
 
-        let kind = search_state.kind;
-        let related_excerpts = match &parent_entry {
-            FsEntry::Directory(_) => return,
-            FsEntry::ExternalFile(external) => &external.excerpts,
-            FsEntry::File(file) => &file.excerpts,
-        }
-        .iter()
-        .cloned()
-        .collect::<HashSet<_>>();
+        let excerpt_ranges = excerpts
+            .iter()
+            .filter_map(|excerpt| {
+                let start = search
+                    .multi_buffer_snapshot
+                    .anchor_in_buffer(excerpt.context.start)?;
+                let end = search
+                    .multi_buffer_snapshot
+                    .anchor_in_buffer(excerpt.context.end)?;
+                Some(start..end)
+            })
+            .collect::<Vec<_>>();
 
         let depth = if is_singleton { 0 } else { parent_depth + 1 };
-        let new_search_matches = search_state.matches.iter().filter(|(match_range, _)| {
-            let editor = active_editor.read(cx);
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            if !related_excerpts.iter().any(|excerpt| {
-                let (Some(start), Some(end)) = (
-                    snapshot.anchor_in_buffer(excerpt.context.start),
-                    snapshot.anchor_in_buffer(excerpt.context.end),
-                ) else {
-                    return false;
-                };
-                let excerpt_range = start..end;
-                excerpt_range.overlaps(match_range, &snapshot)
-            }) {
-                return false;
-            };
-            if let Some((buffer_anchor, _)) = snapshot.anchor_to_buffer_anchor(match_range.start)
-                && editor.is_buffer_folded(buffer_anchor.buffer_id, cx)
-            {
-                return false;
-            }
-            if let Some((buffer_anchor, _)) = snapshot.anchor_to_buffer_anchor(match_range.end)
-                && editor.is_buffer_folded(buffer_anchor.buffer_id, cx)
-            {
-                return false;
-            }
-            true
-        });
-
-        let new_search_entries = new_search_matches
+        let new_search_entries = buffer_matches
+            .iter()
+            .filter(|(match_range, _)| {
+                excerpt_ranges.iter().any(|excerpt_range| {
+                    excerpt_range.overlaps(match_range, &search.multi_buffer_snapshot)
+                })
+            })
             .map(|(match_range, search_data)| SearchEntry {
                 match_range: match_range.clone(),
                 kind,
                 render_data: Arc::clone(search_data),
             })
             .collect::<Vec<_>>();
+
         for new_search_entry in new_search_entries {
             self.push_entry(
                 state,
