@@ -345,6 +345,13 @@ impl ChatGptModel {
     fn supports_prompt_cache_key(&self) -> bool {
         true
     }
+
+    fn supports_priority(&self) -> bool {
+        match self {
+            Self::Gpt55 | Self::Gpt54 => true,
+            Self::Gpt54Mini | Self::Gpt53Codex | Self::Gpt52 => false,
+        }
+    }
 }
 
 struct OpenAiSubscribedLanguageModel {
@@ -392,6 +399,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         true
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_priority()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         let default_effort = self.model.default_reasoning_effort();
         self.model
@@ -431,7 +442,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -443,6 +454,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
+
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.

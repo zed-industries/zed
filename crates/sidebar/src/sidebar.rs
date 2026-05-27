@@ -226,24 +226,35 @@ impl ThreadEntryWorkspace {
     }
 }
 
+/// Resolves the sidebar label for a draft thread and reports whether the
+/// label comes from real user content or is a placeholder for an empty draft.
+/// Returns `None` only if the caller is expected to filter the row out
+/// entirely (currently the inner branches always produce a label, so this is
+/// effectively always `Some` — the `Option` shape is preserved for callers
+/// like `thread_metadata_would_render_sidebar_row` that historically gated
+/// on it).
 fn draft_display_label_for_thread_metadata(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
     cx: &App,
-) -> Option<SharedString> {
+) -> Option<(SharedString, DraftKind)> {
     let workspace = match workspace {
         ThreadEntryWorkspace::Open(workspace) => Some(workspace),
         ThreadEntryWorkspace::Closed { .. } => None,
     };
 
-    agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
-        .or_else(|| {
-            Some(agent_ui::draft_prompt_store::empty_draft_placeholder_label(
-                workspace,
-                &metadata.agent_id,
-                cx,
-            ))
-        })
+    if let Some(label) =
+        agent_ui::draft_prompt_store::display_label_for_draft(workspace, metadata.thread_id, cx)
+    {
+        return Some((label, DraftKind::WithContent));
+    }
+
+    let placeholder = agent_ui::draft_prompt_store::empty_draft_placeholder_label(
+        workspace,
+        &metadata.agent_id,
+        cx,
+    );
+    Some((placeholder, DraftKind::Empty))
 }
 
 fn thread_metadata_would_render_sidebar_row(
@@ -321,7 +332,7 @@ enum ListEntry {
         is_active: bool,
         has_threads: bool,
     },
-    Thread(ThreadEntry),
+    Thread(Arc<ThreadEntry>),
     Terminal(TerminalEntry),
 }
 
@@ -417,7 +428,7 @@ impl ListEntry {
 
 impl From<ThreadEntry> for ListEntry {
     fn from(thread: ThreadEntry) -> Self {
-        ListEntry::Thread(thread)
+        ListEntry::Thread(Arc::new(thread))
     }
 }
 
@@ -493,24 +504,22 @@ fn linked_worktree_path_lists_for_workspaces(
     workspaces: &[Entity<Workspace>],
     cx: &App,
 ) -> Vec<PathList> {
-    let mut linked_worktree_paths = HashSet::new();
+    let mut linked_worktree_paths = Vec::new();
     for workspace in workspaces {
         if workspace.read(cx).visible_worktrees(cx).count() != 1 {
             continue;
         }
         for snapshot in root_repository_snapshots(workspace, cx) {
-            for linked_worktree in snapshot.linked_worktrees() {
-                linked_worktree_paths.insert(linked_worktree.path.clone());
-            }
+            linked_worktree_paths.extend(
+                snapshot.linked_worktrees().iter().map(|linked_worktree| {
+                    PathList::new(std::slice::from_ref(&linked_worktree.path))
+                }),
+            );
         }
     }
 
-    let mut linked_worktree_paths = linked_worktree_paths.into_iter().collect::<Vec<_>>();
-    linked_worktree_paths.sort();
+    linked_worktree_paths.sort_by(|a, b| a.paths()[0].cmp(&b.paths()[0]));
     linked_worktree_paths
-        .into_iter()
-        .map(|path| PathList::new(std::slice::from_ref(&path)))
-        .collect()
 }
 
 fn workspace_has_terminal_metadata_except(
@@ -1453,12 +1462,11 @@ impl Sidebar {
                 .is_some_and(|active| group_workspaces.contains(active));
 
             // Collect live thread infos from all workspaces in this group.
-            let live_infos: Vec<_> = group_workspaces
+            let live_infos = group_workspaces
                 .iter()
-                .flat_map(|ws| all_thread_infos_for_workspace(ws, cx))
-                .collect();
+                .flat_map(|ws| all_thread_infos_for_workspace(ws, cx));
 
-            let mut threads: Vec<ThreadEntry> = Vec::new();
+            let mut threads: Vec<Arc<ThreadEntry>> = Vec::new();
             let mut has_running_threads = false;
             let mut waiting_thread_count: usize = 0;
             let group_host = group_key.host();
@@ -1469,14 +1477,15 @@ impl Sidebar {
                 let thread_store = ThreadMetadataStore::global(cx);
 
                 let make_thread_entry =
-                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> ThreadEntry {
+                    |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> Arc<ThreadEntry> {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
                         let worktrees =
                             worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
-
+                        // Start drafts as `WithContent`; the post-processing
+                        // pass below downgrades them to `Empty` if no draft
+                        // label can be derived.
                         let draft = row.is_draft().then_some(DraftKind::WithContent);
-
-                        ThreadEntry {
+                        Arc::new(ThreadEntry {
                             metadata: row,
                             icon,
                             icon_from_external_svg,
@@ -1489,7 +1498,7 @@ impl Sidebar {
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
-                        }
+                        })
                     };
 
                 // Main code path: one query per group via main_worktree_paths.
@@ -1584,29 +1593,18 @@ impl Sidebar {
                     if thread.draft.is_none() {
                         continue;
                     }
-                    let workspace_for_label = match &thread.workspace {
-                        ThreadEntryWorkspace::Open(workspace) => Some(workspace),
-                        ThreadEntryWorkspace::Closed { .. } => None,
-                    };
-
-                    match agent_ui::draft_prompt_store::display_label_for_draft(
-                        workspace_for_label,
-                        thread.metadata.thread_id,
+                    // `Arc::make_mut` is needed because `threads` now holds
+                    // `Arc<ThreadEntry>`. It clones the inner value iff there
+                    // are other outstanding `Arc`s; here we own this slot, so
+                    // in practice this is a cheap reference-bump path.
+                    if let Some((label, kind)) = draft_display_label_for_thread_metadata(
+                        &thread.metadata,
+                        &thread.workspace,
                         cx,
                     ) {
-                        Some(label) => {
-                            thread.metadata.title = Some(label);
-                            thread.draft = Some(DraftKind::WithContent);
-                        }
-                        None => {
-                            thread.metadata.title =
-                                Some(agent_ui::draft_prompt_store::empty_draft_placeholder_label(
-                                    workspace_for_label,
-                                    &thread.metadata.agent_id,
-                                    cx,
-                                ));
-                            thread.draft = Some(DraftKind::Empty);
-                        }
+                        let thread = Arc::make_mut(thread);
+                        thread.metadata.title = Some(label);
+                        thread.draft = Some(kind);
                     }
                 }
                 threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
@@ -1636,26 +1634,26 @@ impl Sidebar {
 
                 // Build a lookup from live_infos and compute running/waiting
                 // counts in a single pass.
-                let mut live_info_by_session: HashMap<&acp::SessionId, &ActiveThreadInfo> =
+                let mut live_info_by_session: HashMap<acp::SessionId, ActiveThreadInfo> =
                     HashMap::new();
-                for info in &live_infos {
-                    live_info_by_session.insert(&info.session_id, info);
+                for info in live_infos {
                     if info.status == AgentThreadStatus::Running {
                         has_running_threads = true;
                     }
                     if info.status == AgentThreadStatus::WaitingForConfirmation {
                         waiting_thread_count += 1;
                     }
+                    live_info_by_session.insert(info.session_id.clone(), info);
                 }
 
                 // Merge live info into threads and update notification state
                 // in a single pass.
                 for thread in &mut threads {
                     if let Some(session_id) = thread.metadata.session_id.clone() {
-                        if let Some(&info) = live_info_by_session.get(&session_id) {
+                        if let Some(info) = live_info_by_session.get(&session_id) {
                             let status = info.status;
                             let thread_id = thread.metadata.thread_id;
-                            thread.apply_active_info(info);
+                            Arc::make_mut(thread).apply_active_info(info);
                             new_live_statuses.insert(session_id, (status, thread_id));
                         }
                     }
@@ -1689,7 +1687,7 @@ impl Sidebar {
                     b_time.cmp(&a_time)
                 });
             } else {
-                for info in &live_infos {
+                for info in live_infos {
                     if info.status == AgentThreadStatus::Running {
                         has_running_threads = true;
                     }
@@ -1760,20 +1758,23 @@ impl Sidebar {
                     fuzzy_match_positions(&query, &label).unwrap_or_default();
                 let workspace_matched = !workspace_highlight_positions.is_empty();
 
-                let mut matched_threads: Vec<ThreadEntry> = Vec::new();
+                let mut matched_threads: Vec<Arc<ThreadEntry>> = Vec::new();
                 for mut thread in threads {
-                    let title = thread.metadata.display_title();
-                    if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
-                        thread.highlight_positions = positions;
-                    }
                     let mut worktree_matched = false;
-                    for worktree in &mut thread.worktrees {
-                        let Some(name) = worktree.worktree_name.as_ref() else {
-                            continue;
-                        };
-                        if let Some(positions) = fuzzy_match_positions(&query, name) {
-                            worktree.highlight_positions = positions;
-                            worktree_matched = true;
+                    {
+                        let thread = Arc::make_mut(&mut thread);
+                        let title = thread.metadata.display_title();
+                        if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
+                            thread.highlight_positions = positions;
+                        }
+                        for worktree in &mut thread.worktrees {
+                            let Some(name) = worktree.worktree_name.as_ref() else {
+                                continue;
+                            };
+                            if let Some(positions) = fuzzy_match_positions(&query, name) {
+                                worktree.highlight_positions = positions;
+                                worktree_matched = true;
+                            }
                         }
                     }
                     if workspace_matched
@@ -4775,7 +4776,7 @@ impl Sidebar {
                     .as_ref()
                     .map(|workspace| PathList::new(&workspace.read(cx).root_paths(cx)))
             });
-        let thread_entry_workspace = thread_entry.map(|thread| thread.workspace);
+        let thread_entry_workspace = thread_entry.map(|thread| thread.workspace.clone());
 
         if let (
             Some(metadata),
@@ -5281,7 +5282,7 @@ impl Sidebar {
     fn push_entries_by_display_time(
         entries: &mut Vec<ListEntry>,
         terminals: Vec<TerminalEntry>,
-        threads: Vec<ThreadEntry>,
+        threads: Vec<Arc<ThreadEntry>>,
         current_session_ids: &mut HashSet<acp::SessionId>,
         current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
     ) {

@@ -645,6 +645,15 @@ enum ToolCallLayout {
     Embedded,
 }
 
+fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Option<String> {
+    if file.path().file_name().is_some() {
+        return None;
+    }
+
+    let full_path = file.full_path(cx).display().to_string();
+    (!full_path.is_empty()).then_some(full_path)
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -2301,7 +2310,7 @@ impl ThreadView {
         let thread = &self.thread;
         let telemetry = ActionLogTelemetry::from(thread.read(cx));
         let action_log = thread.read(cx).action_log().clone();
-        let has_changes = action_log.read(cx).changed_buffers(cx).len() > 0;
+        let has_changes = action_log.read(cx).changed_buffers(cx).next().is_some();
 
         action_log
             .update(cx, |action_log, cx| {
@@ -2571,7 +2580,7 @@ impl ThreadView {
         let thread = self.thread.read(cx);
         let action_log = thread.action_log();
         let telemetry = ActionLogTelemetry::from(thread);
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
 
@@ -2677,7 +2686,7 @@ impl ThreadView {
         &self,
         action_log: &Entity<ActionLog>,
         telemetry: ActionLogTelemetry,
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
         pending_edits: bool,
         cx: &Context<Self>,
     ) -> impl IntoElement {
@@ -2703,6 +2712,9 @@ impl ThreadView {
                         let path_style = file.path_style(cx);
                         let separator = file.path_style(cx).primary_separator();
 
+                        let fallback_full_path =
+                            full_path_for_empty_project_path(file.as_ref(), cx);
+
                         let file_path = path.parent().and_then(|parent| {
                             if parent.is_empty() {
                                 None
@@ -2719,14 +2731,25 @@ impl ThreadView {
                             }
                         });
 
-                        let file_name = path.file_name().map(|name| {
-                            Label::new(name.to_string())
-                                .size(LabelSize::XSmall)
-                                .buffer_font(cx)
-                                .ml_1()
-                        });
+                        let file_name = path
+                            .file_name()
+                            .map(|name| {
+                                Label::new(name.to_string())
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx)
+                                    .ml_1()
+                            })
+                            .or_else(|| {
+                                fallback_full_path.as_ref().map(|path| {
+                                    Label::new(path.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx)
+                                        .ml_1()
+                                })
+                            });
 
-                        let full_path = path.display(path_style).to_string();
+                        let full_path = fallback_full_path
+                            .unwrap_or_else(|| path.display(path_style).to_string());
 
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                             .map(Icon::from_path)
@@ -3410,7 +3433,7 @@ impl ThreadView {
 
     fn render_edits_summary(
         &self,
-        changed_buffers: &BTreeMap<Entity<Buffer>, Entity<BufferDiff>>,
+        changed_buffers: &[(Entity<Buffer>, Entity<BufferDiff>)],
         expanded: bool,
         pending_edits: bool,
         cx: &Context<Self>,
@@ -3455,7 +3478,7 @@ impl ThreadView {
                                 ),
                             )
                         } else {
-                            let stats = DiffStats::all_files(changed_buffers, cx);
+                            let stats = DiffStats::all_files(changed_buffers.iter().cloned(), cx);
                             let dot_divider = || {
                                 Label::new("•")
                                     .size(LabelSize::XSmall)
@@ -8368,7 +8391,7 @@ impl ThreadView {
             .map(|thread| thread.read(cx).session_id().clone());
         let action_log = thread.as_ref().map(|thread| thread.read(cx).action_log());
         let changed_buffers = action_log
-            .map(|log| log.read(cx).changed_buffers(cx))
+            .map(|log| log.read(cx).changed_buffers(cx).collect::<Vec<_>>())
             .unwrap_or_default();
 
         let is_pending_tool_call = thread_view
@@ -8381,7 +8404,7 @@ impl ThreadView {
 
         let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
         let files_changed = changed_buffers.len();
-        let diff_stats = DiffStats::all_files(&changed_buffers, cx);
+        let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
         let is_running = matches!(
             tool_call.status,
