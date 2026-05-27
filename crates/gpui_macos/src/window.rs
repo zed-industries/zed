@@ -4,7 +4,6 @@ use crate::{
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
-#[cfg(any(test, feature = "test-support"))]
 use anyhow::Result;
 use block::ConcreteBlock;
 use cocoa::{
@@ -20,18 +19,18 @@ use cocoa::{
     foundation::{
         NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
-        NSUserDefaults,
+        NSURL, NSUserDefaults,
     },
 };
 use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams, point,
-    px, size,
+    FileDragSession, FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, PromptLevel, RequestFrameOptions, SharedString, Size, SystemWindowTab,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind,
+    WindowParams, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -411,6 +410,17 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         decl.add_method(sel!(close), close_window as extern "C" fn(&Object, Sel));
 
         decl.add_method(
+            sel!(draggingSession:sourceOperationMaskForDraggingContext:),
+            dragging_source_operation_mask
+                as extern "C" fn(&Object, Sel, id, NSInteger) -> NSDragOperation,
+        );
+        decl.add_method(
+            sel!(draggingSession:endedAtPoint:operation:),
+            dragging_session_ended as extern "C" fn(&Object, Sel, id, NSPoint, NSDragOperation),
+        );
+        decl.add_protocol(Protocol::get("NSDraggingSource").unwrap());
+
+        decl.add_method(
             sel!(draggingEntered:),
             dragging_entered as extern "C" fn(&Object, Sel, id) -> NSDragOperation,
         );
@@ -494,6 +504,7 @@ struct MacWindowState {
     keystroke_for_do_command: Option<Keystroke>,
     do_command_handled: Option<bool>,
     external_files_dragged: bool,
+    outbound_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
@@ -824,6 +835,7 @@ impl MacWindow {
                 keystroke_for_do_command: None,
                 do_command_handled: None,
                 external_files_dragged: false,
+                outbound_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
                 move_tab_to_new_window_callback: None,
@@ -1725,6 +1737,79 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
+        if paths.paths().is_empty() {
+            anyhow::bail!("cannot start file drag with empty paths");
+        }
+
+        let window_state = self.0.clone();
+        let mut lock = window_state.lock();
+        lock.outbound_files_dragged = true;
+        let view = lock.native_view.as_ptr();
+        drop(lock);
+
+        unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let event: id = msg_send![app, currentEvent];
+            if event.is_null() {
+                window_state.lock().outbound_files_dragged = false;
+                anyhow::bail!("failed to start file drag: no current event");
+            }
+            let event_location: NSPoint = msg_send![event, locationInWindow];
+
+            let items: id = msg_send![class!(NSMutableArray), array];
+            let requested_count = paths.paths().len();
+            let mut dragged_count = 0;
+            let mut origin = NSPoint::new(event_location.x - 16., event_location.y - 16.);
+
+            for path in paths.paths() {
+                let path_string = ns_string(path.to_string_lossy().as_ref());
+                let url: id = NSURL::fileURLWithPath_(nil, path_string);
+                if url.is_null() {
+                    continue;
+                }
+
+                let item: id = msg_send![class!(NSDraggingItem), alloc];
+                let item: id = msg_send![item, initWithPasteboardWriter: url];
+                if item.is_null() {
+                    continue;
+                }
+
+                let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+                let icon: id = msg_send![workspace, iconForFile: path_string];
+                let frame = NSRect::new(origin, NSSize::new(32., 32.));
+                let _: () = msg_send![item, setDraggingFrame: frame contents: icon];
+                let _: () = msg_send![items, addObject: item];
+                dragged_count += 1;
+
+                origin.x += 12.;
+                origin.y -= 12.;
+            }
+
+            if dragged_count != requested_count {
+                log::warn!(
+                    "macos: created {dragged_count} drag items for {requested_count} requested paths"
+                );
+            }
+
+            if dragged_count == 0 {
+                window_state.lock().outbound_files_dragged = false;
+                anyhow::bail!("failed to create any drag items from the provided paths");
+            }
+
+            let _: id = msg_send![
+                view,
+                beginDraggingSessionWithItems: items
+                event: event
+                source: view
+            ];
+        }
+
+        Ok(FileDragSession::cleanup(move || {
+            window_state.lock().outbound_files_dragged = false;
+        }))
+    }
+
     fn play_system_bell(&self) {
         unsafe { NSBeep() }
     }
@@ -2172,7 +2257,7 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 // Synthetic drag is used for selecting long buffer contents while buffer is being scrolled.
                 // External file drag and drop is able to emit its own synthetic mouse events which will conflict
                 // with these ones.
-                if !lock.external_files_dragged {
+                if !lock.external_files_dragged && !lock.outbound_files_dragged {
                     lock.synthetic_drag_counter += 1;
                     let executor = lock.foreground_executor.clone();
                     executor
@@ -2696,6 +2781,20 @@ fn screen_point_to_gpui_point(this: &Object, position: NSPoint) -> Point<Pixels>
     let window_y = frame.size.height - (position.y - frame.origin.y);
 
     point(px(window_x as f32), px(window_y as f32))
+}
+
+extern "C" fn dragging_source_operation_mask(
+    _: &Object,
+    _: Sel,
+    _: id,
+    _: NSInteger,
+) -> NSDragOperation {
+    NSDragOperationCopy
+}
+
+extern "C" fn dragging_session_ended(this: &Object, _: Sel, _: id, _: NSPoint, _: NSDragOperation) {
+    let window_state = unsafe { get_window_state(this) };
+    window_state.lock().outbound_files_dragged = false;
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {

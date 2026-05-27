@@ -1,4 +1,5 @@
 mod dispatcher;
+mod drag;
 mod headless;
 mod keyboard;
 mod platform;
@@ -13,6 +14,7 @@ mod x11;
 mod xdg_desktop_portal;
 
 pub use dispatcher::*;
+pub(crate) use drag::*;
 pub(crate) use headless::*;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;

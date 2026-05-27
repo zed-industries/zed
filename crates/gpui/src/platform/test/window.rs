@@ -1,10 +1,11 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DevicePixels,
-    DispatchEventResult, GpuSpecs, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
+    DispatchEventResult, ExternalPaths, FileDragSession, GpuSpecs, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformWindow,
+    Point, PromptButton, RequestFrameOptions, Scene, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams,
 };
+use anyhow::Result;
 use collections::HashMap;
 use image::RgbaImage;
 use parking_lot::Mutex;
@@ -21,6 +22,7 @@ pub(crate) struct TestWindowState {
     pub(crate) title: Option<String>,
     pub(crate) edited: bool,
     pub(crate) document_path: Option<std::path::PathBuf>,
+    pub(crate) file_drag_paths: Option<ExternalPaths>,
     platform: Weak<TestPlatform>,
     // TODO: Replace with `Rc`
     sprite_atlas: Arc<dyn PlatformAtlas>,
@@ -77,6 +79,7 @@ impl TestWindow {
             title: Default::default(),
             edited: false,
             document_path: None,
+            file_drag_paths: None,
             should_close_handler: None,
             hit_test_window_control_callback: None,
             input_callback: None,
@@ -328,6 +331,11 @@ impl PlatformWindow for TestWindow {
     }
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
+        self.0.lock().file_drag_paths = Some(paths);
+        Ok(FileDragSession::noop())
+    }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
         None

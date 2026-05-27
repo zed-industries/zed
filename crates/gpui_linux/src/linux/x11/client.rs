@@ -50,7 +50,7 @@ use super::{
 
 use crate::linux::{
     DEFAULT_CURSOR_ICON_NAME, LinuxClient, capslock_from_xkb, cursor_style_to_icon_names,
-    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    encode_paths_as_uri_list, get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
     keystroke_underlying_dead_key, log_cursor_icon_warning, modifiers_from_xkb, open_uri_internal,
     platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
     reveal_path_internal,
@@ -59,10 +59,10 @@ use crate::linux::{
 use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
 
 use gpui::{
-    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay, PlatformInput,
-    PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size,
-    TouchPhase, WindowButtonLayout, WindowParams, point, px,
+    AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, ExternalPaths, FileDropEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, RequestFrameOptions, ScrollDelta,
+    Size, TouchPhase, WindowButtonLayout, WindowParams, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -77,6 +77,8 @@ pub(crate) const XINPUT_ALL_DEVICES: xinput::DeviceId = 0;
 pub(crate) const XINPUT_ALL_DEVICE_GROUPS: xinput::DeviceId = 1;
 
 const GPUI_X11_SCALE_FACTOR_ENV: &str = "GPUI_X11_SCALE_FACTOR";
+const OUTBOUND_XDND_TIMEOUT: Duration = Duration::from_secs(15);
+const XDND_TARGET_DISCOVERY_LIMIT: usize = 64;
 
 pub(crate) struct WindowRef {
     window: X11WindowStatePtr,
@@ -145,7 +147,35 @@ pub struct Xdnd {
     other_window: xproto::Window,
     drag_type: u32,
     retrieved: bool,
+    selection_requested: bool,
+    drop_pending: bool,
     position: Point<Pixels>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum OutboundXdndPhase {
+    #[default]
+    /// Negotiating: sending Enter/Position/Leave, waiting for Status/Drop
+    Negotiating,
+    /// Transferring: XdndDrop was sent, waiting for SelectionRequest then XdndFinished
+    Transferring,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OutboundXdndTarget {
+    logical_window: xproto::Window,
+    send_to_window: xproto::Window,
+}
+
+#[derive(Debug)]
+pub(crate) struct OutboundXdnd {
+    source_window: xproto::Window,
+    target: Option<OutboundXdndTarget>,
+    accepted: bool,
+    needs_pointer_ungrab: bool,
+    phase: OutboundXdndPhase,
+    payload: Vec<u8>,
+    started_at: Instant,
 }
 
 #[derive(Debug)]
@@ -221,6 +251,9 @@ pub struct X11ClientState {
     pub(crate) common: LinuxCommon,
     pub(crate) clipboard: Clipboard,
     pub(crate) clipboard_item: Option<ClipboardItem>,
+    pub(crate) last_button_press_time: Option<xproto::Timestamp>,
+    pub(crate) last_pointer_device_id: Option<xinput::DeviceId>,
+    pub(crate) outbound_xdnd: Option<OutboundXdnd>,
     pub(crate) xdnd_state: Xdnd,
 }
 
@@ -255,6 +288,37 @@ impl X11ClientStatePtr {
             state.cursor_hidden_window = None;
         }
         state.cursor_styles.remove(&x_window);
+    }
+
+    pub fn start_file_drag(
+        &self,
+        source_window: xproto::Window,
+        paths: ExternalPaths,
+    ) -> anyhow::Result<FileDragSession> {
+        let Some(client) = self.get_client() else {
+            return Ok(FileDragSession::noop());
+        };
+        let mut state = client.0.borrow_mut();
+        let payload = encode_paths_as_uri_list(&paths)?;
+        let timestamp = state.last_button_press_time.unwrap_or(x11rb::CURRENT_TIME);
+
+        // Claim XdndSelection ownership so targets can request data via SelectionRequest.
+        state
+            .xcb_connection
+            .set_selection_owner(source_window, state.atoms.XdndSelection, timestamp)
+            .context("failed to set XdndSelection owner")?;
+
+        state.outbound_xdnd = Some(OutboundXdnd {
+            source_window,
+            target: None,
+            accepted: false,
+            needs_pointer_ungrab: true,
+            phase: OutboundXdndPhase::Negotiating,
+            payload,
+            started_at: Instant::now(),
+        });
+
+        Ok(FileDragSession::noop())
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
@@ -557,6 +621,9 @@ impl X11Client {
 
             clipboard,
             clipboard_item: None,
+            outbound_xdnd: None,
+            last_button_press_time: None,
+            last_pointer_device_id: None,
             xdnd_state: Xdnd::default(),
         }))))
     }
@@ -807,38 +874,51 @@ impl X11Client {
             }
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
-                let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
+                let [data0, data1, data2, data3, _] = event.data.as_data32();
                 let mut state = self.0.borrow_mut();
 
-                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
+                if data0 == state.atoms.WM_DELETE_WINDOW && window.should_close() {
                     // window "x" button clicked by user
                     // Rest of the close logic is handled in drop_window()
                     drop(state);
                     window.close();
                     state = self.0.borrow_mut();
-                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                } else if data0 == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
-                            lo: arg2,
-                            hi: arg3 as i32,
+                            lo: data2,
+                            hi: data3 as i32,
                         })
                 }
 
-                if event.type_ == state.atoms.XdndEnter {
-                    state.xdnd_state.other_window = atom;
-                    if (arg1 & 0x1) == 0x1 {
+                if event.type_ == state.atoms.XdndStatus {
+                    if let Some(outbound) = state.outbound_xdnd.as_mut() {
+                        if event.window == outbound.source_window {
+                            outbound.accepted = (data1 & 1) == 1;
+                        }
+                    }
+                } else if event.type_ == state.atoms.XdndFinished {
+                    finish_outbound_xdnd(&mut state);
+                } else if event.type_ == state.atoms.XdndEnter {
+                    let [source_window, flags, atom1, atom2, atom3] = event.data.as_data32();
+                    if inbound_xdnd_is_from_outbound_source(&state, source_window) {
+                        return Some(());
+                    }
+                    state.xdnd_state = Xdnd {
+                        other_window: source_window,
+                        ..Default::default()
+                    };
+                    if (flags & 0x1) == 0x1 {
                         state.xdnd_state.drag_type = xdnd_get_supported_atom(
                             &state.xcb_connection,
                             &state.atoms,
                             state.xdnd_state.other_window,
                         );
-                    } else {
-                        if let Some(atom) = [arg2, arg3, arg4]
-                            .into_iter()
-                            .find(|atom| xdnd_is_atom_supported(*atom, &state.atoms))
-                        {
-                            state.xdnd_state.drag_type = atom;
-                        }
+                    } else if let Some(atom) = [atom1, atom2, atom3]
+                        .into_iter()
+                        .find(|atom| xdnd_is_atom_supported(*atom, &state.atoms))
+                    {
+                        state.xdnd_state.drag_type = atom;
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
                     let position = state.xdnd_state.position;
@@ -848,6 +928,11 @@ impl X11Client {
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
                     self.0.borrow_mut().xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
+                    let [source_window, _, _, timestamp, action] = event.data.as_data32();
+                    if inbound_xdnd_is_from_outbound_source(&state, source_window) {
+                        return Some(());
+                    }
+                    state.xdnd_state.other_window = source_window;
                     if let Ok(pos) = get_reply(
                         || "Failed to query pointer position",
                         state.xcb_connection.query_pointer(event.window),
@@ -855,47 +940,77 @@ impl X11Client {
                         state.xdnd_state.position =
                             Point::new(px(pos.win_x as f32), px(pos.win_y as f32));
                     }
-                    if !state.xdnd_state.retrieved {
-                        check_reply(
+                    xdnd_send_status(
+                        &state.xcb_connection,
+                        &state.atoms,
+                        event.window,
+                        state.xdnd_state.other_window,
+                        action,
+                    );
+                    if !state.xdnd_state.retrieved && !state.xdnd_state.selection_requested {
+                        if check_reply(
                             || "Failed to convert selection for drag and drop",
                             state.xcb_connection.convert_selection(
                                 event.window,
                                 state.atoms.XdndSelection,
                                 state.xdnd_state.drag_type,
                                 state.atoms.XDND_DATA,
-                                arg3,
+                                timestamp,
                             ),
                         )
-                        .log_err();
+                        .log_err()
+                        .is_some()
+                        {
+                            state.xdnd_state.selection_requested = true;
+                        }
                     }
-                    xdnd_send_status(
-                        &state.xcb_connection,
-                        &state.atoms,
-                        event.window,
-                        state.xdnd_state.other_window,
-                        arg4,
-                    );
                     let position = state.xdnd_state.position;
                     drop(state);
                     window
                         .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
                 } else if event.type_ == state.atoms.XdndDrop {
-                    xdnd_send_finished(
-                        &state.xcb_connection,
-                        &state.atoms,
-                        event.window,
-                        state.xdnd_state.other_window,
-                    );
-                    let position = state.xdnd_state.position;
-                    drop(state);
-                    window
-                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
-                    self.0.borrow_mut().xdnd_state = Xdnd::default();
+                    let [source_window, _, timestamp, _, _] = event.data.as_data32();
+                    if inbound_xdnd_is_from_outbound_source(&state, source_window) {
+                        return Some(());
+                    }
+                    state.xdnd_state.other_window = source_window;
+                    state.xdnd_state.drop_pending = true;
+                    if state.xdnd_state.retrieved {
+                        let position = state.xdnd_state.position;
+                        drop(state);
+                        window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                            position,
+                        }));
+                        let mut state = self.0.borrow_mut();
+                        xdnd_send_finished(
+                            &state.xcb_connection,
+                            &state.atoms,
+                            event.window,
+                            source_window,
+                        );
+                        state.xdnd_state = Xdnd::default();
+                    } else if !state.xdnd_state.selection_requested {
+                        if check_reply(
+                            || "Failed to convert selection for drag and drop",
+                            state.xcb_connection.convert_selection(
+                                event.window,
+                                state.atoms.XdndSelection,
+                                state.xdnd_state.drag_type,
+                                state.atoms.XDND_DATA,
+                                timestamp,
+                            ),
+                        )
+                        .log_err()
+                        .is_some()
+                        {
+                            state.xdnd_state.selection_requested = true;
+                        }
+                    }
                 }
             }
             Event::SelectionNotify(event) => {
                 let window = self.get_window(event.requestor)?;
-                let state = self.0.borrow_mut();
+                let mut state = self.0.borrow_mut();
                 let reply = get_reply(
                     || "Failed to get XDND_DATA",
                     state.xcb_connection.get_property(
@@ -908,6 +1023,7 @@ impl X11Client {
                     ),
                 )
                 .log_err();
+                state.xdnd_state.selection_requested = false;
                 let Some(reply) = reply else {
                     return Some(());
                 };
@@ -923,13 +1039,38 @@ impl X11Client {
                             }
                         })
                         .collect();
-                    let input = PlatformInput::FileDrop(FileDropEvent::Entered {
-                        position: state.xdnd_state.position,
-                        paths: gpui::ExternalPaths(paths),
-                    });
+                    let position = state.xdnd_state.position;
+                    let source_window = state.xdnd_state.other_window;
+                    let drop_pending = state.xdnd_state.drop_pending;
                     drop(state);
-                    window.handle_input(input);
-                    self.0.borrow_mut().xdnd_state.retrieved = true;
+                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Entered {
+                        position,
+                        paths: gpui::ExternalPaths(paths),
+                    }));
+                    if drop_pending {
+                        window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
+                            position,
+                        }));
+                        let mut state = self.0.borrow_mut();
+                        xdnd_send_finished(
+                            &state.xcb_connection,
+                            &state.atoms,
+                            event.requestor,
+                            source_window,
+                        );
+                        state.xdnd_state = Xdnd::default();
+                    } else {
+                        self.0.borrow_mut().xdnd_state.retrieved = true;
+                    }
+                }
+            }
+            Event::SelectionRequest(event) => {
+                let state = self.0.borrow_mut();
+                if respond_to_outbound_xdnd_request(&state, &event)
+                    .log_err()
+                    .is_some()
+                {
+                    return Some(());
                 }
             }
             Event::ConfigureNotify(event) => {
@@ -1169,6 +1310,8 @@ impl X11Client {
                         state.last_click = Instant::now();
                         state.last_mouse_button = Some(button);
                         state.last_location = position;
+                        state.last_button_press_time = Some(event.time);
+                        state.last_pointer_device_id = Some(event.deviceid);
                         let current_count = state.current_count;
 
                         drop(state);
@@ -1207,6 +1350,17 @@ impl X11Client {
             Event::XinputButtonRelease(event) => {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
+
+                if state.outbound_xdnd.is_some() {
+                    if button_or_scroll_from_event_detail(event.detail).is_some_and(|button| {
+                        matches!(button, ButtonOrScroll::Button(MouseButton::Left))
+                    }) {
+                        handle_outbound_xdnd_pointer_release(&mut state, event.time);
+                    } else {
+                        release_outbound_xdnd_grab(&mut state);
+                    }
+                }
+
                 let modifiers = modifiers_from_xinput_info(event.mods);
                 state.modifiers = modifiers;
 
@@ -1267,6 +1421,28 @@ impl X11Client {
                 );
                 let modifiers = modifiers_from_xinput_info(event.mods);
                 state.modifiers = modifiers;
+
+                let left_button_pressed = event.button_mask[0] & 2 == 2;
+                if state.outbound_xdnd.is_some() {
+                    cancel_stale_outbound_xdnd(&mut state);
+                    if !left_button_pressed {
+                        finish_outbound_xdnd(&mut state);
+                    }
+                    if state.outbound_xdnd.as_ref().is_some_and(|outbound| {
+                        outbound.source_window == event.event
+                            && outbound.phase == OutboundXdndPhase::Negotiating
+                    }) {
+                        // root_x/root_y are Fp1616 (16.16 fixed-point).
+                        // Shift right by 16 to get the integer pixel coordinate.
+                        update_outbound_xdnd_position(
+                            &mut state,
+                            (event.root_x >> 16) as i16,
+                            (event.root_y >> 16) as i16,
+                            event.time,
+                        );
+                    }
+                }
+
                 drop(state);
 
                 if event.valuator_mask[0] & 3 != 0 {
@@ -1637,7 +1813,7 @@ impl LinuxClient for X11Client {
                 xproto::PropMode::REPLACE,
                 x_window,
                 state.atoms.XdndAware,
-                state.atoms.XA_ATOM,
+                xproto::AtomEnum::ATOM,
                 &[5],
             ),
         )
@@ -2355,6 +2531,517 @@ fn xdnd_send_status(
     )
     .log_err();
     xcb_connection.flush().log_err();
+}
+
+fn xdnd_send_enter(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    source: xproto::Window,
+    target: xproto::Window,
+) {
+    let message = ClientMessageEvent {
+        format: 32,
+        window: target,
+        type_: atoms.XdndEnter,
+        data: ClientMessageData::from([source, 5 << 24, atoms.TextUriList, 0, 0]),
+        sequence: 0,
+        response_type: xproto::CLIENT_MESSAGE_EVENT,
+    };
+    check_reply(
+        || "Failed to send XDnD enter event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
+    xcb_connection.flush().log_err();
+}
+
+fn xdnd_send_leave(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    source: xproto::Window,
+    target: xproto::Window,
+) {
+    let message = ClientMessageEvent {
+        format: 32,
+        window: target,
+        type_: atoms.XdndLeave,
+        data: ClientMessageData::from([source, 0, 0, 0, 0]),
+        sequence: 0,
+        response_type: xproto::CLIENT_MESSAGE_EVENT,
+    };
+    check_reply(
+        || "Failed to send XDnD leave event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
+    xcb_connection.flush().log_err();
+}
+
+fn xdnd_send_position(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    source: xproto::Window,
+    target: xproto::Window,
+    root_x: i16,
+    root_y: i16,
+    timestamp: xproto::Timestamp,
+) {
+    let packed = ((root_x as u32) << 16) | (root_y as u16 as u32);
+    let message = ClientMessageEvent {
+        format: 32,
+        window: target,
+        type_: atoms.XdndPosition,
+        data: ClientMessageData::from([source, 0, packed, timestamp, atoms.XdndActionCopy]),
+        sequence: 0,
+        response_type: xproto::CLIENT_MESSAGE_EVENT,
+    };
+    check_reply(
+        || "Failed to send XDnD position event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
+    xcb_connection.flush().log_err();
+}
+
+fn xdnd_send_drop(
+    xcb_connection: &XCBConnection,
+    atoms: &XcbAtoms,
+    source: xproto::Window,
+    target: xproto::Window,
+    timestamp: xproto::Timestamp,
+) {
+    let message = ClientMessageEvent {
+        format: 32,
+        window: target,
+        type_: atoms.XdndDrop,
+        data: ClientMessageData::from([source, 0, timestamp, 0, 0]),
+        sequence: 0,
+        response_type: xproto::CLIENT_MESSAGE_EVENT,
+    };
+    check_reply(
+        || "Failed to send XDnD drop event",
+        xcb_connection.send_event(false, target, EventMask::default(), message),
+    )
+    .log_err();
+    xcb_connection.flush().log_err();
+}
+
+fn update_outbound_xdnd_position(
+    state: &mut X11ClientState,
+    root_x: i16,
+    root_y: i16,
+    timestamp: xproto::Timestamp,
+) {
+    let Some(outbound) = state.outbound_xdnd.as_ref() else {
+        return;
+    };
+    if outbound.phase != OutboundXdndPhase::Negotiating {
+        return;
+    }
+    let source_window = outbound.source_window;
+    let previous_target = outbound.target;
+    let Some(window_ref) = state.windows.get(&source_window) else {
+        return;
+    };
+    let root_window = window_ref.window.state.borrow().x_root_window;
+
+    let target = find_xdnd_target(state, source_window, root_window);
+
+    if previous_target != target {
+        if let Some(old_target) = previous_target {
+            xdnd_send_leave(
+                &state.xcb_connection,
+                &state.atoms,
+                source_window,
+                old_target.send_to_window,
+            );
+        }
+        if let Some(new_target) = target {
+            xdnd_send_enter(
+                &state.xcb_connection,
+                &state.atoms,
+                source_window,
+                new_target.send_to_window,
+            );
+        }
+        if let Some(outbound) = state.outbound_xdnd.as_mut() {
+            outbound.target = target;
+            outbound.accepted = false;
+        }
+    }
+
+    if let Some(target) = state
+        .outbound_xdnd
+        .as_ref()
+        .and_then(|outbound| outbound.target)
+    {
+        xdnd_send_position(
+            &state.xcb_connection,
+            &state.atoms,
+            source_window,
+            target.send_to_window,
+            root_x,
+            root_y,
+            timestamp,
+        );
+    }
+}
+
+fn respond_to_outbound_xdnd_request(
+    state: &X11ClientState,
+    event: &xproto::SelectionRequestEvent,
+) -> anyhow::Result<bool> {
+    let Some(outbound) = state.outbound_xdnd.as_ref() else {
+        return Ok(false);
+    };
+    if event.selection != state.atoms.XdndSelection {
+        return Ok(false);
+    }
+
+    let property = if event.target == state.atoms.TARGETS {
+        // Xdnd requires listing TARGETS itself so the receiver can query
+        state
+            .xcb_connection
+            .change_property32(
+                xproto::PropMode::REPLACE,
+                event.requestor,
+                event.property,
+                xproto::AtomEnum::ATOM,
+                &[state.atoms.TARGETS, state.atoms.TextUriList],
+            )
+            .context("failed to write Xdnd TARGETS")?;
+        event.property
+    } else if event.target == state.atoms.TextUriList {
+        state
+            .xcb_connection
+            .change_property8(
+                xproto::PropMode::REPLACE,
+                event.requestor,
+                event.property,
+                event.target,
+                &outbound.payload,
+            )
+            .context("failed to write Xdnd outbound property")?;
+        event.property
+    } else {
+        AtomEnum::NONE.into()
+    };
+
+    let notify = xproto::SelectionNotifyEvent {
+        response_type: xproto::SELECTION_NOTIFY_EVENT,
+        sequence: 0,
+        time: event.time,
+        requestor: event.requestor,
+        selection: event.selection,
+        target: event.target,
+        property,
+    };
+    state
+        .xcb_connection
+        .send_event(false, event.requestor, EventMask::NO_EVENT, notify)
+        .context("failed to send Xdnd SelectionNotify")?;
+    state
+        .xcb_connection
+        .flush()
+        .context("failed to flush after Xdnd selection reply")?;
+    Ok(true)
+}
+
+fn finish_outbound_xdnd(state: &mut X11ClientState) {
+    release_outbound_xdnd_grab(state);
+    state.outbound_xdnd = None;
+}
+
+fn inbound_xdnd_is_from_outbound_source(
+    state: &X11ClientState,
+    source_window: xproto::Window,
+) -> bool {
+    state
+        .outbound_xdnd
+        .as_ref()
+        .is_some_and(|outbound| outbound.source_window == source_window)
+}
+
+fn release_outbound_xdnd_grab(state: &mut X11ClientState) {
+    let Some(source_window) = state
+        .outbound_xdnd
+        .as_ref()
+        .filter(|outbound| outbound.needs_pointer_ungrab)
+        .map(|outbound| outbound.source_window)
+    else {
+        return;
+    };
+
+    log::trace!("outbound XDND UngrabPointer source_window={source_window:#010x}");
+    state
+        .xcb_connection
+        .ungrab_pointer(x11rb::CURRENT_TIME)
+        .log_err();
+    if let Some(outbound) = state.outbound_xdnd.as_mut() {
+        outbound.needs_pointer_ungrab = false;
+    }
+}
+
+fn handle_outbound_xdnd_pointer_release(state: &mut X11ClientState, timestamp: xproto::Timestamp) {
+    let Some((source_window, phase, target, accepted)) =
+        state.outbound_xdnd.as_ref().map(|outbound| {
+            (
+                outbound.source_window,
+                outbound.phase,
+                outbound.target,
+                outbound.accepted,
+            )
+        })
+    else {
+        return;
+    };
+
+    release_outbound_xdnd_grab(state);
+
+    if phase != OutboundXdndPhase::Negotiating {
+        return;
+    }
+
+    if accepted {
+        if let Some(target) = target {
+            xdnd_send_drop(
+                &state.xcb_connection,
+                &state.atoms,
+                source_window,
+                target.send_to_window,
+                timestamp,
+            );
+            if let Some(outbound) = state.outbound_xdnd.as_mut() {
+                outbound.phase = OutboundXdndPhase::Transferring;
+            }
+        } else {
+            finish_outbound_xdnd(state);
+        }
+    } else {
+        if let Some(target) = target {
+            xdnd_send_leave(
+                &state.xcb_connection,
+                &state.atoms,
+                source_window,
+                target.send_to_window,
+            );
+        }
+        finish_outbound_xdnd(state);
+    }
+}
+
+fn cancel_stale_outbound_xdnd(state: &mut X11ClientState) {
+    if state.outbound_xdnd.as_ref().is_some_and(|outbound| {
+        outbound.phase == OutboundXdndPhase::Negotiating
+            && outbound.started_at.elapsed() > OUTBOUND_XDND_TIMEOUT
+    }) {
+        finish_outbound_xdnd(state);
+    }
+}
+
+fn first_property_atom(reply: &xproto::GetPropertyReply) -> Option<xproto::Atom> {
+    if reply.format != 32 || reply.value_len == 0 {
+        return None;
+    }
+    reply.value32().and_then(|mut values| values.next())
+}
+
+fn xdnd_aware_version(state: &X11ClientState, window: xproto::Window) -> Option<u32> {
+    let reply = get_reply(
+        || "Failed to query XdndAware",
+        state.xcb_connection.get_property(
+            false,
+            window,
+            state.atoms.XdndAware,
+            xproto::AtomEnum::ATOM,
+            0,
+            1,
+        ),
+    )
+    .ok()?;
+    let version = first_property_atom(&reply).unwrap_or(0);
+    log::trace!(
+        "outbound XDND XdndAware window={window:#010x} actual_type={} actual_format={} nitems={} bytes_after={} version={}",
+        reply.type_,
+        reply.format,
+        reply.value_len,
+        reply.bytes_after,
+        version,
+    );
+    (reply.type_ == u32::from(xproto::AtomEnum::ATOM)
+        && reply.format == 32
+        && reply.value_len >= 1
+        && version > 0)
+        .then_some(version)
+}
+
+fn xdnd_proxy_for_candidate(
+    state: &X11ClientState,
+    window: xproto::Window,
+) -> Option<xproto::Window> {
+    let reply = get_reply(
+        || "Failed to query XdndProxy",
+        state.xcb_connection.get_property(
+            false,
+            window,
+            state.atoms.XdndProxy,
+            xproto::AtomEnum::ATOM,
+            0,
+            1,
+        ),
+    )
+    .ok()?;
+    let proxy = first_property_atom(&reply).unwrap_or(0);
+    log::trace!(
+        "outbound XDND XdndProxy window={window:#010x} actual_type={} actual_format={} nitems={} bytes_after={} proxy={proxy:#010x}",
+        reply.type_,
+        reply.format,
+        reply.value_len,
+        reply.bytes_after,
+    );
+    if reply.type_ != u32::from(xproto::AtomEnum::ATOM)
+        || reply.format != 32
+        || reply.value_len == 0
+        || proxy == 0
+        || proxy == window
+    {
+        return None;
+    }
+
+    if let Ok(proxy_reply) = get_reply(
+        || "Failed to validate XdndProxy",
+        state.xcb_connection.get_property(
+            false,
+            proxy,
+            state.atoms.XdndProxy,
+            xproto::AtomEnum::ATOM,
+            0,
+            1,
+        ),
+    ) {
+        if let Some(self_proxy) = first_property_atom(&proxy_reply)
+            && self_proxy != proxy
+        {
+            return None;
+        }
+    }
+
+    Some(proxy)
+}
+
+fn window_belongs_to_client(state: &X11ClientState, window: xproto::Window) -> bool {
+    state.windows.contains_key(&window)
+}
+
+fn xdnd_target_for_candidate(
+    state: &X11ClientState,
+    source_window: xproto::Window,
+    candidate: xproto::Window,
+) -> Option<OutboundXdndTarget> {
+    log::trace!(
+        "outbound XDND source_window={source_window:#010x} candidate_target={candidate:#010x}"
+    );
+    if candidate == source_window || window_belongs_to_client(state, candidate) {
+        log::trace!(
+            "outbound XDND source_window={source_window:#010x} candidate_target={candidate:#010x} skipped=self"
+        );
+        return None;
+    }
+
+    if let Some(proxy) = xdnd_proxy_for_candidate(state, candidate) {
+        if proxy == source_window || window_belongs_to_client(state, proxy) {
+            log::trace!(
+                "outbound XDND source_window={source_window:#010x} candidate_target={proxy:#010x} skipped=self"
+            );
+            return None;
+        }
+        if xdnd_aware_version(state, proxy).is_some() {
+            return Some(OutboundXdndTarget {
+                logical_window: candidate,
+                send_to_window: proxy,
+            });
+        }
+    }
+
+    xdnd_aware_version(state, candidate).map(|_| OutboundXdndTarget {
+        logical_window: candidate,
+        send_to_window: candidate,
+    })
+}
+
+/// Find the XDND-aware target window under the pointer, respecting `XdndProxy`.
+///
+/// First descends via repeated `QueryPointer` calls to find the deepest window
+/// under the cursor. Then walks upward via `QueryTree` parent, checking each
+/// ancestor for `XdndAware`.
+fn find_xdnd_target(
+    state: &X11ClientState,
+    source_window: xproto::Window,
+    root_window: xproto::Window,
+) -> Option<OutboundXdndTarget> {
+    let pointer = get_reply(
+        || "Failed to query pointer for Xdnd target",
+        state.xcb_connection.query_pointer(root_window),
+    )
+    .ok()?;
+
+    let mut deepest = 0;
+    let mut current = pointer.child;
+    let mut visited_descend: SmallVec<[xproto::Window; 32]> = SmallVec::new();
+    for _ in 0..XDND_TARGET_DISCOVERY_LIMIT {
+        if current == 0 || current == root_window {
+            break;
+        }
+        if visited_descend.contains(&current) {
+            break;
+        }
+        visited_descend.push(current);
+        deepest = current;
+        let Ok(deeper) = get_reply(
+            || "Failed to query deeper pointer for Xdnd target",
+            state.xcb_connection.query_pointer(current),
+        ) else {
+            break;
+        };
+        let child = deeper.child;
+        if child == 0 || child == root_window || child == current {
+            break;
+        }
+        current = child;
+    }
+
+    let mut current = deepest;
+    let mut visited_ascend: SmallVec<[xproto::Window; 32]> = SmallVec::new();
+    for _ in 0..XDND_TARGET_DISCOVERY_LIMIT {
+        if current == 0 || current == root_window {
+            break;
+        }
+        if visited_ascend.contains(&current) {
+            break;
+        }
+        visited_ascend.push(current);
+        if let Some(target) = xdnd_target_for_candidate(state, source_window, current) {
+            log::trace!(
+                "outbound XDND source_window={source_window:#010x} logical_target={:#010x} send_to={:#010x}",
+                target.logical_window,
+                target.send_to_window,
+            );
+            return Some(target);
+        }
+
+        let Ok(tree) = get_reply(
+            || "Failed to query window tree",
+            state.xcb_connection.query_tree(current),
+        ) else {
+            break;
+        };
+        let parent = tree.parent;
+        if parent == 0 || parent == root_window || parent == current {
+            break;
+        }
+        current = parent;
+    }
+    None
 }
 
 /// Recomputes `pointer_device_states` by querying all pointer devices.

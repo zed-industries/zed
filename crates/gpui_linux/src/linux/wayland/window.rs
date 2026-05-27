@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
 };
 
+use anyhow::Result;
 use collections::{FxHashSet, HashMap};
 use futures::channel::oneshot::Receiver;
 
@@ -30,12 +31,12 @@ use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
 use crate::linux::{Globals, Output, WaylandClientStatePtr, get_window};
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, GpuSpecs, Modifiers, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
-    size,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, ExternalPaths, FileDragSession,
+    GpuSpecs, Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, Scene, Size, Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowControls, WindowDecorations, WindowKind, WindowParams,
+    layer_shell::LayerShellNotSupportedError, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -1444,6 +1445,11 @@ impl PlatformWindow for WaylandWindow {
         if let Some(toplevel) = state.surface_state.toplevel() {
             toplevel._move(&state.globals.seat, serial);
         }
+    }
+
+    fn start_file_drag(&self, paths: ExternalPaths) -> Result<FileDragSession> {
+        let state = self.borrow();
+        state.client.start_file_drag(self.0.clone(), paths)
     }
 
     fn start_window_resize(&self, edge: gpui::ResizeEdge) {

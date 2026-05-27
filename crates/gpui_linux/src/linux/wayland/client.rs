@@ -1,15 +1,19 @@
 use std::{
     cell::{RefCell, RefMut},
+    fs::File,
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    io::{ErrorKind, Write},
+    os::fd::{AsRawFd, BorrowedFd, OwnedFd},
     path::PathBuf,
     rc::{Rc, Weak},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
+use anyhow::Result;
 use ashpd::WindowIdentifier;
 use calloop::{
-    EventLoop, LoopHandle,
+    EventLoop, LoopHandle, PostAction,
     timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
@@ -78,12 +82,13 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxClient, LinuxCommon, LinuxKeyboardLayout, SCROLL_LINES,
-    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, open_uri_internal,
-    read_fd, reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, FILE_LIST_MIME_TYPE, LinuxClient, LinuxCommon, LinuxKeyboardLayout,
+    SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names, encode_paths_as_uri_list,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, modifiers_from_xkb, open_uri_internal, read_fd,
+    reveal_path_internal,
     wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
+        clipboard::{Clipboard, DataOffer, TEXT_MIME_TYPES},
         cursor::Cursor,
         serial::{SerialKind, SerialTracker},
         to_shape,
@@ -92,12 +97,12 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformDisplay, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    ScrollDelta, ScrollWheelEvent, SharedString, Size, TaskTiming, TouchPhase, WindowButtonLayout,
-    WindowParams, point, profiler, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DisplayId, ExternalPaths,
+    FileDragSession, FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput,
+    PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
+    Size, TaskTiming, TouchPhase, WindowButtonLayout, WindowParams, point, profiler, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -239,6 +244,7 @@ pub(crate) struct WaylandClientState {
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
     drag: DragState,
+    outbound_drag: Option<OutboundDrag>,
     click: ClickState,
     repeat: KeyRepeat,
     pub modifiers: Modifiers,
@@ -270,6 +276,11 @@ pub struct DragState {
     data_offer: Option<wl_data_offer::WlDataOffer>,
     window: Option<WaylandWindowStatePtr>,
     position: Point<Pixels>,
+}
+
+pub struct OutboundDrag {
+    source: wl_data_source::WlDataSource,
+    payload: Arc<[u8]>,
 }
 
 pub struct ClickState {
@@ -309,6 +320,59 @@ impl WaylandClientStatePtr {
 
     pub fn get_serial(&self, kind: SerialKind) -> u32 {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
+    }
+
+    pub fn start_file_drag(
+        &self,
+        window: WaylandWindowStatePtr,
+        paths: ExternalPaths,
+    ) -> Result<FileDragSession> {
+        let client = self.get_client();
+        let mut state = client.borrow_mut();
+        let (Some(data_device_manager), Some(data_device)) = (
+            state.globals.data_device_manager.clone(),
+            state.data_device.clone(),
+        ) else {
+            anyhow::bail!("wayland: cannot start file drag - missing data_device_manager or data_device globals");
+        };
+
+        let payload = encode_paths_as_uri_list(&paths)?;
+
+        let serial = state.serial_tracker.get(SerialKind::MousePress);
+        let source = data_device_manager.create_data_source(&state.globals.qh, ());
+        source.offer(FILE_LIST_MIME_TYPE.to_string());
+        source.set_actions(DndAction::Copy);
+        data_device.start_drag(Some(&source), &window.surface(), None, serial);
+        state.outbound_drag = Some(OutboundDrag {
+            source: source.clone(),
+            payload: payload.into(),
+        });
+        if state
+            .loop_handle
+            .insert_source(Timer::from_duration(Duration::from_secs(15)), {
+                let source = source.clone();
+                move |_, _, this| {
+                    let client = this.get_client();
+                    let mut state = client.borrow_mut();
+                    if state
+                        .outbound_drag
+                        .as_ref()
+                        .is_some_and(|drag| drag.source.id() == source.id())
+                    {
+                        log::warn!("wayland: cancelling stale outbound file drag");
+                        source.destroy();
+                        state.outbound_drag = None;
+                    }
+                    TimeoutAction::Drop
+                }
+            })
+            .log_err()
+            .is_none()
+        {
+            log::warn!("wayland: failed to register outbound drag timeout");
+        }
+
+        Ok(FileDragSession::noop())
     }
 
     pub fn set_pending_activation(&self, window: ObjectId) {
@@ -692,6 +756,7 @@ impl WaylandClient {
                 window: None,
                 position: Point::default(),
             },
+            outbound_drag: None,
             click: ClickState {
                 last_click: Instant::now(),
                 last_mouse_button: None,
@@ -2423,6 +2488,47 @@ impl Dispatch<wl_data_offer::WlDataOffer, ()> for WaylandClientStatePtr {
     }
 }
 
+fn send_drag_payload(
+    loop_handle: &LoopHandle<'static, WaylandClientStatePtr>,
+    fd: OwnedFd,
+    bytes: Arc<[u8]>,
+) {
+    let mut written = 0;
+    if loop_handle
+        .insert_source(
+            calloop::generic::Generic::new(
+                File::from(fd),
+                calloop::Interest::WRITE,
+                calloop::Mode::Level,
+            ),
+            move |_, file, _| {
+                // SAFETY: calloop dispatches each event source to a single
+                // callback at a time, so there are no concurrent mutable
+                // references to this file. The Generic was registered with
+                // Interest::WRITE in Mode::Level, ensuring exclusive access.
+                let file = unsafe { file.get_mut() };
+                loop {
+                    match file.write(&bytes[written..]) {
+                        Ok(n) if written + n == bytes.len() => break Ok(PostAction::Remove),
+                        Ok(n) => written += n,
+                        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                            break Ok(PostAction::Continue);
+                        }
+                        Err(err) => {
+                            log::warn!("wayland: failed to write outbound drag payload: {err}");
+                            break Ok(PostAction::Remove);
+                        }
+                    }
+                }
+            },
+        )
+        .log_err()
+        .is_none()
+    {
+        log::warn!("wayland: failed to register outbound drag data transfer");
+    }
+}
+
 impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
     fn event(
         this: &mut Self,
@@ -2433,13 +2539,32 @@ impl Dispatch<wl_data_source::WlDataSource, ()> for WaylandClientStatePtr {
         _: &QueueHandle<Self>,
     ) {
         let client = this.get_client();
-        let state = client.borrow_mut();
+        let mut state = client.borrow_mut();
 
         match event {
             wl_data_source::Event::Send { mime_type, fd } => {
-                state.clipboard.send(mime_type, fd);
+                if mime_type == FILE_LIST_MIME_TYPE
+                    && let Some(outbound_drag) = state
+                        .outbound_drag
+                        .as_ref()
+                        .filter(|drag| drag.source.id() == data_source.id())
+                {
+                    let payload = outbound_drag.payload.clone();
+                    let loop_handle = state.loop_handle.clone();
+                    drop(state);
+                    send_drag_payload(&loop_handle, fd, payload);
+                } else {
+                    state.clipboard.send(mime_type, fd);
+                }
             }
             wl_data_source::Event::Cancelled => {
+                if state
+                    .outbound_drag
+                    .as_ref()
+                    .is_some_and(|drag| drag.source.id() == data_source.id())
+                {
+                    state.outbound_drag = None;
+                }
                 data_source.destroy();
             }
             _ => {}

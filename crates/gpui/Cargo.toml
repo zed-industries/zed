@@ -250,3 +250,7 @@ path = "examples/list_example.rs"
 [[example]]
 name = "mouse_pressure"
 path = "examples/mouse_pressure.rs"
+
+[[example]]
+name = "file_drag_out"
+path = "examples/file_drag_out.rs"
