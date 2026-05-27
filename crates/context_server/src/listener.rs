@@ -103,6 +103,7 @@ impl McpServer {
         let registered_tool = RegisteredTool {
             tool: Tool {
                 name: T::NAME.into(),
+                title: None,
                 description,
                 input_schema: input_schema.into(),
                 output_schema: if TypeId::of::<T::Output>() == TypeId::of::<()>() {

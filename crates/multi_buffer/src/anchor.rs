@@ -232,6 +232,9 @@ impl ExcerptAnchor {
         let Some(excerpt) = cursor.item() else {
             return false;
         };
+        if excerpt.buffer_id != buffer_snapshot.remote_id() {
+            return false;
+        }
         let is_valid = self.text_anchor == excerpt.range.context.start
             || self.text_anchor == excerpt.range.context.end
             || self.text_anchor.is_valid(&buffer_snapshot);

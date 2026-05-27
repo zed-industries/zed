@@ -143,10 +143,7 @@ impl AgentTool for FetchTool {
     ) -> Task<Result<Self::Output, Self::Output>> {
         let http_client = self.http_client.clone();
         cx.spawn(async move |cx| {
-            let input: FetchToolInput = input
-                .recv()
-                .await
-                .map_err(|e| format!("Failed to receive tool input: {e}"))?;
+            let input: FetchToolInput = input.recv().await.map_err(|e| e.to_string())?;
 
             let authorize = cx.update(|cx| {
                 let context =

@@ -3,21 +3,22 @@ use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
-    DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, Priority, PromptButton,
-    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
-    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubpixelSprite,
-    SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
-    TaffyLayoutEngine, Task, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
+    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
+    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
+    transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1401,6 +1402,11 @@ impl Window {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
+                                if request_frame_options.force_render {
+                                    // Bypass cached view reuse so we don't replay stale
+                                    // atlas tile references after a GPU device recovery.
+                                    window.refresh();
+                                }
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
                                 arena_clear_needed.clear();
@@ -1457,10 +1463,6 @@ impl Window {
             move |active| {
                 handle
                     .update(&mut cx, |_, window, cx| {
-                        if !active {
-                            cx.platform.set_cursor_style(CursorStyle::Arrow);
-                        }
-
                         window.active.set(active);
                         window.modifiers = window.platform_window.modifiers();
                         window.capslock = window.platform_window.capslock();
@@ -2492,8 +2494,21 @@ impl Window {
         self.requested_autoscroll = None;
 
         // Restore the previously-used input handler.
+        // Place it back into a None slot (left by a previous .take()) so that
+        // cached paint_range indices in reuse_paint find the handler at the
+        // expected position.
         if let Some(input_handler) = self.platform_window.take_input_handler() {
-            self.rendered_frame.input_handlers.push(Some(input_handler));
+            if let Some(slot) = self
+                .rendered_frame
+                .input_handlers
+                .iter_mut()
+                .rev()
+                .find(|h| h.is_none())
+            {
+                *slot = Some(input_handler);
+            } else {
+                self.rendered_frame.input_handlers.push(Some(input_handler));
+            }
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
@@ -2502,9 +2517,18 @@ impl Window {
         self.next_frame.window_active = self.active.get();
 
         // Register requested input handler with the platform window.
-        if let Some(input_handler) = self.next_frame.input_handlers.pop() {
-            self.platform_window
-                .set_input_handler(input_handler.unwrap());
+        // Use .take() instead of .pop() to preserve Vec length, so that cached
+        // paint_range indices remain valid for reuse_paint on the next frame.
+        // Search backwards to find the last Some entry, since reuse_paint may
+        // have copied None slots from the previous frame. (Fixes #50456)
+        if let Some(input_handler) = self
+            .next_frame
+            .input_handlers
+            .iter_mut()
+            .rev()
+            .find_map(|h| h.take())
+        {
+            self.platform_window.set_input_handler(input_handler);
         }
 
         self.layout_engine.as_mut().unwrap().clear();
@@ -3425,10 +3449,12 @@ impl Window {
         result
     }
 
-    /// Paint one or more drop shadows into the scene for the next frame at the current z-index.
+    /// Paint the drop (non-inset) shadows from `shadows` into the scene at the current
+    /// z-index. Inset shadows are skipped; paint those with [`Self::paint_inset_shadows`]
+    /// after the element's background so they layer on top of the fill.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_shadows(
+    pub fn paint_drop_shadows(
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
@@ -3439,7 +3465,12 @@ impl Window {
         let scale_factor = self.scale_factor();
         let content_mask = self.snapped_content_mask();
         let opacity = self.element_opacity();
+        let element_bounds = self.cover_bounds(bounds);
+        let element_corner_radii = corner_radii.scale(scale_factor);
         for shadow in shadows {
+            if shadow.inset {
+                continue;
+            }
             let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
@@ -3448,6 +3479,55 @@ impl Window {
                 content_mask,
                 corner_radii: corner_radii.scale(scale_factor),
                 color: shadow.color.opacity(opacity),
+                element_bounds,
+                element_corner_radii,
+                inset: 0,
+                pad: 0,
+            });
+        }
+    }
+
+    /// Paint the inset shadows from `shadows` into the scene at the current z-index. Should
+    /// be called after the element's background so the shadow layers on top of the fill.
+    /// Drop shadows are skipped; paint those with [`Self::paint_drop_shadows`] before the background.
+    pub fn paint_inset_shadows(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        shadows: &[BoxShadow],
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let scale_factor = self.scale_factor();
+        let content_mask = self.snapped_content_mask();
+        let opacity = self.element_opacity();
+        let element_bounds = self.cover_bounds(bounds);
+        let element_corner_radii = corner_radii.scale(scale_factor);
+        for shadow in shadows {
+            if !shadow.inset {
+                continue;
+            }
+            let hole = (bounds + shadow.offset).dilate(-shadow.spread_radius);
+            // Clamp at zero so a large spread can't produce negative radii, which would
+            // break the SDF in the shader.
+            let zero = Pixels::ZERO;
+            let hole_corner_radii = Corners {
+                top_left: (corner_radii.top_left - shadow.spread_radius).max(zero),
+                top_right: (corner_radii.top_right - shadow.spread_radius).max(zero),
+                bottom_right: (corner_radii.bottom_right - shadow.spread_radius).max(zero),
+                bottom_left: (corner_radii.bottom_left - shadow.spread_radius).max(zero),
+            };
+            self.next_frame.scene.insert_primitive(Shadow {
+                order: 0,
+                blur_radius: shadow.blur_radius.scale(scale_factor),
+                bounds: self.cover_bounds(hole),
+                content_mask,
+                corner_radii: hole_corner_radii.scale(scale_factor),
+                color: shadow.color.opacity(opacity),
+                element_bounds,
+                element_corner_radii,
+                inset: 1,
+                pad: 0,
             });
         }
     }
@@ -4473,6 +4553,14 @@ impl Window {
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.pending_modifier.saw_keystroke = true;
             keystroke = Some(key_down_event.keystroke.clone());
+            if key_down_event.keystroke.key_char.is_some()
+                && matches!(
+                    cx.cursor_hide_mode,
+                    CursorHideMode::OnTyping | CursorHideMode::OnTypingAndAction
+                )
+            {
+                cx.platform.hide_cursor_until_mouse_moves();
+            }
         }
 
         let Some(keystroke) = keystroke else {
@@ -4734,6 +4822,22 @@ impl Window {
     }
 
     fn dispatch_action_on_node(
+        &mut self,
+        node_id: DispatchNodeId,
+        action: &dyn Action,
+        cx: &mut App,
+    ) {
+        self.dispatch_action_on_node_inner(node_id, action, cx);
+
+        if !cx.propagate_event
+            && cx.cursor_hide_mode == CursorHideMode::OnTypingAndAction
+            && self.last_input_was_keyboard()
+        {
+            cx.platform.hide_cursor_until_mouse_moves();
+        }
+    }
+
+    fn dispatch_action_on_node_inner(
         &mut self,
         node_id: DispatchNodeId,
         action: &dyn Action,
@@ -5738,7 +5842,7 @@ impl From<Arc<std::path::Path>> for ElementId {
 
 impl From<&'static str> for ElementId {
     fn from(name: &'static str) -> Self {
-        ElementId::Name(name.into())
+        ElementId::Name(SharedString::new_static(name))
     }
 }
 
@@ -5750,13 +5854,13 @@ impl<'a> From<&'a FocusHandle> for ElementId {
 
 impl From<(&'static str, EntityId)> for ElementId {
     fn from((name, id): (&'static str, EntityId)) -> Self {
-        ElementId::NamedInteger(name.into(), id.as_u64())
+        ElementId::NamedInteger(SharedString::new_static(name), id.as_u64())
     }
 }
 
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
-        ElementId::NamedInteger(name.into(), id as u64)
+        ElementId::NamedInteger(SharedString::new_static(name), id as u64)
     }
 }
 
@@ -5768,7 +5872,7 @@ impl From<(SharedString, usize)> for ElementId {
 
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
-        ElementId::NamedInteger(name.into(), id)
+        ElementId::NamedInteger(SharedString::new_static(name), id)
     }
 }
 
@@ -5780,7 +5884,7 @@ impl From<Uuid> for ElementId {
 
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
-        ElementId::NamedInteger(name.into(), id.into())
+        ElementId::NamedInteger(SharedString::new_static(name), u64::from(id))
     }
 }
 

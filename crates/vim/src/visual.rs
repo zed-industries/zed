@@ -897,6 +897,9 @@ impl Vim {
             }
         });
         if !match_exists {
+            self.update_editor(cx, |_, editor, _| {
+                editor.set_collapse_matches(true);
+            });
             self.clear_operator(window, cx);
             self.stop_replaying(cx);
             return;

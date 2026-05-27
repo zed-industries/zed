@@ -201,6 +201,10 @@ pub enum ContextServerSettings {
         headers: HashMap<String, String>,
         /// Timeout for tool calls in milliseconds.
         timeout: Option<u64>,
+        /// Pre-registered OAuth client credentials for authorization servers that
+        /// require out-of-band client registration.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<OAuthClientSettings>,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -243,11 +247,16 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
                 url,
                 headers,
                 timeout,
+                oauth,
             } => ContextServerSettings::Http {
                 enabled,
                 url,
                 headers,
                 timeout,
+                oauth: oauth.map(|o| OAuthClientSettings {
+                    client_id: o.client_id,
+                    client_secret: o.client_secret,
+                }),
             },
         }
     }
@@ -278,14 +287,33 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
                 url,
                 headers,
                 timeout,
+                oauth,
             } => settings::ContextServerSettingsContent::Http {
                 enabled,
                 url,
                 headers,
                 timeout,
+                oauth: oauth.map(|o| settings::OAuthClientSettings {
+                    client_id: o.client_id,
+                    client_secret: o.client_secret,
+                }),
             },
         }
     }
+}
+
+/// Pre-registered OAuth client credentials for MCP servers that don't support
+/// Dynamic Client Registration.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+pub struct OAuthClientSettings {
+    /// The OAuth client ID obtained from out-of-band registration with the
+    /// authorization server.
+    pub client_id: String,
+    /// The OAuth client secret, if this is a confidential client. For security,
+    /// prefer providing this interactively; we will prompt and store it in
+    /// the system keychain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
 }
 
 impl ContextServerSettings {
@@ -455,6 +483,10 @@ pub struct GitSettings {
     ///
     /// Default: file_name_first
     pub path_style: GitPathStyle,
+    /// Whether to show the stage and restore buttons on diff hunks.
+    ///
+    /// Default: true
+    pub show_stage_restore_buttons: bool,
     /// Directory where git worktrees are created, relative to the repository
     /// working directory. When the resolved directory is outside the project
     /// root, the project's directory name is automatically appended so that
@@ -651,6 +683,7 @@ impl Settings for ProjectSettings {
             },
             hunk_style: git.hunk_style.unwrap(),
             path_style: git.path_style.unwrap().into(),
+            show_stage_restore_buttons: git.show_stage_restore_buttons.unwrap_or(true),
             worktree_directory: git
                 .worktree_directory
                 .clone()

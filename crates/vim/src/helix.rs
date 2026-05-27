@@ -7,11 +7,11 @@ mod surround;
 
 use editor::display_map::{DisplayRow, DisplaySnapshot};
 use editor::{
-    DisplayPoint, Editor, EditorSettings, HideMouseCursorOrigin, MultiBufferOffset,
-    NavigationOverlayLabel, NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
+    DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
+    NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
 };
 use gpui::actions;
-use gpui::{App, Context, Font, Hsla, Pixels, Window, WindowTextSystem};
+use gpui::{App, Context, Font, Hsla, Pixels, TaskExt, Window, WindowTextSystem};
 use language::{CharClassifier, CharKind, Point, Selection};
 use multi_buffer::MultiBufferSnapshot;
 use search::{BufferSearchBar, SearchOptions};
@@ -807,7 +807,6 @@ impl Vim {
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.update_editor(cx, |_, editor, cx| {
-            editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(&display_map);
             let max_point = display_map.buffer_snapshot().max_point();
@@ -984,10 +983,17 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let behaviour = if self.mode.is_visual() {
-            HelixJumpBehaviour::Extend
-        } else {
-            HelixJumpBehaviour::Move
+        let behaviour = match self.mode {
+            // Vim normal mode treats jump-to-word as a cursor motion, while Helix
+            // normal mode treats the cursor as a single-character selection.
+            Mode::Normal => HelixJumpBehaviour::MoveToWordStart,
+            // Vim visual mode extends like a motion, so the cursor stops at the
+            // same word boundary as normal mode instead of selecting the word.
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+                HelixJumpBehaviour::ExtendToWordStart
+            }
+            Mode::HelixSelect => HelixJumpBehaviour::Extend,
+            _ => HelixJumpBehaviour::Move,
         };
         self.start_helix_jump(behaviour, window, cx);
     }
@@ -998,8 +1004,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_visual = self.mode.is_visual();
-        let Some(data) = self.collect_helix_jump_data(is_visual, window, cx) else {
+        let allow_targets_in_selection = self.mode.has_selection();
+        let Some(data) = self.collect_helix_jump_data(allow_targets_in_selection, window, cx)
+        else {
             return;
         };
 
@@ -1025,7 +1032,7 @@ impl Vim {
 
     fn collect_helix_jump_data(
         &mut self,
-        is_visual: bool,
+        allow_targets_in_selection: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<HelixJumpUiData> {
@@ -1038,7 +1045,11 @@ impl Vim {
             let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
-            let skip_data = Self::selection_skip_offsets(buffer_snapshot, &selections, is_visual);
+            let skip_data = Self::selection_skip_offsets(
+                buffer_snapshot,
+                &selections,
+                allow_targets_in_selection,
+            );
 
             // Get the primary cursor position for alternating forward/backward labeling
             let cursor_offset = selections
@@ -1248,7 +1259,7 @@ impl Vim {
     fn selection_skip_offsets(
         buffer: &MultiBufferSnapshot,
         selections: &[Selection<Point>],
-        is_visual: bool,
+        allow_targets_in_selection: bool,
     ) -> HelixJumpSkipData {
         let mut skip_points = Vec::with_capacity(selections.len());
         let mut skip_ranges = Vec::new();
@@ -1257,8 +1268,7 @@ impl Vim {
             let head_offset = buffer.point_to_offset(selection.head());
             skip_points.push(head_offset);
 
-            // In visual mode, don't skip ranges so we can shrink the selection
-            if !is_visual && selection.start != selection.end {
+            if !allow_targets_in_selection && selection.start != selection.end {
                 let mut start = buffer.point_to_offset(selection.start);
                 let mut end = buffer.point_to_offset(selection.end);
                 if start > end {
@@ -1710,7 +1720,7 @@ mod test {
     use editor::{HighlightKey, MultiBufferOffset};
     use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
-    use language::Point;
+    use language::{CursorShape, Point};
     use project::FakeFs;
     use search::{ProjectSearchView, project_search};
     use serde_json::json;
@@ -1719,7 +1729,7 @@ mod test {
     use util::path;
     use workspace::{DeploySearch, MultiWorkspace};
 
-    use super::HELIX_JUMP_LABEL_LIMIT;
+    use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
         HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
         state::{Mode, Operator},
@@ -1773,7 +1783,11 @@ mod test {
     }
 
     fn jump_to_word(cx: &mut VimTestContext, target_word: &str) {
-        cx.simulate_keystrokes("g w");
+        jump_to_word_with_keystrokes(cx, "g w", target_word);
+    }
+
+    fn jump_to_word_with_keystrokes(cx: &mut VimTestContext, keystrokes: &str, target_word: &str) {
+        cx.simulate_keystrokes(keystrokes);
 
         let label = helix_jump_label_for_word(cx, target_word);
 
@@ -1781,6 +1795,16 @@ mod test {
         let first = chars.next().expect("jump labels are two characters long");
         let second = chars.next().expect("jump labels are two characters long");
         cx.simulate_keystrokes(&format!("{first} {second}"));
+    }
+
+    fn bind_vim_jump_to_word(cx: &mut VimTestContext, keystrokes: &'static str) {
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                keystrokes,
+                HelixJumpToWord,
+                Some("vim_mode == normal || vim_mode == visual"),
+            )])
+        });
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -2458,6 +2482,12 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+
+        cx.set_state("«aaˇ»", Mode::HelixSelect);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxˇ»", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -2961,6 +2991,61 @@ mod test {
         cx.assert_state("«ˇone» two three", Mode::HelixSelect);
     }
 
+    // Regression test for ZED-758: helix motions called
+    // `Editor::text_layout_details` on an editor whose `style` had never
+    // been set, panicking on `unwrap()`.
+    #[gpui::test]
+    async fn test_helix_motion_on_unrendered_editor(cx: &mut gpui::TestAppContext) {
+        use editor::{Editor, EditorMode, SelectionEffects};
+        use multi_buffer::{MultiBuffer, MultiBufferOffset};
+
+        VimTestContext::init(cx);
+        cx.update(|cx| {
+            VimTestContext::init_keybindings(true, cx);
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.vim_mode = Some(true);
+                    s.helix_mode = Some(true);
+                });
+            });
+        });
+
+        let cx = cx.add_empty_window();
+
+        let editor = cx.update(|window, cx| {
+            use gpui::AppContext as _;
+            let buffer = MultiBuffer::build_simple("one two three", cx);
+            cx.new(|cx| {
+                let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([MultiBufferOffset(4)..MultiBufferOffset(4)])
+                });
+                editor
+            })
+        });
+
+        let vim = editor
+            .read_with(cx, |editor, _| editor.addon::<VimAddon>().cloned())
+            .expect("VimAddon should be auto-attached to new editors when vim mode is enabled");
+
+        cx.update(|window, cx| {
+            vim.entity.update(cx, |vim, cx| {
+                vim.switch_mode(Mode::HelixNormal, true, window, cx);
+                vim.helix_move_and_collapse(crate::motion::Motion::Left, None, window, cx);
+            });
+        });
+
+        let cursor_offset = cx.update(|_, cx| {
+            editor.update(cx, |editor, cx| {
+                editor
+                    .selections
+                    .newest::<MultiBufferOffset>(&editor.display_snapshot(cx))
+                    .head()
+            })
+        });
+        assert_eq!(cursor_offset, MultiBufferOffset(3));
+    }
+
     #[gpui::test]
     async fn test_helix_select_regex(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
@@ -3411,6 +3496,83 @@ mod test {
         jump_to_word(&mut cx, "three");
 
         cx.assert_state("one two «threeˇ»", Mode::HelixNormal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_helix_jump_includes_line_selection_targets(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+        cx.set_state("alpha beta\nˇfoo bar baz\nqux quux", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("x");
+        jump_to_word(&mut cx, "bar");
+
+        cx.assert_state("alpha beta\nfoo «barˇ» baz\nqux quux", Mode::HelixNormal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_moves_to_target_word_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "two");
+
+        cx.assert_state("one ˇtwo three", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_jump_keeps_normal_cursor_shape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.vim.get_or_insert_default().cursor_shape =
+                        Some(settings::CursorShapeSettings {
+                            normal: Some(settings::CursorShape::Bar),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("g z");
+
+        assert!(
+            matches!(cx.active_operator(), Some(Operator::HelixJump { .. })),
+            "expected HelixJump operator to be active"
+        );
+        cx.update_editor(|editor, _, _| {
+            assert_eq!(editor.cursor_shape(), CursorShape::Bar);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("one «twoˇ» three four", Mode::Visual);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "three");
+
+        cx.assert_state("one «two tˇ»hree four", Mode::Visual);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
+    async fn test_vim_visual_jump_extends_selection_backward(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "g z");
+        cx.set_state("one two «threeˇ» four", Mode::Visual);
+
+        jump_to_word_with_keystrokes(&mut cx, "g z", "one");
+
+        cx.assert_state("«ˇone two three» four", Mode::Visual);
         assert_eq!(cx.active_operator(), None);
     }
 

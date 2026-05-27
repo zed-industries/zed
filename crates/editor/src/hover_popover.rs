@@ -1,6 +1,6 @@
 use crate::{
-    ActiveDiagnostic, Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings,
-    EditorSnapshot, GlobalDiagnosticRenderer, HighlightKey, Hover,
+    Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
+    GlobalDiagnosticRenderer, HighlightKey, Hover,
     display_map::{InlayOffset, ToDisplayPoint, is_invisible},
     editor_settings::EditorSettingsScrollbarProxy,
     hover_links::{InlayHighlight, RangeInEditor},
@@ -11,8 +11,8 @@ use anyhow::Context as _;
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
-    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TextStyleRefinement,
-    Window, canvas, div, px,
+    StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
+    TextStyleRefinement, Window, canvas, div, px,
 };
 use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
@@ -319,12 +319,8 @@ fn show_hover(
     }
 
     let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay.0;
-    let all_diagnostics_active = editor.active_diagnostics == ActiveDiagnostic::All;
-    let active_group_id = if let ActiveDiagnostic::Group(group) = &editor.active_diagnostics {
-        Some(group.group_id)
-    } else {
-        None
-    };
+    let all_diagnostics_active = editor.all_diagnostics_active();
+    let active_group_id = editor.active_diagnostic_group_id();
 
     let renderer = GlobalDiagnosticRenderer::global(cx);
     let task = cx.spawn_in(window, async move |this, cx| {
@@ -514,6 +510,27 @@ fn show_hover(
                 })
             }
 
+            let doc_link_task = this
+                .update(cx, |editor, cx| {
+                    editor.document_links_at(buffer.clone(), buffer_position, cx)
+                })
+                .ok()
+                .flatten();
+            let doc_link_tooltips = match doc_link_task {
+                Some(task) => task
+                    .await
+                    .into_iter()
+                    .filter_map(|(_, link)| {
+                        let multi_buffer_range = snapshot
+                            .buffer_snapshot()
+                            .buffer_anchor_range_to_anchor_range(link.range.clone())?;
+                        let tooltip = link.tooltip?;
+                        Some((multi_buffer_range, tooltip))
+                    })
+                    .collect::<Vec<_>>(),
+                None => Vec::new(),
+            };
+
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
                 let range = hover_result
@@ -547,6 +564,32 @@ fn show_hover(
                     .flatten();
                 info_popovers.push(InfoPopover {
                     symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                    last_bounds: Rc::new(Cell::new(None)),
+                    _subscription: subscription,
+                });
+            }
+
+            for (multi_buffer_range, tooltip) in doc_link_tooltips {
+                let blocks = vec![HoverBlock {
+                    text: tooltip.to_string(),
+                    kind: HoverBlockKind::Markdown,
+                }];
+                let parsed_content = parse_blocks(&blocks, language_registry.as_ref(), None, cx);
+                let scroll_handle = ScrollHandle::new();
+                let subscription = this
+                    .update(cx, |_, cx| {
+                        parsed_content.as_ref().map(|parsed_content| {
+                            cx.observe(parsed_content, |_, _, cx| cx.notify())
+                        })
+                    })
+                    .ok()
+                    .flatten();
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(multi_buffer_range),
                     parsed_content,
                     scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
@@ -1047,6 +1090,7 @@ impl InfoPopover {
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button_visibility: CopyButtonVisibility::Hidden,
+                                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url)
@@ -1161,6 +1205,7 @@ impl DiagnosticPopover {
                                 )
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button_visibility: CopyButtonVisibility::Hidden,
+                                    wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                     border: false,
                                 })
                                 .on_url_click(

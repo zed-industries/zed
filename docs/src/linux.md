@@ -53,7 +53,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed) (WARNING: [Sandboxing causes problems](https://github.com/flathub/dev.zed.Zed/pull/275))
+- Flathub: [`dev.zed.Zed`](https://flathub.org/apps/dev.zed.Zed)
 
 See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 
@@ -205,7 +205,7 @@ Using [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser).
 
 If Vulkan is configured correctly, and Zed is still not working for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
-When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the `zed: copy system specs into clipboard` command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
+When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the {#action zed::CopySystemSpecsIntoClipboard} command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
 
 Passing the `--system-specs` flag to Zed like
 

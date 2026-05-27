@@ -5,8 +5,7 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
-    App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, WeakEntity,
-    prelude::*,
+    App, Context, Entity, EntityId, Global, SharedString, Subscription, Task, TaskExt, prelude::*,
 };
 use jupyter_websocket_client::RemoteServer;
 use language::{Language, LanguageName};

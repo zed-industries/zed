@@ -868,6 +868,51 @@ mod tests {
     }
 
     #[test]
+    fn parses_html_table_th_defaults_to_center() {
+        let html = "<table><thead><tr><th>H1</th><th>H2</th></tr></thead><tbody><tr><td>a</td><td>b</td></tr></tbody></table>";
+        let parsed = parse_html_block(html, 0..html.len()).unwrap();
+
+        let ParsedHtmlElement::Table(table) = &parsed.children[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header.len(), 1);
+        for column in &table.header[0].columns {
+            assert!(column.is_header);
+            assert_eq!(column.alignment, Alignment::Center);
+        }
+
+        for column in &table.body[0].columns {
+            assert!(!column.is_header);
+            assert_eq!(column.alignment, Alignment::None);
+        }
+    }
+
+    #[test]
+    fn parses_html_table_explicit_align_attribute_preserved() {
+        let html = "<table>\
+            <thead><tr>\
+                <th align=\"right\">H1</th>\
+                <th align=\"left\">H2</th>\
+            </tr></thead>\
+            <tbody><tr>\
+                <td align=\"center\">a</td>\
+                <td align=\"right\">b</td>\
+            </tr></tbody>\
+        </table>";
+        let parsed = parse_html_block(html, 0..html.len()).unwrap();
+
+        let ParsedHtmlElement::Table(table) = &parsed.children[0] else {
+            panic!("expected table");
+        };
+
+        assert_eq!(table.header[0].columns[0].alignment, Alignment::Right);
+        assert_eq!(table.header[0].columns[1].alignment, Alignment::Left);
+        assert_eq!(table.body[0].columns[0].alignment, Alignment::Center);
+        assert_eq!(table.body[0].columns[1].alignment, Alignment::Right);
+    }
+
+    #[test]
     fn parses_html_list_as_explicit_list_node() {
         let parsed = parse_html_block(
             "<ul><li>parent<ul><li>child</li></ul></li><li>sibling</li></ul>",
