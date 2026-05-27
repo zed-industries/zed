@@ -9524,6 +9524,7 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
         };
 
         let thread_store = cx.update(|cx| ThreadStore::global(cx));

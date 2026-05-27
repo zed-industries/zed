@@ -2664,8 +2664,26 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         output_byte_limit: Option<u64>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
+        // Use a per-thread temp directory for all terminal commands, even when
+        // sandboxing is disabled, so the model can't infer sandbox state from
+        // `$TMPDIR` changing between conversations.
+        let extra_env = match self
+            .thread
+            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
+        {
+            Ok(Ok(temp_dir)) => {
+                let temp_dir = temp_dir.to_string_lossy().into_owned();
+                vec![
+                    acp::EnvVariable::new("TMPDIR", &temp_dir),
+                    acp::EnvVariable::new("TMP", &temp_dir),
+                    acp::EnvVariable::new("TEMP", &temp_dir),
+                ]
+            }
+            Ok(Err(error)) => return Task::ready(Err(error)),
+            Err(error) => return Task::ready(Err(error)),
+        };
         let task = self.acp_thread.update(cx, |thread, cx| {
-            thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, cx)
+            thread.create_terminal(command, vec![], extra_env, cwd, output_byte_limit, cx)
         });
 
         let acp_thread = self.acp_thread.clone();

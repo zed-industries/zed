@@ -58,6 +58,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+tempfile.workspace = true
 shell_command_parser.workspace = true
 smallvec.workspace = true
 sqlez.workspace = true
