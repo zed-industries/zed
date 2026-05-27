@@ -121,15 +121,7 @@ To see which files specifically have been edited, expand the accordion bar that 
 You can accept or reject each individual change hunk, or the whole set of changes made by the agent.
 
 Edit diffs can also appear inline in individual files with the same
-keep/reject hunk controls as the multi-buffer review pane. This temporarily overrides the buffer's git diff while review is active. Enable it by setting `agent.single_file_review` to `true` in your settings:
-
-```json
-{
-  "agent": {
-    "single_file_review": true
-  }
-}
-```
+keep/reject hunk controls as the multi-buffer review pane. This temporarily overrides the buffer's git diff while review is active. Enable it by setting `agent.single_file_review` to `true` in your settings.
 
 ## Terminal Threads {#terminal-threads}
 
