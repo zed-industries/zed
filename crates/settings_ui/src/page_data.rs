@@ -14,7 +14,7 @@ use crate::{
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
         open_audio_test_window, render_edit_prediction_setup_page,
-        render_llm_providers_page, render_skills_setup_page,
+        render_llm_providers_page, render_mcp_servers_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -7511,6 +7511,15 @@ fn ai_page(cx: &App) -> SettingsPage {
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some("View, add, configure, and remove Model Context Protocol servers.".into()),
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
             }),
         ];
 
