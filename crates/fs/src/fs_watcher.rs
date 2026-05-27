@@ -488,7 +488,7 @@ pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
     callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
-    path: Arc<std::path::Path>,
+    watch_path: Arc<std::path::Path>,
     mode: WatcherMode,
 }
 
@@ -521,16 +521,16 @@ impl WatcherState {
     ) -> Option<(Arc<std::path::Path>, WatcherMode)> {
         let registration_state = self.watchers.remove(&id)?;
         let path_registrations = self.path_registrations(registration_state.mode);
-        let count = path_registrations.get_mut(&registration_state.path)?;
+        let count = path_registrations.get_mut(&registration_state.watch_path)?;
         count.count -= 1;
         if count.count != 0 {
             return None;
         }
 
         let was_actually_watched = count.has_os_watcher;
-        path_registrations.remove(&registration_state.path);
+        path_registrations.remove(&registration_state.watch_path);
 
-        was_actually_watched.then_some((registration_state.path, registration_state.mode))
+        was_actually_watched.then_some((registration_state.watch_path, registration_state.mode))
     }
 }
 
@@ -566,14 +566,15 @@ impl GlobalWatcher {
         mode: WatcherMode,
         cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<WatcherRegistrationId> {
+        let watch_path = native_recursive_watch_path(&path, mode);
         let mut state = self.state.lock();
         let registrations_for_mode = state.path_registrations(mode);
         let path_already_covered =
-            path_already_covered(path.as_ref(), registrations_for_mode, mode);
+            path_already_covered(watch_path.as_ref(), registrations_for_mode, mode);
 
-        if !path_already_covered && !registrations_for_mode.contains_key(&path) {
+        if !path_already_covered && !registrations_for_mode.contains_key(&watch_path) {
             drop(state);
-            self.watch(&path, mode)?;
+            self.watch(&watch_path, mode)?;
             state = self.state.lock();
         }
 
@@ -582,13 +583,13 @@ impl GlobalWatcher {
 
         let registration_state = WatcherRegistrationState {
             callback: Arc::new(cb),
-            path: path.clone(),
+            watch_path: watch_path.clone(),
             mode,
         };
         state.watchers.insert(id, registration_state);
         state
             .path_registrations(mode)
-            .entry(path)
+            .entry(watch_path)
             .and_modify(|registration| registration.count += 1)
             .or_insert(PathRegistrationState {
                 count: 1,
@@ -686,6 +687,20 @@ fn path_already_covered(
             .ancestors()
             .skip(1)
             .any(|ancestor| path_registrations.contains_key(ancestor))
+}
+
+fn native_recursive_watch_path(path: &Arc<Path>, mode: WatcherMode) -> Arc<Path> {
+    if mode != WatcherMode::Native || !cfg!(any(target_os = "windows", target_os = "macos")) {
+        return path.clone();
+    }
+
+    if std::fs::symlink_metadata(path.as_ref()).is_ok_and(|metadata| metadata.is_file())
+        && let Some(parent) = path.parent()
+    {
+        return Arc::from(parent);
+    }
+
+    path.clone()
 }
 
 static POLL_INTERVAL: LazyLock<Duration> = LazyLock::new(|| {
@@ -814,7 +829,7 @@ mod tests {
         }
     }
 
-    fn test_watcher(poll_watcher: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
+    fn test_watcher(backend: Arc<Mutex<FakeWatchBackend>>) -> GlobalWatcher {
         GlobalWatcher {
             state: Mutex::new(WatcherState {
                 watchers: Default::default(),
@@ -822,8 +837,8 @@ mod tests {
                 poll_path_registrations: Default::default(),
                 last_registration: Default::default(),
             }),
-            native_watcher: Mutex::new(None),
-            poll_watcher: Mutex::new(Some(Box::new(SharedFakeWatchBackend(poll_watcher)))),
+            native_watcher: Mutex::new(Some(Box::new(SharedFakeWatchBackend(backend.clone())))),
+            poll_watcher: Mutex::new(Some(Box::new(SharedFakeWatchBackend(backend)))),
         }
     }
 
@@ -855,6 +870,69 @@ mod tests {
         let backend = backend.lock();
         assert_eq!(backend.watch_calls, &[parent.to_path_buf()]);
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
+    }
+
+    #[test]
+    fn native_file_registrations_use_parent_directory_on_recursive_platforms() {
+        let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+        let file = temp_dir.path().join("file.csproj");
+        std::fs::write(&file, "<Project />").expect("write test project file");
+
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher(backend.clone());
+        let file = Arc::<Path>::from(file.as_path());
+        let expected_watch_path = if cfg!(any(target_os = "windows", target_os = "macos")) {
+            temp_dir.path().to_path_buf()
+        } else {
+            file.to_path_buf()
+        };
+
+        let registration = watcher
+            .add(file.clone(), WatcherMode::Native, |_| {})
+            .expect("add file watch");
+        watcher.remove(registration);
+
+        let backend = backend.lock();
+        assert_eq!(backend.watch_calls, &[expected_watch_path.clone()]);
+        assert_eq!(backend.unwatch_calls, &[expected_watch_path]);
+    }
+
+    #[test]
+    fn native_sibling_file_registrations_share_parent_directory_watcher() {
+        let temp_dir = tempfile::TempDir::new().expect("create temp dir");
+        let first_file = temp_dir.path().join("first.csproj");
+        let second_file = temp_dir.path().join("second.csproj");
+        std::fs::write(&first_file, "<Project />").expect("write first test project file");
+        std::fs::write(&second_file, "<Project />").expect("write second test project file");
+
+        let backend = Arc::new(Mutex::new(FakeWatchBackend::default()));
+        let watcher = test_watcher(backend.clone());
+        let first_file = Arc::<Path>::from(first_file.as_path());
+        let second_file = Arc::<Path>::from(second_file.as_path());
+        let first_registration = watcher
+            .add(first_file.clone(), WatcherMode::Native, |_| {})
+            .expect("add first file watch");
+        let second_registration = watcher
+            .add(second_file.clone(), WatcherMode::Native, |_| {})
+            .expect("add second file watch");
+
+        watcher.remove(first_registration);
+        watcher.remove(second_registration);
+
+        let backend = backend.lock();
+        if cfg!(any(target_os = "windows", target_os = "macos")) {
+            assert_eq!(backend.watch_calls, &[temp_dir.path().to_path_buf()]);
+            assert_eq!(backend.unwatch_calls, &[temp_dir.path().to_path_buf()]);
+        } else {
+            assert_eq!(
+                backend.watch_calls,
+                &[first_file.to_path_buf(), second_file.to_path_buf()]
+            );
+            assert_eq!(
+                backend.unwatch_calls,
+                &[first_file.to_path_buf(), second_file.to_path_buf()]
+            );
+        }
     }
 
     #[test]
