@@ -1046,3 +1046,30 @@ fn init_test(cx: &mut TestAppContext) {
         gpui_tokio::init(cx);
     });
 }
+
+#[gpui::test]
+fn test_auto_update_extensions_enabled_setting(cx: &mut TestAppContext) {
+    use crate::ExtensionSettings;
+    use gpui::UpdateGlobal;
+    use settings::{Settings, SettingsStore};
+
+    init_test(cx);
+
+    cx.update(|cx| {
+        assert!(
+            ExtensionSettings::get_global(cx).auto_update_extensions_enabled,
+            "default should be true"
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |s| {
+                s.extension.auto_update_extensions_enabled = Some(false);
+            });
+        });
+
+        assert!(
+            !ExtensionSettings::get_global(cx).auto_update_extensions_enabled,
+            "should be false after user sets it to false"
+        );
+    });
+}

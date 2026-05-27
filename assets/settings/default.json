@@ -2048,6 +2048,8 @@
   "auto_install_extensions": {
     "html": true,
   },
+  // Whether to automatically update installed extensions.
+  "auto_update_extensions_enabled": true,
   // The capabilities granted to extensions.
   //
   // This list can be customized to restrict what extensions are able to do.

@@ -640,6 +640,9 @@ impl ExtensionStore {
     }
 
     pub fn check_for_updates(&mut self, cx: &mut Context<Self>) {
+        if !ExtensionSettings::get_global(cx).auto_update_extensions_enabled {
+            return;
+        }
         let task = self.fetch_extensions_with_update_available(cx);
         cx.spawn(async move |this, cx| Self::upgrade_extensions(this, task.await?, cx).await)
             .detach();
