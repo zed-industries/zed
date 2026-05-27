@@ -773,6 +773,7 @@ impl ContentBlock {
                     None,
                     MarkdownOptions {
                         render_mermaid_diagrams: true,
+                        render_metadata_blocks: true,
                         ..Default::default()
                     },
                     cx,

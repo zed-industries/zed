@@ -1404,6 +1404,113 @@ impl MarkdownElement {
         builder.pop_text_style();
     }
 
+    fn push_metadata_block(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        source: &str,
+        range: &Range<usize>,
+        markdown_end: usize,
+        cx: &App,
+    ) {
+        if let Some(rows) = parse_metadata_table_rows(source, range.clone()) {
+            builder.push_div(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .w_full()
+                    .mb_2()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_sm()
+                    .overflow_hidden(),
+                range,
+                markdown_end,
+            );
+
+            for (row_index, MetadataRow { key, value }) in rows.into_iter().enumerate() {
+                self.push_metadata_cell(
+                    builder,
+                    source,
+                    key,
+                    range,
+                    markdown_end,
+                    MetadataCellStyle {
+                        row_index,
+                        is_key: true,
+                    },
+                    cx,
+                );
+                self.push_metadata_cell(
+                    builder,
+                    source,
+                    value,
+                    range,
+                    markdown_end,
+                    MetadataCellStyle {
+                        row_index,
+                        is_key: false,
+                    },
+                    cx,
+                );
+            }
+
+            builder.pop_div();
+        } else {
+            let mut metadata_block = div().w_full().rounded_md();
+            metadata_block.style().refine(&self.style.code_block);
+            builder.push_text_style(self.style.code_block.text.to_owned());
+            builder.push_code_block(None);
+            builder.push_div(metadata_block, range, markdown_end);
+            builder.push_text(&source[range.clone()], range.clone());
+            builder.trim_trailing_newline();
+            builder.pop_div();
+            builder.pop_code_block();
+            builder.pop_text_style();
+        }
+    }
+
+    fn push_metadata_cell(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        source: &str,
+        text_range: Range<usize>,
+        block_range: &Range<usize>,
+        markdown_end: usize,
+        cell_style: MetadataCellStyle,
+        cx: &App,
+    ) {
+        builder.push_div(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .px_2()
+                .py_1()
+                .border_color(cx.theme().colors().border)
+                .when(cell_style.row_index > 0, |this| this.border_t_1())
+                .when(!cell_style.is_key, |this| this.border_l_1())
+                .when(cell_style.is_key, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                }),
+            block_range,
+            markdown_end,
+        );
+
+        let text_style = if cell_style.is_key {
+            TextStyleRefinement {
+                color: Some(cx.theme().colors().text_muted),
+                font_weight: Some(FontWeight::SEMIBOLD),
+                ..Default::default()
+            }
+        } else {
+            TextStyleRefinement::default()
+        };
+        builder.push_text_style(text_style);
+        builder.push_text(&source[text_range.clone()], text_range);
+        builder.pop_text_style();
+        builder.pop_div();
+    }
+
     fn push_markdown_list_item(
         &self,
         builder: &mut MarkdownElementBuilder,
@@ -1815,6 +1922,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut rendering_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -2154,11 +2262,7 @@ impl Element for MarkdownElement {
                             builder.push_div(div().flex_1().w_0(), range, markdown_end);
                         }
                         MarkdownTag::MetadataBlock(_) => {
-                            let mut metadata_block = div().w_full().rounded_md();
-                            metadata_block.style().refine(&self.style.code_block);
-                            builder.push_text_style(self.style.code_block.text.to_owned());
-                            builder.push_code_block(None);
-                            builder.push_div(metadata_block, range, markdown_end);
+                            rendering_metadata_block = true;
                         }
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
@@ -2372,14 +2476,21 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                     }
                     MarkdownTagEnd::MetadataBlock(_) => {
-                        builder.trim_trailing_newline();
-                        builder.pop_div();
-                        builder.pop_code_block();
-                        builder.pop_text_style();
+                        rendering_metadata_block = false;
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
+                    if rendering_metadata_block {
+                        self.push_metadata_block(
+                            &mut builder,
+                            &parsed_markdown.source,
+                            range,
+                            markdown_end,
+                            cx,
+                        );
+                        continue;
+                    }
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
                 }
                 MarkdownEvent::SubstitutedText(text) => {
@@ -2768,6 +2879,59 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
     }
+}
+
+struct MetadataCellStyle {
+    row_index: usize,
+    is_key: bool,
+}
+
+struct MetadataRow {
+    key: Range<usize>,
+    value: Range<usize>,
+}
+
+fn parse_metadata_table_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
+    let mut rows = Vec::new();
+    let mut line_start = source_range.start;
+
+    for line in source[source_range].split_inclusive('\n') {
+        let line_end = line_start + line.len();
+        let content_end = line_start + line.trim_end_matches(['\r', '\n']).len();
+        let content_range = line_start..content_end;
+        let line_text = &source[content_range.clone()];
+
+        if line_text.is_empty()
+            || line_text
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_whitespace())
+        {
+            return None;
+        }
+
+        let delimiter = line_text.find(':')?;
+        let key = trim_metadata_range(source, content_range.start..content_range.start + delimiter);
+        let value = trim_metadata_range(
+            source,
+            content_range.start + delimiter + 1..content_range.end,
+        );
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
+
+        rows.push(MetadataRow { key, value });
+        line_start = line_end;
+    }
+
+    if rows.is_empty() { None } else { Some(rows) }
+}
+
+fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
+    let text = &source[range.clone()];
+    let start_offset = text.len() - text.trim_start().len();
+    let end_offset = text.trim_end().len();
+    range.start + start_offset..range.start + end_offset
 }
 
 struct MarkdownElementBuilder {
@@ -3615,7 +3779,49 @@ mod tests {
             },
             cx,
         );
-        assert_eq!(rendered.text_for_range(0..24), "title: Post\nBody");
+        assert_eq!(rendered.text_for_range(0..24), "title\nPost\nBody");
+    }
+
+    #[gpui::test]
+    fn test_frontmatter_falls_back_to_code_block_for_nested_yaml(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\ntags:\n  - zed\n---\nBody",
+            None,
+            MarkdownOptions {
+                render_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
+    }
+
+    #[test]
+    fn test_metadata_table_rows_parse_simple_colon_pairs() {
+        let source = "title: Post\nauthor: Zed\n";
+        let Some(rows) = parse_metadata_table_rows(source, 0..source.len()) else {
+            panic!("expected metadata rows");
+        };
+        let pairs = rows
+            .into_iter()
+            .map(|row| (&source[row.key], &source[row.value]))
+            .collect::<Vec<_>>();
+
+        assert_eq!(pairs, vec![("title", "Post"), ("author", "Zed")]);
+    }
+
+    #[test]
+    fn test_metadata_table_rows_reject_non_simple_colon_pairs() {
+        for source in [
+            "tags:\n  - zed\n",
+            "title = Post\n",
+            "title:\n",
+            ": Post\n",
+            " title: Post\n",
+            "\n",
+        ] {
+            assert!(parse_metadata_table_rows(source, 0..source.len()).is_none());
+        }
     }
 
     fn render_markdown_with_code_span_link(

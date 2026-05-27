@@ -377,7 +377,12 @@ pub(crate) fn parse_markdown_with_options(
                     }
                 }
 
-                if within_code_block || within_metadata {
+                if within_metadata {
+                    state.push_event(range, MarkdownEvent::Text);
+                    continue;
+                }
+
+                if within_code_block {
                     let (range, event) = event_for(text, range, &parsed);
                     state.push_event(range, event);
                     continue;
