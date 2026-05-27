@@ -5659,7 +5659,7 @@ impl LspStore {
                     .unwrap_or_default();
 
                 if !available_commands.contains(&command.command) {
-                    log::warn!(
+                    log::debug!(
                         "Skipping executeCommand for {}, not listed in language server capabilities",
                         command.command
                     );
@@ -13076,6 +13076,18 @@ impl LspStore {
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
+                "textDocument/documentLink" => {
+                    if let Some(caps) = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_link_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
         }
@@ -13276,6 +13288,12 @@ impl LspStore {
                 "textDocument/foldingRange" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.folding_range_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/documentLink" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_link_provider = None;
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }

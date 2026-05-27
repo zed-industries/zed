@@ -53,7 +53,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{collections::BTreeMap, rc::Rc, time::Duration};
+use std::{rc::Rc, time::Duration};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::Anchor;
 use theme_settings::{AgentBufferFontSize, AgentUiFontSize};
@@ -70,9 +70,8 @@ use util::{
     size::format_file_size,
     time::duration_alt_display,
 };
-use workspace::PathList;
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, Toast, Workspace, notifications::NotificationId,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Toast, Workspace,
     path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};

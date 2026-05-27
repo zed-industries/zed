@@ -184,7 +184,7 @@ impl Render for TitleBar {
 
         let show_menus = show_menus(cx);
 
-        let mut children = <ArrayVec<_, 4>>::new();
+        let mut children = <ArrayVec<_, 5>>::new();
 
         let mut project_name = None;
         let mut repository = None;
@@ -237,6 +237,8 @@ impl Render for TitleBar {
                 }
             }
         }
+
+        children.push(gpui::text!("Hello from a11y").into_any_element());
 
         children.push(
             h_flex()
