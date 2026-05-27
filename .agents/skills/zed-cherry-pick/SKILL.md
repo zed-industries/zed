@@ -48,7 +48,7 @@ A successful run prints both `BRANCH:` and `CHANNEL:` env vars; that's your mapp
 
 You need three things: the **merge commit SHA**, the **target branch**, and the **channel name**.
 
-If the user requested multiple PRs and/or commits, gather the metadata for all of them first and cherry-pick them in chronological order, oldest to newest. For PRs, order by `mergedAt`; for raw commits, order by commit date. Matching the order changes landed on `main` reduces avoidable merge conflicts, especially when later PRs depend on earlier ones.
+If the user requested multiple PRs and/or commits, gather the metadata for all of them first and cherry-pick them in the order they landed on `main`, oldest to newest. For PRs, order by `mergedAt`; for raw commits, use their order on `main` when available, otherwise commit date. This tends to reduce avoidable conflicts because later changes may depend on earlier ones, but it does not guarantee a conflict-free cherry-pick when the release branch has diverged.
 
 ```
 gh pr view <PR_NUMBER> --json title,number,mergeCommit,mergedAt,url
