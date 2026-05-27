@@ -57,7 +57,7 @@ use anyhow::Result;
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
-use client::UserStore;
+use client::{UserStore, zed_urls};
 use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -4958,9 +4958,20 @@ impl AgentPanel {
 
                                 if global_agents_md_loaded {
                                     let workspace = workspace.clone();
-                                    menu = menu.entry(
-                                        "Open Global AGENTS.md",
-                                        None,
+
+                                    menu = menu.custom_entry(
+                                        |_window, _cx| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(Label::new("Open Global Rules"))
+                                                .child(
+                                                    Label::new("(AGENTS.md)")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                                .into_any_element()
+                                        },
                                         move |window, cx| {
                                             workspace
                                                 .update(cx, |workspace, cx| {
@@ -4983,9 +4994,19 @@ impl AgentPanel {
 
                                 if let Some(path) = project_agents_md_path.clone() {
                                     let workspace = workspace.clone();
-                                    menu = menu.entry(
-                                        "Open Project AGENTS.md",
-                                        None,
+                                    menu = menu.custom_entry(
+                                        |_window, _cx| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(Label::new("Open Project Rules"))
+                                                .child(
+                                                    Label::new("(AGENTS.md)")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                                .into_any_element()
+                                        },
                                         move |window, cx| {
                                             let path = path.clone();
                                             workspace
@@ -5006,6 +5027,10 @@ impl AgentPanel {
                                         },
                                     );
                                 }
+
+                                menu = menu.entry("Rules Library", None, |_window, cx| {
+                                    cx.open_url(&zed_urls::rules_docs(cx));
+                                });
 
                                 menu = menu.separator();
                             }
