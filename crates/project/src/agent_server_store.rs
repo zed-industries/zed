@@ -1156,7 +1156,7 @@ impl ExternalAgentServer for LocalRegistryArchiveAgent {
             if !fs.is_dir(&version_dir).await {
                 let mut loading_status_tx = loading_status_tx;
                 if let Some(tx) = loading_status_tx.as_mut() {
-                    tx.send(Some("Installing adapter…".to_string())).ok();
+                    tx.send(Some("Installing…".to_string())).ok();
                 }
 
                 let sha256 = if let Some(provided_sha) = &target_config.sha256 {
@@ -1306,14 +1306,9 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
         let args = self.args.clone();
         let distribution_env = self.distribution_env.clone();
         let settings_env = self.settings_env.clone();
-        let loading_status_tx = self.loading_status_tx.take();
+        let mut loading_status_tx = self.loading_status_tx.take();
 
         cx.spawn(async move |cx| {
-            let mut loading_status_tx = loading_status_tx;
-            if let Some(tx) = loading_status_tx.as_mut() {
-                tx.send(Some("Installing adapter…".to_string())).ok();
-            }
-
             let mut env = project_environment
                 .update(cx, |project_environment, cx| {
                     project_environment.default_environment(cx)
@@ -1325,7 +1320,13 @@ impl ExternalAgentServer for LocalRegistryNpxAgent {
                 .join("registry")
                 .join("npx")
                 .join(sanitize_path_component(&registry_id));
-            fs.create_dir(&prefix_dir).await?;
+
+            if !fs.is_dir(&prefix_dir).await {
+                if let Some(tx) = loading_status_tx.as_mut() {
+                    tx.send(Some("Installing…".to_string())).ok();
+                }
+                fs.create_dir(&prefix_dir).await?;
+            }
 
             let mut exec_args = vec!["--yes".to_string(), "--".to_string(), package];
             exec_args.extend(args);

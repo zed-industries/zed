@@ -238,7 +238,6 @@ impl AgentConnectionStore {
         .detach();
 
         cx.spawn({
-            let key = key;
             let entry = entry.downgrade();
             async move |this, cx| {
                 while let Ok(status) = loading_status_rx.recv().await {
