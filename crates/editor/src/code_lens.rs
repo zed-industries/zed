@@ -758,11 +758,11 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 2 references
                     Line 1: function hello() {}
-                    Lens: 2 references
 
+                    Lenses: 0 references
                     Line 2: function world() {}
-                    Lens: 0 references
                 "#},
                 "both lenses should render their server-provided titles"
             );
@@ -816,8 +816,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 1 reference
                     Line 1: function hello() {}
-                    Lens: 1 reference
                 "#},
                 "initial fetch should render the server title"
             );
@@ -850,8 +850,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 1 reference
                     Line 1: function hello() {}
-                    Lens: 1 reference
                 "#},
                 "refreshed block should keep rendering the same title"
             );
@@ -929,8 +929,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 1 reference
                     Line 1: function hello() {}
-                    Lens: 1 reference
                 "#},
                 "resolve should fill the placeholder with the server title"
             );
@@ -964,8 +964,8 @@ mod tests {
                 assert_eq!(
                     code_lens_assertion_text(editor, cx),
                     indoc! {r#"
+                        Lenses: 1 reference
                         Line 1: function hello() {}
-                        Lens: 1 reference
                     "#},
                     "refresh+resolve cycle should keep rendering the same title"
                 );
@@ -1049,8 +1049,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: <placeholder>
                     Line 1: function hello() {}
-                    Lens: <placeholder>
                 "#},
                 "placeholder spacer should be reserved with no rendered text before resolve"
             );
@@ -1063,8 +1063,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 1 reference
                     Line 1: function hello() {}
-                    Lens: 1 reference
                 "#},
                 "after resolve the placeholder should display the server title"
             );
@@ -1126,8 +1126,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 0 references
                     Line 1: function hello() {}
-                    Lens: 0 references
                 "#},
                 "lens resolved to an empty title should fall back to the synthetic label"
             );
@@ -1224,8 +1224,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 2 references | 1 implementation
                     Line 1: function hello() {}
-                    Lens: 2 references | 1 implementation
                 "#},
                 "both same-range lenses should render their resolved titles"
             );
@@ -1281,8 +1281,8 @@ mod tests {
             assert_eq!(
                 code_lens_assertion_text(editor, cx),
                 indoc! {r#"
+                    Lenses: 0 references
                     Line 1: function hello() {}
-                    Lens: 0 references
                 "#},
                 "lens resolved without a command should fall back to the synthetic label"
             );
@@ -1636,6 +1636,8 @@ mod tests {
             .unwrap_or_default();
         blocks.sort_by_key(|block| block.anchor.to_point(&snapshot).row);
 
+        let lens_label = "Lenses";
+        let line_label = "Line";
         let mut text = blocks
             .into_iter()
             .map(|block| {
@@ -1655,7 +1657,13 @@ mod tests {
                     })
                     .collect::<Vec<_>>()
                     .join(CODE_LENS_SEPARATOR);
-                format!("Line {}: {line_text}\nLens: {lens_text}", row + 1)
+                let line_number = row + 1;
+                let line_label = format!("{line_label} {line_number}");
+                let label_width = line_label.len().max(lens_label.len());
+                format!(
+                    "{lens_label:<label_width$}: {lens_text}\n\
+                     {line_label:<label_width$}: {line_text}"
+                )
             })
             .collect::<Vec<_>>()
             .join("\n\n");
