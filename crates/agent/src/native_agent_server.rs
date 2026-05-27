@@ -113,6 +113,7 @@ fn model_id_to_selection(model_id: &acp::ModelId, cx: &App) -> LanguageModelSele
             enable_thinking: false,
             effort: None,
             speed: None,
+            include_project_rules: None,
         };
     };
 

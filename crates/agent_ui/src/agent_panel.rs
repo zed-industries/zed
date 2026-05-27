@@ -3607,6 +3607,7 @@ impl AgentPanel {
                                 enable_thinking,
                                 effort,
                                 speed: None,
+                                include_project_rules: None,
                             })
                     });
                 }

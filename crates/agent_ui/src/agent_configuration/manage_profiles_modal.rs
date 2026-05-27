@@ -273,6 +273,7 @@ impl ManageProfilesModal {
                                             .default_effort_level()
                                             .map(|effort| effort.value.to_string()),
                                         speed: None,
+                                        include_project_rules: None,
                                     });
                                 }
                             }
