@@ -10,6 +10,9 @@ use util::markdown::generate_heading_slug;
 
 use crate::{html, path_range::PathWithRange};
 
+// Keep masked parser input byte-aligned with the original markdown source.
+const MASKED_RAW_PIPE_IN_CODE: &str = "\u{1f}";
+
 pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_FOOTNOTES)
     .union(Options::ENABLE_STRIKETHROUGH)
@@ -136,6 +139,12 @@ fn build_heading_slugs(
                 }
                 heading_text.push_str(&source[range.clone()]);
             }
+            MarkdownEvent::SubstitutedCode(substituted) if inside_heading => {
+                if heading_source_start.is_none() {
+                    heading_source_start = Some(range.start);
+                }
+                heading_text.push_str(substituted);
+            }
             MarkdownEvent::SubstitutedText(substituted) if inside_heading => {
                 if heading_source_start.is_none() {
                     heading_source_start = Some(range.start);
@@ -161,7 +170,10 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_link = false;
     let mut within_code_block = false;
     let mut within_metadata = false;
-    let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
+    let mut within_table = false;
+    let parser_text = mask_raw_pipes_in_inline_code(text);
+    let parser_text = parser_text.as_deref().unwrap_or(text);
+    let mut parser = Parser::new_ext(parser_text, PARSE_OPTIONS)
         .into_offset_iter()
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
@@ -313,7 +325,10 @@ pub(crate) fn parse_markdown_with_options(
                     pulldown_cmark::Tag::FootnoteDefinition(label) => {
                         MarkdownTag::FootnoteDefinition(SharedString::from(label.to_string()))
                     }
-                    pulldown_cmark::Tag::Table(alignments) => MarkdownTag::Table(alignments),
+                    pulldown_cmark::Tag::Table(alignments) => {
+                        within_table = true;
+                        MarkdownTag::Table(alignments)
+                    }
                     pulldown_cmark::Tag::TableHead => MarkdownTag::TableHead,
                     pulldown_cmark::Tag::TableRow => MarkdownTag::TableRow,
                     pulldown_cmark::Tag::TableCell => MarkdownTag::TableCell,
@@ -347,6 +362,8 @@ pub(crate) fn parse_markdown_with_options(
                     within_link = false;
                 } else if let pulldown_cmark::TagEnd::CodeBlock = tag {
                     within_code_block = false;
+                } else if let pulldown_cmark::TagEnd::Table = tag {
+                    within_table = false;
                 }
                 state.push_event(range, MarkdownEvent::End(tag));
             }
@@ -508,7 +525,13 @@ pub(crate) fn parse_markdown_with_options(
                 let content_range = extract_code_content_range(&text[range.clone()]);
                 let content_range =
                     content_range.start + range.start..content_range.end + range.start;
-                state.push_event(content_range, MarkdownEvent::Code)
+                let source = &text[content_range.clone()];
+                let event = if within_table && source.contains(r"\|") {
+                    MarkdownEvent::SubstitutedCode(unescape_table_pipes_in_code(source))
+                } else {
+                    MarkdownEvent::Code
+                };
+                state.push_event(content_range, event)
             }
             pulldown_cmark::Event::Html(_) => state.push_event(range, MarkdownEvent::Html),
             pulldown_cmark::Event::InlineHtml(_) => {
@@ -626,6 +649,8 @@ pub enum MarkdownEvent {
     SubstitutedText(String),
     /// An inline code node.
     Code,
+    /// An inline code node that differs from the markdown source due to escape decoding.
+    SubstitutedCode(String),
     /// An HTML node.
     Html,
     /// An inline HTML node.
@@ -771,6 +796,183 @@ fn extract_code_content_range(text: &str) -> Range<usize> {
     }
 
     start_ticks..text_len - end_ticks
+}
+
+fn unescape_table_pipes_in_code(text: &str) -> String {
+    text.replace(r"\|", "|")
+}
+
+fn mask_raw_pipes_in_inline_code(text: &str) -> Option<String> {
+    let mut masked = None;
+    let mut line_start = 0;
+    let mut fenced_code_block: Option<(u8, usize)> = None;
+
+    while line_start < text.len() {
+        let line_end = text[line_start..]
+            .find('\n')
+            .map(|newline| line_start + newline)
+            .unwrap_or(text.len());
+        let line = &text[line_start..line_end];
+
+        if let Some((marker, minimum_len)) = fenced_code_block {
+            if is_closing_code_fence(line, marker, minimum_len) {
+                fenced_code_block = None;
+            }
+        } else if let Some(fence) = opening_code_fence_marker(line) {
+            fenced_code_block = Some(fence);
+        } else if !is_indented_code_line(line) {
+            mask_raw_pipes_in_inline_code_spans(text, line, line_start, &mut masked);
+        }
+
+        if line_end == text.len() {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+
+    masked
+}
+
+fn opening_code_fence_marker(line: &str) -> Option<(u8, usize)> {
+    let bytes = line.as_bytes();
+    let (index, marker, len) = code_fence_marker_start(bytes)?;
+    if marker == b'`' && bytes[index + len..].contains(&b'`') {
+        return None;
+    }
+    Some((marker, len))
+}
+
+fn is_closing_code_fence(line: &str, marker: u8, minimum_len: usize) -> bool {
+    let bytes = line.as_bytes();
+    let Some((index, closing_marker, len)) = code_fence_marker_start(bytes) else {
+        return false;
+    };
+    closing_marker == marker
+        && len >= minimum_len
+        && bytes[index + len..]
+            .iter()
+            .all(|byte| *byte == b' ' || *byte == b'\t')
+}
+
+fn code_fence_marker_start(bytes: &[u8]) -> Option<(usize, u8, usize)> {
+    let mut index = 0;
+    let mut leading_spaces = 0;
+    while index < bytes.len() && bytes[index] == b' ' && leading_spaces < 4 {
+        leading_spaces += 1;
+        index += 1;
+    }
+
+    if leading_spaces > 3 || index >= bytes.len() {
+        return None;
+    }
+
+    let marker = bytes[index];
+    if marker != b'`' && marker != b'~' {
+        return None;
+    }
+
+    let len = bytes[index..]
+        .iter()
+        .take_while(|byte| **byte == marker)
+        .count();
+    (len >= 3).then_some((index, marker, len))
+}
+
+fn is_indented_code_line(line: &str) -> bool {
+    let mut spaces = 0;
+    for byte in line.bytes() {
+        match byte {
+            b' ' => {
+                spaces += 1;
+                if spaces >= 4 {
+                    return true;
+                }
+            }
+            b'\t' => return true,
+            _ => return false,
+        }
+    }
+    false
+}
+
+fn mask_raw_pipes_in_inline_code_spans(
+    original: &str,
+    line: &str,
+    line_start: usize,
+    masked: &mut Option<String>,
+) {
+    let bytes = line.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'`' && !is_backslash_escaped(bytes, index) {
+            let tick_count = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            let content_start = index + tick_count;
+            if let Some(content_end) = find_closing_code_span(bytes, content_start, tick_count) {
+                mask_raw_pipes_in_range(
+                    original,
+                    bytes,
+                    line_start,
+                    content_start..content_end,
+                    masked,
+                );
+                index = content_end + tick_count;
+            } else {
+                index = content_start;
+            }
+        } else {
+            index += 1;
+        }
+    }
+}
+
+fn find_closing_code_span(bytes: &[u8], mut index: usize, opening_ticks: usize) -> Option<usize> {
+    while index < bytes.len() {
+        if bytes[index] == b'`' && !is_backslash_escaped(bytes, index) {
+            let tick_count = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            if tick_count == opening_ticks {
+                return Some(index);
+            }
+            index += tick_count;
+        } else {
+            index += 1;
+        }
+    }
+    None
+}
+
+fn mask_raw_pipes_in_range(
+    original: &str,
+    line_bytes: &[u8],
+    line_start: usize,
+    range: Range<usize>,
+    masked: &mut Option<String>,
+) {
+    for index in range {
+        if line_bytes[index] == b'|' && !is_backslash_escaped(line_bytes, index) {
+            let masked = masked.get_or_insert_with(|| original.to_owned());
+            masked.replace_range(
+                line_start + index..line_start + index + 1,
+                MASKED_RAW_PIPE_IN_CODE,
+            );
+        }
+    }
+}
+
+fn is_backslash_escaped(bytes: &[u8], index: usize) -> bool {
+    let mut backslash_count = 0;
+    let mut index = index;
+    while index > 0 && bytes[index - 1] == b'\\' {
+        backslash_count += 1;
+        index -= 1;
+    }
+    backslash_count % 2 == 1
 }
 
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
@@ -1064,6 +1266,28 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_closing_fence_keeps_table_pipes_unmasked() {
+        let markdown = "```text\n``` not a closing fence\n| `a|b` | still code |\n```\n";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        assert!(
+            parsed.events.iter().all(|(_, event)| !matches!(
+                event,
+                SubstitutedText(text) if text.contains(MASKED_RAW_PIPE_IN_CODE)
+            )),
+            "fenced code block contents should not be masked: {:?}",
+            parsed.events
+        );
+        assert!(
+            parsed.events.iter().any(|(range, event)| {
+                event == &Text && markdown[range.clone()].contains("| `a|b` | still code |")
+            }),
+            "expected fenced code block text to retain raw pipes: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
     fn test_metadata_blocks_do_not_affect_root_blocks() {
         assert_eq!(
             parse_markdown_with_options("+++\ntitle = \"Example\"\n+++\n\nParagraph", false, false),
@@ -1140,6 +1364,120 @@ mod tests {
 
         let input = "``let x = 5;`";
         assert_eq!(extract_code_content_range(input), 0..13);
+    }
+
+    fn table_rows(markdown: &str) -> Vec<Vec<String>> {
+        let parsed = parse_markdown_with_options(markdown, false, false);
+        let mut rows = Vec::new();
+        let mut current_row: Option<Vec<String>> = None;
+        let mut current_cell: Option<String> = None;
+
+        for (range, event) in &parsed.events {
+            match event {
+                Start(TableHead) | Start(TableRow) => {
+                    current_row = Some(Vec::new());
+                }
+                End(MarkdownTagEnd::TableHead) | End(MarkdownTagEnd::TableRow) => {
+                    if let Some(row) = current_row.take() {
+                        rows.push(row);
+                    }
+                }
+                Start(TableCell) => {
+                    current_cell = Some(String::new());
+                }
+                End(MarkdownTagEnd::TableCell) => {
+                    if let (Some(row), Some(cell)) = (&mut current_row, current_cell.take()) {
+                        row.push(cell.trim().to_string());
+                    }
+                }
+                Text | Code => {
+                    if let Some(cell) = &mut current_cell {
+                        cell.push_str(&markdown[range.clone()]);
+                    }
+                }
+                SubstitutedText(text) | SubstitutedCode(text) => {
+                    if let Some(cell) = &mut current_cell {
+                        cell.push_str(text);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        rows
+    }
+
+    #[test]
+    fn test_inline_code_substitutes_escaped_pipes() {
+        let markdown = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+        let code_range = {
+            let start = markdown.find(r"a\|b").expect("inline code source");
+            start..start + r"a\|b".len()
+        };
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &code_range
+                    && event == &SubstitutedCode("a|b".into())),
+            "expected escaped pipe in table inline code to render as decoded inline code: {:?}",
+            parsed.events
+        );
+    }
+
+    #[test]
+    fn test_inline_code_preserves_raw_pipes_in_tables() {
+        let markdown = r"| Pattern | Meaning |
+| --- | --- |
+| ``^echo(\s|$)`` | command pattern |
+| `a|b` | alternation |
+| `(a|b)` | grouped alternation |
+| `a||b` | empty middle alternative |";
+
+        assert_eq!(
+            table_rows(markdown),
+            vec![
+                vec!["Pattern".to_string(), "Meaning".to_string()],
+                vec!["^echo(\\s|$)".to_string(), "command pattern".to_string()],
+                vec!["a|b".to_string(), "alternation".to_string()],
+                vec!["(a|b)".to_string(), "grouped alternation".to_string()],
+                vec!["a||b".to_string(), "empty middle alternative".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_unclosed_inline_code_does_not_mask_table_pipes() {
+        let markdown = r"| Pattern | Meaning |
+| --- | --- |
+| `a|b | broken |";
+
+        assert_eq!(
+            table_rows(markdown),
+            vec![
+                vec!["Pattern".to_string(), "Meaning".to_string()],
+                vec!["`a".to_string(), "b".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_inline_code_keeps_escaped_pipes_outside_tables() {
+        let markdown = r"`a\|b`";
+        let parsed = parse_markdown_with_options(markdown, false, false);
+
+        assert!(
+            parsed
+                .events
+                .iter()
+                .any(|(range, event)| range == &(1..5) && event == &Code),
+            "expected escaped pipe outside a table to remain normal inline code: {:?}",
+            parsed.events
+        );
     }
 
     #[test]
