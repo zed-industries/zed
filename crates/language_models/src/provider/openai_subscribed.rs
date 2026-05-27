@@ -6,10 +6,11 @@ use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -250,6 +251,16 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.sign_out(cx)
+    }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
     }
 }
 
