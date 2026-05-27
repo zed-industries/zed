@@ -909,6 +909,14 @@ mod tests {
                 !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
                 "CreateSkillFromUrl should be visible by default"
             );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be visible by default"
+            );
         });
 
         // Disable agent
@@ -931,6 +939,14 @@ mod tests {
             assert!(
                 filter.is_hidden(&NewTerminalThread),
                 "NewTerminalThread should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenGlobalAgentsMdRules),
+                "OpenGlobalAgentsMdRules should be hidden when agent is disabled"
+            );
+            assert!(
+                filter.is_hidden(&zed_actions::assistant::OpenProjectAgentsMdRules),
+                "OpenProjectAgentsMdRules should be hidden when agent is disabled"
             );
         });
 
