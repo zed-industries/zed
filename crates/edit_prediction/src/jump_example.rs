@@ -16,7 +16,12 @@ use release_channel::AppVersion;
 
 use text::ToPoint as _;
 
-use crate::{EditPredictionStore, ProjectState, StoredEvent, example_spec::RecentFile, zeta};
+use crate::{
+    EditPredictionStore, ProjectState, StoredEvent,
+    data_collection::{compute_uncommitted_diff, uncommitted_diff_for_events},
+    example_spec::RecentFile,
+    zeta,
+};
 
 pub const JUMP_EXAMPLE_FUTURE_EVENT_COUNT: usize = 2;
 pub const JUMP_EXAMPLE_TTL: Duration = Duration::from_secs(60 * 2);
@@ -92,9 +97,8 @@ pub fn start_jump_example_capture(
                 })
                 .await
                 .context("failed to get uncommitted diffs for events")?;
-            // todo! this calls background_spawn, should just return DTO
             // todo! why does this return events?
-            crate::capture_example::uncommitted_diff_for_events(
+            let (uncommitted_diff_snapshots, edit_history_events) = uncommitted_diff_for_events(
                 project.clone(),
                 worktree_id,
                 worktree_root_name.clone(),
@@ -102,7 +106,13 @@ pub fn start_jump_example_capture(
                 uncommitted_diffs,
                 cx,
             )
-            .await?
+            .await?;
+
+            let uncommitted_diff = cx
+                .background_executor()
+                .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshots) })
+                .await;
+            (uncommitted_diff, edit_history_events)
         } else {
             (String::new(), stored_events.clone())
         };
@@ -130,8 +140,8 @@ pub fn start_jump_example_capture(
         };
         let now = cx.background_executor().now();
         ep_store.update(cx, |ep_store, cx| {
-            let (recently_opened_files, recently_viewed_files) =
-                ep_store.recent_paths_for_project(&project, cx);
+            let recently_opened_files = ep_store.recently_opened_files_for_project(&project);
+            let recently_viewed_files = ep_store.recently_viewed_files_for_project(&project);
             let project_state = ep_store.get_or_init_project(&project, cx);
             project_state
                 .pending_jump_example_captures

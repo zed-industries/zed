@@ -409,7 +409,12 @@ pub fn request_prediction_with_zeta(
             let model_version = prediction.model_version.clone();
             let example_task = capture_data.and_then(|(events, uncommitted_diffs)| {
                 let (recently_opened_files, recently_viewed_files) = this
-                    .read_with(cx, |this, cx| this.recent_paths_for_project(&project, cx))
+                    .read_with(cx, |this, _| {
+                        (
+                            this.recently_opened_files_for_project(&project),
+                            this.recently_viewed_files_for_project(&project),
+                        )
+                    })
                     .ok()?;
                 Some(cx.spawn({
                     let project = project.clone();

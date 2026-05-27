@@ -67,6 +67,7 @@ use thiserror::Error;
 use util::{RangeExt as _, ResultExt as _};
 
 pub mod cursor_excerpt;
+mod data_collection;
 pub mod example_spec;
 pub mod fim;
 mod jump_example;
@@ -117,6 +118,7 @@ actions!(
 
 /// Maximum number of events to track.
 const EVENT_COUNT_MAX: usize = 10;
+const RECENT_PATH_COUNT_MAX: usize = 20;
 const CHANGE_GROUPING_LINE_SPAN: u32 = 8;
 const EDIT_HISTORY_DIFF_SIZE_LIMIT: usize = 2048 * 3; // ~2048 tokens or ~50% of typical prompt budget
 const COLLABORATOR_EDIT_LOCALITY_CONTEXT_TOKENS: usize = 512;
@@ -322,10 +324,22 @@ fn lines_between_ranges(left: &Range<Point>, right: &Range<Point>) -> u32 {
     0
 }
 
+fn push_recent_file(files: &mut VecDeque<RecentFile>, mut file: RecentFile) {
+    if let Some(ix) = files.iter().position(|probe| probe.path == file.path)
+        && let Some(previous) = files.remove(ix)
+        && file.cursor_position.is_none()
+    {
+        file.cursor_position = previous.cursor_position;
+    }
+    files.push_front(file);
+    files.truncate(RECENT_PATH_COUNT_MAX);
+}
+
 struct ProjectState {
     events: VecDeque<StoredEvent>,
     last_event: Option<LastEvent>,
-    recent_paths: VecDeque<ProjectPath>,
+    recently_viewed_files: VecDeque<RecentFile>,
+    recently_opened_files: VecDeque<RecentFile>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
     current_prediction: Option<CurrentEditPrediction>,
     last_edit_source: Option<BufferEditSource>,
@@ -397,6 +411,19 @@ impl ProjectState {
         let active_buffer = project.buffer_store().read(cx).get_by_path(&active_path)?;
         let registered_buffer = self.registered_buffers.get(&active_buffer.entity_id())?;
         Some((active_buffer, registered_buffer.last_position))
+    }
+
+    fn update_recent_file_cursor(&mut self, path: &Path, cursor_position: usize) {
+        for file in &mut self.recently_opened_files {
+            if file.path.as_ref() == path && file.cursor_position.is_none() {
+                file.cursor_position = Some(cursor_position);
+            }
+        }
+        for file in &mut self.recently_viewed_files {
+            if file.path.as_ref() == path {
+                file.cursor_position = Some(cursor_position);
+            }
+        }
     }
 
     fn finalize_last_event(&mut self, cx: &mut Context<EditPredictionStore>) {
@@ -1209,7 +1236,20 @@ impl EditPredictionStore {
         project: &Entity<Project>,
         cx: &mut Context<Self>,
     ) {
+        let opened_path = buffer
+            .read(cx)
+            .file()
+            .map(|file| ProjectPath::from_file(file.as_ref(), cx));
         let project_state = self.get_or_init_project(project, cx);
+        if let Some(path) = opened_path {
+            push_recent_file(
+                &mut project_state.recently_opened_files,
+                RecentFile {
+                    path: path.path.as_std_path().into(),
+                    cursor_position: None,
+                },
+            );
+        }
         Self::register_buffer_impl(project_state, buffer, project, cx);
     }
 
@@ -1232,7 +1272,8 @@ impl EditPredictionStore {
                 },
                 events: VecDeque::new(),
                 last_event: None,
-                recent_paths: VecDeque::new(),
+                recently_viewed_files: VecDeque::new(),
+                recently_opened_files: VecDeque::new(),
                 debug_tx: None,
                 registered_buffers: HashMap::default(),
                 current_prediction: None,
@@ -1350,23 +1391,30 @@ impl EditPredictionStore {
                 };
                 let path = project.read(cx).path_for_entry(*active_entry_id, cx);
                 if let Some(path) = path {
-                    if let Some(ix) = project_state
-                        .recent_paths
-                        .iter()
-                        .position(|probe| probe == &path)
-                    {
-                        project_state.recent_paths.remove(ix);
-                    }
-                    for capture in &mut project_state.pending_jump_example_captures {
-                        capture.navigation_history.push(RecentFile {
-                            path: path.path.as_std_path().into(),
-                            cursor_position: None,
+                    let cursor_position = project
+                        .read(cx)
+                        .buffer_store()
+                        .read(cx)
+                        .get_by_path(&path)
+                        .and_then(|buffer| {
+                            let position = project_state
+                                .registered_buffers
+                                .get(&buffer.entity_id())?
+                                .last_position?;
+                            Some(position.to_offset(&buffer.read(cx).snapshot()))
                         });
+
+                    let recent_file = RecentFile {
+                        path: path.path.as_std_path().into(),
+                        cursor_position,
+                    };
+                    for capture in &mut project_state.pending_jump_example_captures {
+                        capture.navigation_history.push(recent_file.clone());
                         if capture.navigation_history.len() > JUMP_EXAMPLE_NAVIGATION_COUNT {
                             capture.navigation_history.remove(0);
                         }
                     }
-                    project_state.recent_paths.push_front(path);
+                    push_recent_file(&mut project_state.recently_viewed_files, recent_file);
                     jump_example::drain_completed_jump_example_captures(project_state, cx);
                 }
             }
@@ -1597,12 +1645,18 @@ impl EditPredictionStore {
         cx: &App,
     ) -> Option<BufferEditPrediction<'_>> {
         let project_state = self.projects.get_mut(&project.entity_id())?;
-        if let Some(position) = position
-            && let Some(buffer) = project_state
+        if let Some(position) = position {
+            let snapshot = buffer.read(cx).snapshot();
+            let cursor_position = position.to_offset(&snapshot);
+            if let Some(file) = snapshot.file() {
+                project_state.update_recent_file_cursor(file.path().as_std_path(), cursor_position);
+            }
+            if let Some(buffer) = project_state
                 .registered_buffers
                 .get_mut(&buffer.entity_id())
-        {
-            buffer.last_position = Some(position);
+            {
+                buffer.last_position = Some(position);
+            }
         }
 
         let CurrentEditPrediction {
@@ -2993,44 +3047,39 @@ impl EditPredictionStore {
         cx: &mut Context<Self>,
     ) {
         let project_state = self.get_or_init_project(project, cx);
-        project_state.recent_paths = paths.into_iter().collect();
-    }
-
-    // todo! split method. Also should fix recently_opened_files just being opened_buffers call
-    pub fn recent_paths_for_project(
-        &self,
-        project: &Entity<Project>,
-        cx: &App,
-    ) -> (Vec<RecentFile>, Vec<RecentFile>) {
-        let recently_opened_files = project
-            .read(cx)
-            .opened_buffers(cx)
+        project_state.recently_viewed_files = paths
             .into_iter()
-            .filter_map(|buffer| {
-                let snapshot = buffer.read(cx).snapshot();
-                let file = snapshot.file()?;
-                Some(RecentFile {
-                    path: file.path().as_std_path().into(),
-                    cursor_position: None,
-                })
+            .map(|path| RecentFile {
+                path: path.path.as_std_path().into(),
+                cursor_position: None,
             })
             .collect();
-        let recently_viewed_files = self
-            .projects
+    }
+
+    pub fn recently_opened_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
+        self.projects
             .get(&project.entity_id())
             .map(|project_state| {
                 project_state
-                    .recent_paths
+                    .recently_opened_files
                     .iter()
-                    .map(|path| RecentFile {
-                        path: path.path.as_std_path().into(),
-                        cursor_position: None,
-                    })
+                    .cloned()
                     .collect()
             })
-            .unwrap_or_default();
+            .unwrap_or_default()
+    }
 
-        (recently_opened_files, recently_viewed_files)
+    pub fn recently_viewed_files_for_project(&self, project: &Entity<Project>) -> Vec<RecentFile> {
+        self.projects
+            .get(&project.entity_id())
+            .map(|project_state| {
+                project_state
+                    .recently_viewed_files
+                    .iter()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn is_file_open_source(
