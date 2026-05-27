@@ -184,11 +184,7 @@ const ACCENT_FILL_OPACITY: f32 = 0.15;
 fn accent_css(theme: &MermaidTheme) -> String {
     // Each block is around 400 bytes, add some headroom
     let mut css = String::with_capacity(theme.accent_colors.len() * 420);
-    let text = crate::css_color(if theme.dark_mode {
-        gpui::white()
-    } else {
-        gpui::black()
-    });
+    let text = crate::css_color(theme.text_color);
 
     for (i, accent) in theme.accent_colors.iter().enumerate() {
         let stroke = crate::css_color(accent.foreground);

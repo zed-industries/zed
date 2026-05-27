@@ -147,8 +147,25 @@ impl CachedMermaidDiagram {
     }
 }
 
-fn mermaid_font_family(font_family: &str) -> &str {
-    gpui::font_name_with_fallbacks(font_family, "system-ui")
+/// Merman has somewhat limited text measurement capabilities.
+/// 
+/// When it doesn't have metrics for any of the specified fonts, it chooses a
+/// fairly narrow width, which causes visible overflow. Adding `sans-serif`
+/// allows it to fall back to a more conservative (i.e. wider) measurement.
+/// 
+/// This isn't perfect - very wide fonts will likely still cause overflow. A
+/// proper fix would involve somehow piping `resvg`'s actual measurements into
+/// `merman`, but that is a lot of work for a fairly uncommon edge case.
+fn mermaid_font_family(font_family: &str) -> String {
+    let font_family = gpui::font_name_with_fallbacks(font_family, "system-ui");
+    if font_family
+        .split(',')
+        .any(|family| family.trim().eq_ignore_ascii_case("sans-serif"))
+    {
+        font_family.to_string()
+    } else {
+        format!("{font_family}, sans-serif")
+    }
 }
 
 fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
@@ -162,7 +179,7 @@ fn build_mermaid_theme(cx: &Context<Markdown>) -> mermaid_render::MermaidTheme {
 
     mermaid_render::MermaidTheme {
         dark_mode: is_dark,
-        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()).to_string(),
+        font_family: mermaid_font_family(theme_settings.ui_font.family.as_ref()),
         background: colors.editor_background,
         primary_color: colors.surface_background,
         primary_text_color: colors.text,
@@ -634,11 +651,27 @@ mod tests {
 
     #[test]
     fn test_mermaid_font_family_resolves_zed_virtual_fonts() {
-        assert_eq!(super::mermaid_font_family(".ZedSans"), "IBM Plex Sans");
-        assert_eq!(super::mermaid_font_family("Zed Plex Sans"), "IBM Plex Sans");
-        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex");
-        assert_eq!(super::mermaid_font_family(".SystemUIFont"), "system-ui");
-        assert_eq!(super::mermaid_font_family("Custom Font"), "Custom Font");
+        assert_eq!(
+            super::mermaid_font_family(".ZedSans"),
+            "IBM Plex Sans, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Zed Plex Sans"),
+            "IBM Plex Sans, sans-serif"
+        );
+        assert_eq!(super::mermaid_font_family(".ZedMono"), "Lilex, sans-serif");
+        assert_eq!(
+            super::mermaid_font_family(".SystemUIFont"),
+            "system-ui, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Custom Font"),
+            "Custom Font, sans-serif"
+        );
+        assert_eq!(
+            super::mermaid_font_family("Custom Font, sans-serif"),
+            "Custom Font, sans-serif"
+        );
     }
 
     #[test]
