@@ -37,8 +37,21 @@ pub(crate) struct ParsedMarkdownData {
     pub language_paths: HashSet<Arc<str>>,
     pub root_block_starts: Vec<usize>,
     pub html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ParsedMetadataBlock {
+    pub content_range: Range<usize>,
+    pub rows: Option<Vec<MetadataRow>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MetadataRow {
+    pub key: Range<usize>,
+    pub value: Range<usize>,
 }
 
 impl ParseState {
@@ -149,20 +162,68 @@ fn build_heading_slugs(
     slugs
 }
 
+fn parse_metadata_table_rows(source: &str, source_range: Range<usize>) -> Option<Vec<MetadataRow>> {
+    let mut rows = Vec::new();
+    let mut line_start = source_range.start;
+
+    for line in source[source_range].split_inclusive('\n') {
+        let line_end = line_start + line.len();
+        let content_end = line_start + line.trim_end_matches(['\r', '\n']).len();
+        let content_range = line_start..content_end;
+        let line_text = &source[content_range.clone()];
+
+        if line_text.is_empty()
+            || line_text
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_whitespace())
+        {
+            return None;
+        }
+
+        let delimiter = line_text.find(':')?;
+        let key = trim_metadata_range(source, content_range.start..content_range.start + delimiter);
+        let value = trim_metadata_range(
+            source,
+            content_range.start + delimiter + 1..content_range.end,
+        );
+        if key.is_empty() || value.is_empty() {
+            return None;
+        }
+
+        rows.push(MetadataRow { key, value });
+        line_start = line_end;
+    }
+
+    if rows.is_empty() { None } else { Some(rows) }
+}
+
+fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
+    let text = &source[range.clone()];
+    let start_offset = text.len() - text.trim_start().len();
+    let end_offset = text.trim_end().len();
+    let start = range.start + start_offset;
+    let end = (range.start + end_offset).max(start);
+    start..end
+}
+
 pub(crate) fn parse_markdown_with_options(
     text: &str,
     parse_html: bool,
     parse_heading_slugs: bool,
-    render_metadata_blocks: bool,
+    parse_metadata_blocks: bool,
 ) -> ParsedMarkdownData {
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
     let mut html_blocks = BTreeMap::default();
+    let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
     let mut within_code_block = false;
     let mut within_metadata = false;
-    let parse_options = if render_metadata_blocks {
+    let mut current_metadata_block_start = None;
+    let mut metadata_block_content_range: Option<Range<usize>> = None;
+    let parse_options = if parse_metadata_blocks {
         PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
     } else {
         PARSE_OPTIONS
@@ -171,11 +232,13 @@ pub(crate) fn parse_markdown_with_options(
         .into_offset_iter()
         .peekable();
     while let Some((pulldown_event, range)) = parser.next() {
-        if within_metadata && !render_metadata_blocks {
+        if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
                 pulldown_event
             {
                 within_metadata = false;
+                current_metadata_block_start = None;
+                metadata_block_content_range = None;
             }
             continue;
         }
@@ -224,7 +287,9 @@ pub(crate) fn parse_markdown_with_options(
                     }
                     pulldown_cmark::Tag::MetadataBlock(kind) => {
                         within_metadata = true;
-                        if !render_metadata_blocks {
+                        current_metadata_block_start = Some(range.start);
+                        metadata_block_content_range = None;
+                        if !parse_metadata_blocks {
                             continue;
                         }
                         MarkdownTag::MetadataBlock(kind)
@@ -358,7 +423,21 @@ pub(crate) fn parse_markdown_with_options(
                     within_code_block = false;
                 } else if let pulldown_cmark::TagEnd::MetadataBlock(_) = tag {
                     within_metadata = false;
-                    if !render_metadata_blocks {
+                    let block_start = current_metadata_block_start.take();
+                    let content_range = metadata_block_content_range.take();
+                    if parse_metadata_blocks
+                        && let (Some(block_start), Some(content_range)) =
+                            (block_start, content_range)
+                    {
+                        metadata_blocks.insert(
+                            block_start,
+                            ParsedMetadataBlock {
+                                rows: parse_metadata_table_rows(text, content_range.clone()),
+                                content_range,
+                            },
+                        );
+                    }
+                    if !parse_metadata_blocks {
                         continue;
                     }
                 }
@@ -378,6 +457,13 @@ pub(crate) fn parse_markdown_with_options(
                 }
 
                 if within_metadata {
+                    match &mut metadata_block_content_range {
+                        Some(content_range) => {
+                            content_range.start = content_range.start.min(range.start);
+                            content_range.end = content_range.end.max(range.end);
+                        }
+                        None => metadata_block_content_range = Some(range.clone()),
+                    }
                     state.push_event(range, MarkdownEvent::Text);
                     continue;
                 }
@@ -560,6 +646,7 @@ pub(crate) fn parse_markdown_with_options(
         language_paths,
         root_block_starts: state.root_block_starts,
         html_blocks,
+        metadata_blocks,
         heading_slugs,
         footnote_definitions,
     }
@@ -873,6 +960,16 @@ mod tests {
                     (20..29, RootEnd(1)),
                 ],
                 root_block_starts: vec![0, 20],
+                metadata_blocks: BTreeMap::from_iter([(
+                    0,
+                    ParsedMetadataBlock {
+                        content_range: 4..16,
+                        rows: Some(vec![MetadataRow {
+                            key: 4..9,
+                            value: 11..15,
+                        }]),
+                    },
+                )]),
                 ..Default::default()
             }
         )
@@ -888,6 +985,91 @@ mod tests {
                 .iter()
                 .all(|(_, event)| !matches!(event, Start(Link { .. })))
         );
+    }
+
+    #[test]
+    fn test_metadata_blocks_store_table_rows() {
+        let parsed = parse_markdown_with_options(
+            "---\ntitle: Post\nauthor: Zed\n---\nBody",
+            false,
+            false,
+            true,
+        );
+
+        assert_eq!(
+            parsed.metadata_blocks,
+            BTreeMap::from_iter([(
+                0,
+                ParsedMetadataBlock {
+                    content_range: 4..28,
+                    rows: Some(vec![
+                        MetadataRow {
+                            key: 4..9,
+                            value: 11..15,
+                        },
+                        MetadataRow {
+                            key: 16..22,
+                            value: 24..27,
+                        },
+                    ]),
+                },
+            )])
+        );
+    }
+
+    #[test]
+    fn test_metadata_blocks_store_fallback_for_nested_yaml() {
+        let parsed =
+            parse_markdown_with_options("---\ntags:\n  - zed\n---\nBody", false, false, true);
+
+        assert_eq!(
+            parsed.metadata_blocks,
+            BTreeMap::from_iter([(
+                0,
+                ParsedMetadataBlock {
+                    content_range: 4..18,
+                    rows: None,
+                },
+            )])
+        );
+    }
+
+    #[test]
+    fn test_metadata_table_rows_parse_simple_colon_pairs() {
+        let source = "title: Post\nauthor: Zed\n";
+        let Some(rows) = parse_metadata_table_rows(source, 0..source.len()) else {
+            panic!("expected metadata rows");
+        };
+        let pairs = rows
+            .into_iter()
+            .map(|row| (&source[row.key], &source[row.value]))
+            .collect::<Vec<_>>();
+
+        assert_eq!(pairs, vec![("title", "Post"), ("author", "Zed")]);
+    }
+
+    #[test]
+    fn test_metadata_table_rows_reject_non_simple_colon_pairs() {
+        for source in [
+            "tags:\n  - zed\n",
+            "title = Post\n",
+            "title:\n",
+            "title:   \n",
+            ": Post\n",
+            " title: Post\n",
+            "\n",
+        ] {
+            assert!(parse_metadata_table_rows(source, 0..source.len()).is_none());
+        }
+    }
+
+    #[test]
+    fn test_trim_metadata_range_returns_valid_empty_range() {
+        let source = "key:   \n";
+        let trimmed = trim_metadata_range(source, 4..7);
+
+        assert_eq!(trimmed, 7..7);
+        assert!(source[trimmed].is_empty());
     }
 
     #[test]
@@ -1176,6 +1358,13 @@ mod tests {
                     (27..36, RootEnd(1)),
                 ],
                 root_block_starts: vec![0, 27],
+                metadata_blocks: BTreeMap::from_iter([(
+                    0,
+                    ParsedMetadataBlock {
+                        content_range: 4..22,
+                        rows: None,
+                    },
+                )]),
                 ..Default::default()
             }
         );
