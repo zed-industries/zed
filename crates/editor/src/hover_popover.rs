@@ -37,6 +37,7 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+const ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS: usize = 4;
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
@@ -599,7 +600,19 @@ fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -
                     let offset = anchor.to_offset(&snapshot.buffer_snapshot());
                     // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
                     // use an inclusive range here to check if we should dismiss the popover
-                    (hover_range.start..=hover_range.end).contains(&offset)
+                    let mut start = hover_range.start;
+                    let mut end = hover_range.end;
+                    if start == end {
+                        // Some language servers report zero-width hover ranges.
+                        // Treat nearby offsets as equivalent to avoid flicker around zero-width ranges.
+                        start = MultiBufferOffset(
+                            start.0.saturating_sub(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS),
+                        );
+                        end = MultiBufferOffset(
+                            end.0.saturating_add(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS),
+                        );
+                    }
+                    (start..=end).contains(&offset)
                 })
                 .unwrap_or(false)
         })
@@ -618,7 +631,14 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
             let offset = anchor.to_offset(&snapshot.buffer_snapshot());
 
             // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
-            (hover_range.start..=hover_range.end).contains(&offset)
+            let mut start = hover_range.start;
+            let mut end = hover_range.end;
+            if start == end {
+                start =
+                    MultiBufferOffset(start.0.saturating_sub(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS));
+                end = MultiBufferOffset(end.0.saturating_add(ZERO_WIDTH_HOVER_EQUIVALENT_OFFSETS));
+            }
+            (start..=end).contains(&offset)
         })
         .unwrap_or(false)
 }
