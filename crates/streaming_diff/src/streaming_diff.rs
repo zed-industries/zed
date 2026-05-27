@@ -1,6 +1,6 @@
 use ordered_float::OrderedFloat;
 use rope::{Point, Rope, TextSummary};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::{
     cmp,
     fmt::{self, Debug},
@@ -103,7 +103,8 @@ pub struct StreamingDiff {
     scores: Matrix,
     old_text_ix: usize,
     new_text_ix: usize,
-    equal_runs: HashMap<(usize, usize), u32>,
+    previous_equal_runs: Vec<u32>,
+    current_equal_runs: Vec<u32>,
 }
 
 impl StreamingDiff {
@@ -114,9 +115,10 @@ impl StreamingDiff {
 
     pub fn new(old: String) -> Self {
         let old = old.chars().collect::<Vec<_>>();
+        let old_len = old.len();
         let mut scores = Matrix::new();
-        scores.resize(old.len() + 1, 1);
-        for i in 0..=old.len() {
+        scores.resize(old_len + 1, 1);
+        for i in 0..=old_len {
             scores.set(i, 0, i as f64 * Self::DELETION_SCORE);
         }
         Self {
@@ -125,7 +127,8 @@ impl StreamingDiff {
             scores,
             old_text_ix: 0,
             new_text_ix: 0,
-            equal_runs: Default::default(),
+            previous_equal_runs: vec![0; old_len + 1],
+            current_equal_runs: vec![0; old_len + 1],
         }
     }
 
@@ -134,9 +137,9 @@ impl StreamingDiff {
         self.scores.swap_columns(0, self.scores.cols - 1);
         self.scores
             .resize(self.old.len() + 1, self.new.len() - self.new_text_ix + 1);
-        self.equal_runs.retain(|(_i, j), _| *j == self.new_text_ix);
 
         for j in self.new_text_ix + 1..=self.new.len() {
+            self.current_equal_runs.fill(0);
             let relative_j = j - self.new_text_ix;
 
             self.scores
@@ -145,9 +148,8 @@ impl StreamingDiff {
                 let insertion_score = self.scores.get(i, relative_j - 1) + Self::INSERTION_SCORE;
                 let deletion_score = self.scores.get(i - 1, relative_j) + Self::DELETION_SCORE;
                 let equality_score = if self.old[i - 1] == self.new[j - 1] {
-                    let mut equal_run = self.equal_runs.get(&(i - 1, j - 1)).copied().unwrap_or(0);
-                    equal_run += 1;
-                    self.equal_runs.insert((i, j), equal_run);
+                    let equal_run = self.previous_equal_runs[i - 1] + 1;
+                    self.current_equal_runs[i] = equal_run;
 
                     let exponent = cmp::min(equal_run as i32 / 4, Self::MAX_EQUALITY_EXPONENT);
                     self.scores.get(i - 1, relative_j - 1) + Self::EQUALITY_BASE.powi(exponent)
@@ -158,6 +160,8 @@ impl StreamingDiff {
                 let score = insertion_score.max(deletion_score).max(equality_score);
                 self.scores.set(i, relative_j, score);
             }
+
+            std::mem::swap(&mut self.previous_equal_runs, &mut self.current_equal_runs);
         }
 
         let mut max_score = f64::NEG_INFINITY;
