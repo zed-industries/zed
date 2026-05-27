@@ -1766,6 +1766,16 @@ impl NativeAgentConnection {
             .update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
     }
 
+    pub fn refresh_skills_for_project(&self, project: Entity<Project>, cx: &mut App) {
+        self.0.update(cx, |agent, cx| {
+            let project_id = agent.get_or_create_project_state(&project, cx);
+            agent.ensure_skills_scan_started(cx);
+            if let Some(state) = agent.projects.get_mut(&project_id) {
+                state.project_context_needs_refresh.send(()).ok();
+            }
+        });
+    }
+
     pub fn available_skills(
         &self,
         session_id: &acp::SessionId,
