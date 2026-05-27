@@ -17089,6 +17089,7 @@ checksum = "2b2231b7c3057d5e4ad0156fb3dc807d900806020c5ffa3ee6ff2c8c76fb8520"
 name = "streaming_diff"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "ordered-float 2.10.1",
  "rand 0.9.4",
  "rope",
