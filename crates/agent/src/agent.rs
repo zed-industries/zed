@@ -2619,17 +2619,18 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         // Use a per-thread temp directory for all terminal commands, even when
         // sandboxing is disabled, so the model can't infer sandbox state from
         // `$TMPDIR` changing between conversations.
-        let extra_env = match self
+        let mut extra_env = extra_env;
+        match self
             .thread
             .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
         {
             Ok(Ok(temp_dir)) => {
                 let temp_dir = temp_dir.to_string_lossy().into_owned();
-                vec![
+                extra_env.extend([
                     acp::EnvVariable::new("TMPDIR", &temp_dir),
                     acp::EnvVariable::new("TMP", &temp_dir),
                     acp::EnvVariable::new("TEMP", &temp_dir),
-                ]
+                ]);
             }
             Ok(Err(error)) => return Task::ready(Err(error)),
             Err(error) => return Task::ready(Err(error)),
