@@ -5,11 +5,11 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::HttpClient;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
+    ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -214,6 +214,16 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
+    }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for OpenAI?".into(),
+            message: "Fast mode sends requests using OpenAI's Priority processing tier, which \
+                targets significantly lower latency than the standard tier and is billed at a \
+                premium per-token rate."
+                .into(),
+        })
     }
 }
 
@@ -454,6 +464,10 @@ impl LanguageModel for OpenAiLanguageModel {
         supports_selectable_thinking_effort(&self.model)
     }
 
+    fn supports_fast_mode(&self) -> bool {
+        self.model.supports_priority()
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         supported_thinking_effort_levels(&self.model)
     }
@@ -476,7 +490,7 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -488,6 +502,9 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        if !self.model.supports_priority() {
+            request.speed = None;
+        }
         if self.model.uses_responses_api() {
             let request = into_open_ai_response(
                 request,

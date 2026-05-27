@@ -12738,7 +12738,7 @@ fn git_reset(offset: usize, repo: &git2::Repository) {
     let new_head = commit
         .parents()
         .inspect(|parnet| {
-            parnet.message();
+            let _ = parnet.message();
         })
         .nth(offset)
         .expect("Not enough history");
