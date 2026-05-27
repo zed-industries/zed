@@ -131,12 +131,14 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
 
-        assert!(rendered.contains("### Personal `AGENTS.md`"));
+        assert!(rendered.contains("These instructions apply to every project this user opens"));
         assert!(rendered.contains("always be concise"));
         assert!(rendered.contains("### Project Rules"));
         assert!(rendered.contains("project-specific guidance"));
 
-        let personal_idx = rendered.find("### Personal `AGENTS.md`").unwrap();
+        let personal_idx = rendered
+            .find("These instructions apply to every project this user opens")
+            .unwrap();
         let project_idx = rendered.find("### Project Rules").unwrap();
         assert!(
             personal_idx < project_idx,
@@ -231,7 +233,7 @@ mod tests {
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
-        assert!(!rendered.contains("### Personal `AGENTS.md`"));
+        assert!(!rendered.contains("These instructions apply to every project this user opens"));
     }
 
     #[test]
