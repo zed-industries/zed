@@ -2879,6 +2879,78 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_branch_diff_action_matches_existing_item_by_base_ref(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "changed",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let target_branch_diff = cx
+            .update(|window, cx| {
+                let Some(repository) = project.read(cx).active_repository(cx) else {
+                    return Task::ready(Err(anyhow!("No active repository")));
+                };
+                ProjectDiff::new_with_branch_base(
+                    project.clone(),
+                    workspace.clone(),
+                    "topic".into(),
+                    repository,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(target_branch_diff.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(BranchDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let (active_base_ref, mut base_refs) = workspace.update(cx, |workspace, cx| {
+            let active_item = workspace.active_item_as::<ProjectDiff>(cx).unwrap();
+            let active_base_ref = match active_item.read(cx).diff_base(cx) {
+                DiffBase::Merge { base_ref } => base_ref.to_string(),
+                DiffBase::Head => panic!("expected active item to be a branch diff"),
+            };
+            let base_refs = workspace
+                .items_of_type::<ProjectDiff>(cx)
+                .filter_map(|item| match item.read(cx).diff_base(cx) {
+                    DiffBase::Merge { base_ref } => Some(base_ref.to_string()),
+                    DiffBase::Head => None,
+                })
+                .collect::<Vec<_>>();
+            (active_base_ref, base_refs)
+        });
+        base_refs.sort();
+
+        assert_eq!(active_base_ref, "origin/main");
+        assert_eq!(base_refs, vec!["origin/main", "topic"]);
+    }
+
+    #[gpui::test]
     async fn test_update_on_uncommit(cx: &mut TestAppContext) {
         init_test(cx);
 
