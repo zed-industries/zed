@@ -693,6 +693,10 @@ pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.38"
 quote = "1.0.9"
 rand = "0.9"
+ratex-layout = "0.1.9"
+ratex-parser = "0.1.9"
+ratex-svg = { version = "0.1.9", features = ["embed-fonts"] }
+ratex-types = "0.1.9"
 rayon = "1.8"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io

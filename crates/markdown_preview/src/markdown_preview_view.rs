@@ -221,7 +221,7 @@ impl MarkdownPreviewView {
                     None,
                     MarkdownOptions {
                         parse_html: true,
-                        render_mermaid_diagrams: true,
+                        render_embedded_diagrams: true,
                         parse_heading_slugs: true,
                         ..Default::default()
                     },

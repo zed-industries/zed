@@ -747,7 +747,10 @@ impl ConversationView {
         let code_span_resolver = AgentCodeSpanResolver::new(&project.downgrade(), cx);
         let mut subscriptions = vec![
             cx.observe_global_in::<SettingsStore>(window, Self::agent_ui_font_size_changed),
-            cx.observe_global_in::<SettingsStore>(window, Self::invalidate_mermaid_caches),
+            cx.observe_global_in::<SettingsStore>(
+                window,
+                Self::invalidate_embedded_diagrams_caches,
+            ),
             cx.observe_global_in::<AgentUiFontSize>(window, Self::agent_ui_font_size_changed),
             cx.observe_global_in::<AgentBufferFontSize>(window, Self::agent_ui_font_size_changed),
             cx.subscribe_in(
@@ -2884,7 +2887,11 @@ impl ConversationView {
         }
     }
 
-    fn invalidate_mermaid_caches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn invalidate_embedded_diagrams_caches(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let current_theme_id = cx.theme().id.clone();
         if self.last_theme_id.as_ref() == Some(&current_theme_id) {
             return;
@@ -2901,7 +2908,7 @@ impl ConversationView {
                 .collect();
             for thread in threads {
                 thread.update(cx, |thread, cx| {
-                    thread.invalidate_mermaid_caches(cx);
+                    thread.invalidate_embedded_diagrams_caches(cx);
                 });
             }
         }
