@@ -1,6 +1,6 @@
 use super::tool_permissions::{
     authorize_symlink_access, canonicalize_worktree_roots, detect_symlink_escape,
-    sensitive_settings_kind,
+    resolve_creatable_global_skill_path, sensitive_settings_kind,
 };
 use agent_client_protocol::schema as acp;
 use agent_settings::AgentSettings;
@@ -22,6 +22,7 @@ use std::path::Path;
 /// Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
 ///
 /// This tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CreateDirectoryToolInput {
     /// The path of the new directory.
@@ -33,6 +34,10 @@ pub struct CreateDirectoryToolInput {
     /// - directory2/
     ///
     /// You can create a new directory by providing a path of "directory1/new_directory"
+    /// </example>
+    ///
+    /// <example>
+    /// To create a global agent skill directory, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill`.
     /// </example>
     pub path: String,
 }
@@ -144,6 +149,21 @@ impl AgentTool for CreateDirectoryTool {
                 authorize.await.map_err(|e| e.to_string())?;
             }
 
+            if let Some(global_skill_directory) =
+                resolve_creatable_global_skill_path(Path::new(&input.path), fs.as_ref()).await
+            {
+                futures::select! {
+                    result = fs.create_dir(&global_skill_directory).fuse() => {
+                        result.map_err(|e| format!("Creating directory {destination_path}: {e}"))?;
+                    }
+                    _ = event_stream.cancelled_by_user().fuse() => {
+                        return Err("Create directory cancelled by user".to_string());
+                    }
+                }
+
+                return Ok(format!("Created directory {destination_path}"));
+            }
+
             let create_entry = project.update(cx, |project, cx| {
                 match project.find_project_path(&input.path, cx) {
                     Some(project_path) => Ok(project.create_entry(project_path, true, cx)),
@@ -188,6 +208,96 @@ mod tests {
             settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
             AgentSettings::override_global(settings, cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_allows_global_skill_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let input_path = PathBuf::from("~")
+            .join(".agents")
+            .join("skills")
+            .join("my-skill")
+            .to_string_lossy()
+            .into_owned();
+        let created_path = agent_skills::global_skills_dir().join("my-skill");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(CreateDirectoryToolInput { path: input_path }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let auth = event_rx.expect_authorization().await;
+        let title = auth.tool_call.fields.title.as_deref().unwrap_or("");
+        assert!(
+            title.contains("agent skills"),
+            "Authorization title should mention agent skills, got: {title}",
+        );
+        auth.response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let result = task.await;
+        assert!(
+            result.is_ok(),
+            "Tool should create global skill directory: {result:?}"
+        );
+        assert!(fs.is_dir(&created_path).await);
+    }
+
+    #[gpui::test]
+    async fn test_create_directory_rejects_other_global_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root/project"), json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let tool = Arc::new(CreateDirectoryTool::new(project));
+        let outside_path = agent_skills::global_skills_dir()
+            .parent()
+            .expect("global skills directory should have a parent")
+            .join("not-skills");
+
+        let (event_stream, mut event_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| {
+                tool.run(
+                    ToolInput::resolved(CreateDirectoryToolInput {
+                        path: outside_path.to_string_lossy().into_owned(),
+                    }),
+                    event_stream,
+                    cx,
+                )
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Tool should reject paths outside the project and global skills directory"
+        );
+        assert!(!fs.is_dir(&outside_path).await);
+        assert!(
+            !matches!(
+                event_rx.try_recv(),
+                Ok(Ok(crate::ThreadEvent::ToolCallAuthorization(_)))
+            ),
+            "Non-skill global path should not emit an agent-skills authorization prompt",
+        );
     }
 
     #[gpui::test]

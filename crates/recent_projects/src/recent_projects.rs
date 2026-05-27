@@ -1135,24 +1135,41 @@ impl PickerDelegate for RecentProjectsDelegate {
                 }
 
                 let key = key.clone();
-                let path_list = key.path_list().clone();
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     cx.defer(move |cx| {
-                        if let Some(task) = handle
-                            .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.find_or_create_local_workspace(
-                                    path_list,
-                                    Some(key.clone()),
-                                    &[],
-                                    None,
-                                    OpenMode::Activate,
-                                    window,
-                                    cx,
-                                )
+                        // Try to activate an existing workspace for this project group
+                        // first, so we preserve the actual worktree paths (which may
+                        // differ from the main git worktree paths stored in the key).
+                        if let Some(workspace) = handle
+                            .update(cx, |multi_workspace, _window, cx| {
+                                multi_workspace.last_active_workspace_for_group(&key, cx)
                             })
                             .log_err()
+                            .flatten()
                         {
-                            task.detach_and_log_err(cx);
+                            handle
+                                .update(cx, |multi_workspace, window, cx| {
+                                    multi_workspace.activate(workspace, None, window, cx);
+                                })
+                                .log_err();
+                        } else {
+                            let path_list = key.path_list().clone();
+                            if let Some(task) = handle
+                                .update(cx, |multi_workspace, window, cx| {
+                                    multi_workspace.find_or_create_local_workspace(
+                                        path_list,
+                                        Some(key.clone()),
+                                        &[],
+                                        None,
+                                        OpenMode::Activate,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .log_err()
+                            {
+                                task.detach_and_log_err(cx);
+                            }
                         }
                     });
                 }
