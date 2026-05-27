@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
@@ -413,6 +413,9 @@ impl LmStudioLanguageModel {
             model: self.model.name.clone(),
             messages,
             stream: true,
+            stream_options: Some(lmstudio::StreamOptions {
+                include_usage: true,
+            }),
             max_tokens: Some(-1),
             stop: Some(request.stop),
             // In LM Studio you can configure specific settings you'd like to use for your model.
@@ -558,13 +561,23 @@ impl LmStudioEventMapper {
         &mut self,
         event: lmstudio::ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        // The final usage summary chunk from OpenAI-compatible servers has an empty choices array.
+        // Return accumulated events instead of treating it as an error.
         let Some(choice) = event.choices.into_iter().next() else {
-            return vec![Err(LanguageModelCompletionError::from(anyhow!(
-                "Response contained no choices"
-            )))];
+            return events;
         };
 
-        let mut events = Vec::new();
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
@@ -601,15 +614,6 @@ impl LmStudioEventMapper {
                     }
                 }
             }
-        }
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
         }
 
         match choice.finish_reason.as_deref() {
