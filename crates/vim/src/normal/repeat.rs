@@ -165,10 +165,6 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                // replay_insert_event calls handle_input directly, which does not emit
-                // InputHandled, so observe_insertion is never triggered via the subscription.
-                // We call it explicitly here so dot recording captures the insertion text.
-                Vim::globals(cx).observe_insertion(&text, utf16_range_to_replace.clone());
                 let Some(workspace) = Workspace::for_window(window, cx) else {
                     return;
                 };
@@ -474,6 +470,21 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("hello worlˇd\nhello world\nhello world\n");
+    }
+
+    #[gpui::test]
+    async fn test_dot_repeat_after_macro_change_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇfoo foo", Mode::Normal);
+        cx.simulate_keystrokes("q l c f o x escape q");
+        cx.assert_state("ˇxo foo", Mode::Normal);
+
+        cx.simulate_keystrokes("w @ l");
+        cx.assert_state("xo ˇxo", Mode::Normal);
+
+        cx.simulate_keystrokes(".");
+        cx.assert_state("xo ˇx", Mode::Normal);
     }
 
     #[gpui::test]
