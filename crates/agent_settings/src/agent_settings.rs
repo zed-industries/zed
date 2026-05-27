@@ -1,4 +1,5 @@
 mod agent_profile;
+mod user_agents_md;
 
 use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
@@ -20,6 +21,7 @@ use settings::{
 };
 
 pub use crate::agent_profile::*;
+pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =

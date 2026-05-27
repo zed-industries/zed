@@ -138,7 +138,7 @@ impl AgentDiffPane {
             .changed_buffers(cx);
 
         // Sort edited files alphabetically for consistency with Git diff view
-        let mut sorted_buffers: Vec<_> = changed_buffers.iter().collect();
+        let mut sorted_buffers: Vec<_> = changed_buffers.collect();
         sorted_buffers.sort_by(|(buffer_a, _), (buffer_b, _)| {
             let path_a = buffer_a.read(cx).file().map(|f| f.path().clone());
             let path_b = buffer_b.read(cx).file().map(|f| f.path().clone());
@@ -564,6 +564,10 @@ impl Item for AgentDiffPane {
             .read(cx)
             .rhs_editor()
             .for_each_project_item(cx, f)
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
@@ -1531,7 +1535,7 @@ impl AgentDiff {
         };
 
         let action_log = thread.read(cx).action_log();
-        let changed_buffers = action_log.read(cx).changed_buffers(cx);
+        let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
 
         let mut unaffected = self.reviewing_editors.clone();
 
@@ -1765,12 +1769,13 @@ impl AgentDiff {
         {
             let changed_buffers = thread.read(cx).action_log().read(cx).changed_buffers(cx);
 
-            let mut keys = changed_buffers.keys();
-            keys.find(|k| *k == &curr_buffer);
+            let mut keys = changed_buffers.map(|(buffer, _)| buffer);
+            keys.find(|k| *k == curr_buffer);
             let next_project_path = keys
                 .next()
-                .filter(|k| *k != &curr_buffer)
+                .filter(|k| *k != curr_buffer)
                 .and_then(|after| after.read(cx).project_path(cx));
+            drop(keys);
 
             if let Some(path) = next_project_path {
                 let task = workspace.open_path(path, None, true, window, cx);
@@ -2253,7 +2258,7 @@ mod tests {
         });
 
         let editor2_path = editor2
-            .read_with(cx, |editor, cx| editor.project_path(cx))
+            .read_with(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(editor2_path, buffer_path2);
 

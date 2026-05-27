@@ -70,7 +70,7 @@ impl SeatbeltConfigFile {
         let mut file =
             NamedTempFile::new().context("failed to create temporary Seatbelt config file")?;
 
-        let config = generate_seatbelt_config(writable_directories, permissions);
+        let config = generate_seatbelt_config(writable_directories, permissions)?;
         file.write_all(config.as_bytes())
             .context("failed to write Seatbelt config")?;
         file.flush().context("failed to flush Seatbelt config")?;
@@ -114,7 +114,16 @@ pub fn wrap_invocation(
 
     let mut wrapped_args = vec![
         "-f".to_string(),
-        config_file.path.to_string_lossy().to_string(),
+        config_file
+            .path
+            .to_str()
+            .with_context(|| {
+                format!(
+                    "Seatbelt config file path contains invalid UTF-8: {}",
+                    config_file.path.display()
+                )
+            })?
+            .to_string(),
         program.to_string(),
     ];
     wrapped_args.extend(args.iter().cloned());
@@ -138,7 +147,7 @@ pub fn wrap_invocation(
 fn generate_seatbelt_config(
     writable_directories: &[&Path],
     permissions: SandboxPermissions,
-) -> String {
+) -> Result<String> {
     // Canonicalize each writable path to resolve symlinks (e.g.,
     // /var -> /private/var on macOS). Fall back to the original path if
     // canonicalization fails.
@@ -182,7 +191,7 @@ fn generate_seatbelt_config(
         );
     } else {
         for canonical_path in &canonical_writable_directories {
-            let escaped_path = escape_sandbox_path(canonical_path);
+            let escaped_path = escape_sandbox_path(canonical_path)?;
             config.push_str(&format!(
                 r#"
 ; Allow writing to a permitted directory
@@ -216,17 +225,18 @@ fn generate_seatbelt_config(
         );
     }
 
-    config
+    Ok(config)
 }
 
 /// Escape a path for use in a Seatbelt config string.
 ///
 /// Seatbelt configs use a Scheme-like syntax where certain characters need
 /// to be handled carefully.
-fn escape_sandbox_path(path: &Path) -> String {
-    let path_str = path.to_string_lossy();
-    // Escape backslashes and quotes
-    path_str.replace('\\', "\\\\").replace('"', "\\\"")
+fn escape_sandbox_path(path: &Path) -> Result<String> {
+    let path_str = path
+        .to_str()
+        .with_context(|| format!("path contains invalid UTF-8: {}", path.display()))?;
+    Ok(path_str.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 #[cfg(test)]
@@ -241,7 +251,8 @@ mod tests {
     #[test]
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
-        let config = generate_seatbelt_config(&[dir.as_path()], SandboxPermissions::default());
+        let config =
+            generate_seatbelt_config(&[dir.as_path()], SandboxPermissions::default()).unwrap();
 
         assert!(config.contains("(allow file-read*)"));
         assert!(config.contains("/Users/test/projects/myproject"));
@@ -259,7 +270,8 @@ mod tests {
                 allow_network: false,
                 allow_fs_write: true,
             },
-        );
+        )
+        .unwrap();
 
         assert!(config.contains("(allow file-read*)"));
         assert!(config.contains("; Allow unrestricted filesystem writes"));
@@ -277,7 +289,8 @@ mod tests {
                 allow_network: true,
                 allow_fs_write: false,
             },
-        );
+        )
+        .unwrap();
 
         assert!(config.contains("(allow network*)"));
         assert!(config.contains("/Users/test/projects/myproject"));
@@ -292,7 +305,8 @@ mod tests {
         let config = generate_seatbelt_config(
             &[project_dir.as_path(), scratch_dir.as_path()],
             SandboxPermissions::default(),
-        );
+        )
+        .unwrap();
 
         assert!(config.contains("/Users/test/projects/myproject"));
         assert!(config.contains("/private/tmp/zed-agent-command"));
@@ -303,8 +317,19 @@ mod tests {
     #[test]
     fn test_escape_sandbox_path_handles_special_chars() {
         let path = PathBuf::from("/path/with\"quotes");
-        let escaped = escape_sandbox_path(&path);
+        let escaped = escape_sandbox_path(&path).unwrap();
         assert_eq!(escaped, "/path/with\\\"quotes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_escape_sandbox_path_rejects_invalid_utf8() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"/path/with/invalid/\xFF".to_vec()));
+        let error = escape_sandbox_path(&path).unwrap_err();
+
+        assert!(error.to_string().contains("invalid UTF-8"));
     }
 
     #[test]

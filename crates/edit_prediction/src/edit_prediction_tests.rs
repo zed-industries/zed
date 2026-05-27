@@ -3603,6 +3603,9 @@ async fn test_edit_prediction_settled_omits_body_when_data_collection_is_disable
                 tags: Vec::new(),
                 reasoning: None,
                 uncommitted_diff: String::new(),
+                recently_opened_files: Vec::new(),
+                recently_viewed_files: Vec::new(),
+                uncommitted_diff_contains_edit_history: false,
                 cursor_path: Path::new("foo.md").into(),
                 cursor_position: "0".to_string(),
                 edit_history: "sensitive edit history".to_string(),
@@ -3901,7 +3904,7 @@ async fn test_upsell_dismissed_via_dismissable_api(cx: &mut TestAppContext) {
     kvp.delete_kvp(ZedPredictUpsell::KEY.into()).await.unwrap();
 }
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }

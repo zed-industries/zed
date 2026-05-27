@@ -4,11 +4,11 @@ use crate::{
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
     ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, UserAgentsMd, WebSearchTool, WriteFileTool,
-    decide_permission_from_settings,
+    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
+use agent_settings::UserAgentsMd;
 use feature_flags::{
     FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag, UpdatePlanToolFeatureFlag,
     UpdateTitleToolFeatureFlag,
@@ -123,7 +123,7 @@ enum RetryStrategy {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Message {
     User(UserMessage),
     Agent(AgentMessage),
@@ -176,13 +176,16 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
     pub id: UserMessageId,
-    pub content: Vec<UserMessageContent>,
+    pub content: Arc<[UserMessageContent]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UserMessageContent {
     Text(String),
-    Mention { uri: MentionUri, content: String },
+    Mention {
+        uri: MentionUri,
+        content: SharedString,
+    },
     Image(LanguageModelImage),
 }
 
@@ -190,7 +193,7 @@ impl UserMessage {
     pub fn to_markdown(&self) -> String {
         let mut markdown = String::new();
 
-        for content in &self.content {
+        for content in &*self.content {
             match content {
                 UserMessageContent::Text(text) => {
                     markdown.push_str(text);
@@ -250,7 +253,7 @@ impl UserMessage {
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
         let mut skills_context = OPEN_SKILLS_TAG.to_string();
 
-        for chunk in &self.content {
+        for chunk in &*self.content {
             let chunk = match chunk {
                 UserMessageContent::Text(text) => {
                     language_model::MessageContent::Text(text.clone())
@@ -266,7 +269,7 @@ impl UserMessage {
                                 "\n{}",
                                 MarkdownCodeBlock {
                                     tag: &codeblock_tag(abs_path, None),
-                                    text: &content.to_string(),
+                                    text: content,
                                 }
                             )
                             .ok();
@@ -627,9 +630,9 @@ impl AgentMessage {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentMessage {
-    pub content: Vec<AgentMessageContent>,
-    pub tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
-    pub reasoning_details: Option<serde_json::Value>,
+    pub(crate) content: Vec<AgentMessageContent>,
+    pub(crate) tool_results: IndexMap<LanguageModelToolUseId, LanguageModelToolResult>,
+    pub(crate) reasoning_details: Option<Arc<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -963,7 +966,7 @@ pub struct Thread {
     title_generation_failed: bool,
     pending_summary_generation: Option<Shared<Task<Option<SharedString>>>>,
     summary: Option<SharedString>,
-    messages: Vec<Message>,
+    messages: Vec<Arc<Message>>,
     user_store: Entity<UserStore>,
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -1183,7 +1186,7 @@ impl Thread {
         let (tx, rx) = mpsc::unbounded();
         let stream = ThreadEventStream(tx);
         for message in &self.messages {
-            match message {
+            match &**message {
                 Message::User(user_message) => stream.send_user_message(user_message),
                 Message::Agent(assistant_message) => {
                     for content in &assistant_message.content {
@@ -1639,13 +1642,13 @@ impl Thread {
     }
 
     pub fn last_message(&self) -> Option<&Message> {
-        self.messages.last()
+        self.messages.last().map(std::ops::Deref::deref)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn last_received_or_pending_message(&self) -> Option<Message> {
+    pub fn last_received_or_pending_message(&self) -> Option<Arc<Message>> {
         if let Some(message) = self.pending_message.clone() {
-            Some(Message::Agent(message))
+            Some(Arc::new(Message::Agent(message)))
         } else {
             self.messages.last().cloned()
         }
@@ -1802,13 +1805,13 @@ impl Thread {
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
         let Some(position) = self.messages.iter().position(
-            |msg| matches!(msg, Message::User(UserMessage { id, .. }) if id == &message_id),
+            |msg| matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &message_id),
         ) else {
             return Err(anyhow!("Message not found"));
         };
 
         for message in self.messages.drain(position..) {
-            match message {
+            match &*message {
                 Message::User(message) => {
                     self.request_token_usage.remove(&message.id);
                 }
@@ -1850,7 +1853,7 @@ impl Thread {
         let mut previous_user_message_id: Option<&UserMessageId> = None;
 
         for message in &self.messages {
-            if let Message::User(user_msg) = message {
+            if let Message::User(user_msg) = &**message {
                 if &user_msg.id == target_id {
                     let prev_id = previous_user_message_id?;
                     let usage = self.request_token_usage.get(prev_id)?;
@@ -1895,7 +1898,7 @@ impl Thread {
         &mut self,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
-        self.messages.push(Message::Resume);
+        self.messages.push(Arc::new(Message::Resume));
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
@@ -1914,11 +1917,11 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
-        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
+        let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
 
         self.send_existing(cx)
@@ -1949,9 +1952,9 @@ impl Thread {
         let content = blocks
             .into_iter()
             .map(|block| UserMessageContent::from_content_block(block, path_style))
-            .collect::<Vec<_>>();
+            .collect::<Arc<_>>();
         self.messages
-            .push(Message::User(UserMessage { id, content }));
+            .push(Arc::new(Message::User(UserMessage { id, content })));
         cx.notify();
     }
 
@@ -1969,10 +1972,10 @@ impl Thread {
             _ => "[unknown]".to_string(),
         };
 
-        self.messages.push(Message::Agent(AgentMessage {
+        self.messages.push(Arc::new(Message::Agent(AgentMessage {
             content: vec![AgentMessageContent::Text(text)],
             ..Default::default()
-        }));
+        })));
         cx.notify();
     }
 
@@ -2230,10 +2233,10 @@ impl Thread {
                     }
                 }
                 this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.messages.last() {
+                    if let Some(Message::Agent(message)) = this.last_message() {
                         if message.tool_results.is_empty() {
                             intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Message::Resume);
+                            this.messages.push(Arc::new(Message::Resume));
                         }
                     }
                 })?;
@@ -2356,12 +2359,12 @@ impl Thread {
                 let last_message = self.pending_message();
                 // Store the last non-empty reasoning_details (overwrites earlier ones)
                 // This ensures we keep the encrypted reasoning with signatures, not the early text reasoning
-                if let serde_json::Value::Array(ref arr) = details {
+                if let serde_json::Value::Array(arr) = &details {
                     if !arr.is_empty() {
-                        last_message.reasoning_details = Some(details);
+                        last_message.reasoning_details = Some(Arc::new(details));
                     }
                 } else {
-                    last_message.reasoning_details = Some(details);
+                    last_message.reasoning_details = Some(Arc::new(details));
                 }
             }
             ToolUse(tool_use) => {
@@ -2895,7 +2898,7 @@ impl Thread {
         self.messages
             .iter()
             .rev()
-            .find_map(|message| match message {
+            .find_map(|message| match &**message {
                 Message::User(user_message) => Some(user_message),
                 Message::Agent(_) => None,
                 Message::Resume => None,
@@ -2936,7 +2939,7 @@ impl Thread {
             }
         }
 
-        self.messages.push(Message::Agent(message));
+        self.messages.push(Arc::new(Message::Agent(message)));
         self.updated_at = Utc::now();
         self.clear_summary();
         cx.notify()
@@ -3200,7 +3203,7 @@ impl Thread {
             if ix > 0 {
                 markdown.push('\n');
             }
-            match message {
+            match &**message {
                 Message::User(_) => markdown.push_str("## User\n\n"),
                 Message::Agent(_) => markdown.push_str("## Assistant\n\n"),
                 Message::Resume => {}
@@ -4412,7 +4415,7 @@ impl UserMessageContent {
                 match MentionUri::parse(&resource_link.uri, path_style) {
                     Ok(uri) => Self::Mention {
                         uri,
-                        content: String::new(),
+                        content: SharedString::default(),
                     },
                     Err(err) => {
                         log::error!("Failed to parse mention link: {}", err);
@@ -4425,7 +4428,7 @@ impl UserMessageContent {
                     match MentionUri::parse(&resource.uri, path_style) {
                         Ok(uri) => Self::Mention {
                             uri,
-                            content: resource.text,
+                            content: resource.text.into(),
                         },
                         Err(err) => {
                             log::error!("Failed to parse mention link: {}", err);
@@ -4627,14 +4630,14 @@ mod tests {
                     },
                 );
 
-                thread.messages.push(Message::Agent(AgentMessage {
+                thread.messages.push(Arc::new(Message::Agent(AgentMessage {
                     content: vec![
                         AgentMessageContent::ToolUse(registered_tool_use),
                         AgentMessageContent::ToolUse(missing_tool_use),
                     ],
                     tool_results,
                     reasoning_details: None,
-                }));
+                })));
 
                 thread.replay(cx)
             })
@@ -4785,11 +4788,11 @@ mod tests {
             },
         );
 
-        thread.messages.push(Message::Agent(AgentMessage {
+        thread.messages.push(Arc::new(Message::Agent(AgentMessage {
             content: vec![AgentMessageContent::ToolUse(tool_use)],
             tool_results,
             reasoning_details: None,
-        }));
+        })));
     }
 
     #[gpui::test]

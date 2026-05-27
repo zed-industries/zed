@@ -408,13 +408,32 @@ pub struct NpmInfo {
     #[serde(default)]
     dist_tags: NpmInfoDistTags,
     versions: Vec<Version>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_npm_info_time")]
     time: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NpmInfoDistTags {
     latest: Option<Version>,
+}
+
+// Some registries put non-string values in the `time` map: JFrog Artifactory emits
+// `"unpublished": null`, and npm itself reports `unpublished` as an object when a
+// package has had versions unpublished. Only version keys map to the RFC 3339 strings
+// we read, so keep the string entries and drop the rest rather than failing to parse
+// the entire `npm info` response (which would block language server installation).
+fn deserialize_npm_info_time<'de, D>(deserializer: D) -> Result<HashMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries = HashMap::<String, serde_json::Value>::deserialize(deserializer)?;
+    Ok(entries
+        .into_iter()
+        .filter_map(|(key, value)| match value {
+            serde_json::Value::String(value) => Some((key, value)),
+            _ => None,
+        })
+        .collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1208,6 +1227,31 @@ mod tests {
         assert_eq!(
             select_npm_package_version("test-package", info, None)?,
             Version::parse("3.0.0")?
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_npm_info_skips_non_string_time_entries() -> Result<()> {
+        // Registries such as JFrog Artifactory include `"unpublished": null` in `time`;
+        // parsing must tolerate this rather than rejecting the whole response.
+        let info: NpmInfo = serde_json::from_str(
+            r#"{
+                "dist-tags": { "latest": "2.0.0" },
+                "versions": ["1.0.0", "2.0.0"],
+                "time": {
+                    "unpublished": null,
+                    "created": "2024-01-01T00:00:00.000Z",
+                    "modified": "2024-02-01T00:00:00.000Z",
+                    "1.0.0": "2024-01-01T00:00:00.000Z",
+                    "2.0.0": "2024-02-01T00:00:00.000Z"
+                }
+            }"#,
+        )?;
+
+        assert_eq!(
+            select_npm_package_version("test-package", info, Some("2024-02-15T00:00:00.000Z"))?,
+            Version::parse("2.0.0")?
         );
         Ok(())
     }
