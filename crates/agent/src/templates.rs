@@ -111,7 +111,7 @@ mod tests {
                 project_entry_id: 1,
             }),
         }];
-        let project = ProjectContext::new(worktrees, Vec::new());
+        let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
@@ -148,5 +148,22 @@ mod tests {
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
         assert!(!rendered.contains("### Personal `AGENTS.md`"));
+    }
+
+    #[test]
+    fn test_system_prompt_does_not_render_legacy_zed_rules_section() {
+        let project = prompt_store::ProjectContext::default();
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(!rendered.contains("The user has specified the following rules"));
+        assert!(!rendered.contains("Rules title:"));
     }
 }
