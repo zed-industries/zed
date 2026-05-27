@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
+    Banner, ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
     WithScrollbar, prelude::*,
 };
 use ui_input::{ErasedEditorEvent, InputField};
@@ -1012,29 +1012,29 @@ impl SkillCreator {
             ))
     }
 
-    fn render_action_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let valid = self.is_valid(cx);
         let saving = self.saving;
         let main_action = if saving { "Saving…" } else { "Save Skill" };
 
-        h_flex()
+        v_flex()
             .w_full()
-            .map(|this| {
-                if self.save_error.is_some() {
-                    this.justify_between()
-                } else {
-                    this.justify_end()
-                }
+            .p_2p5()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().panel_background)
+            .when(self.save_error.is_some(), |this| {
+                this.gap_2().child(
+                    Banner::new()
+                        .severity(Severity::Error)
+                        .children(self.save_error.clone().map(|err| Label::new(err))),
+                )
             })
-            .gap_2()
-            .children(
-                self.save_error
-                    .clone()
-                    .map(|err| Label::new(err).size(LabelSize::Small).color(Color::Error)),
-            )
             .child(
                 h_flex()
+                    .w_full()
                     .gap_1()
+                    .justify_end()
                     .child(
                         Button::new("cancel-skill", "Cancel")
                             .disabled(saving)
@@ -1161,15 +1161,7 @@ impl Render for SkillCreator {
                                 .child(self.render_form_fields(window, cx)),
                         ),
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .p_2p5()
-                        .border_t_1()
-                        .border_color(theme.colors().border_variant)
-                        .bg(theme.colors().panel_background)
-                        .child(self.render_action_bar(cx)),
-                ),
+                .child(self.render_footer(cx)),
             window,
             cx,
             Tiling::default(),
