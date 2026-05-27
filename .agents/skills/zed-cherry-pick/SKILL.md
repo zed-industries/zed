@@ -1,6 +1,6 @@
 ---
 name: zed-cherry-pick
-description: Cherry-pick a merged PR into Zed's `preview` or `stable` release branch, including the case where the automated `cherry_pick` GitHub Actions workflow failed due to merge conflicts. Use this whenever the user mentions cherry-picking to preview/stable, a failed cherry-pick run, or wants to manually port a fix into a release branch.
+description: Cherry-pick a merged PR or commit into Zed's `preview` or `stable` release branch. Use this whenever the user mentions cherry-picking to preview/stable, a failed cherry-pick run, or wants to manually port a fix into a release branch.
 ---
 
 # Zed Cherry-Pick
@@ -16,9 +16,9 @@ A merged PR on `main` gets ported to a release branch by `script/cherry-pick`, n
 
 ## When to use
 
-- The user asks to cherry-pick a PR (by number or URL) to `preview` or `stable`.
-- The user mentions that the automated cherry-pick "failed" and wants you to take over.
-- The user wants to manually port a commit into a release branch.
+Use this when the user asks to cherry-pick a commit or PR (by number or URL) to `preview` or `stable`.
+Optionally, the user may specify whether to resolve merge conflicts; if unspecified, assume the user would
+like you to resolve merge conflicts and verify that tests pass locally before committing.
 
 ## The script you're emulating
 
