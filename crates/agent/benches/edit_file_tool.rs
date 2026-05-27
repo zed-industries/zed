@@ -472,7 +472,7 @@ fn rewrite_local_block(lines: &mut [String], rng: &mut StdRng) {
 
 fn rewrite_many_small_lines(lines: &mut [String], every_nth_line: usize, rng: &mut StdRng) {
     for (line_index, line) in lines.iter_mut().enumerate() {
-        if line_index % every_nth_line != 0 || line.trim().is_empty() {
+        if line_index.is_multiple_of(every_nth_line) || line.trim().is_empty() {
             continue;
         }
 
@@ -489,7 +489,7 @@ fn insert_helper_blocks(
 ) {
     let mut line_index = range.start;
     while line_index < range.end.min(lines.len()) {
-        if line_index % every_nth_line == 0 && !lines[line_index].trim().is_empty() {
+        if line_index.is_multiple_of(every_nth_line) && !lines[line_index].trim().is_empty() {
             let suffix = identifier(rng, line_index + 30_000);
             lines.splice(
                 line_index..line_index,
