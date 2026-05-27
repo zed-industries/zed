@@ -645,18 +645,13 @@ enum ToolCallLayout {
     Embedded,
 }
 
-fn global_skill_full_path_for_empty_project_path(
-    file: &dyn language::File,
-    cx: &App,
-) -> Option<String> {
+fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Option<String> {
     if file.path().file_name().is_some() {
         return None;
     }
 
-    let absolute_path = file.as_local()?.abs_path(cx);
-    absolute_path
-        .starts_with(agent_skills::global_skills_dir())
-        .then(|| file.full_path(cx).display().to_string())
+    let full_path = file.full_path(cx).display().to_string();
+    (!full_path.is_empty()).then_some(full_path)
 }
 
 impl ThreadView {
@@ -2717,8 +2712,8 @@ impl ThreadView {
                         let path_style = file.path_style(cx);
                         let separator = file.path_style(cx).primary_separator();
 
-                        let global_skill_full_path =
-                            global_skill_full_path_for_empty_project_path(file.as_ref(), cx);
+                        let fallback_full_path =
+                            full_path_for_empty_project_path(file.as_ref(), cx);
 
                         let file_path = path.parent().and_then(|parent| {
                             if parent.is_empty() {
@@ -2745,7 +2740,7 @@ impl ThreadView {
                                     .ml_1()
                             })
                             .or_else(|| {
-                                global_skill_full_path.as_ref().map(|path| {
+                                fallback_full_path.as_ref().map(|path| {
                                     Label::new(path.clone())
                                         .size(LabelSize::XSmall)
                                         .buffer_font(cx)
@@ -2753,7 +2748,7 @@ impl ThreadView {
                                 })
                             });
 
-                        let full_path = global_skill_full_path
+                        let full_path = fallback_full_path
                             .unwrap_or_else(|| path.display(path_style).to_string());
 
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
