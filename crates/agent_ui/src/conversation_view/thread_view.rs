@@ -645,6 +645,20 @@ enum ToolCallLayout {
     Embedded,
 }
 
+fn global_skill_full_path_for_empty_project_path(
+    file: &dyn language::File,
+    cx: &App,
+) -> Option<String> {
+    if file.path().file_name().is_some() {
+        return None;
+    }
+
+    let absolute_path = file.as_local()?.abs_path(cx);
+    absolute_path
+        .starts_with(agent_skills::global_skills_dir())
+        .then(|| file.full_path(cx).display().to_string())
+}
+
 impl ThreadView {
     pub(crate) fn new(
         root_thread_id: ThreadId,
@@ -2703,6 +2717,9 @@ impl ThreadView {
                         let path_style = file.path_style(cx);
                         let separator = file.path_style(cx).primary_separator();
 
+                        let global_skill_full_path =
+                            global_skill_full_path_for_empty_project_path(file.as_ref(), cx);
+
                         let file_path = path.parent().and_then(|parent| {
                             if parent.is_empty() {
                                 None
@@ -2719,14 +2736,25 @@ impl ThreadView {
                             }
                         });
 
-                        let file_name = path.file_name().map(|name| {
-                            Label::new(name.to_string())
-                                .size(LabelSize::XSmall)
-                                .buffer_font(cx)
-                                .ml_1()
-                        });
+                        let file_name = path
+                            .file_name()
+                            .map(|name| {
+                                Label::new(name.to_string())
+                                    .size(LabelSize::XSmall)
+                                    .buffer_font(cx)
+                                    .ml_1()
+                            })
+                            .or_else(|| {
+                                global_skill_full_path.as_ref().map(|path| {
+                                    Label::new(path.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx)
+                                        .ml_1()
+                                })
+                            });
 
-                        let full_path = path.display(path_style).to_string();
+                        let full_path = global_skill_full_path
+                            .unwrap_or_else(|| path.display(path_style).to_string());
 
                         let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                             .map(Icon::from_path)
