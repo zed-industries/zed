@@ -226,13 +226,6 @@ impl ThreadEntryWorkspace {
     }
 }
 
-/// Resolves the sidebar label for a draft thread and reports whether the
-/// label comes from real user content or is a placeholder for an empty draft.
-/// Returns `None` only if the caller is expected to filter the row out
-/// entirely (currently the inner branches always produce a label, so this is
-/// effectively always `Some` — the `Option` shape is preserved for callers
-/// like `thread_metadata_would_render_sidebar_row` that historically gated
-/// on it).
 fn draft_display_label_for_thread_metadata(
     metadata: &ThreadMetadata,
     workspace: &ThreadEntryWorkspace,
