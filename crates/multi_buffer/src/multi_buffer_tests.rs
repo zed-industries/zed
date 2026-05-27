@@ -12,7 +12,7 @@ use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
