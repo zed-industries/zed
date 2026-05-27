@@ -479,13 +479,8 @@ pub async fn persist_worktree_state(root: &RootPlan, cx: &mut AsyncApp) -> Resul
     let thread_ids: Vec<ThreadId> = store.read_with(cx, |store, _cx| {
         store
             .entries()
-            .filter(|thread| {
-                thread
-                    .folder_paths()
-                    .paths()
-                    .iter()
-                    .any(|p| p.as_path() == root.root_path)
-            })
+            .filter(|thread| thread.matches_remote_connection(root.remote_connection.as_ref()))
+            .filter(|thread| thread.references_folder_path(&root.root_path))
             .map(|thread| thread.thread_id)
             .collect()
     });
@@ -574,14 +569,13 @@ pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &m
 /// **Destructive**: the final step (`restore_archive_checkpoint`) clobbers the
 /// working directory unconditionally via `git read-tree --reset -u`. If the
 /// path has any pre-existing content (a non-empty directory, a file, or a
-/// symlink) it is moved aside into a `zed-restore-backup-<uuid>` directory
-/// before the rest of the destructive work runs. We try to place the backup
-/// next to `worktree_path` so the rename stays on the same filesystem
-/// (atomic and fast), and fall back to the system temp directory if a
-/// sibling cannot be created. If a later step fails, the backup is moved
-/// back over `worktree_path` so the user does not lose their content. On
-/// success the backup directory is deleted asynchronously so a multi-GB
-/// cleanup does not block the caller.
+/// symlink) it is moved aside into a `zed-restore-backup-<uuid>` sibling
+/// directory before the rest of the destructive work runs. If a later step
+/// fails, the backup is moved back over `worktree_path` so the user does not
+/// lose their content. On success the backup directory is deleted
+/// asynchronously so a multi-GB cleanup does not block the caller. If the
+/// sibling backup directory cannot be created, restore aborts before any
+/// destructive step runs.
 ///
 /// Callers MUST first call [`restore_would_overwrite`] and confirm with the
 /// user before invoking this function — there is no preflight or refusal
@@ -593,6 +587,24 @@ pub async fn restore_worktree_via_git(
     confirmed_overwrite_paths: &HashSet<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
+    let restored = restore_worktree_via_git_deferred_cleanup(
+        row,
+        remote_connection,
+        confirmed_overwrite_paths,
+        cx,
+    )
+    .await?;
+    let path = restored.path.clone();
+    restored.cleanup_backup(cx);
+    Ok(path)
+}
+
+pub async fn restore_worktree_via_git_deferred_cleanup(
+    row: &ArchivedGitWorktree,
+    remote_connection: Option<&RemoteConnectionOptions>,
+    confirmed_overwrite_paths: &HashSet<PathBuf>,
+    cx: &mut AsyncApp,
+) -> Result<RestoredWorktree> {
     if remote_connection.is_some() {
         anyhow::bail!("restoring archived worktrees on remote machines is not yet supported");
     }
@@ -693,9 +705,10 @@ pub async fn restore_worktree_via_git(
         return Err(session.rollback_with_annotation(error).await);
     }
 
-    session.commit_async(app_state.fs.clone(), cx);
-
-    Ok(worktree_path.clone())
+    Ok(RestoredWorktree {
+        path: worktree_path.clone(),
+        backup: session.into_backup(),
+    })
 }
 
 /// Fixed leaf filename inside a backup directory where the original
@@ -722,6 +735,68 @@ impl Backup {
     }
 }
 
+pub struct RestoredWorktree {
+    pub path: PathBuf,
+    backup: Option<Backup>,
+}
+
+impl RestoredWorktree {
+    pub fn cleanup_backup(self, cx: &mut AsyncApp) {
+        let Some(backup) = self.backup else {
+            return;
+        };
+        let Some(app_state) = current_app_state(cx) else {
+            log::warn!(
+                "could not clean up backup directory '{}' after successful restore: no app state available",
+                backup.dir.display()
+            );
+            return;
+        };
+        schedule_backup_cleanup(app_state.fs.clone(), Some(backup), cx);
+    }
+
+    pub async fn rollback(
+        self,
+        row: &ArchivedGitWorktree,
+        remote_connection: Option<&RemoteConnectionOptions>,
+        cx: &mut AsyncApp,
+    ) {
+        let Some(app_state) = current_app_state(cx) else {
+            if let Some(backup) = self.backup {
+                log::error!(
+                    "could not roll back restored worktree at '{}': no app state available; pre-existing files remain at '{}'",
+                    row.worktree_path.display(),
+                    backup.target().display()
+                );
+            }
+            return;
+        };
+        let fs = app_state.fs.as_ref();
+        match find_or_create_repository(&row.main_repo_path, remote_connection, cx).await {
+            Ok((main_repo, _temp_project)) => {
+                remove_new_worktree_on_error(fs, &main_repo, &row.worktree_path, cx).await;
+            }
+            Err(error) => {
+                log::warn!(
+                    "failed to open main repo while rolling back restored worktree '{}': {error:#}",
+                    row.worktree_path.display()
+                );
+            }
+        }
+
+        let restore_error = anyhow!("restore did not complete");
+        if let Some(stranded_path) =
+            rollback_backup(fs, self.backup.as_ref(), &row.worktree_path, &restore_error).await
+        {
+            log::error!(
+                "rollback left pre-existing files for '{}' at '{}'",
+                row.worktree_path.display(),
+                stranded_path.display()
+            );
+        }
+    }
+}
+
 /// Owns the entire "move aside any existing content, undo on failure,
 /// clean up on success" lifecycle for a single call to
 /// [`restore_worktree_via_git`]. Bundles the `fs` / `worktree_path` /
@@ -735,10 +810,9 @@ impl Backup {
 ///    that doesn't need its own access to the borrow held by the step.
 /// 3. For steps that share a `cx` borrow with their cleanup, call
 ///    [`Self::rollback_with_annotation`] directly on the error path.
-/// 4. On success, `session.commit_async(fs_owned, cx)` schedules
-///    background cleanup of the backup directory. Dropping the session
-///    without `commit_async` will leak the backup directory — on
-///    purpose, since reaching that code path means something panicked.
+/// 4. On success, `session.into_backup()` transfers cleanup ownership to
+///    the caller, which can delete the backup only after the higher-level
+///    restore transaction commits.
 struct BackupSession<'a> {
     fs: &'a dyn Fs,
     worktree_path: &'a Path,
@@ -787,12 +861,8 @@ impl<'a> BackupSession<'a> {
         }
     }
 
-    /// Consumes the session and schedules cleanup of the (now-unused)
-    /// backup directory on a background task. Failures are logged but
-    /// not surfaced; the `zed-restore-backup-<uuid>` naming makes any
-    /// orphans easy to spot manually.
-    fn commit_async(self, fs: Arc<dyn Fs>, cx: &mut AsyncApp) {
-        schedule_backup_cleanup(fs, self.backup, cx);
+    fn into_backup(self) -> Option<Backup> {
+        self.backup
     }
 }
 

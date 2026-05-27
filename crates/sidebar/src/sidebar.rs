@@ -770,7 +770,7 @@ async fn prompt_overwrite_if_needed(
 /// post-restore plumbing.
 struct RestoreOutcome {
     archived: ArchivedGitWorktree,
-    restored_path: PathBuf,
+    restored: thread_worktree_archive::RestoredWorktree,
 }
 
 /// Runs the destructive `restore_worktree_via_git` for every archived
@@ -795,20 +795,40 @@ async fn run_destructive_restore_pass(
 ) -> anyhow::Result<Vec<RestoreOutcome>> {
     let mut outcomes = Vec::with_capacity(archived_worktrees.len());
     for row in archived_worktrees {
-        let restored_path = thread_worktree_archive::restore_worktree_via_git(
+        let restored = match thread_worktree_archive::restore_worktree_via_git_deferred_cleanup(
             row,
             remote_connection,
             confirmed_overwrite_paths,
             cx,
         )
         .await
-        .with_context(|| format!("restoring worktree at {}", row.worktree_path.display()))?;
+        .with_context(|| format!("restoring worktree at {}", row.worktree_path.display()))
+        {
+            Ok(restored) => restored,
+            Err(error) => {
+                rollback_restore_outcomes(outcomes, remote_connection, cx).await;
+                return Err(error);
+            }
+        };
         outcomes.push(RestoreOutcome {
             archived: row.clone(),
-            restored_path,
+            restored,
         });
     }
     Ok(outcomes)
+}
+
+async fn rollback_restore_outcomes(
+    outcomes: Vec<RestoreOutcome>,
+    remote_connection: Option<&RemoteConnectionOptions>,
+    cx: &mut AsyncApp,
+) {
+    for outcome in outcomes.into_iter().rev() {
+        outcome
+            .restored
+            .rollback(&outcome.archived, remote_connection, cx)
+            .await;
+    }
 }
 
 /// Commits the DB-visible state changes for a successful restore:
@@ -845,7 +865,13 @@ async fn commit_db_state_after_restore(
     let Some(persist_task) = persist_task else {
         return Ok(None);
     };
-    persist_task.await.map(Some)
+    let metadata = persist_task.await?;
+    cx.update(|cx| {
+        store.update(cx, |store, cx| {
+            store.apply_completed_worktree_restore(metadata.clone(), cx);
+        });
+    });
+    Ok(Some(metadata))
 }
 
 #[derive(Clone)]
@@ -4107,7 +4133,7 @@ impl Sidebar {
                     .map(|outcome| {
                         (
                             outcome.archived.worktree_path.clone(),
-                            outcome.restored_path.clone(),
+                            outcome.restored.path.clone(),
                         )
                     })
                     .collect();
@@ -4120,14 +4146,26 @@ impl Sidebar {
                 // commit above.
                 let archived_worktree_ids =
                     outcomes.iter().map(|outcome| outcome.archived.id).collect();
-                let updated_metadata = commit_db_state_after_restore(
+                let updated_metadata = match commit_db_state_after_restore(
                     &store,
                     thread_id,
                     &path_replacements,
                     archived_worktree_ids,
                     cx,
                 )
-                .await?;
+                .await
+                {
+                    Ok(updated_metadata) => updated_metadata,
+                    Err(error) => {
+                        rollback_restore_outcomes(
+                            outcomes,
+                            metadata.remote_connection.as_ref(),
+                            cx,
+                        )
+                        .await;
+                        return Err(error);
+                    }
+                };
 
                 match updated_metadata {
                     Some(updated_metadata) => {
@@ -4170,7 +4208,7 @@ impl Sidebar {
                 }
 
                 let remote_connection = metadata.remote_connection.as_ref();
-                let cleanups = outcomes.iter().map(|outcome| {
+                let cleanups = outcomes.into_iter().map(|outcome| {
                     let mut cx = cx.clone();
                     async move {
                         thread_worktree_archive::cleanup_archived_worktree_ref(
@@ -4179,6 +4217,7 @@ impl Sidebar {
                             &mut cx,
                         )
                         .await;
+                        outcome.restored.cleanup_backup(&mut cx);
                     }
                 });
                 futures::future::join_all(cleanups).await;
@@ -4652,6 +4691,10 @@ impl Sidebar {
         except_terminal_id: Option<TerminalId>,
         cx: &App,
     ) -> Vec<thread_worktree_archive::RootPlan> {
+        if remote_connection.is_some() {
+            return Vec::new();
+        }
+
         let workspaces = self.archive_workspaces(cx);
         folder_paths
             .ordered_paths()

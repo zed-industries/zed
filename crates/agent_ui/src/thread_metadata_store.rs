@@ -971,6 +971,13 @@ impl ThreadMetadataStore {
     }
 
     fn save_internal(&mut self, metadata: ThreadMetadata) {
+        self.cache_thread_metadata_update(metadata.clone());
+        self.pending_thread_ops_tx
+            .try_send(DbOperation::Upsert(metadata))
+            .log_err();
+    }
+
+    fn cache_thread_metadata_update(&mut self, metadata: ThreadMetadata) {
         if let Some(thread) = self.threads.get(&metadata.thread_id) {
             if thread.folder_paths() != metadata.folder_paths() {
                 if let Some(thread_ids) = self.threads_by_paths.get_mut(thread.folder_paths()) {
@@ -989,10 +996,7 @@ impl ThreadMetadataStore {
             }
         }
 
-        self.cache_thread_metadata(metadata.clone());
-        self.pending_thread_ops_tx
-            .try_send(DbOperation::Upsert(metadata))
-            .log_err();
+        self.cache_thread_metadata(metadata);
     }
 
     fn cache_thread_metadata(&mut self, metadata: ThreadMetadata) {
@@ -1171,9 +1175,6 @@ impl ThreadMetadataStore {
             archived: false,
             ..thread
         };
-        self.save_internal(metadata.clone());
-        cx.notify();
-
         let (completion_tx, completion_rx) = async_channel::bounded(1);
         if let Err(error) = self
             .pending_thread_ops_tx
@@ -1195,6 +1196,15 @@ impl ThreadMetadataStore {
                 .context("restore completion task was canceled")??;
             Ok(metadata)
         }))
+    }
+
+    pub fn apply_completed_worktree_restore(
+        &mut self,
+        metadata: ThreadMetadata,
+        cx: &mut Context<Self>,
+    ) {
+        self.cache_thread_metadata_update(metadata);
+        cx.notify();
     }
 
     /// Apply a mutation to the worktree paths of all threads whose current
@@ -1460,14 +1470,8 @@ impl ThreadMetadataStore {
                                 archived_worktree_ids,
                                 completion_tx,
                             } => {
-                                let result = async {
-                                    db.save(metadata).await?;
-                                    for archived_worktree_id in archived_worktree_ids {
-                                        db.delete_archived_worktree(archived_worktree_id).await?;
-                                    }
-                                    anyhow::Ok(())
-                                }
-                                .await;
+                                let result =
+                                    db.complete_restore(metadata, archived_worktree_ids).await;
                                 completion_tx.send(result).await.log_err();
                             }
                         }
@@ -1747,6 +1751,13 @@ impl ThreadMetadataDb {
     /// session_id on promotion (when the first message is sent) and
     /// then flow through this same upsert path.
     pub async fn save(&self, row: ThreadMetadata) -> anyhow::Result<()> {
+        self.write(move |conn| Self::save_sync(conn, row)).await
+    }
+
+    fn save_sync(
+        conn: &db::sqlez::connection::Connection,
+        row: ThreadMetadata,
+    ) -> anyhow::Result<()> {
         let session_id = row.session_id.as_ref().map(|s| s.0.clone());
         let agent_id = if row.agent_id.as_ref() == ZED_AGENT_ID.as_ref() {
             None
@@ -1784,39 +1795,53 @@ impl ThreadMetadataDb {
         let thread_id = row.thread_id;
         let archived = row.archived;
 
+        let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+                   ON CONFLICT(thread_id) DO UPDATE SET \
+                       session_id = excluded.session_id, \
+                       agent_id = excluded.agent_id, \
+                       title = excluded.title, \
+                       updated_at = excluded.updated_at, \
+                       created_at = excluded.created_at, \
+                       interacted_at = excluded.interacted_at, \
+                       folder_paths = excluded.folder_paths, \
+                       folder_paths_order = excluded.folder_paths_order, \
+                       archived = excluded.archived, \
+                       main_worktree_paths = excluded.main_worktree_paths, \
+                       main_worktree_paths_order = excluded.main_worktree_paths_order, \
+                       remote_connection = excluded.remote_connection, \
+                       title_override = excluded.title_override";
+        let mut stmt = Statement::prepare(conn, sql)?;
+        let mut i = stmt.bind(&thread_id, 1)?;
+        i = stmt.bind(&session_id, i)?;
+        i = stmt.bind(&agent_id, i)?;
+        i = stmt.bind(&title, i)?;
+        i = stmt.bind(&updated_at, i)?;
+        i = stmt.bind(&created_at, i)?;
+        i = stmt.bind(&interacted_at, i)?;
+        i = stmt.bind(&folder_paths, i)?;
+        i = stmt.bind(&folder_paths_order, i)?;
+        i = stmt.bind(&archived, i)?;
+        i = stmt.bind(&main_worktree_paths, i)?;
+        i = stmt.bind(&main_worktree_paths_order, i)?;
+        i = stmt.bind(&remote_connection, i)?;
+        stmt.bind(&title_override, i)?;
+        stmt.exec()
+    }
+
+    pub async fn complete_restore(
+        &self,
+        metadata: ThreadMetadata,
+        archived_worktree_ids: Vec<i64>,
+    ) -> anyhow::Result<()> {
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
-                       ON CONFLICT(thread_id) DO UPDATE SET \
-                           session_id = excluded.session_id, \
-                           agent_id = excluded.agent_id, \
-                           title = excluded.title, \
-                           updated_at = excluded.updated_at, \
-                           created_at = excluded.created_at, \
-                           interacted_at = excluded.interacted_at, \
-                           folder_paths = excluded.folder_paths, \
-                           folder_paths_order = excluded.folder_paths_order, \
-                           archived = excluded.archived, \
-                           main_worktree_paths = excluded.main_worktree_paths, \
-                           main_worktree_paths_order = excluded.main_worktree_paths_order, \
-                           remote_connection = excluded.remote_connection, \
-                           title_override = excluded.title_override";
-            let mut stmt = Statement::prepare(conn, sql)?;
-            let mut i = stmt.bind(&thread_id, 1)?;
-            i = stmt.bind(&session_id, i)?;
-            i = stmt.bind(&agent_id, i)?;
-            i = stmt.bind(&title, i)?;
-            i = stmt.bind(&updated_at, i)?;
-            i = stmt.bind(&created_at, i)?;
-            i = stmt.bind(&interacted_at, i)?;
-            i = stmt.bind(&folder_paths, i)?;
-            i = stmt.bind(&folder_paths_order, i)?;
-            i = stmt.bind(&archived, i)?;
-            i = stmt.bind(&main_worktree_paths, i)?;
-            i = stmt.bind(&main_worktree_paths_order, i)?;
-            i = stmt.bind(&remote_connection, i)?;
-            stmt.bind(&title_override, i)?;
-            stmt.exec()
+            conn.with_savepoint("complete_thread_restore", || {
+                Self::save_sync(conn, metadata)?;
+                for archived_worktree_id in archived_worktree_ids {
+                    Self::delete_archived_worktree_sync(conn, archived_worktree_id)?;
+                }
+                Ok(())
+            })
         })
         .await
     }
@@ -1890,20 +1915,24 @@ impl ThreadMetadataDb {
     }
 
     pub async fn delete_archived_worktree(&self, id: i64) -> anyhow::Result<()> {
-        self.write(move |conn| {
-            let mut stmt = Statement::prepare(
-                conn,
-                "DELETE FROM thread_archived_worktrees WHERE archived_worktree_id = ?",
-            )?;
-            stmt.bind(&id, 1)?;
-            stmt.exec()?;
+        self.write(move |conn| Self::delete_archived_worktree_sync(conn, id))
+            .await
+    }
 
-            let mut stmt =
-                Statement::prepare(conn, "DELETE FROM archived_git_worktrees WHERE id = ?")?;
-            stmt.bind(&id, 1)?;
-            stmt.exec()
-        })
-        .await
+    fn delete_archived_worktree_sync(
+        conn: &db::sqlez::connection::Connection,
+        id: i64,
+    ) -> anyhow::Result<()> {
+        let mut stmt = Statement::prepare(
+            conn,
+            "DELETE FROM thread_archived_worktrees WHERE archived_worktree_id = ?",
+        )?;
+        stmt.bind(&id, 1)?;
+        stmt.exec()?;
+
+        let mut stmt = Statement::prepare(conn, "DELETE FROM archived_git_worktrees WHERE id = ?")?;
+        stmt.bind(&id, 1)?;
+        stmt.exec()
     }
 
     pub async fn unlink_thread_from_all_archived_worktrees(
@@ -3765,9 +3794,12 @@ mod tests {
                 store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
             })
             .expect("thread should exist");
-        persist_task
+        let metadata = persist_task
             .await
             .expect("restore completion should persist");
+        store.update(cx, |store, cx| {
+            store.apply_completed_worktree_restore(metadata, cx);
+        });
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3808,9 +3840,12 @@ mod tests {
                 store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
             })
             .expect("thread should exist");
-        persist_task
+        let metadata = persist_task
             .await
             .expect("restore completion should persist");
+        store.update(cx, |store, cx| {
+            store.apply_completed_worktree_restore(metadata, cx);
+        });
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3854,9 +3889,12 @@ mod tests {
                 store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
             })
             .expect("thread should exist");
-        persist_task
+        let metadata = persist_task
             .await
             .expect("restore completion should persist");
+        store.update(cx, |store, cx| {
+            store.apply_completed_worktree_restore(metadata, cx);
+        });
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3899,9 +3937,12 @@ mod tests {
                 store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
             })
             .expect("thread should exist");
-        persist_task
+        let metadata = persist_task
             .await
             .expect("restore completion should persist");
+        store.update(cx, |store, cx| {
+            store.apply_completed_worktree_restore(metadata, cx);
+        });
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
