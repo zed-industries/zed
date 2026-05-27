@@ -2931,7 +2931,9 @@ fn trim_metadata_range(source: &str, range: Range<usize>) -> Range<usize> {
     let text = &source[range.clone()];
     let start_offset = text.len() - text.trim_start().len();
     let end_offset = text.trim_end().len();
-    range.start + start_offset..range.start + end_offset
+    let start = range.start + start_offset;
+    let end = (range.start + end_offset).max(start);
+    start..end
 }
 
 struct MarkdownElementBuilder {
@@ -3816,12 +3818,22 @@ mod tests {
             "tags:\n  - zed\n",
             "title = Post\n",
             "title:\n",
+            "title:   \n",
             ": Post\n",
             " title: Post\n",
             "\n",
         ] {
             assert!(parse_metadata_table_rows(source, 0..source.len()).is_none());
         }
+    }
+
+    #[test]
+    fn test_trim_metadata_range_returns_valid_empty_range() {
+        let source = "key:   \n";
+        let trimmed = trim_metadata_range(source, 4..7);
+
+        assert_eq!(trimmed, 7..7);
+        assert!(source[trimmed].is_empty());
     }
 
     fn render_markdown_with_code_span_link(
