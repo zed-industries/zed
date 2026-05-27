@@ -114,8 +114,8 @@ impl Render for Toolbar {
 
         let secondary_items = self.secondary_items().map(|item| item.to_any());
 
-        let has_left_items = self.left_items().count() > 0;
-        let has_right_items = self.right_items().count() > 0;
+        let has_left_items = self.left_items().next().is_some();
+        let has_right_items = self.right_items().next().is_some();
 
         v_flex()
             .group("toolbar")
