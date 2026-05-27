@@ -8786,7 +8786,7 @@ mod tests {
         assert!(prompt.contains("Update generated message"));
         assert!(prompt.contains("diff --git a/file b/file"));
 
-        let user_agents_md_index = prompt.find("<user_agents_md>").unwrap();
+        let user_agents_md_index = prompt.find("<rules>").unwrap();
         let project_rules_index = prompt.find("<project_rules>").unwrap();
         assert!(user_agents_md_index < project_rules_index);
     }
