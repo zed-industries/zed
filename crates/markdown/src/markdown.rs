@@ -1923,6 +1923,7 @@ impl Element for MarkdownElement {
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
         let mut rendering_metadata_block = false;
+        let mut metadata_block_content_range = None;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -2263,6 +2264,7 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::MetadataBlock(_) => {
                             rendering_metadata_block = true;
+                            metadata_block_content_range = None;
                         }
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
@@ -2477,18 +2479,29 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::MetadataBlock(_) => {
                         rendering_metadata_block = false;
+                        if let Some(metadata_block_content_range) =
+                            metadata_block_content_range.take()
+                        {
+                            self.push_metadata_block(
+                                &mut builder,
+                                &parsed_markdown.source,
+                                &metadata_block_content_range,
+                                markdown_end,
+                                cx,
+                            );
+                        }
                     }
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
                     if rendering_metadata_block {
-                        self.push_metadata_block(
-                            &mut builder,
-                            &parsed_markdown.source,
-                            range,
-                            markdown_end,
-                            cx,
-                        );
+                        match &mut metadata_block_content_range {
+                            Some(content_range) => {
+                                content_range.start = content_range.start.min(range.start);
+                                content_range.end = content_range.end.max(range.end);
+                            }
+                            None => metadata_block_content_range = Some(range.clone()),
+                        }
                         continue;
                     }
                     builder.push_text(&parsed_markdown.source[range.clone()], range.clone());
