@@ -7,7 +7,7 @@ use serde_json::json;
 use util::{path, rel_path::rel_path};
 use workspace::{ActivatePreviousItem, AppState, MultiWorkspace, Workspace, item::test::TestItem};
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
