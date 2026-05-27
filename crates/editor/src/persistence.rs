@@ -30,7 +30,7 @@ pub(crate) struct SerializedEditor {
 pub(crate) struct PersistedUndoHistory {
     pub(crate) mtime: Option<MTime>,
     pub(crate) line_ending: String,
-    pub(crate) text_hash: String,
+    pub(crate) text_hash: Vec<u8>,
     pub(crate) uncompressed_byte_len: usize,
     pub(crate) payload: Vec<u8>,
 }
@@ -70,7 +70,7 @@ impl Column for PersistedUndoHistory {
         let (mtime_nanos, start_index): (Option<i32>, i32) =
             Column::column(statement, start_index)?;
         let (line_ending, start_index): (String, i32) = Column::column(statement, start_index)?;
-        let (text_hash, start_index): (String, i32) = Column::column(statement, start_index)?;
+        let (text_hash, start_index): (Vec<u8>, i32) = Column::column(statement, start_index)?;
         let (uncompressed_byte_len, start_index): (usize, i32) =
             Column::column(statement, start_index)?;
         let (payload, start_index): (Vec<u8>, i32) = Column::column(statement, start_index)?;
@@ -293,29 +293,12 @@ impl Domain for EditorDb {
         sql! (
             CREATE TABLE undo_histories (
                 workspace_id INTEGER NOT NULL,
-                path TEXT NOT NULL,
-                schema_version INTEGER NOT NULL,
-                current_text_hash TEXT NOT NULL,
-                mtime_seconds INTEGER,
-                mtime_nanos INTEGER,
-                data BLOB NOT NULL,
-                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE,
-                PRIMARY KEY(workspace_id, path)
-            );
-        ),
-        sql! (
-            DROP TABLE undo_histories;
-
-            CREATE TABLE undo_histories (
-                workspace_id INTEGER NOT NULL,
                 key_kind TEXT NOT NULL,
                 key TEXT NOT NULL,
                 mtime_seconds INTEGER DEFAULT NULL,
                 mtime_nanos INTEGER DEFAULT NULL,
                 line_ending TEXT NOT NULL,
-                text_hash TEXT NOT NULL,
+                text_hash BLOB NOT NULL,
                 uncompressed_byte_len INTEGER NOT NULL,
                 payload BLOB NOT NULL,
                 updated_at_seconds INTEGER NOT NULL,
@@ -326,14 +309,6 @@ impl Domain for EditorDb {
             ) STRICT;
         ),
     ];
-
-    fn should_allow_migration_change(index: usize, old: &str, new: &str) -> bool {
-        index == 9
-            && old.contains("key_kind TEXT NOT NULL")
-            && old.contains("payload BLOB NOT NULL")
-            && new.contains("path TEXT NOT NULL")
-            && new.contains("data BLOB NOT NULL")
-    }
 }
 
 db::static_connection!(EditorDb, [WorkspaceDb]);
@@ -884,7 +859,7 @@ mod tests {
         let file_history = PersistedUndoHistory {
             mtime: Some(MTime::from_seconds_and_nanos(10, 20)),
             line_ending: "unix".to_string(),
-            text_hash: "hash-a".to_string(),
+            text_hash: b"hash-a".to_vec(),
             uncompressed_byte_len: 4,
             payload: vec![1, 2, 3, 4],
         };
@@ -907,7 +882,7 @@ mod tests {
         let updated_file_history = PersistedUndoHistory {
             mtime: Some(MTime::from_seconds_and_nanos(30, 40)),
             line_ending: "windows".to_string(),
-            text_hash: "hash-b".to_string(),
+            text_hash: b"hash-b".to_vec(),
             uncompressed_byte_len: 2,
             payload: vec![9, 8],
         };
@@ -930,7 +905,7 @@ mod tests {
         let item_history = PersistedUndoHistory {
             mtime: None,
             line_ending: "unix".to_string(),
-            text_hash: "hash-item".to_string(),
+            text_hash: b"hash-item".to_vec(),
             uncompressed_byte_len: 1,
             payload: vec![7],
         };

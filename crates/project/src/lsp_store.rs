@@ -1539,7 +1539,9 @@ impl LocalLspStore {
                     .start_transaction()
                     .context("transaction already open")?;
                 buffer.end_transaction(cx);
-                let transaction_id = buffer.push_empty_transaction(cx.background_executor().now());
+                let transaction_id = buffer
+                    .push_empty_transaction(cx.background_executor().now())
+                    .context("failed to create formatting transaction")?;
                 buffer.finalize_last_transaction();
                 anyhow::Ok(transaction_id)
             })?;

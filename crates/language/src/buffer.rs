@@ -365,15 +365,22 @@ impl SerializedUndoHistory {
         self.nodes.len()
     }
 
-    fn from_text_state(state: text::UndoHistoryState) -> Self {
-        Self {
+    pub fn from_text_state(mut state: text::UndoHistoryState, max_nodes: usize) -> Result<Self> {
+        if state.nodes.len() > max_nodes {
+            bail!("undo history node count exceeds limit");
+        }
+        compact_undo_history_node_ids(&mut state)?;
+
+        let history = Self {
             version: UNDO_HISTORY_SCHEMA_VERSION,
             line_ending: state.line_ending.into(),
             base_text: state.base_text.to_string(),
+            // `state.operations` is a `TreeMap` (cheap to hand off from the
+            // foreground); flatten it into the serialized form here, off-thread.
             operations: state
                 .operations
-                .into_iter()
-                .map(SerializedTextOperation::from)
+                .iter()
+                .map(|(_, operation)| SerializedTextOperation::from(operation.clone()))
                 .collect(),
             nodes: state
                 .nodes
@@ -383,18 +390,21 @@ impl SerializedUndoHistory {
             root: state.root.as_usize(),
             current: state.current.as_usize(),
             latest_saved: state.latest_saved.map(text::UndoNodeId::as_usize),
-        }
+        };
+        history.validate(max_nodes)?;
+        Ok(history)
     }
 
-    fn into_text_state(self) -> Result<text::UndoHistoryState> {
-        self.validate(usize::MAX)?;
+    pub fn into_text_state(self, max_nodes: usize) -> Result<text::UndoHistoryState> {
+        self.validate(max_nodes)?;
+        let mut operations = TreeMap::default();
+        for operation in self.operations {
+            let operation = operation.into_text_operation()?;
+            operations.insert(operation.timestamp(), operation);
+        }
         Ok(text::UndoHistoryState {
             base_text: Rope::from(&self.base_text),
-            operations: self
-                .operations
-                .into_iter()
-                .map(SerializedTextOperation::into_text_operation)
-                .collect::<Result<Vec<_>>>()?,
+            operations,
             nodes: self
                 .nodes
                 .into_iter()
@@ -407,6 +417,17 @@ impl SerializedUndoHistory {
         })
     }
 
+    /// Validates the *structure* of a deserialized payload: schema version, size
+    /// limits, well-formed operations, and per-node invariants (unique ids,
+    /// in-bounds child/active-child indexes, transaction/edit references, and that
+    /// the root/current/saved anchors exist).
+    ///
+    /// Tree *topology* — parent/child consistency, cycle-freedom, and full
+    /// reachability — is intentionally left to the `text` layer's
+    /// `History::validate_topology`, which owns the canonical tree and checks it in
+    /// O(n) over an indexed `Vec` when restoring. Duplicating those walks here
+    /// would be a second implementation to keep in sync for no extra safety: every
+    /// restore path runs `text`'s validation before the tree is installed.
     fn validate(&self, max_nodes: usize) -> Result<()> {
         if self.version != UNDO_HISTORY_SCHEMA_VERSION {
             bail!("unsupported undo history schema version {}", self.version);
@@ -452,6 +473,9 @@ impl SerializedUndoHistory {
         let mut node_ids = HashSet::default();
         let mut transaction_ids = HashSet::default();
         for node in &self.nodes {
+            if node.id >= max_nodes {
+                bail!("undo history node id exceeds limit");
+            }
             if !node_ids.insert(node.id) {
                 bail!("duplicate undo history node");
             }
@@ -493,36 +517,6 @@ impl SerializedUndoHistory {
             && !node_ids.contains(&latest_saved)
         {
             bail!("undo history latest saved node is missing");
-        }
-
-        for node in &self.nodes {
-            for child_id in &node.children {
-                let child = self
-                    .nodes
-                    .iter()
-                    .find(|candidate| candidate.id == *child_id)
-                    .context("undo history child is missing")?;
-                if child.parent != Some(node.id) {
-                    bail!("undo history child has inconsistent parent");
-                }
-            }
-        }
-
-        let mut visited = HashSet::default();
-        let mut stack = vec![self.root];
-        while let Some(node_id) = stack.pop() {
-            if !visited.insert(node_id) {
-                bail!("undo history contains a cycle");
-            }
-            let node = self
-                .nodes
-                .iter()
-                .find(|candidate| candidate.id == node_id)
-                .context("undo history node is missing")?;
-            stack.extend(node.children.iter().copied());
-        }
-        if visited.len() != self.nodes.len() {
-            bail!("undo history has unreachable nodes");
         }
 
         Ok(())
@@ -806,6 +800,59 @@ fn deserialize_version(version: Vec<SerializedLamport>) -> clock::Global {
         .into_iter()
         .map(clock::Lamport::from)
         .collect::<clock::Global>()
+}
+
+fn compact_undo_history_node_ids(state: &mut text::UndoHistoryState) -> Result<()> {
+    let mut old_to_new = HashMap::default();
+    let mut next_id = 0;
+
+    let mut assign_node_id = |old_id: text::UndoNodeId| {
+        if old_to_new.contains_key(&old_id) {
+            return;
+        }
+        old_to_new.insert(old_id, text::UndoNodeId::new(next_id));
+        next_id += 1;
+    };
+
+    if !state.nodes.iter().any(|node| node.id == state.root) {
+        bail!("undo history root is missing");
+    }
+
+    assign_node_id(state.root);
+    for node in &state.nodes {
+        assign_node_id(node.id);
+    }
+
+    fn remap_node_id(
+        old_to_new: &HashMap<text::UndoNodeId, text::UndoNodeId>,
+        id: text::UndoNodeId,
+    ) -> Result<text::UndoNodeId> {
+        old_to_new
+            .get(&id)
+            .copied()
+            .with_context(|| format!("undo history references missing node {:?}", id))
+    }
+
+    for node in &mut state.nodes {
+        node.id = remap_node_id(&old_to_new, node.id)?;
+        node.parent = node
+            .parent
+            .map(|parent| remap_node_id(&old_to_new, parent))
+            .transpose()?;
+        for child in &mut node.children {
+            *child = remap_node_id(&old_to_new, *child)?;
+        }
+    }
+
+    state.root = remap_node_id(&old_to_new, state.root)?;
+    state.current = remap_node_id(&old_to_new, state.current)?;
+    state.latest_saved = state
+        .latest_saved
+        .map(|latest_saved| remap_node_id(&old_to_new, latest_saved))
+        .transpose()?;
+    state.nodes.sort_unstable_by_key(|node| node.id.as_usize());
+
+    Ok(())
 }
 
 /// The file associated with a buffer.
@@ -2012,7 +2059,7 @@ impl Buffer {
         self.has_unsaved_edits.set((version, false));
         self.has_conflict = false;
         self.saved_mtime = mtime;
-        self.mark_current_undo_node_saved();
+        self.mark_current_undo_node_saved(cx);
         self.was_changed();
         cx.emit(BufferEvent::Saved);
         cx.notify();
@@ -2941,18 +2988,13 @@ impl Buffer {
         self.text.push_transaction(transaction, now);
     }
 
-    /// Differs from `push_transaction` in that it does not clear the redo
-    /// stack. Intended to be used to create a parent transaction to merge
-    /// potential child transactions into.
+    /// Creates an empty transaction node under the current undo-tree node.
+    /// Intended to be used as a placeholder transaction that can later absorb
+    /// child edit transactions via `merge_transactions`.
     ///
     /// The caller is responsible for removing it from the undo history using
-    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
-    /// are merged into this transaction, the caller is responsible for ensuring
-    /// the redo stack is cleared. The easiest way to ensure the redo stack is
-    /// cleared is to create transactions with the usual `start_transaction` and
-    /// `end_transaction` methods and merging the resulting transactions into
-    /// the transaction created by this method
-    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+    /// `forget_transaction` if no edits are merged into it.
+    pub fn push_empty_transaction(&mut self, now: Instant) -> Option<TransactionId> {
         self.text.push_empty_transaction(now)
     }
 
@@ -3670,10 +3712,50 @@ impl Buffer {
         self.text.undo_tree_snapshot()
     }
 
+    pub fn contains_undo_node(&self, node: text::UndoNodeId) -> bool {
+        self.text.contains_undo_node(node)
+    }
+
+    pub fn undo_history_persisted_byte_estimate(&self) -> usize {
+        self.text.undo_history_persisted_byte_estimate()
+    }
+
     pub fn export_undo_history(&self, max_nodes: usize) -> Result<SerializedUndoHistory> {
-        let history = SerializedUndoHistory::from_text_state(self.text.export_undo_history());
-        history.validate(max_nodes)?;
-        Ok(history)
+        SerializedUndoHistory::from_text_state(self.text.export_undo_history(), max_nodes)
+    }
+
+    pub fn export_undo_history_state(
+        &self,
+        max_nodes: usize,
+    ) -> Result<Option<text::UndoHistoryState>> {
+        let node_count = self.text.undo_history_node_count();
+        if node_count <= 1 {
+            return Ok(None);
+        }
+        if node_count > max_nodes {
+            bail!("undo history node count exceeds limit");
+        }
+
+        Ok(Some(self.text.export_undo_history()))
+    }
+
+    /// Returns a cheap `Send` snapshot of the undo tree that can be moved to a
+    /// background thread for serialization. The foreground cost is O(nodes)
+    /// refcount bumps; the expensive per-node conversion is deferred to
+    /// [`text::UndoHistoryExportSnapshot::into_state`], which runs off-thread.
+    pub fn export_undo_history_snapshot(
+        &self,
+        max_nodes: usize,
+    ) -> Result<Option<text::UndoHistoryExportSnapshot>> {
+        let node_count = self.text.undo_history_node_count();
+        if node_count <= 1 {
+            return Ok(None);
+        }
+        if node_count > max_nodes {
+            bail!("undo history node count exceeds limit");
+        }
+
+        Ok(Some(self.text.export_undo_history_snapshot()))
     }
 
     pub fn restore_undo_history(
@@ -3682,13 +3764,27 @@ impl Buffer {
         max_nodes: usize,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        history.validate(max_nodes)?;
         if history.line_ending() != self.line_ending() {
             bail!("persisted undo history line ending does not match buffer");
         }
 
+        let prepared = text::Buffer::prepare_undo_history_restore(
+            self.replica_id(),
+            self.remote_id(),
+            self.transaction_group_interval(),
+            self.text.snapshot().clone(),
+            history.into_text_state(max_nodes)?,
+        )?;
+        self.restore_prepared_undo_history(prepared, cx)
+    }
+
+    pub fn restore_prepared_undo_history(
+        &mut self,
+        prepared: text::PreparedUndoHistoryRestore,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         let was_dirty = self.is_dirty();
-        self.text.restore_undo_history(history.into_text_state()?)?;
+        self.text.restore_prepared_undo_history(prepared)?;
         if was_dirty {
             self.has_unsaved_edits.set((self.version.clone(), true));
         } else {
@@ -3696,7 +3792,6 @@ impl Buffer {
             self.has_unsaved_edits
                 .set((self.saved_version.clone(), false));
         }
-        self.was_changed();
         cx.emit(BufferEvent::UndoHistoryChanged);
         cx.notify();
         Ok(())
@@ -3706,18 +3801,28 @@ impl Buffer {
         self.text.current_undo_node()
     }
 
-    pub fn mark_current_undo_node_saved(&mut self) {
-        self.text.mark_current_undo_node_saved();
+    pub fn transaction_id_for_undo_node(&self, node: text::UndoNodeId) -> Option<TransactionId> {
+        self.text.transaction_id_for_undo_node(node)
+    }
+
+    pub fn mark_current_undo_node_saved(&mut self, cx: &mut Context<Self>) {
+        if self.text.mark_current_undo_node_saved() {
+            cx.emit(BufferEvent::UndoHistoryChanged);
+            cx.notify();
+        }
     }
 
     pub fn jump_to_undo_node(&mut self, target: text::UndoNodeId, cx: &mut Context<Self>) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-        let transaction_ids = self.undo_tree_transaction_ids_to(target);
 
+        // The text layer reports the transaction toggled for each operation, so
+        // we can restore per-transaction encoding without re-walking the tree.
         let operations = self.text.jump_to_undo_node(target);
         let jumped = !operations.is_empty();
-        for operation in operations {
+        let mut transaction_ids = Vec::with_capacity(operations.len());
+        for (transaction_id, operation) in operations {
+            transaction_ids.push(transaction_id);
             self.send_operation(Operation::Buffer(operation), true, cx);
         }
         if jumped {
@@ -3742,82 +3847,6 @@ impl Buffer {
         } else {
             false
         }
-    }
-
-    fn undo_tree_transaction_ids_to(&self, target: text::UndoNodeId) -> Vec<TransactionId> {
-        let snapshot = self.text.undo_tree_snapshot();
-        if target == snapshot.current {
-            return Vec::new();
-        }
-
-        let nodes_by_id = snapshot
-            .nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<HashMap<_, _>>();
-
-        let Some(current_path) = Self::undo_tree_path_to_root(snapshot.current, &nodes_by_id)
-        else {
-            return Vec::new();
-        };
-        let Some(target_path) = Self::undo_tree_path_to_root(target, &nodes_by_id) else {
-            return Vec::new();
-        };
-        let Some(lowest_common_ancestor) = current_path
-            .iter()
-            .copied()
-            .find(|node_id| target_path.contains(node_id))
-        else {
-            return Vec::new();
-        };
-
-        let mut transaction_ids = Vec::new();
-        for node_id in current_path
-            .iter()
-            .copied()
-            .take_while(|node_id| *node_id != lowest_common_ancestor)
-        {
-            if let Some(transaction_id) = nodes_by_id
-                .get(&node_id)
-                .and_then(|node| node.transaction_id)
-            {
-                transaction_ids.push(transaction_id);
-            }
-        }
-
-        let redo_nodes = target_path
-            .iter()
-            .copied()
-            .take_while(|node_id| *node_id != lowest_common_ancestor)
-            .collect::<Vec<_>>();
-        for node_id in redo_nodes.into_iter().rev() {
-            if let Some(transaction_id) = nodes_by_id
-                .get(&node_id)
-                .and_then(|node| node.transaction_id)
-            {
-                transaction_ids.push(transaction_id);
-            }
-        }
-
-        transaction_ids
-    }
-
-    fn undo_tree_path_to_root(
-        node_id: text::UndoNodeId,
-        nodes_by_id: &HashMap<text::UndoNodeId, &text::UndoTreeNodeSnapshot>,
-    ) -> Option<Vec<text::UndoNodeId>> {
-        let mut path = Vec::new();
-        let mut node_id = node_id;
-        loop {
-            let node = nodes_by_id.get(&node_id)?;
-            path.push(node_id);
-            if let Some(parent) = node.parent {
-                node_id = parent;
-            } else {
-                break;
-            }
-        }
-        Some(path)
     }
 
     pub fn undo_operations(&mut self, counts: HashMap<Lamport, u32>, cx: &mut Context<Buffer>) {

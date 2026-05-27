@@ -636,7 +636,7 @@ fn test_undo_tree_preserves_branches_and_switches_active_child() {
     let node_c_id = node_c.id;
 
     assert_eq!(node_a.parent, Some(snapshot.root));
-    assert_eq!(node_a.children, vec![node_b_id, node_c_id]);
+    assert_eq!(*node_a.children, vec![node_b_id, node_c_id]);
     assert_eq!(node_a.active_child, Some(1));
     assert_eq!(node_b.parent, Some(node_a.id));
     assert_eq!(node_c.parent, Some(node_a.id));
@@ -794,7 +794,7 @@ fn test_undo_history_export_restore_preserves_tree_and_disables_grouping() {
     assert_eq!(snapshot.current, node_c.id);
     assert_eq!(snapshot.latest_saved, Some(node_c.id));
     assert!(node_c.saved);
-    assert_eq!(node_a.children, vec![node_b.id, node_c.id]);
+    assert_eq!(*node_a.children, vec![node_b.id, node_c.id]);
 
     restored.undo();
     let snapshot = restored.undo_tree_snapshot();
@@ -814,6 +814,138 @@ fn test_undo_history_export_restore_preserves_tree_and_disables_grouping() {
     assert_eq!(
         live_transaction_node_count(&restored),
         live_nodes_before_edit + 1
+    );
+}
+
+#[test]
+fn test_mark_current_undo_node_saved_reports_visible_changes() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    assert!(buffer.mark_current_undo_node_saved());
+    assert!(!buffer.mark_current_undo_node_saved());
+
+    buffer.edit([(0..0, "A")]);
+    assert!(buffer.mark_current_undo_node_saved());
+    assert!(!buffer.mark_current_undo_node_saved());
+}
+
+#[test]
+fn test_contains_undo_node_rejects_stale_generation() {
+    let mut now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+    buffer.edit([(0..0, "A")]);
+
+    let stale_node = {
+        let transaction_id = buffer.push_empty_transaction(now).unwrap();
+        let node = buffer.current_undo_node();
+        assert!(buffer.forget_transaction(transaction_id).is_some());
+        node
+    };
+
+    now += Duration::from_secs(1);
+    let transaction_id = buffer.push_empty_transaction(now).unwrap();
+    assert!(buffer.forget_transaction(transaction_id).is_some());
+
+    assert!(!buffer.contains_undo_node(stale_node));
+}
+
+#[test]
+fn test_prepare_undo_history_restore_round_trip() {
+    let mut source = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    source.set_group_interval(Duration::ZERO);
+    source.edit([(0..0, "A")]);
+    source.edit([(1..1, "B")]);
+    source.undo();
+    source.edit([(1..1, "C")]);
+    source.mark_current_undo_node_saved();
+
+    let history = source.export_undo_history();
+
+    let mut restored = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "AC");
+    let prepared = Buffer::prepare_undo_history_restore(
+        restored.replica_id(),
+        restored.remote_id(),
+        restored.transaction_group_interval(),
+        restored.snapshot().clone(),
+        history,
+    )
+    .unwrap();
+    restored.restore_prepared_undo_history(prepared).unwrap();
+
+    assert_eq!(restored.text(), "AC");
+    let snapshot = restored.undo_tree_snapshot();
+    assert_eq!(snapshot.latest_saved, Some(snapshot.current));
+}
+
+#[test]
+fn test_prepare_undo_history_restore_rejects_final_text_mismatch() {
+    let mut source = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    source.set_group_interval(Duration::ZERO);
+    source.edit([(0..0, "A")]);
+    let history = source.export_undo_history();
+
+    let target = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "different");
+    let result = Buffer::prepare_undo_history_restore(
+        target.replica_id(),
+        target.remote_id(),
+        target.transaction_group_interval(),
+        target.snapshot().clone(),
+        history,
+    );
+    assert!(result.is_err());
+    let error = result.err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("undo history final text does not match buffer")
+    );
+}
+
+#[test]
+fn test_prepare_undo_history_restore_rejects_unreplayable_operations() {
+    let mut source = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    source.set_group_interval(Duration::ZERO);
+    source.edit([(0..0, "A")]);
+    source.edit([(1..1, "B")]);
+    let mut history = source.export_undo_history();
+
+    let mut corrupted_operations = TreeMap::default();
+    let mut corrupted = false;
+    for (_, operation) in history.operations.iter() {
+        let mut operation = operation.clone();
+        if !corrupted {
+            let mut synthetic_version = match &operation {
+                Operation::Edit(edit) => edit.version.clone(),
+                Operation::Undo(undo) => undo.version.clone(),
+            };
+            synthetic_version.observe(clock::Lamport {
+                replica_id: ReplicaId::new(999),
+                value: 1,
+            });
+            match &mut operation {
+                Operation::Edit(edit) => edit.version = synthetic_version,
+                Operation::Undo(undo) => undo.version = synthetic_version,
+            }
+            corrupted = true;
+        }
+        corrupted_operations.insert(operation.timestamp(), operation);
+    }
+    history.operations = corrupted_operations;
+
+    let target = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "AB");
+    let result = Buffer::prepare_undo_history_restore(
+        target.replica_id(),
+        target.remote_id(),
+        target.transaction_group_interval(),
+        target.snapshot().clone(),
+        history,
+    );
+    assert!(result.is_err());
+    let error = result.err().unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("undo history operations could not be replayed")
     );
 }
 
@@ -976,7 +1108,7 @@ fn test_undo_tree_grouping_does_not_cross_branch_points() {
     let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
     let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
     let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
-    assert_eq!(node_a.children, vec![node_b.id, node_c.id]);
+    assert_eq!(*node_a.children, vec![node_b.id, node_c.id]);
     assert_eq!(snapshot.current, node_c.id);
 
     buffer.undo();
@@ -989,7 +1121,7 @@ fn test_undo_tree_empty_and_merged_transactions() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
     buffer.set_group_interval(Duration::ZERO);
 
-    let empty_transaction = buffer.push_empty_transaction(now);
+    let empty_transaction = buffer.push_empty_transaction(now).unwrap();
     assert_eq!(
         buffer.peek_undo_stack().map(|entry| entry.transaction_id()),
         Some(empty_transaction)
@@ -998,7 +1130,7 @@ fn test_undo_tree_empty_and_merged_transactions() {
     assert!(buffer.peek_undo_stack().is_none());
     assert_eq!(buffer.text(), "abc");
 
-    let formatting_transaction = buffer.push_empty_transaction(now);
+    let formatting_transaction = buffer.push_empty_transaction(now).unwrap();
     buffer.finalize_last_transaction();
     buffer.start_transaction_at(now);
     buffer.edit([(3..3, "def")]);
@@ -1020,6 +1152,43 @@ fn test_undo_tree_empty_and_merged_transactions() {
 }
 
 #[test]
+fn test_undo_tree_merge_reparents_children() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.end_transaction_at(now).unwrap().0;
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.end_transaction_at(now).unwrap().0;
+
+    buffer.start_transaction_at(now);
+    buffer.edit([(2..2, "C")]);
+    let transaction_c = buffer.end_transaction_at(now).unwrap().0;
+    assert_eq!(buffer.text(), "ABC");
+
+    buffer.merge_transactions(transaction_b, transaction_a);
+    assert!(buffer.get_transaction(transaction_b).is_none());
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    assert_eq!(node_c.parent, Some(node_a.id));
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "AB");
+    buffer.undo();
+    assert_eq!(buffer.text(), "");
+    buffer.redo();
+    assert_eq!(buffer.text(), "AB");
+    buffer.redo();
+    assert_eq!(buffer.text(), "ABC");
+}
+
+#[test]
 fn test_undo_tree_forgetting_active_empty_child_preserves_redo_sibling() {
     let now = Instant::now();
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
@@ -1035,7 +1204,7 @@ fn test_undo_tree_forgetting_active_empty_child_preserves_redo_sibling() {
         Some(transaction_b)
     );
 
-    let empty_transaction = buffer.push_empty_transaction(now);
+    let empty_transaction = buffer.push_empty_transaction(now).unwrap();
     assert!(buffer.forget_transaction(empty_transaction).is_some());
     assert_eq!(buffer.text(), "A");
     assert_eq!(
@@ -1064,21 +1233,55 @@ fn test_undo_tree_undo_non_current_transaction_reparents_current_path() {
     assert_eq!(buffer.text(), "AC");
 
     let snapshot = buffer.undo_tree_snapshot();
-    assert!(
-        !snapshot
-            .nodes
-            .iter()
-            .any(|node| node.transaction_id == Some(transaction_b))
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b);
+    let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
+    assert_eq!(node_c.parent, Some(node_a.id));
+    assert_eq!(node_b.parent, Some(node_c.id));
+    assert_eq!(snapshot.current, node_c.id);
+    assert_eq!(
+        buffer.peek_redo_stack().map(|entry| entry.transaction_id()),
+        Some(transaction_b)
     );
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "A");
+    buffer.redo();
+    assert_eq!(buffer.text(), "AC");
+    buffer.redo();
+    assert_eq!(buffer.text(), "ABC");
+}
+
+#[test]
+fn test_undo_tree_forget_reparents_children() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.edit([(2..2, "C")]);
+    let transaction_c = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_eq!(buffer.text(), "ABC");
+
+    assert!(buffer.forget_transaction(transaction_b).is_some());
+    assert!(buffer.get_transaction(transaction_b).is_none());
+
+    let snapshot = buffer.undo_tree_snapshot();
     let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a);
     let node_c = undo_snapshot_node_for_transaction(&snapshot, transaction_c);
     assert_eq!(node_c.parent, Some(node_a.id));
     assert_eq!(snapshot.current, node_c.id);
 
     buffer.undo();
-    assert_eq!(buffer.text(), "A");
+    assert_eq!(buffer.text(), "AB");
+    buffer.undo();
+    assert_eq!(buffer.text(), "B");
     buffer.redo();
-    assert_eq!(buffer.text(), "AC");
+    assert_eq!(buffer.text(), "AB");
+    buffer.redo();
+    assert_eq!(buffer.text(), "ABC");
 }
 
 #[test]
@@ -1090,7 +1293,7 @@ fn test_undo_tree_node_ids_are_stable_after_forget() {
     buffer.edit([(0..0, "A")]);
     let node_a = buffer.current_undo_node();
 
-    let empty_transaction = buffer.push_empty_transaction(now);
+    let empty_transaction = buffer.push_empty_transaction(now).unwrap();
     let forgotten_node = buffer.current_undo_node();
     assert!(buffer.forget_transaction(empty_transaction).is_some());
 
@@ -1098,6 +1301,107 @@ fn test_undo_tree_node_ids_are_stable_after_forget() {
     let node_b = buffer.current_undo_node();
     assert_ne!(node_b, forgotten_node);
     assert_ne!(node_b, node_a);
+}
+
+#[test]
+fn test_undo_tree_reclaims_detached_node_slots() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+
+    buffer.edit([(0..0, "A")]);
+
+    // Repeatedly create and forget a node. Each forget vacates a slot that the
+    // next push must reuse, so storage stays bounded instead of growing with the
+    // number of churned transactions (the regression this guards against).
+    let stale_node = {
+        let id = buffer.push_empty_transaction(now).unwrap();
+        let node = buffer.current_undo_node();
+        assert!(buffer.forget_transaction(id).is_some());
+        node
+    };
+    for _ in 0..1_000 {
+        let id = buffer.push_empty_transaction(now).unwrap();
+        assert!(buffer.forget_transaction(id).is_some());
+    }
+
+    // Only the root and node "A" remain live...
+    assert_eq!(buffer.undo_history_node_count(), 2);
+    // ...and backing storage never accumulated a slot per churned transaction.
+    assert!(
+        buffer.undo_history_slot_count() <= 3,
+        "expected reclaimed slots, got {}",
+        buffer.undo_history_slot_count()
+    );
+
+    // A stale id whose slot was reused must resolve to nothing rather than
+    // aliasing whatever now lives in that slot.
+    buffer.edit([(1..1, "B")]);
+    assert_ne!(stale_node, buffer.current_undo_node());
+    assert_eq!(buffer.transaction_id_for_undo_node(stale_node), None);
+}
+
+#[gpui::test]
+async fn test_restore_undo_history_clears_pending_waiters() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+    buffer.edit([(0..0, "A")]);
+    let history = buffer.export_undo_history();
+
+    let mut missing_version = clock::Global::new();
+    missing_version.observe(clock::Lamport {
+        replica_id: ReplicaId::new(9),
+        value: 1,
+    });
+    let waiter = buffer.wait_for_version(missing_version);
+
+    buffer.restore_undo_history(history).unwrap();
+    assert!(waiter.await.is_err());
+}
+
+#[test]
+fn test_undo_tree_change_count_tracks_visible_mutations() {
+    fn assert_bumped(buffer: &Buffer, last: &mut u64, what: &str) {
+        let now = buffer.undo_history_version();
+        assert_ne!(now, *last, "change count should bump after {what}");
+        *last = now;
+    }
+
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_group_interval(Duration::ZERO);
+    let mut last = buffer.undo_history_version();
+
+    buffer.edit([(0..0, "A")]);
+    let transaction_a = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_bumped(&buffer, &mut last, "edit");
+
+    buffer.edit([(1..1, "B")]);
+    let transaction_b = buffer.peek_undo_stack().unwrap().transaction_id();
+    assert_bumped(&buffer, &mut last, "second edit");
+
+    buffer.undo();
+    assert_bumped(&buffer, &mut last, "undo");
+    buffer.redo();
+    assert_bumped(&buffer, &mut last, "redo");
+
+    // Diverge into a second branch under "A".
+    buffer.undo();
+    assert_bumped(&buffer, &mut last, "undo before branch");
+    buffer.edit([(1..1, "C")]);
+    assert_bumped(&buffer, &mut last, "branch edit");
+
+    let snapshot = buffer.undo_tree_snapshot();
+    let node_a = undo_snapshot_node_for_transaction(&snapshot, transaction_a).id;
+    let node_b = undo_snapshot_node_for_transaction(&snapshot, transaction_b).id;
+
+    buffer.jump_to_undo_node(node_b);
+    assert_bumped(&buffer, &mut last, "jump");
+
+    assert!(buffer.switch_undo_branch(node_a, 1));
+    assert_bumped(&buffer, &mut last, "switch branch");
+
+    buffer.mark_current_undo_node_saved();
+    assert_bumped(&buffer, &mut last, "mark saved");
 }
 
 #[test]

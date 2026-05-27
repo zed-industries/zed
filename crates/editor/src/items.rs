@@ -24,22 +24,24 @@ use language::{
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
+use parking_lot::Mutex;
 use project::{
     File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
-use rope::TextSummary;
+use rope::{Rope, TextSummary};
 use rpc::proto::{self, update_view};
+use seahash::SeaHasher;
 use settings::Settings;
-use sha2::{Digest, Sha256};
 use std::{
     any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
+    hash::Hasher as _,
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection};
 use ui::{IconDecorationKind, prelude::*};
@@ -65,6 +67,16 @@ use zed_actions::preview::{
 
 pub const MAX_TAB_TITLE_LEN: usize = 24;
 const MAX_PERSISTED_UNDO_HISTORY_ROWS_PER_WORKSPACE: usize = 10_000;
+
+/// Latest-wins coalescing queue for persisted undo-history writes keyed by
+/// `(workspace, kind, key)`.
+///
+/// Only one writer loop runs per key. While that writer is active, new payloads
+/// replace the key's single pending slot so only the newest queued payload is
+/// ever written next.
+static PERSISTED_UNDO_HISTORY_WRITE_SLOTS: LazyLock<
+    Mutex<HashMap<PersistedUndoHistoryKey, Option<UndoHistoryWritePayload>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::default()));
 
 impl FollowableItem for Editor {
     fn remote_id(&self) -> Option<ViewId> {
@@ -1196,9 +1208,18 @@ impl SerializableItem for Editor {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let db = EditorDb::global(cx);
+        let max_undo_history_age_days = ProjectSettings::get_global(cx)
+            .session
+            .max_persisted_undo_history_age_days;
         cx.background_spawn(async move {
             db.delete_unloaded_editors_and_item_undo_histories(workspace_id, alive_items)
-                .await
+                .await?;
+            db.prune_undo_histories(
+                workspace_id,
+                MAX_PERSISTED_UNDO_HISTORY_ROWS_PER_WORKSPACE,
+                max_undo_history_age_days,
+            )
+            .await
         })
     }
 
@@ -1285,27 +1306,18 @@ impl SerializableItem for Editor {
                         }
                     });
 
-                    if persist_undo_history {
-                        restore_persisted_undo_history(
-                            buffer.clone(),
-                            undo_history_db.clone(),
-                            workspace_id,
-                            item_id,
-                            max_undo_history_bytes,
-                            max_undo_history_nodes,
-                            cx,
-                        )
-                        .await?;
-                    }
-
-                    cx.update(|window, cx| {
-                        cx.new(|cx| {
-                            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
-
-                            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                            editor
-                        })
-                    })
+                    build_editor_restoring_undo_history(
+                        buffer,
+                        project,
+                        item_id,
+                        workspace_id,
+                        persist_undo_history,
+                        undo_history_db,
+                        max_undo_history_bytes,
+                        max_undo_history_nodes,
+                        cx,
+                    )
+                    .await
                 }
             }),
             SerializedEditor {
@@ -1335,28 +1347,18 @@ impl SerializableItem for Editor {
                             });
                         }
 
-                        if persist_undo_history {
-                            restore_persisted_undo_history(
-                                buffer.clone(),
-                                undo_history_db.clone(),
-                                workspace_id,
-                                item_id,
-                                max_undo_history_bytes,
-                                max_undo_history_nodes,
-                                cx,
-                            )
-                            .await?;
-                        }
-
-                        cx.update(|window, cx| {
-                            cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project), window, cx);
-
-                                editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                editor
-                            })
-                        })
+                        build_editor_restoring_undo_history(
+                            buffer,
+                            project,
+                            item_id,
+                            workspace_id,
+                            persist_undo_history,
+                            undo_history_db,
+                            max_undo_history_bytes,
+                            max_undo_history_nodes,
+                            cx,
+                        )
+                        .await
                     }),
                     None => {
                         // File is not in any worktree (e.g., opened as a standalone file).
@@ -1378,27 +1380,18 @@ impl SerializableItem for Editor {
                                 });
                             }
 
-                            if persist_undo_history {
-                                restore_persisted_undo_history(
-                                    buffer.clone(),
-                                    undo_history_db.clone(),
-                                    workspace_id,
-                                    item_id,
-                                    max_undo_history_bytes,
-                                    max_undo_history_nodes,
-                                    cx,
-                                )
-                                .await?;
-                            }
-
-                            cx.update(|window, cx| {
-                                cx.new(|cx| {
-                                    let mut editor =
-                                        Editor::for_buffer(buffer, Some(project), window, cx);
-                                    editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                                    editor
-                                })
-                            })
+                            build_editor_restoring_undo_history(
+                                buffer,
+                                project,
+                                item_id,
+                                workspace_id,
+                                persist_undo_history,
+                                undo_history_db,
+                                max_undo_history_bytes,
+                                max_undo_history_nodes,
+                                cx,
+                            )
+                            .await
                         })
                     }
                 }
@@ -1413,27 +1406,18 @@ impl SerializableItem for Editor {
                     .await
                     .context("Failed to create buffer")?;
 
-                if persist_undo_history {
-                    restore_persisted_undo_history(
-                        buffer.clone(),
-                        undo_history_db.clone(),
-                        workspace_id,
-                        item_id,
-                        max_undo_history_bytes,
-                        max_undo_history_nodes,
-                        cx,
-                    )
-                    .await?;
-                }
-
-                cx.update(|window, cx| {
-                    cx.new(|cx| {
-                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
-
-                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
-                        editor
-                    })
-                })
+                build_editor_restoring_undo_history(
+                    buffer,
+                    project,
+                    item_id,
+                    workspace_id,
+                    persist_undo_history,
+                    undo_history_db,
+                    max_undo_history_bytes,
+                    max_undo_history_nodes,
+                    cx,
+                )
+                .await
             }),
         }
     }
@@ -1481,23 +1465,21 @@ impl SerializableItem for Editor {
         let persist_undo_history = session_settings.persist_undo_history;
         let max_undo_history_bytes = session_settings.max_persisted_undo_history_bytes;
         let max_undo_history_nodes = session_settings.max_persisted_undo_history_nodes;
-        let max_undo_history_age_days = session_settings.max_persisted_undo_history_age_days;
 
         let (is_dirty, mtime, undo_history_key, undo_history, snapshot) = {
             let buffer = buffer.read(cx);
             let undo_history_key = persist_undo_history
                 .then(|| undo_history_key_for_buffer(buffer, item_id, cx))
                 .flatten();
-            let undo_history = undo_history_key.as_ref().and_then(|_| {
-                match buffer.export_undo_history(max_undo_history_nodes) {
-                    Ok(history) if history.node_count() > 1 => Some(history),
-                    Ok(_) => None,
-                    Err(error) => {
-                        log::warn!("failed to export undo history: {error:#}");
-                        None
-                    }
-                }
-            });
+            let undo_history = if undo_history_key.is_some() {
+                export_persistable_undo_history(
+                    buffer,
+                    max_undo_history_bytes,
+                    max_undo_history_nodes,
+                )
+            } else {
+                None
+            };
             (
                 buffer.is_dirty(),
                 buffer.saved_mtime(),
@@ -1510,12 +1492,17 @@ impl SerializableItem for Editor {
         let db = EditorDb::global(cx);
         Some(cx.spawn_in(window, async move |_this, cx| {
             cx.background_spawn(async move {
-                let current_text = snapshot.text();
-                let text_hash = hash_normalized_text(&current_text);
+                // Hash straight from the rope (no full-text String) so save and
+                // restore agree on the digest without an extra allocation.
+                let text_hash = if undo_history.is_some() {
+                    hash_rope(snapshot.as_rope())
+                } else {
+                    Vec::new()
+                };
                 let line_ending = persisted_line_ending(snapshot.line_ending()).to_string();
                 let (contents, language) = if serialize_dirty_buffers && is_dirty {
                     let language = snapshot.language().map(|lang| lang.name().to_string());
-                    (Some(current_text), language)
+                    (Some(snapshot.text()), language)
                 } else {
                     (None, None)
                 };
@@ -1532,27 +1519,23 @@ impl SerializableItem for Editor {
                     .context("failed to save serialized editor")?;
 
                 if let Some(undo_history_key) = undo_history_key {
-                    save_persisted_undo_history(
-                        &db,
+                    let write_payload = UndoHistoryWritePayload {
+                        db,
                         workspace_id,
                         undo_history_key,
                         undo_history,
-                        UndoHistoryMetadata {
+                        metadata: UndoHistoryMetadata {
                             mtime,
                             line_ending,
                             text_hash,
                         },
-                        max_undo_history_bytes,
-                    )
-                    .await?;
-
-                    db.prune_undo_histories(
-                        workspace_id,
-                        MAX_PERSISTED_UNDO_HISTORY_ROWS_PER_WORKSPACE,
-                        max_undo_history_age_days,
-                    )
-                    .await
-                    .context("failed to prune undo histories")?;
+                        max_bytes: max_undo_history_bytes,
+                        max_nodes: max_undo_history_nodes,
+                    };
+                    if let Some(write_payload) = enqueue_persisted_undo_history_write(write_payload)
+                    {
+                        run_persisted_undo_history_writer(write_payload).await;
+                    }
                 }
 
                 Ok::<(), anyhow::Error>(())
@@ -2259,10 +2242,74 @@ struct UndoHistoryKey {
     key: String,
 }
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct PersistedUndoHistoryKey {
+    workspace_id: WorkspaceId,
+    kind: &'static str,
+    key: String,
+}
+
 struct UndoHistoryMetadata {
     mtime: Option<MTime>,
     line_ending: String,
-    text_hash: String,
+    text_hash: Vec<u8>,
+}
+
+struct UndoHistoryWritePayload {
+    db: EditorDb,
+    workspace_id: WorkspaceId,
+    undo_history_key: UndoHistoryKey,
+    undo_history: Option<text::UndoHistoryExportSnapshot>,
+    metadata: UndoHistoryMetadata,
+    max_bytes: usize,
+    max_nodes: usize,
+}
+
+impl UndoHistoryWritePayload {
+    fn persisted_key(&self) -> PersistedUndoHistoryKey {
+        PersistedUndoHistoryKey {
+            workspace_id: self.workspace_id,
+            kind: self.undo_history_key.kind,
+            key: self.undo_history_key.key.clone(),
+        }
+    }
+}
+
+fn enqueue_persisted_undo_history_write(
+    payload: UndoHistoryWritePayload,
+) -> Option<UndoHistoryWritePayload> {
+    let key = payload.persisted_key();
+    let mut write_slots = PERSISTED_UNDO_HISTORY_WRITE_SLOTS.lock();
+    if let Some(pending_payload) = write_slots.get_mut(&key) {
+        // Writer already active; replace any pending payload so newest wins.
+        *pending_payload = Some(payload);
+        None
+    } else {
+        // Slot exists now and has no pending payload because this caller is
+        // the writer owner for the key.
+        write_slots.insert(key, None);
+        Some(payload)
+    }
+}
+
+fn drain_pending_persisted_undo_history_write(
+    key: &PersistedUndoHistoryKey,
+) -> Option<UndoHistoryWritePayload> {
+    PERSISTED_UNDO_HISTORY_WRITE_SLOTS
+        .lock()
+        .get_mut(key)
+        .and_then(Option::take)
+}
+
+fn dequeue_next_or_finish_persisted_undo_history_writer(
+    key: &PersistedUndoHistoryKey,
+) -> Option<UndoHistoryWritePayload> {
+    let mut write_slots = PERSISTED_UNDO_HISTORY_WRITE_SLOTS.lock();
+    let next_payload = write_slots.get_mut(key).and_then(Option::take);
+    if next_payload.is_none() {
+        write_slots.remove(key);
+    }
+    next_payload
 }
 
 fn undo_history_key_for_buffer(
@@ -2295,11 +2342,71 @@ fn persisted_line_ending(line_ending: LineEnding) -> &'static str {
     }
 }
 
-fn hash_normalized_text(text: &str) -> String {
-    hex::encode(Sha256::digest(text.as_bytes()))
+/// Streaming-stable hash of the rope's bytes. `SeaHasher` is byte-sequence
+/// stable, so feeding the bytes one chunk at a time yields the same digest no
+/// matter how the rope is internally chunked — which matters because a rope
+/// rebuilt from `Rope::from(&str)` at restore has different SumTree chunking
+/// than the live rope it was hashed against at save. (`FxHasher` is *not*
+/// stable that way: its leftover handling at 4/2/1-byte boundaries shifts the
+/// state at every chunk break.)
+fn hash_rope(rope: &Rope) -> Vec<u8> {
+    let mut hasher = SeaHasher::default();
+    let mut byte_len = 0u64;
+    for chunk in rope.chunks() {
+        byte_len = byte_len.saturating_add(chunk.len() as u64);
+        hasher.write(chunk.as_bytes());
+    }
+
+    let mut hash = Vec::with_capacity(16);
+    hash.extend_from_slice(&hasher.finish().to_le_bytes());
+    hash.extend_from_slice(&byte_len.to_le_bytes());
+    hash
 }
 
-fn undo_history_matches_buffer(buffer: &Buffer, persisted: &PersistedUndoHistory) -> bool {
+/// Produces a cheap, Send-able snapshot of the undo tree (O(nodes) refcount
+/// bumps) that the caller hands off to a background thread. The expensive
+/// per-node conversion happens in [`text::UndoHistoryExportSnapshot::into_state`]
+/// — off the foreground thread.
+fn export_persistable_undo_history(
+    buffer: &Buffer,
+    max_bytes: usize,
+    max_nodes: usize,
+) -> Option<text::UndoHistoryExportSnapshot> {
+    let node_count = buffer.undo_history_node_count();
+    if node_count <= 1 {
+        return None;
+    }
+
+    if node_count > max_nodes {
+        log::debug!("not saving undo history because it exceeds configured node limit");
+        return None;
+    }
+
+    if buffer.undo_history_persisted_byte_estimate() > max_bytes {
+        log::debug!(
+            "not saving undo history because estimated payload exceeds configured byte limit"
+        );
+        return None;
+    }
+
+    if buffer.len() > max_bytes {
+        log::debug!("not saving undo history because buffer text exceeds configured byte limit");
+        return None;
+    }
+
+    match buffer.export_undo_history_snapshot(max_nodes) {
+        Ok(history) => history,
+        Err(error) => {
+            log::debug!("failed to export undo history: {error:#}");
+            None
+        }
+    }
+}
+
+/// Cheap metadata gate (line ending + mtime) for persisted undo history. The
+/// authoritative text-hash comparison happens separately, off the foreground
+/// thread, so we never hash the whole buffer while blocking the UI.
+fn undo_history_metadata_matches_buffer(buffer: &Buffer, persisted: &PersistedUndoHistory) -> bool {
     if persisted.line_ending != persisted_line_ending(buffer.line_ending()) {
         return false;
     }
@@ -2310,18 +2417,19 @@ fn undo_history_matches_buffer(buffer: &Buffer, persisted: &PersistedUndoHistory
         return false;
     }
 
-    let current_hash = hash_normalized_text(&buffer.snapshot().text());
-    current_hash == persisted.text_hash
+    true
 }
 
-async fn save_persisted_undo_history(
-    db: &EditorDb,
-    workspace_id: WorkspaceId,
-    undo_history_key: UndoHistoryKey,
-    undo_history: Option<SerializedUndoHistory>,
-    metadata: UndoHistoryMetadata,
-    max_bytes: usize,
-) -> Result<()> {
+async fn save_persisted_undo_history(payload: UndoHistoryWritePayload) -> Result<()> {
+    let UndoHistoryWritePayload {
+        db,
+        workspace_id,
+        undo_history_key,
+        undo_history,
+        metadata,
+        max_bytes,
+        max_nodes,
+    } = payload;
     let key_kind = undo_history_key.kind;
     let key = undo_history_key.key;
 
@@ -2332,6 +2440,19 @@ async fn save_persisted_undo_history(
         return Ok(());
     };
 
+    // The owned `UndoHistoryState` materialization happens here, on the
+    // background thread, so the foreground only paid for refcount bumps.
+    let undo_history_state = undo_history.into_state();
+    let undo_history = match SerializedUndoHistory::from_text_state(undo_history_state, max_nodes) {
+        Ok(undo_history) => undo_history,
+        Err(error) => {
+            log::warn!("failed to serialize undo history: {error:#}");
+            db.delete_undo_history(workspace_id, key_kind.to_string(), key)
+                .await
+                .context("failed to delete invalid undo history")?;
+            return Ok(());
+        }
+    };
     let payload = undo_history.to_json_bytes()?;
     if payload.len() > max_bytes {
         log::warn!("not saving undo history because it exceeds configured byte limit");
@@ -2354,6 +2475,67 @@ async fn save_persisted_undo_history(
     db.save_undo_history(workspace_id, key_kind.to_string(), key, undo_history)
         .await
         .context("failed to save undo history")
+}
+
+async fn run_persisted_undo_history_writer(mut payload: UndoHistoryWritePayload) {
+    let key = payload.persisted_key();
+    loop {
+        while let Some(newer_payload) = drain_pending_persisted_undo_history_write(&key) {
+            payload = newer_payload;
+        }
+
+        if let Err(error) = save_persisted_undo_history(payload).await {
+            log::warn!("failed to persist undo history: {error:#}");
+        }
+
+        let Some(newer_payload) = dequeue_next_or_finish_persisted_undo_history_writer(&key) else {
+            break;
+        };
+        payload = newer_payload;
+    }
+}
+
+/// Restores persisted undo history into `buffer` (if enabled) and then builds the
+/// editor for it.
+///
+/// Order matters: the restore swaps the buffer's snapshot — rebuilt from
+/// `base_text` plus the persisted operation log — for one with identical text but
+/// an unrelated CRDT version. Doing that *after* the editor exists desyncs the
+/// editor's already-synced display map and panics on the next `display_snapshot`
+/// ("display point out of range"). Restoring first means the display map is built
+/// fresh from the restored snapshot, so there is nothing to desync.
+async fn build_editor_restoring_undo_history(
+    buffer: Entity<Buffer>,
+    project: Entity<Project>,
+    item_id: ItemId,
+    workspace_id: WorkspaceId,
+    persist_undo_history: bool,
+    undo_history_db: EditorDb,
+    max_undo_history_bytes: usize,
+    max_undo_history_nodes: usize,
+    cx: &mut AsyncWindowContext,
+) -> Result<Entity<Editor>> {
+    if persist_undo_history {
+        restore_persisted_undo_history(
+            buffer.clone(),
+            undo_history_db,
+            workspace_id,
+            item_id,
+            max_undo_history_bytes,
+            max_undo_history_nodes,
+            cx,
+        )
+        .await
+        .log_err();
+    }
+
+    cx.update(|window, cx| {
+        cx.new(|cx| {
+            let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+            editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+            editor
+        })
+    })
 }
 
 async fn restore_persisted_undo_history(
@@ -2385,39 +2567,67 @@ async fn restore_persisted_undo_history(
         return Ok(());
     }
 
-    let initial_version = buffer.read_with(cx, |buffer, _| buffer.version());
-    let matches = buffer.read_with(cx, |buffer, _| {
-        undo_history_matches_buffer(buffer, &persisted)
-    });
-    if !matches {
+    // Cheap metadata gate on the foreground; capture immutable inputs so
+    // decode + replay + topology validation run off-thread.
+    let Some((initial_version, snapshot, replica_id, remote_id, group_interval)) = buffer
+        .read_with(cx, |buffer, _| {
+            undo_history_metadata_matches_buffer(buffer, &persisted).then(|| {
+                (
+                    buffer.version(),
+                    buffer.text_snapshot(),
+                    buffer.replica_id(),
+                    buffer.remote_id(),
+                    buffer.transaction_group_interval(),
+                )
+            })
+        })
+    else {
         return Ok(());
-    }
+    };
 
     let payload = persisted.payload.clone();
-    let history = match cx
+    let expected_hash = persisted.text_hash.clone();
+    let prepared = match cx
         .background_spawn(async move {
+            // Verify the buffer text still matches before paying to decompress.
+            if hash_rope(snapshot.as_rope()) != expected_hash {
+                return anyhow::Ok(None);
+            }
             let decompressed = zstd::bulk::decompress(&payload, max_bytes)
                 .context("failed to decompress undo history")?;
-            SerializedUndoHistory::from_json_bytes(&decompressed, max_nodes)
+            let history = SerializedUndoHistory::from_json_bytes(&decompressed, max_nodes)
+                .context("failed to decode undo history payload")?;
+            let prepared = text::Buffer::prepare_undo_history_restore(
+                replica_id,
+                remote_id,
+                group_interval,
+                snapshot,
+                history.into_text_state(max_nodes)?,
+            )?;
+            anyhow::Ok(Some(prepared))
         })
         .await
     {
-        Ok(history) => history,
+        Ok(Some(prepared)) => prepared,
+        Ok(None) => return Ok(()),
         Err(error) => {
-            log::warn!("failed to decode persisted undo history: {error:#}");
+            log::warn!("failed to prepare persisted undo history: {error:#}");
             return Ok(());
         }
     };
 
-    let matches = buffer.read_with(cx, |buffer, _| {
-        buffer.version() == initial_version && undo_history_matches_buffer(buffer, &persisted)
+    // The hash was computed against `initial_version`; only restore if the
+    // buffer hasn't changed since (and the cheap metadata still matches).
+    let still_matches = buffer.read_with(cx, |buffer, _| {
+        buffer.version() == initial_version
+            && undo_history_metadata_matches_buffer(buffer, &persisted)
     });
-    if !matches {
+    if !still_matches {
         return Ok(());
     }
 
-    buffer.update(cx, |buffer, cx| {
-        if let Err(error) = buffer.restore_undo_history(history, max_nodes, cx) {
+    buffer.update(cx, move |buffer, cx| {
+        if let Err(error) = buffer.restore_prepared_undo_history(prepared, cx) {
             log::warn!("failed to restore persisted undo history: {error:#}");
         }
     });
@@ -2516,6 +2726,83 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use util::{path, rel_path::RelPath};
+
+    /// Regression test: `hash_rope` must produce the same digest for two ropes
+    /// holding the same content even when their internal chunking differs.
+    /// `Rope::from(&str)` and a rope built up through many edits land on
+    /// different chunk boundaries; if the hash isn't stable under chunking,
+    /// persisted undo history fails the text-hash check on restart and is
+    /// silently skipped.
+    #[test]
+    fn test_hash_rope_is_stable_across_chunking() {
+        let mut content = String::new();
+        for i in 0..400 {
+            content.push_str(&format!("line {i}\n"));
+        }
+
+        let fresh_rope = Rope::from(content.as_str());
+        let mut edited_rope = Rope::default();
+        for chunk in content.as_bytes().chunks(7) {
+            let text = std::str::from_utf8(chunk).unwrap();
+            edited_rope.push(text);
+        }
+
+        assert_eq!(fresh_rope.to_string(), edited_rope.to_string());
+        // Sanity check: the chunkings really do differ, otherwise this test
+        // wouldn't be exercising the property we care about.
+        let fresh_chunks: Vec<&str> = fresh_rope.chunks().collect();
+        let edited_chunks: Vec<&str> = edited_rope.chunks().collect();
+        assert_ne!(fresh_chunks, edited_chunks);
+
+        assert_eq!(hash_rope(&fresh_rope), hash_rope(&edited_rope));
+    }
+
+    #[gpui::test]
+    fn test_enqueue_persisted_undo_history_write_latest_wins(cx: &mut App) {
+        PERSISTED_UNDO_HISTORY_WRITE_SLOTS.lock().clear();
+
+        let first_payload = UndoHistoryWritePayload {
+            db: EditorDb::global(cx),
+            workspace_id: WorkspaceId::from_i64(1),
+            undo_history_key: UndoHistoryKey {
+                kind: "item",
+                key: "same-key".to_string(),
+            },
+            undo_history: None,
+            metadata: UndoHistoryMetadata {
+                mtime: None,
+                line_ending: "first".to_string(),
+                text_hash: vec![1],
+            },
+            max_bytes: 1024,
+            max_nodes: 1024,
+        };
+        let key = first_payload.persisted_key();
+        assert!(enqueue_persisted_undo_history_write(first_payload).is_some());
+
+        let newer_payload = UndoHistoryWritePayload {
+            db: EditorDb::global(cx),
+            workspace_id: WorkspaceId::from_i64(1),
+            undo_history_key: UndoHistoryKey {
+                kind: "item",
+                key: "same-key".to_string(),
+            },
+            undo_history: None,
+            metadata: UndoHistoryMetadata {
+                mtime: None,
+                line_ending: "newer".to_string(),
+                text_hash: vec![2],
+            },
+            max_bytes: 1024,
+            max_nodes: 1024,
+        };
+        assert!(enqueue_persisted_undo_history_write(newer_payload).is_none());
+
+        let queued_payload = drain_pending_persisted_undo_history_write(&key).unwrap();
+        assert_eq!(queued_payload.metadata.line_ending, "newer");
+        assert!(dequeue_next_or_finish_persisted_undo_history_writer(&key).is_none());
+        assert!(!PERSISTED_UNDO_HISTORY_WRITE_SLOTS.lock().contains_key(&key));
+    }
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {

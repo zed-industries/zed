@@ -2,6 +2,7 @@ use super::*;
 use gpui::{
     DragMoveEvent, Empty, InteractiveElement as _, StatefulInteractiveElement as _, canvas, fill,
 };
+use std::rc::Rc;
 use std::time::SystemTime;
 use text::{UndoNodeId, UndoTreeSnapshot};
 
@@ -99,6 +100,44 @@ pub(crate) struct UndoTreeVisualizerEdge {
     pub(crate) active: bool,
 }
 
+/// Cached visualizer state plus the inputs it was built from. Reused across
+/// frames while the undo tree and selection are unchanged, so a large history
+/// isn't re-snapshotted and re-laid-out on every repaint.
+pub(crate) struct UndoTreeVisualizerCache {
+    version: Option<u64>,
+    selected: Option<UndoNodeId>,
+    state: Rc<UndoTreeVisualizerState>,
+}
+
+/// Vec indexed by `UndoNodeId::as_usize()` — cheaper than the previous
+/// `HashMap<UndoNodeId, _>` we rebuilt every time the visualizer (or its
+/// keyboard navigation) needed to chase a parent/child link. Ids stay dense in
+/// the live tree because `History` reuses slots via its free-list, so the
+/// table size tracks the live node count and not arbitrary lifetime growth.
+struct UndoNodeLookup<'a> {
+    table: Vec<Option<&'a text::UndoTreeNodeSnapshot>>,
+}
+
+impl<'a> UndoNodeLookup<'a> {
+    fn new(snapshot: &'a UndoTreeSnapshot) -> Self {
+        let max_index = snapshot
+            .nodes
+            .iter()
+            .map(|node| node.id.as_usize())
+            .max()
+            .unwrap_or(0);
+        let mut table = vec![None; max_index + 1];
+        for node in &snapshot.nodes {
+            table[node.id.as_usize()] = Some(node);
+        }
+        Self { table }
+    }
+
+    fn get(&self, id: UndoNodeId) -> Option<&'a text::UndoTreeNodeSnapshot> {
+        *self.table.get(id.as_usize())?
+    }
+}
+
 impl Editor {
     pub fn undo_tree_visible(&self) -> bool {
         self.show_undo_tree
@@ -108,22 +147,29 @@ impl Editor {
         self.selected_undo_node
     }
 
-    pub fn undo_tree_snapshot(&self, cx: &App) -> Option<UndoTreeSnapshot> {
+    fn undo_tree_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
         let buffer = self.buffer.read(cx).as_singleton()?;
-        Some(buffer.read(cx).undo_tree_snapshot())
+        let is_local = buffer.read(cx).replica_id() == ReplicaId::LOCAL;
+        is_local.then_some(buffer)
+    }
+
+    pub fn undo_tree_snapshot(&self, cx: &App) -> Option<UndoTreeSnapshot> {
+        Some(self.undo_tree_buffer(cx)?.read(cx).undo_tree_snapshot())
     }
 
     pub fn show_undo_tree(&mut self, _: &ShowUndoTree, _: &mut Window, cx: &mut Context<Self>) {
         self.show_undo_tree = true;
         self.selected_undo_node = self.undo_tree_snapshot(cx).map(|snapshot| snapshot.current);
-        cx.emit(EditorEvent::UndoHistoryChanged);
+        // View-only change (panel visibility / selection): re-render, but don't
+        // emit `UndoHistoryChanged`, which `should_serialize` treats as a reason
+        // to persist. Nothing persistable changed here.
         cx.notify();
     }
 
     pub fn hide_undo_tree(&mut self, _: &HideUndoTree, _: &mut Window, cx: &mut Context<Self>) {
         if self.show_undo_tree {
             self.show_undo_tree = false;
-            cx.emit(EditorEvent::UndoHistoryChanged);
+            // View-only change; re-render without triggering serialization.
             cx.notify();
         }
     }
@@ -226,21 +272,12 @@ impl Editor {
             return false;
         }
 
-        let Some(snapshot) = self.undo_tree_snapshot(cx) else {
+        let Some(buffer) = self.undo_tree_buffer(cx) else {
             return false;
         };
-        let target_transaction_id = snapshot
-            .nodes
-            .iter()
-            .find(|node| node.id == target)
-            .and_then(|node| node.transaction_id);
+        let target_transaction_id = buffer.read(cx).transaction_id_for_undo_node(target);
 
-        let jumped = self.buffer.update(cx, |multi_buffer, cx| {
-            let Some(buffer) = multi_buffer.as_singleton() else {
-                return false;
-            };
-            buffer.update(cx, |buffer, cx| buffer.jump_to_undo_node(target, cx))
-        });
+        let jumped = buffer.update(cx, |buffer, cx| buffer.jump_to_undo_node(target, cx));
 
         if jumped {
             self.selected_undo_node = Some(target);
@@ -267,12 +304,13 @@ impl Editor {
             return false;
         }
 
-        if let Some(snapshot) = self.undo_tree_snapshot(cx) {
+        if let Some(buffer) = self.undo_tree_buffer(cx) {
+            let buffer = buffer.read(cx);
             let selected_is_valid = self
                 .selected_undo_node
-                .is_some_and(|selected| snapshot.nodes.iter().any(|node| node.id == selected));
+                .is_some_and(|selected| buffer.contains_undo_node(selected));
             if follow_current || !selected_is_valid {
-                self.selected_undo_node = Some(snapshot.current);
+                self.selected_undo_node = Some(buffer.current_undo_node());
             }
         } else {
             self.selected_undo_node = None;
@@ -281,6 +319,15 @@ impl Editor {
         cx.emit(EditorEvent::UndoHistoryChanged);
         cx.notify();
         true
+    }
+
+    #[doc(hidden)]
+    pub fn benchmark_refresh_undo_tree_visualizer(
+        &mut self,
+        follow_current: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.refresh_undo_tree_visualizer(follow_current, cx)
     }
 
     fn select_undo_tree_node_relative(&mut self, direction: isize, cx: &mut Context<Self>) {
@@ -307,7 +354,7 @@ impl Editor {
         };
 
         self.selected_undo_node = ordered_nodes.get(new_index).copied();
-        cx.emit(EditorEvent::UndoHistoryChanged);
+        // Selection-only change; re-render without triggering serialization.
         cx.notify();
     }
 
@@ -320,13 +367,9 @@ impl Editor {
             return;
         };
         let selected = self.selected_undo_node.unwrap_or(snapshot.current);
-        let nodes_by_id = snapshot
-            .nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<HashMap<_, _>>();
+        let lookup = UndoNodeLookup::new(&snapshot);
 
-        let Some(parent_id) = nodes_by_id.get(&selected).and_then(|selected_node| {
+        let Some(parent_id) = lookup.get(selected).and_then(|selected_node| {
             if selected_node.children.is_empty() {
                 selected_node.parent
             } else {
@@ -335,7 +378,7 @@ impl Editor {
         }) else {
             return;
         };
-        let Some(parent) = nodes_by_id.get(&parent_id) else {
+        let Some(parent) = lookup.get(parent_id) else {
             return;
         };
         if parent.children.is_empty() {
@@ -357,13 +400,11 @@ impl Editor {
             return;
         }
 
-        let switched = self.buffer.update(cx, |multi_buffer, cx| {
-            let Some(buffer) = multi_buffer.as_singleton() else {
-                return false;
-            };
-            buffer.update(cx, |buffer, cx| {
-                buffer.switch_undo_branch(parent_id, new_child, cx)
-            })
+        let Some(buffer) = self.undo_tree_buffer(cx) else {
+            return;
+        };
+        let switched = buffer.update(cx, |buffer, cx| {
+            buffer.switch_undo_branch(parent_id, new_child, cx)
         });
         if switched {
             self.selected_undo_node = parent.children.get(new_child).copied();
@@ -392,31 +433,29 @@ impl Editor {
             .unwrap_or(snapshot.root)
     }
 
+    /// Returns the nodes in pre-order (parent before children, children
+    /// left-to-right), which is the order keyboard selection steps through.
+    ///
+    /// Iterative on purpose: a normal session is a near-linear chain, so depth
+    /// ≈ node count and a recursive walk would overflow the stack on large
+    /// histories. The `visited` set keeps it O(n) and tolerates malformed
+    /// snapshots without looping.
     fn undo_tree_node_order(snapshot: &UndoTreeSnapshot) -> Vec<UndoNodeId> {
-        let nodes_by_id = snapshot
-            .nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<HashMap<_, _>>();
+        let lookup = UndoNodeLookup::new(snapshot);
         let mut ordered_nodes = Vec::new();
-        Self::push_undo_tree_node(snapshot.root, &nodes_by_id, &mut ordered_nodes);
-        ordered_nodes
-    }
-
-    fn push_undo_tree_node(
-        node_id: UndoNodeId,
-        nodes_by_id: &HashMap<UndoNodeId, &text::UndoTreeNodeSnapshot>,
-        ordered_nodes: &mut Vec<UndoNodeId>,
-    ) {
-        if ordered_nodes.contains(&node_id) {
-            return;
-        }
-        ordered_nodes.push(node_id);
-        if let Some(node) = nodes_by_id.get(&node_id) {
-            for child in &node.children {
-                Self::push_undo_tree_node(*child, nodes_by_id, ordered_nodes);
+        let mut visited = HashSet::default();
+        let mut stack = vec![snapshot.root];
+        while let Some(node_id) = stack.pop() {
+            if !visited.insert(node_id) {
+                continue;
+            }
+            ordered_nodes.push(node_id);
+            if let Some(node) = lookup.get(node_id) {
+                // Reverse so children pop left-to-right.
+                stack.extend(node.children.iter().rev().copied());
             }
         }
+        ordered_nodes
     }
 
     fn restore_selection_for_undo_tree_target(
@@ -481,43 +520,32 @@ impl Editor {
             .selected_undo_node
             .filter(|node_id| snapshot.nodes.iter().any(|node| node.id == *node_id))
             .unwrap_or(snapshot.current);
-        let nodes_by_id = snapshot
-            .nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<HashMap<_, _>>();
+        undo_tree_visualizer_state(&snapshot, selected)
+    }
 
-        let mut layout = UndoTreeLayout {
-            current: snapshot.current,
-            selected,
-            nodes_by_id: &nodes_by_id,
-            visited: HashSet::default(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            row_edit_times: Vec::new(),
-            next_leaf_column: 0.,
-        };
-        layout.place(snapshot.root, 0, true);
-
-        let row_timestamps = layout
-            .row_edit_times
-            .iter()
-            .map(|time| time.map(Self::format_undo_tree_timestamp))
-            .collect::<Vec<_>>();
-        let columns = layout
-            .nodes
-            .iter()
-            .map(|node| node.column.ceil() as usize + 1)
-            .max()
-            .unwrap_or(1);
-
-        UndoTreeVisualizerState {
-            available: true,
-            nodes: layout.nodes,
-            edges: layout.edges,
-            row_timestamps,
-            columns,
+    /// Visualizer state for rendering, reusing the cached result while the
+    /// buffer's undo-history version and the selected node are unchanged. This
+    /// keeps the per-frame cost off the O(nodes) snapshot/layout path for large
+    /// histories; the cache key changes whenever the tree or selection does.
+    fn cached_undo_tree_visualizer_state(&mut self, cx: &App) -> Rc<UndoTreeVisualizerState> {
+        let version = self
+            .undo_tree_buffer(cx)
+            .map(|buffer| buffer.read(cx).undo_history_version());
+        let selected = self.selected_undo_node;
+        if let Some(cache) = &self.undo_tree_visualizer_cache
+            && cache.version == version
+            && cache.selected == selected
+        {
+            return cache.state.clone();
         }
+
+        let state = Rc::new(self.undo_tree_visualizer_state(cx));
+        self.undo_tree_visualizer_cache = Some(UndoTreeVisualizerCache {
+            version,
+            selected,
+            state: state.clone(),
+        });
+        state
     }
 
     pub(crate) fn render_undo_tree_visualizer(
@@ -529,7 +557,7 @@ impl Editor {
             return None;
         }
 
-        let state = self.undo_tree_visualizer_state(cx);
+        let state = self.cached_undo_tree_visualizer_state(cx);
         let read_only = self.read_only(cx);
         let can_jump = state.available && !read_only;
 
@@ -669,7 +697,7 @@ impl Editor {
                                 .overflow_y_scroll()
                                 .when(!state.available, |this| {
                                     this.p_3().child(
-                                        Label::new("Undo tree is unavailable for multibuffers")
+                                        Label::new("Undo tree is unavailable for this buffer")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
@@ -682,7 +710,7 @@ impl Editor {
                                     )
                                 })
                                 .when(state.available && !state.nodes.is_empty(), |this| {
-                                    this.child(self.render_undo_tree_graph(state, cx))
+                                    this.child(self.render_undo_tree_graph(&state, cx))
                                 }),
                         )
                         // Resize handles paint last so they sit above the body and
@@ -739,7 +767,7 @@ impl Editor {
 
     fn render_undo_tree_graph(
         &self,
-        state: UndoTreeVisualizerState,
+        state: &UndoTreeVisualizerState,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let rows = state.row_timestamps.len();
@@ -845,7 +873,7 @@ impl Editor {
             .pr_2()
             .border_l_1()
             .border_color(cx.theme().colors().border_variant)
-            .children(state.row_timestamps.into_iter().map(|timestamp| {
+            .children(state.row_timestamps.iter().cloned().map(|timestamp| {
                 h_flex()
                     .h(UNDO_TREE_ROW_HEIGHT)
                     .w_full()
@@ -903,6 +931,49 @@ impl Editor {
     }
 }
 
+/// Builds the renderable visualizer state from a tree snapshot.
+///
+/// Pure (no `cx`/buffer access) so it can be exercised directly on large
+/// synthetic trees in tests; the `Editor` method just supplies the snapshot.
+pub(crate) fn undo_tree_visualizer_state(
+    snapshot: &UndoTreeSnapshot,
+    selected: UndoNodeId,
+) -> UndoTreeVisualizerState {
+    let lookup = UndoNodeLookup::new(snapshot);
+
+    let mut layout = UndoTreeLayout {
+        current: snapshot.current,
+        selected,
+        lookup: &lookup,
+        visited: HashSet::default(),
+        nodes: Vec::new(),
+        edges: Vec::new(),
+        row_edit_times: Vec::new(),
+        next_leaf_column: 0.,
+    };
+    layout.build(snapshot.root);
+
+    let row_timestamps = layout
+        .row_edit_times
+        .iter()
+        .map(|time| time.map(Editor::format_undo_tree_timestamp))
+        .collect::<Vec<_>>();
+    let columns = layout
+        .nodes
+        .iter()
+        .map(|node| node.column.ceil() as usize + 1)
+        .max()
+        .unwrap_or(1);
+
+    UndoTreeVisualizerState {
+        available: true,
+        nodes: layout.nodes,
+        edges: layout.edges,
+        row_timestamps,
+        columns,
+    }
+}
+
 /// Assigns each undo-tree node a (column, row) position for the visualizer.
 ///
 /// Rows correspond to tree depth. Columns are assigned bottom-up: leaves take
@@ -913,7 +984,7 @@ impl Editor {
 struct UndoTreeLayout<'a> {
     current: UndoNodeId,
     selected: UndoNodeId,
-    nodes_by_id: &'a HashMap<UndoNodeId, &'a text::UndoTreeNodeSnapshot>,
+    lookup: &'a UndoNodeLookup<'a>,
     visited: HashSet<UndoNodeId>,
     nodes: Vec<UndoTreeVisualizerNode>,
     edges: Vec<UndoTreeVisualizerEdge>,
@@ -921,25 +992,93 @@ struct UndoTreeLayout<'a> {
     next_leaf_column: f32,
 }
 
-impl UndoTreeLayout<'_> {
-    /// Places the subtree rooted at `node_id` and returns the node's column.
-    fn place(&mut self, node_id: UndoNodeId, row: usize, on_active_branch: bool) -> f32 {
-        if !self.visited.insert(node_id) {
-            return 0.;
+/// One suspended node in the iterative post-order traversal: it has been entered
+/// (and marked visited) but is waiting for its children to finish so their
+/// columns can center it.
+struct UndoTreeLayoutFrame<'a> {
+    node: Option<&'a text::UndoTreeNodeSnapshot>,
+    node_id: UndoNodeId,
+    row: usize,
+    on_active_branch: bool,
+    /// Index of the next child to descend into.
+    next_child: usize,
+    /// `(column, active)` of each already-finalized child, in order.
+    child_columns: Vec<(f32, bool)>,
+}
+
+impl<'a> UndoTreeLayout<'a> {
+    /// Lays out the whole tree starting at `root`.
+    ///
+    /// This is an explicit-stack rewrite of the natural post-order recursion: a
+    /// child must be placed before its parent (the parent centers itself between
+    /// its first and last child), so a frame stays on the stack until all its
+    /// children report back. It is iterative on purpose — a typical undo history
+    /// is a near-linear chain, so recursion would be ~depth-deep and overflow the
+    /// stack on large histories. Output is identical to the recursive form:
+    /// leaves take successive columns left-to-right, parents sit at the midpoint.
+    fn build(&mut self, root: UndoNodeId) {
+        if !self.visited.insert(root) {
+            return;
         }
-        let Some(node) = self.nodes_by_id.get(&node_id).copied() else {
-            return 0.;
+        let mut stack = vec![self.new_frame(root, 0, true)];
+        while let Some(frame) = stack.last_mut() {
+            // Try to descend into the next unvisited child of the top frame.
+            let descend = match frame.node {
+                Some(node) if frame.next_child < node.children.len() => {
+                    let index = frame.next_child;
+                    frame.next_child += 1;
+                    let active_child = node.active_child.unwrap_or(0);
+                    let child_active = frame.on_active_branch && index == active_child;
+                    Some((node.children[index], frame.row + 1, child_active))
+                }
+                _ => None,
+            };
+
+            if let Some((child_id, row, child_active)) = descend {
+                if self.visited.insert(child_id) {
+                    let child_frame = self.new_frame(child_id, row, child_active);
+                    stack.push(child_frame);
+                } else if let Some(frame) = stack.last_mut() {
+                    // Already placed elsewhere (only possible for malformed,
+                    // non-tree snapshots); mirror the recursion's `return 0.`.
+                    frame.child_columns.push((0., child_active));
+                }
+                continue;
+            }
+
+            // All children done: finalize this frame and report up to its parent.
+            let frame = stack.pop().expect("loop guard guarantees a top frame");
+            let reported = self.finalize(frame);
+            if let Some(parent) = stack.last_mut() {
+                parent.child_columns.push(reported);
+            }
+        }
+    }
+
+    fn new_frame(
+        &self,
+        node_id: UndoNodeId,
+        row: usize,
+        on_active_branch: bool,
+    ) -> UndoTreeLayoutFrame<'a> {
+        UndoTreeLayoutFrame {
+            node: self.lookup.get(node_id),
+            node_id,
+            row,
+            on_active_branch,
+            next_child: 0,
+            child_columns: Vec::new(),
+        }
+    }
+
+    /// Emits the node, its child edges, and its row timestamp, then returns the
+    /// node's `(column, active)` for its parent to record.
+    fn finalize(&mut self, frame: UndoTreeLayoutFrame<'a>) -> (f32, bool) {
+        let Some(node) = frame.node else {
+            return (0., frame.on_active_branch);
         };
 
-        let active_child = node.active_child.unwrap_or(0);
-        let mut child_columns = Vec::with_capacity(node.children.len());
-        for (index, child_id) in node.children.iter().enumerate() {
-            let child_active = on_active_branch && index == active_child;
-            let child_column = self.place(*child_id, row + 1, child_active);
-            child_columns.push((child_column, child_active));
-        }
-
-        let column = match (child_columns.first(), child_columns.last()) {
+        let column = match (frame.child_columns.first(), frame.child_columns.last()) {
             (Some(first), Some(last)) => (first.0 + last.0) / 2.,
             _ => {
                 let column = self.next_leaf_column;
@@ -948,17 +1087,17 @@ impl UndoTreeLayout<'_> {
             }
         };
 
-        for (child_column, child_active) in &child_columns {
+        for (child_column, child_active) in &frame.child_columns {
             self.edges.push(UndoTreeVisualizerEdge {
                 from_column: column,
-                from_row: row,
+                from_row: frame.row,
                 to_column: *child_column,
-                to_row: row + 1,
+                to_row: frame.row + 1,
                 active: *child_active,
             });
         }
 
-        let kind = if node_id == self.current {
+        let kind = if frame.node_id == self.current {
             UndoTreeNodeKind::Current
         } else if node.saved || node.latest_saved {
             UndoTreeNodeKind::Saved
@@ -966,21 +1105,21 @@ impl UndoTreeLayout<'_> {
             UndoTreeNodeKind::Normal
         };
         self.nodes.push(UndoTreeVisualizerNode {
-            id: node_id,
+            id: frame.node_id,
             column,
-            row,
+            row: frame.row,
             kind,
-            selected: node_id == self.selected,
+            selected: frame.node_id == self.selected,
         });
 
-        if self.row_edit_times.len() <= row {
-            self.row_edit_times.resize(row + 1, None);
+        if self.row_edit_times.len() <= frame.row {
+            self.row_edit_times.resize(frame.row + 1, None);
         }
         if let Some(edit_time) = node.last_edit_at.or(node.first_edit_at) {
-            let slot = &mut self.row_edit_times[row];
+            let slot = &mut self.row_edit_times[frame.row];
             *slot = Some(slot.map_or(edit_time, |current| current.max(edit_time)));
         }
 
-        column
+        (column, frame.on_active_branch)
     }
 }

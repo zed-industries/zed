@@ -56,16 +56,44 @@ const MAX_INSERTION_LEN: usize = if cfg!(test) { 16 } else { u32::MAX as usize }
 
 pub type TransactionId = clock::Lamport;
 
+/// Identifies a node in the undo tree.
+///
+/// Backed by a slot index into `History::nodes` plus a generation. When a node
+/// is detached its slot is returned to a free list and later reused by a new
+/// node carrying an incremented generation, so a stale `UndoNodeId` (for
+/// example one captured by the visualizer before an edit) resolves to `None`
+/// instead of silently aliasing whatever now occupies that slot.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct UndoNodeId(usize);
+pub struct UndoNodeId {
+    index: usize,
+    generation: u32,
+}
 
 impl UndoNodeId {
-    pub fn new(id: usize) -> Self {
-        Self(id)
+    /// Builds an id from a bare slot index with generation 0. Used by
+    /// persistence, whose serialized form only stores the (compacted) index;
+    /// generations are an in-memory concern and always restore as 0.
+    pub fn new(index: usize) -> Self {
+        Self {
+            index,
+            generation: 0,
+        }
     }
 
     pub fn as_usize(self) -> usize {
-        self.0
+        self.index
+    }
+
+    fn index(self) -> usize {
+        self.index
+    }
+
+    /// The id the same slot should hand out the next time it is reused.
+    fn next_generation(self) -> Self {
+        Self {
+            index: self.index,
+            generation: self.generation.wrapping_add(1),
+        }
     }
 }
 
@@ -176,7 +204,11 @@ pub struct UndoTreeNodeSnapshot {
     pub id: UndoNodeId,
     pub transaction_id: Option<TransactionId>,
     pub parent: Option<UndoNodeId>,
-    pub children: Vec<UndoNodeId>,
+    /// Shared with the underlying [`HistoryNode`] via `Arc`, so cloning a
+    /// `UndoTreeSnapshot` is O(nodes) refcount bumps rather than O(total
+    /// children) deep copies. Slice operations work via `Deref`, so callers
+    /// see this exactly like a `Vec<UndoNodeId>` for reading.
+    pub children: Arc<Vec<UndoNodeId>>,
     pub active_child: Option<usize>,
     pub first_edit_at: Option<SystemTime>,
     pub last_edit_at: Option<SystemTime>,
@@ -187,7 +219,11 @@ pub struct UndoTreeNodeSnapshot {
 #[derive(Clone, Debug)]
 pub struct UndoHistoryState {
     pub base_text: Rope,
-    pub operations: Vec<Operation>,
+    /// Indexed by lamport timestamp so the export side can hand off the
+    /// in-memory `TreeMap` directly (its clone is O(1) via `sum_tree`'s internal
+    /// `Arc`-shared nodes), instead of materializing a `Vec<Operation>` on the
+    /// foreground thread.
+    pub operations: TreeMap<clock::Lamport, Operation>,
     pub nodes: Vec<UndoHistoryNode>,
     pub root: UndoNodeId,
     pub current: UndoNodeId,
@@ -207,11 +243,105 @@ pub struct UndoHistoryNode {
     pub saved: bool,
 }
 
+/// A cheap, `Send` snapshot of the undo tree suitable for off-thread
+/// serialization. Producing one is O(nodes) refcount bumps; the owned
+/// conversion to [`UndoHistoryState`] (which clones each `HistoryNode` out of
+/// its `Arc`) is deferred to [`UndoHistoryExportSnapshot::into_state`], so the
+/// foreground thread never pays it.
+///
+/// The snapshot is logically frozen at the instant it was produced — later
+/// mutations to the source buffer take the copy-on-write path on the touched
+/// nodes only, leaving the snapshot intact.
+pub struct UndoHistoryExportSnapshot {
+    inner: UndoHistoryExportInner,
+}
+
+struct UndoHistoryExportInner {
+    base_text: Rope,
+    operations: TreeMap<clock::Lamport, Operation>,
+    nodes: Vec<Option<Arc<HistoryNode>>>,
+    live_node_count: usize,
+    root: UndoNodeId,
+    current: UndoNodeId,
+    latest_saved: Option<UndoNodeId>,
+    line_ending: LineEnding,
+    wall_clock_anchor: (SystemTime, Instant),
+}
+
+impl UndoHistoryExportSnapshot {
+    /// Number of live (non-empty) nodes in the snapshot. O(1).
+    pub fn node_count(&self) -> usize {
+        self.inner.live_node_count
+    }
+
+    /// Materializes the owned [`UndoHistoryState`] form. Each Arc-shared
+    /// `HistoryNode` is unwrapped when uniquely owned or cloned into the
+    /// exported `UndoHistoryNode` otherwise. In practice, `into_state` usually
+    /// clones because the live history still owns its Arcs; intended to be
+    /// called off the foreground thread.
+    pub fn into_state(self) -> UndoHistoryState {
+        let UndoHistoryExportInner {
+            base_text,
+            operations,
+            nodes,
+            live_node_count: _,
+            root,
+            current,
+            latest_saved,
+            line_ending,
+            wall_clock_anchor,
+        } = self.inner;
+
+        let exported_nodes = nodes
+            .into_iter()
+            .flatten()
+            .map(|node_arc| {
+                // This often clones because the live history still owns an Arc
+                // for each node; `try_unwrap` is only free when uniquely owned.
+                let node = Arc::try_unwrap(node_arc).unwrap_or_else(|arc| (*arc).clone());
+                let (first_edit_at, last_edit_at) =
+                    node.exported_wall_timestamps(wall_clock_anchor);
+                UndoHistoryNode {
+                    id: node.id,
+                    parent: node.parent,
+                    children: Arc::try_unwrap(node.children).unwrap_or_else(|arc| (*arc).clone()),
+                    active_child: node.active_child,
+                    transaction: node.entry.map(|entry| entry.transaction),
+                    first_edit_at,
+                    last_edit_at,
+                    saved: node.saved,
+                }
+            })
+            .collect();
+
+        UndoHistoryState {
+            base_text,
+            operations,
+            nodes: exported_nodes,
+            root,
+            current,
+            latest_saved,
+            line_ending,
+        }
+    }
+}
+
+pub struct PreparedUndoHistoryRestore {
+    snapshot: BufferSnapshot,
+    history: History,
+    deferred_ops: OperationQueue<Operation>,
+    deferred_replicas: HashSet<ReplicaId>,
+    lamport_clock: clock::Lamport,
+}
+
 #[derive(Clone, Debug)]
 struct HistoryNode {
     id: UndoNodeId,
     parent: Option<UndoNodeId>,
-    children: Vec<UndoNodeId>,
+    /// `Arc<Vec<...>>` so the visualizer snapshot can share children via a
+    /// refcount bump instead of a deep `Vec` clone. Mutation goes through
+    /// `Arc::make_mut`, which is free while no snapshot is holding a clone.
+    children: Arc<Vec<UndoNodeId>>,
     active_child: Option<usize>,
     entry: Option<HistoryEntry>,
     first_edit_timestamp: Option<SystemTime>,
@@ -219,15 +349,42 @@ struct HistoryNode {
     saved: bool,
 }
 
+const PERSISTED_UNDO_HISTORY_BASE_OVERHEAD_BYTES: usize = 256;
+const PERSISTED_UNDO_HISTORY_OPERATION_OVERHEAD_BYTES: usize = 64;
+const PERSISTED_UNDO_HISTORY_EDIT_RANGE_OVERHEAD_BYTES: usize = 32;
+const PERSISTED_UNDO_HISTORY_UNDO_COUNT_OVERHEAD_BYTES: usize = 24;
+const PERSISTED_UNDO_HISTORY_NODE_OVERHEAD_BYTES: usize = 96;
+
 struct History {
     base_text: Rope,
     operations: TreeMap<clock::Lamport, Operation>,
-    nodes: Vec<Option<HistoryNode>>,
+    /// `Arc<HistoryNode>` so a snapshot for off-thread serialization can clone
+    /// the whole vec for the cost of N refcount bumps. Mutating a node uses
+    /// `Arc::make_mut`, which is free when the node is uniquely owned and
+    /// performs a localized clone otherwise (e.g. while a background serializer
+    /// holds a snapshot).
+    nodes: Vec<Option<Arc<HistoryNode>>>,
+    /// Slots in `nodes` vacated by `detach_node`, each paired with the id its
+    /// next occupant should take (same index, bumped generation). Reusing these
+    /// keeps `nodes` from growing without bound as grouping/merging churns
+    /// through short-lived nodes over a long session.
+    free_slots: Vec<UndoNodeId>,
+    transaction_nodes: HashMap<TransactionId, UndoNodeId>,
+    /// Live (non-`None`) entry count in `nodes`, maintained as nodes are pushed
+    /// and detached so callers can pre-check size cheaply (the persistence layer
+    /// gates on this before doing the export).
+    live_node_count: usize,
     root_node: UndoNodeId,
     current_node: UndoNodeId,
     latest_saved_node: Option<UndoNodeId>,
+    /// Monotonic counter bumped on every change to visualizer-visible tree state
+    /// (node set, current/active pointers, saved markers). Lets the editor cache
+    /// the rendered visualizer and skip rebuilding it each frame the tree is
+    /// unchanged.
+    change_count: u64,
     transaction_depth: usize,
     group_interval: Duration,
+    persisted_operation_bytes_estimate: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -285,25 +442,60 @@ impl InsertionSlice {
     }
 }
 
+impl HistoryNode {
+    fn derived_wall_time_for(
+        entry_time: Option<Instant>,
+        explicit_wall_time: Option<SystemTime>,
+        wall_clock_anchor: (SystemTime, Instant),
+    ) -> Option<SystemTime> {
+        if explicit_wall_time.is_some() {
+            return explicit_wall_time;
+        }
+        let entry_time = entry_time?;
+        let elapsed_since_entry = wall_clock_anchor.1.saturating_duration_since(entry_time);
+        wall_clock_anchor.0.checked_sub(elapsed_since_entry)
+    }
+
+    fn exported_wall_timestamps(
+        &self,
+        wall_clock_anchor: (SystemTime, Instant),
+    ) -> (Option<SystemTime>, Option<SystemTime>) {
+        let first_edit_at = self.entry.as_ref().map(|entry| entry.first_edit_at);
+        let last_edit_at = self.entry.as_ref().map(|entry| entry.last_edit_at);
+        (
+            Self::derived_wall_time_for(
+                first_edit_at,
+                self.first_edit_timestamp,
+                wall_clock_anchor,
+            ),
+            Self::derived_wall_time_for(last_edit_at, self.last_edit_timestamp, wall_clock_anchor),
+        )
+    }
+}
+
 impl History {
     pub fn new(base_text: Rope) -> Self {
-        let root_node = UndoNodeId(0);
+        let root_node = UndoNodeId::new(0);
         Self {
             base_text,
             operations: Default::default(),
-            nodes: vec![Some(HistoryNode {
+            nodes: vec![Some(Arc::new(HistoryNode {
                 id: root_node,
                 parent: None,
-                children: Vec::new(),
+                children: Arc::new(Vec::new()),
                 active_child: None,
                 entry: None,
                 first_edit_timestamp: None,
                 last_edit_timestamp: None,
                 saved: false,
-            })],
+            }))],
+            free_slots: Vec::new(),
+            transaction_nodes: HashMap::default(),
+            live_node_count: 1,
             root_node,
             current_node: root_node,
             latest_saved_node: None,
+            change_count: 0,
             transaction_depth: 0,
             // Don't group transactions in tests unless we opt in, because it's a footgun.
             group_interval: if cfg!(any(test, feature = "test-support")) {
@@ -311,19 +503,32 @@ impl History {
             } else {
                 Duration::from_millis(300)
             },
+            persisted_operation_bytes_estimate: 0,
         }
     }
 
     fn push(&mut self, op: Operation) {
+        self.persisted_operation_bytes_estimate = self
+            .persisted_operation_bytes_estimate
+            .saturating_add(Self::operation_persisted_byte_estimate(&op));
         self.operations.insert(op.timestamp(), op);
     }
 
     fn node(&self, id: UndoNodeId) -> Option<&HistoryNode> {
-        self.nodes.get(id.0)?.as_ref()
+        let node = self.nodes.get(id.index())?.as_ref()?;
+        // Reject stale ids whose slot has since been reused by a newer node.
+        (node.id == id).then_some(node.as_ref())
     }
 
     fn node_mut(&mut self, id: UndoNodeId) -> Option<&mut HistoryNode> {
-        self.nodes.get_mut(id.0)?.as_mut()
+        let slot = self.nodes.get_mut(id.index())?.as_mut()?;
+        if slot.id != id {
+            return None;
+        }
+        // `Arc::make_mut` is free while the node is uniquely owned (the common
+        // case). It only clones when another thread is holding an Arc to the
+        // same node — e.g. a background serializer working from a snapshot.
+        Some(Arc::make_mut(slot))
     }
 
     fn current_entry(&self) -> Option<&HistoryEntry> {
@@ -334,6 +539,52 @@ impl History {
         self.node_mut(self.current_node)?.entry.as_mut()
     }
 
+    fn node_count(&self) -> usize {
+        self.live_node_count
+    }
+
+    fn contains_node(&self, node: UndoNodeId) -> bool {
+        self.node(node).is_some()
+    }
+
+    fn persisted_byte_estimate(&self) -> usize {
+        PERSISTED_UNDO_HISTORY_BASE_OVERHEAD_BYTES
+            .saturating_add(self.base_text.len())
+            .saturating_add(self.persisted_operation_bytes_estimate)
+            .saturating_add(
+                self.live_node_count
+                    .saturating_mul(PERSISTED_UNDO_HISTORY_NODE_OVERHEAD_BYTES),
+            )
+    }
+
+    fn operation_persisted_byte_estimate(operation: &Operation) -> usize {
+        match operation {
+            Operation::Edit(edit) => {
+                let new_text_bytes = edit.new_text.iter().map(|text| text.len()).sum::<usize>();
+                PERSISTED_UNDO_HISTORY_OPERATION_OVERHEAD_BYTES
+                    .saturating_add(
+                        edit.ranges
+                            .len()
+                            .saturating_mul(PERSISTED_UNDO_HISTORY_EDIT_RANGE_OVERHEAD_BYTES),
+                    )
+                    .saturating_add(new_text_bytes)
+            }
+            Operation::Undo(undo) => PERSISTED_UNDO_HISTORY_OPERATION_OVERHEAD_BYTES
+                .saturating_add(
+                    undo.counts
+                        .len()
+                        .saturating_mul(PERSISTED_UNDO_HISTORY_UNDO_COUNT_OVERHEAD_BYTES),
+                ),
+        }
+    }
+
+    /// Records a change to visualizer-visible tree state. Over-notifying is safe
+    /// (it only costs a visualizer rebuild); under-notifying would leave a stale
+    /// visualizer, so every tree mutator calls this.
+    fn note_change(&mut self) {
+        self.change_count = self.change_count.wrapping_add(1);
+    }
+
     fn active_child(&self, parent: UndoNodeId) -> Option<UndoNodeId> {
         let parent = self.node(parent)?;
         let child_ix = parent.active_child?;
@@ -341,22 +592,21 @@ impl History {
     }
 
     fn set_active_child(&mut self, parent: UndoNodeId, child: UndoNodeId) -> bool {
-        let Some(child_ix) = self
-            .node(parent)
-            .and_then(|parent| parent.children.iter().position(|id| *id == child))
-        else {
+        let Some(parent_node) = self.node_mut(parent) else {
             return false;
         };
-        if let Some(parent) = self.node_mut(parent) {
-            parent.active_child = Some(child_ix);
-            true
-        } else {
-            false
-        }
+        let Some(child_ix) = parent_node.children.iter().position(|id| *id == child) else {
+            return false;
+        };
+        parent_node.active_child = Some(child_ix);
+        self.note_change();
+        true
     }
 
-    fn path_to_root(&self, node_id: UndoNodeId) -> Option<Vec<UndoNodeId>> {
-        let mut path = Vec::new();
+    /// 32 covers a typical session's path-to-root without allocating. Beyond
+    /// that the SmallVec spills to the heap — fine, just no longer free.
+    fn path_to_root(&self, node_id: UndoNodeId) -> Option<SmallVec<[UndoNodeId; 32]>> {
+        let mut path = SmallVec::new();
         let mut node_id = node_id;
         for _ in 0..self.nodes.len() {
             path.push(node_id);
@@ -378,15 +628,7 @@ impl History {
     }
 
     fn node_id_for_transaction(&self, transaction_id: TransactionId) -> Option<UndoNodeId> {
-        self.nodes
-            .iter()
-            .flatten()
-            .find(|node| {
-                node.entry
-                    .as_ref()
-                    .is_some_and(|entry| entry.transaction.id == transaction_id)
-            })
-            .map(|node| node.id)
+        self.transaction_nodes.get(&transaction_id).copied()
     }
 
     fn adjusted_active_child(
@@ -432,6 +674,9 @@ impl History {
             if !reparent_children && !node.children.is_empty() {
                 return None;
             }
+            // Arc-clone shares the children vec with the original node; we
+            // only read from `children` here (no mutation), so the source Arc
+            // is left intact.
             (node.parent?, node.children.clone(), node.active_child)
         };
         let child_ix = self
@@ -442,7 +687,7 @@ impl History {
         let original_len = self.node(parent_id)?.children.len();
 
         if reparent_children {
-            for child_id in &children {
+            for child_id in children.iter() {
                 if let Some(child) = self.node_mut(*child_id) {
                     child.parent = Some(parent_id);
                 }
@@ -451,12 +696,11 @@ impl History {
 
         let inserted_len = if reparent_children { children.len() } else { 0 };
         if let Some(parent) = self.node_mut(parent_id) {
+            let parent_children = Arc::make_mut(&mut parent.children);
             if reparent_children {
-                parent
-                    .children
-                    .splice(child_ix..child_ix + 1, children.iter().copied());
+                parent_children.splice(child_ix..child_ix + 1, children.iter().copied());
             } else {
-                parent.children.remove(child_ix);
+                parent_children.remove(child_ix);
             }
             parent.active_child = Self::adjusted_active_child(
                 parent.active_child,
@@ -469,37 +713,74 @@ impl History {
             return None;
         }
 
-        let node = self.nodes.get_mut(node_id.0)?.take()?;
+        let node_arc = self.nodes.get_mut(node_id.index())?.take()?;
+        self.live_node_count -= 1;
+        self.free_slots.push(node_id.next_generation());
+        if let Some(entry) = node_arc.entry.as_ref() {
+            self.transaction_nodes.remove(&entry.transaction.id);
+        }
         if self.current_node == node_id {
             self.current_node = parent_id;
         }
         if self.latest_saved_node == Some(node_id) {
             self.latest_saved_node = None;
         }
-        Some(node)
+        self.note_change();
+        // `try_unwrap` succeeds (no clone) in the common case where no
+        // serialization snapshot is currently borrowing this node.
+        Some(Arc::try_unwrap(node_arc).unwrap_or_else(|arc| (*arc).clone()))
     }
 
-    fn push_child_node(&mut self, parent_id: UndoNodeId, entry: HistoryEntry) -> UndoNodeId {
-        let node_id = UndoNodeId(self.nodes.len());
-        let edit_timestamp = SystemTime::now();
-        if let Some(parent) = self.node_mut(parent_id) {
-            parent.children.push(node_id);
-            parent.active_child = Some(parent.children.len() - 1);
-        } else {
+    fn push_child_node(
+        &mut self,
+        parent_id: UndoNodeId,
+        entry: HistoryEntry,
+    ) -> Option<UndoNodeId> {
+        self.push_child_node_with_timestamps(parent_id, entry, None, None, true)
+    }
+
+    fn push_child_node_with_timestamps(
+        &mut self,
+        parent_id: UndoNodeId,
+        entry: HistoryEntry,
+        first_edit_timestamp: Option<SystemTime>,
+        last_edit_timestamp: Option<SystemTime>,
+        make_current: bool,
+    ) -> Option<UndoNodeId> {
+        let reused_slot = self.free_slots.pop();
+        let node_id = reused_slot.unwrap_or_else(|| UndoNodeId::new(self.nodes.len()));
+        let Some(parent) = self.node_mut(parent_id) else {
+            // Return the slot we popped so it isn't leaked from the free list.
+            if let Some(reused_slot) = reused_slot {
+                self.free_slots.push(reused_slot);
+            }
             debug_panic!("missing parent undo node");
-        }
-        self.nodes.push(Some(HistoryNode {
+            return None;
+        };
+        Arc::make_mut(&mut parent.children).push(node_id);
+        parent.active_child = Some(parent.children.len() - 1);
+        self.transaction_nodes.insert(entry.transaction.id, node_id);
+        let new_node = Arc::new(HistoryNode {
             id: node_id,
             parent: Some(parent_id),
-            children: Vec::new(),
+            children: Arc::new(Vec::new()),
             active_child: None,
             entry: Some(entry),
-            first_edit_timestamp: Some(edit_timestamp),
-            last_edit_timestamp: Some(edit_timestamp),
+            first_edit_timestamp,
+            last_edit_timestamp,
             saved: false,
-        }));
-        self.current_node = node_id;
-        node_id
+        });
+        if reused_slot.is_some() {
+            self.nodes[node_id.index()] = Some(new_node);
+        } else {
+            self.nodes.push(Some(new_node));
+        }
+        self.live_node_count += 1;
+        if make_current {
+            self.current_node = node_id;
+        }
+        self.note_change();
+        Some(node_id)
     }
 
     fn start_transaction(
@@ -511,20 +792,27 @@ impl History {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
             let id = clock.tick();
-            self.push_child_node(
-                self.current_node,
-                HistoryEntry {
-                    transaction: Transaction {
-                        id,
-                        start,
-                        edit_ids: Default::default(),
+            if self
+                .push_child_node(
+                    self.current_node,
+                    HistoryEntry {
+                        transaction: Transaction {
+                            id,
+                            start,
+                            edit_ids: Default::default(),
+                        },
+                        first_edit_at: now,
+                        last_edit_at: now,
+                        suppress_grouping: false,
                     },
-                    first_edit_at: now,
-                    last_edit_at: now,
-                    suppress_grouping: false,
-                },
-            );
-            Some(id)
+                )
+                .is_some()
+            {
+                Some(id)
+            } else {
+                self.transaction_depth -= 1;
+                None
+            }
         } else {
             None
         }
@@ -544,11 +832,13 @@ impl History {
                 self.detach_node(current_node, false);
                 None
             } else {
-                if let Some(node) = self.node_mut(current_node) {
-                    if let Some(entry) = node.entry.as_mut() {
-                        entry.last_edit_at = now;
-                    }
-                    node.last_edit_timestamp = Some(SystemTime::now());
+                // Wall-clock timestamps are derived lazily from these monotonic
+                // instants at snapshot/export time to keep the edit hot path
+                // free of `SystemTime::now()` syscalls.
+                if let Some(node) = self.node_mut(current_node)
+                    && let Some(entry) = node.entry.as_mut()
+                {
+                    entry.last_edit_at = now;
                 }
                 self.node(current_node)?.entry.as_ref()
             }
@@ -694,9 +984,18 @@ impl History {
                 .and_then(|node| node.entry.as_ref())
                 .is_some_and(|entry| entry.transaction.id == transaction_id)
         })?;
-        self.detach_node(node_id, true)?
-            .entry
-            .map(|entry| entry.transaction)
+        let current_node = self.current_node;
+        let detached_node = self.detach_node(node_id, true)?;
+        let entry = detached_node.entry?;
+        let transaction = entry.transaction.clone();
+        self.push_child_node_with_timestamps(
+            current_node,
+            entry,
+            detached_node.first_edit_timestamp,
+            detached_node.last_edit_timestamp,
+            false,
+        )?;
+        Some(transaction)
     }
 
     fn undo_until(&mut self, transaction_id: TransactionId) -> Vec<Transaction> {
@@ -755,23 +1054,18 @@ impl History {
         );
     }
 
-    /// Differs from `push_transaction` in that it does not clear the redo
-    /// stack. Intended to be used to create a parent transaction to merge
-    /// potential child transactions into.
+    /// Creates an empty transaction node under the current undo-tree node.
+    /// Intended to be used as a placeholder transaction that can later absorb
+    /// child edit transactions via `merge_transactions`.
     ///
     /// The caller is responsible for removing it from the undo history using
-    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
-    /// are merged into this transaction, the caller is responsible for ensuring
-    /// the redo stack is cleared. The easiest way to ensure the redo stack is
-    /// cleared is to create transactions with the usual `start_transaction` and
-    /// `end_transaction` methods and merging the resulting transactions into
-    /// the transaction created by this method
+    /// `forget_transaction` if no edits are merged into it.
     fn push_empty_transaction(
         &mut self,
         start: clock::Global,
         now: Instant,
         clock: &mut clock::Lamport,
-    ) -> TransactionId {
+    ) -> Option<TransactionId> {
         assert_eq!(self.transaction_depth, 0);
         let id = clock.tick();
         let transaction = Transaction {
@@ -787,8 +1081,8 @@ impl History {
                 last_edit_at: now,
                 suppress_grouping: false,
             },
-        );
-        id
+        )?;
+        Some(id)
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {
@@ -805,7 +1099,7 @@ impl History {
     fn forget(&mut self, transaction_id: TransactionId) -> Option<Transaction> {
         assert_eq!(self.transaction_depth, 0);
         let node_id = self.node_id_for_transaction(transaction_id)?;
-        let node = self.detach_node(node_id, false)?;
+        let node = self.detach_node(node_id, true)?;
         node.entry.map(|entry| entry.transaction)
     }
 
@@ -822,15 +1116,19 @@ impl History {
         }
         assert_eq!(self.transaction_depth, 0);
         let Some(transaction_node_id) = self.node_id_for_transaction(transaction_id) else {
+            log::warn!("cannot merge missing undo transaction {transaction_id:?}");
             return;
         };
         let Some(destination_node_id) = self.node_id_for_transaction(destination_id) else {
+            log::warn!("cannot merge undo transaction into missing destination {destination_id:?}");
             return;
         };
-        let Some(transaction_node) = self.detach_node(transaction_node_id, false) else {
+        let Some(transaction_node) = self.detach_node(transaction_node_id, true) else {
+            log::warn!("cannot detach undo transaction {transaction_id:?} for merge");
             return;
         };
         let Some(transaction_entry) = transaction_node.entry else {
+            log::warn!("cannot merge undo node without transaction {transaction_node_id:?}");
             return;
         };
         if let Some(destination_node) = self.node_mut(destination_node_id)
@@ -842,6 +1140,8 @@ impl History {
                 .extend(transaction_entry.transaction.edit_ids);
             destination.last_edit_at = transaction_entry.last_edit_at;
             destination_node.last_edit_timestamp = transaction_node.last_edit_timestamp;
+        } else {
+            log::warn!("cannot merge into undo node without transaction {destination_node_id:?}");
         }
     }
 
@@ -849,6 +1149,7 @@ impl History {
         assert_eq!(self.transaction_depth, 0);
         let child_id = self.active_child(self.current_node)?;
         self.current_node = child_id;
+        self.note_change();
         self.node(child_id)?
             .entry
             .as_ref()
@@ -884,6 +1185,7 @@ impl History {
             .collect::<Vec<_>>();
         if let Some(target_node) = nodes_to_redo.last().copied() {
             self.current_node = target_node;
+            self.note_change();
         }
         transactions
     }
@@ -900,10 +1202,14 @@ impl History {
         let Some(target_path) = self.path_to_root(target) else {
             return Vec::new();
         };
+        // Lowest common ancestor: the first node on the current path that also
+        // lies on the target path. A set lookup keeps this O(depth) rather than
+        // O(current_depth * target_depth) for deep, branchy histories.
+        let target_path_set = target_path.iter().copied().collect::<HashSet<_>>();
         let Some(lca) = current_path
             .iter()
             .copied()
-            .find(|node_id| target_path.contains(node_id))
+            .find(|node_id| target_path_set.contains(node_id))
         else {
             return Vec::new();
         };
@@ -955,15 +1261,20 @@ impl History {
         if !child_exists {
             return false;
         }
-        if let Some(parent) = self.node_mut(parent) {
+        let switched = if let Some(parent) = self.node_mut(parent) {
             parent.active_child = Some(child_index);
             true
         } else {
             false
+        };
+        if switched {
+            self.note_change();
         }
+        switched
     }
 
     fn snapshot(&self) -> UndoTreeSnapshot {
+        let wall_clock_anchor = (SystemTime::now(), Instant::now());
         let latest_saved = self
             .latest_saved_node
             .filter(|node_id| self.node(*node_id).is_some());
@@ -972,16 +1283,20 @@ impl History {
                 .nodes
                 .iter()
                 .flatten()
-                .map(|node| UndoTreeNodeSnapshot {
-                    id: node.id,
-                    transaction_id: node.entry.as_ref().map(|entry| entry.transaction.id),
-                    parent: node.parent,
-                    children: node.children.clone(),
-                    active_child: node.active_child,
-                    first_edit_at: node.first_edit_timestamp,
-                    last_edit_at: node.last_edit_timestamp,
-                    saved: node.saved,
-                    latest_saved: latest_saved == Some(node.id),
+                .map(|node| {
+                    let (first_edit_at, last_edit_at) =
+                        node.exported_wall_timestamps(wall_clock_anchor);
+                    UndoTreeNodeSnapshot {
+                        id: node.id,
+                        transaction_id: node.entry.as_ref().map(|entry| entry.transaction.id),
+                        parent: node.parent,
+                        children: node.children.clone(),
+                        active_child: node.active_child,
+                        first_edit_at,
+                        last_edit_at,
+                        saved: node.saved,
+                        latest_saved: latest_saved == Some(node.id),
+                    }
                 })
                 .collect(),
             root: self.root_node,
@@ -990,41 +1305,49 @@ impl History {
         }
     }
 
-    fn mark_current_node_saved(&mut self) {
-        if let Some(node) = self.node_mut(self.current_node) {
-            node.saved = true;
-            self.latest_saved_node = Some(node.id);
+    fn mark_current_node_saved(&mut self) -> bool {
+        let Some(node) = self.node_mut(self.current_node) else {
+            return false;
+        };
+
+        let current_id = node.id;
+        let saved_changed = !node.saved;
+        node.saved = true;
+        let latest_saved_changed = self.latest_saved_node != Some(current_id);
+        self.latest_saved_node = Some(current_id);
+
+        let changed = saved_changed || latest_saved_changed;
+        if changed {
+            self.note_change();
+        }
+        changed
+    }
+
+    /// Builds a cheap export snapshot. The work here is O(operations) +
+    /// O(nodes) — but operations is an O(1) `TreeMap` clone, and nodes is a
+    /// `Vec<Option<Arc<HistoryNode>>>` clone whose payload is refcount-bumps,
+    /// so this is fast enough to do on the foreground thread. The expensive
+    /// per-node conversion (which often clones because the live tree still owns
+    /// the same Arcs) is deferred to
+    /// [`UndoHistoryExportSnapshot::into_state`].
+    fn export_snapshot(&self, line_ending: LineEnding) -> UndoHistoryExportSnapshot {
+        UndoHistoryExportSnapshot {
+            inner: UndoHistoryExportInner {
+                base_text: self.base_text.clone(),
+                operations: self.operations.clone(),
+                nodes: self.nodes.clone(),
+                live_node_count: self.live_node_count,
+                root: self.root_node,
+                current: self.current_node,
+                latest_saved: self.latest_saved_node,
+                line_ending,
+                wall_clock_anchor: (SystemTime::now(), Instant::now()),
+            },
         }
     }
 
     fn export_state(&self, line_ending: LineEnding) -> UndoHistoryState {
-        UndoHistoryState {
-            base_text: self.base_text.clone(),
-            operations: self
-                .operations
-                .iter()
-                .map(|(_, operation)| operation.clone())
-                .collect(),
-            nodes: self
-                .nodes
-                .iter()
-                .flatten()
-                .map(|node| UndoHistoryNode {
-                    id: node.id,
-                    parent: node.parent,
-                    children: node.children.clone(),
-                    active_child: node.active_child,
-                    transaction: node.entry.as_ref().map(|entry| entry.transaction.clone()),
-                    first_edit_at: node.first_edit_timestamp,
-                    last_edit_at: node.last_edit_timestamp,
-                    saved: node.saved,
-                })
-                .collect(),
-            root: self.root_node,
-            current: self.current_node,
-            latest_saved: self.latest_saved_node,
-            line_ending,
-        }
+        self.export_snapshot(line_ending).into_state()
     }
 
     fn from_restored_state(
@@ -1035,16 +1358,42 @@ impl History {
     ) -> Result<Self> {
         let max_node_id = Self::max_restored_node_id(&state.nodes)?;
         let nodes = Self::restore_nodes(state.nodes, state.root, max_node_id, &operations, clock)?;
+        let mut transaction_nodes = HashMap::default();
+        let mut live_node_count = 0;
+        for node in nodes.iter().flatten() {
+            live_node_count += 1;
+            if let Some(entry) = node.entry.as_ref() {
+                transaction_nodes.insert(entry.transaction.id, node.id);
+            }
+        }
+
+        // Restored ids are dense (compacted on export), but treat any vacant
+        // slot as reusable so the free list is correct regardless of input.
+        let free_slots = nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.is_none())
+            .map(|(index, _)| UndoNodeId::new(index))
+            .collect();
+        let persisted_operation_bytes_estimate = operations
+            .iter()
+            .map(|(_, operation)| Self::operation_persisted_byte_estimate(operation))
+            .fold(0usize, usize::saturating_add);
 
         let history = Self {
             base_text: state.base_text,
             operations,
             nodes,
+            free_slots,
+            transaction_nodes,
+            live_node_count,
             root_node: state.root,
             current_node: state.current,
             latest_saved_node: state.latest_saved,
+            change_count: 0,
             transaction_depth: 0,
             group_interval,
+            persisted_operation_bytes_estimate,
         };
 
         history.validate_topology()?;
@@ -1054,7 +1403,7 @@ impl History {
     fn max_restored_node_id(nodes: &[UndoHistoryNode]) -> Result<usize> {
         nodes
             .iter()
-            .map(|node| node.id.0)
+            .map(|node| node.id.as_usize())
             .max()
             .context("undo history has no nodes")
     }
@@ -1065,7 +1414,7 @@ impl History {
         max_node_id: usize,
         operations: &TreeMap<clock::Lamport, Operation>,
         clock: &mut clock::Lamport,
-    ) -> Result<Vec<Option<HistoryNode>>> {
+    ) -> Result<Vec<Option<Arc<HistoryNode>>>> {
         let mut nodes = vec![None; max_node_id + 1];
         let mut seen_nodes = HashSet::default();
         let mut transaction_ids = HashSet::default();
@@ -1086,7 +1435,8 @@ impl History {
             )?;
 
             let node_id = node.id;
-            nodes[node_id.0] = Some(Self::history_node_from_restored_node(node, now));
+            nodes[node_id.as_usize()] =
+                Some(Arc::new(Self::history_node_from_restored_node(node, now)));
         }
 
         Ok(nodes)
@@ -1160,7 +1510,7 @@ impl History {
         }
 
         for child_id in &node.children {
-            if child_id.0 > max_node_id {
+            if child_id.as_usize() > max_node_id {
                 anyhow::bail!(
                     "undo node {:?} references missing child {:?}",
                     node.id,
@@ -1183,7 +1533,7 @@ impl History {
         HistoryNode {
             id: node.id,
             parent: node.parent,
-            children: node.children,
+            children: Arc::new(node.children),
             active_child: node.active_child,
             entry,
             first_edit_timestamp: node.first_edit_at,
@@ -1222,7 +1572,7 @@ impl History {
                 anyhow::bail!("cycle in undo history at {:?}", node_id);
             }
             let node = self.node(node_id).context("missing undo node")?;
-            for child_id in &node.children {
+            for child_id in node.children.iter() {
                 self.validate_topology_child(node_id, *child_id)?;
                 stack.push(*child_id);
             }
@@ -1240,8 +1590,7 @@ impl History {
     }
 
     fn validate_all_nodes_reachable(&self, visited_count: usize) -> Result<()> {
-        let live_node_count = self.nodes.iter().flatten().count();
-        if visited_count != live_node_count {
+        if visited_count != self.live_node_count {
             anyhow::bail!("undo history has unreachable nodes");
         }
 
@@ -2248,31 +2597,82 @@ impl Buffer {
         self.history.snapshot()
     }
 
+    pub fn undo_history_node_count(&self) -> usize {
+        self.history.node_count()
+    }
+
+    /// Monotonic token that changes whenever visualizer-visible undo-tree state
+    /// changes. Cheap to read; lets callers cache derived views (e.g. the
+    /// editor's visualizer) and rebuild only when this differs.
+    pub fn undo_history_version(&self) -> u64 {
+        self.history.change_count
+    }
+
+    /// Number of backing slots in the undo-tree storage, including those vacated
+    /// by detached nodes and awaiting reuse. Exposed only for tests asserting
+    /// that storage is reclaimed rather than growing without bound.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn undo_history_slot_count(&self) -> usize {
+        self.history.nodes.len()
+    }
+
     pub fn export_undo_history(&self) -> UndoHistoryState {
         self.history.export_state(self.line_ending())
+    }
+
+    /// Builds a cheap snapshot of the undo tree that can be moved to a
+    /// background thread for serialization. The foreground cost is O(nodes)
+    /// refcount bumps; the expensive owned conversion (per-node clone, etc.)
+    /// is deferred to [`UndoHistoryExportSnapshot::into_state`], which the
+    /// background thread runs.
+    pub fn export_undo_history_snapshot(&self) -> UndoHistoryExportSnapshot {
+        self.history.export_snapshot(self.line_ending())
     }
 
     pub fn restore_undo_history(&mut self, state: UndoHistoryState) -> Result<()> {
         if self.history.transaction_depth != 0 {
             anyhow::bail!("cannot restore undo history during an active transaction");
         }
-        if state.line_ending != self.line_ending() {
+        let prepared = Self::prepare_undo_history_restore(
+            self.replica_id(),
+            self.remote_id(),
+            self.history.group_interval,
+            self.snapshot.clone(),
+            state,
+        )?;
+        self.restore_prepared_undo_history(prepared)?;
+        Ok(())
+    }
+
+    pub fn prepare_undo_history_restore(
+        replica_id: ReplicaId,
+        remote_id: BufferId,
+        group_interval: Duration,
+        current_snapshot: BufferSnapshot,
+        state: UndoHistoryState,
+    ) -> Result<PreparedUndoHistoryRestore> {
+        if state.line_ending != current_snapshot.line_ending() {
             anyhow::bail!("undo history line ending does not match buffer");
         }
 
         let mut rebuilt = Buffer::new_normalized(
-            self.replica_id(),
-            self.remote_id(),
+            replica_id,
+            remote_id,
             state.line_ending,
             state.base_text.clone(),
         );
-        let mut operations = state.operations.clone();
-        operations.sort_unstable_by_key(Operation::timestamp);
+        // The `TreeMap` is already sorted by lamport timestamp (its key), so the
+        // resulting `Vec<Operation>` is in the same order `apply_ops` expects.
+        let operations = state
+            .operations
+            .iter()
+            .map(|(_, operation)| operation.clone())
+            .collect::<Vec<_>>();
         rebuilt.apply_ops(operations);
         if rebuilt.has_deferred_ops() {
             anyhow::bail!("undo history operations could not be replayed");
         }
-        if rebuilt.text() != self.text() {
+        if !ropes_match_bytes(rebuilt.snapshot.as_rope(), current_snapshot.as_rope()) {
             anyhow::bail!("undo history final text does not match buffer");
         }
 
@@ -2282,20 +2682,62 @@ impl Buffer {
         let history = History::from_restored_state(
             state,
             rebuilt.history.operations.clone(),
-            self.history.group_interval,
+            group_interval,
             &mut rebuilt.lamport_clock,
         )?;
 
-        self.snapshot = rebuilt.snapshot;
+        Ok(PreparedUndoHistoryRestore {
+            snapshot: rebuilt.snapshot,
+            history,
+            deferred_ops: rebuilt.deferred_ops,
+            deferred_replicas: rebuilt.deferred_replicas,
+            lamport_clock: rebuilt.lamport_clock,
+        })
+    }
+
+    pub fn restore_prepared_undo_history(
+        &mut self,
+        prepared: PreparedUndoHistoryRestore,
+    ) -> Result<()> {
+        if self.history.transaction_depth != 0 {
+            anyhow::bail!("cannot restore undo history during an active transaction");
+        }
+        let PreparedUndoHistoryRestore {
+            snapshot,
+            history,
+            deferred_ops,
+            deferred_replicas,
+            lamport_clock,
+        } = prepared;
+        self.give_up_waiting();
+        self.snapshot = snapshot;
         self.history = history;
-        self.deferred_ops = rebuilt.deferred_ops;
-        self.deferred_replicas = rebuilt.deferred_replicas;
-        self.lamport_clock = rebuilt.lamport_clock;
+        self.deferred_ops = deferred_ops;
+        self.deferred_replicas = deferred_replicas;
+        self.lamport_clock = lamport_clock;
         Ok(())
     }
 
     pub fn current_undo_node(&self) -> UndoNodeId {
         self.history.current_node
+    }
+
+    /// Returns the transaction id stored at `node`, if any, without cloning the
+    /// whole tree the way [`Self::undo_tree_snapshot`] does.
+    pub fn transaction_id_for_undo_node(&self, node: UndoNodeId) -> Option<TransactionId> {
+        self.history
+            .node(node)?
+            .entry
+            .as_ref()
+            .map(|entry| entry.transaction.id)
+    }
+
+    pub fn contains_undo_node(&self, node: UndoNodeId) -> bool {
+        self.history.contains_node(node)
+    }
+
+    pub fn undo_history_persisted_byte_estimate(&self) -> usize {
+        self.history.persisted_byte_estimate()
     }
 
     pub fn root_undo_node(&self) -> UndoNodeId {
@@ -2310,16 +2752,23 @@ impl Buffer {
         self.history.switch_branch(parent, child_index)
     }
 
-    pub fn jump_to_undo_node(&mut self, target: UndoNodeId) -> Vec<Operation> {
+    /// Jumps the buffer to `target`, returning the `(transaction_id, operation)`
+    /// pair produced for each transaction toggled along the way. The transaction
+    /// ids are returned in application order so callers (e.g. the `language`
+    /// layer) can restore per-transaction metadata without re-walking the tree.
+    pub fn jump_to_undo_node(&mut self, target: UndoNodeId) -> Vec<(TransactionId, Operation)> {
         self.history
             .jump_to_node(target)
             .into_iter()
-            .map(|transaction| self.undo_or_redo(transaction))
+            .map(|transaction| {
+                let transaction_id = transaction.id;
+                (transaction_id, self.undo_or_redo(transaction))
+            })
             .collect()
     }
 
-    pub fn mark_current_undo_node_saved(&mut self) {
-        self.history.mark_current_node_saved();
+    pub fn mark_current_undo_node_saved(&mut self) -> bool {
+        self.history.mark_current_node_saved()
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
@@ -2443,20 +2892,13 @@ impl Buffer {
         self.history.push_transaction(transaction, now);
     }
 
-    /// Differs from `push_transaction` in that it does not clear the redo stack.
-    /// The caller responsible for
-    /// Differs from `push_transaction` in that it does not clear the redo
-    /// stack. Intended to be used to create a parent transaction to merge
-    /// potential child transactions into.
+    /// Creates an empty transaction node under the current undo-tree node.
+    /// Intended to be used as a placeholder transaction that can later absorb
+    /// child edit transactions via `merge_transactions`.
     ///
     /// The caller is responsible for removing it from the undo history using
-    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
-    /// are merged into this transaction, the caller is responsible for ensuring
-    /// the redo stack is cleared. The easiest way to ensure the redo stack is
-    /// cleared is to create transactions with the usual `start_transaction` and
-    /// `end_transaction` methods and merging the resulting transactions into
-    /// the transaction created by this method
-    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+    /// `forget_transaction` if no edits are merged into it.
+    pub fn push_empty_transaction(&mut self, now: Instant) -> Option<TransactionId> {
         self.history
             .push_empty_transaction(self.version.clone(), now, &mut self.lamport_clock)
     }
@@ -2631,6 +3073,42 @@ impl Buffer {
 
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.history.group_interval = group_interval;
+    }
+}
+
+fn ropes_match_bytes(left: &Rope, right: &Rope) -> bool {
+    let mut left_chunks = left.chunks();
+    let mut right_chunks = right.chunks();
+    let mut left_chunk = left_chunks.next().unwrap_or("");
+    let mut right_chunk = right_chunks.next().unwrap_or("");
+    let mut left_offset = 0usize;
+    let mut right_offset = 0usize;
+
+    loop {
+        if left_offset == left_chunk.len() {
+            left_chunk = left_chunks.next().unwrap_or("");
+            left_offset = 0;
+        }
+        if right_offset == right_chunk.len() {
+            right_chunk = right_chunks.next().unwrap_or("");
+            right_offset = 0;
+        }
+
+        if left_chunk.is_empty() || right_chunk.is_empty() {
+            return left_chunk.is_empty()
+                && right_chunk.is_empty()
+                && left_chunks.next().is_none()
+                && right_chunks.next().is_none();
+        }
+
+        let left_remaining = &left_chunk.as_bytes()[left_offset..];
+        let right_remaining = &right_chunk.as_bytes()[right_offset..];
+        let shared_len = left_remaining.len().min(right_remaining.len());
+        if left_remaining[..shared_len] != right_remaining[..shared_len] {
+            return false;
+        }
+        left_offset += shared_len;
+        right_offset += shared_len;
     }
 }
 

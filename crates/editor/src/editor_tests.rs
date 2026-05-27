@@ -574,6 +574,42 @@ fn test_undo_tree_visualizer_state_marks_current_saved_and_branches(cx: &mut Tes
         .expect("editor should update");
 }
 
+#[test]
+fn test_undo_tree_visualizer_layout_handles_deep_linear_history() {
+    use text::{UndoNodeId, UndoTreeNodeSnapshot, UndoTreeSnapshot};
+
+    const DEPTH: usize = 200_000;
+
+    let nodes = (0..=DEPTH)
+        .map(|id| UndoTreeNodeSnapshot {
+            id: UndoNodeId::new(id),
+            transaction_id: None,
+            parent: id.checked_sub(1).map(UndoNodeId::new),
+            children: Arc::new(if id < DEPTH {
+                vec![UndoNodeId::new(id + 1)]
+            } else {
+                Vec::new()
+            }),
+            active_child: (id < DEPTH).then_some(0),
+            first_edit_at: None,
+            last_edit_at: None,
+            saved: false,
+            latest_saved: false,
+        })
+        .collect();
+    let snapshot = UndoTreeSnapshot {
+        nodes,
+        root: UndoNodeId::new(0),
+        current: UndoNodeId::new(DEPTH),
+        latest_saved: None,
+    };
+
+    let state = crate::undo_tree::undo_tree_visualizer_state(&snapshot, UndoNodeId::new(DEPTH));
+    assert_eq!(state.nodes.len(), DEPTH + 1);
+    assert_eq!(state.columns, 1);
+    assert_eq!(state.row_timestamps.len(), DEPTH + 1);
+}
+
 /// Returns true if any node in `edges` is the parent of at least two children.
 fn branches_into_two(edges: &[crate::undo_tree::UndoTreeVisualizerEdge]) -> bool {
     edges.iter().any(|edge| {
@@ -585,6 +621,41 @@ fn branches_into_two(edges: &[crate::undo_tree::UndoTreeVisualizerEdge]) -> bool
             .count()
             > 1
     })
+}
+
+#[gpui::test]
+fn test_undo_tree_visualizer_is_disabled_for_remote_buffers(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|_| {
+        Buffer::remote(
+            text::BufferId::new(1).expect("valid buffer id"),
+            ReplicaId::new(2),
+            ReadWrite,
+            "abc",
+        )
+    });
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.add_window(|window, cx| build_editor(multi_buffer, window, cx));
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.show_undo_tree(&ShowUndoTree, window, cx);
+
+            assert!(editor.undo_tree_visible());
+            assert_eq!(editor.selected_undo_node(), None);
+
+            let state = editor.undo_tree_visualizer_state(cx);
+            assert!(!state.available);
+            assert!(state.nodes.is_empty());
+            assert!(state.edges.is_empty());
+
+            editor.undo_tree_select_next(&UndoTreeSelectNext, window, cx);
+            editor.undo_tree_switch_branch_next(&UndoTreeSwitchBranchNext, window, cx);
+            editor.undo_tree_jump_to_selected(&UndoTreeJumpToSelected, window, cx);
+            assert_eq!(editor.selected_undo_node(), None);
+        })
+        .expect("editor should update");
 }
 
 #[gpui::test]

@@ -15,8 +15,10 @@ use settings::SettingsStore;
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
+    cell::Cell,
     env,
     ops::Range,
+    rc::Rc,
     sync::LazyLock,
     time::{Duration, Instant},
 };
@@ -668,13 +670,54 @@ fn test_undo_history_restore_emits_history_event(cx: &mut TestAppContext) {
         })
         .detach();
 
+        let changed = Rc::new(Cell::new(false));
+        buffer.record_changes(Rc::downgrade(&changed));
+
         buffer.restore_undo_history(history, 100, cx).unwrap();
         let snapshot = buffer.undo_tree_snapshot();
         assert_eq!(snapshot.latest_saved, Some(snapshot.current));
         assert_eq!(buffer.text(), "AC");
+        assert!(!changed.get());
     });
 
     assert_eq!(*buffer_events.lock(), vec![BufferEvent::UndoHistoryChanged]);
+}
+
+#[gpui::test]
+fn test_undo_history_serialization_compacts_node_ids(cx: &mut TestAppContext) {
+    let source = cx.new(|cx| {
+        let mut buffer = Buffer::local("", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let history = source.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "A")], None, cx);
+        let empty_transaction = buffer.push_empty_transaction(Instant::now()).unwrap();
+        assert!(buffer.forget_transaction(empty_transaction).is_some());
+        buffer.edit([(1..1, "B")], None, cx);
+        buffer.export_undo_history(3).unwrap()
+    });
+
+    let value: serde_json::Value = serde_json::from_slice(&history.to_json_bytes().unwrap())
+        .expect("history should serialize as JSON");
+    let node_ids = value["nodes"]
+        .as_array()
+        .expect("history should have nodes")
+        .iter()
+        .map(|node| node["id"].as_u64().expect("node should have id"))
+        .collect::<Vec<_>>();
+    assert_eq!(node_ids, vec![0, 1, 2]);
+    assert_eq!(value["current"].as_u64(), Some(2));
+
+    let buffer = cx.new(|cx| Buffer::local("AB", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.restore_undo_history(history, 3, cx).unwrap();
+        assert_eq!(buffer.text(), "AB");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "A");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "");
+    });
 }
 
 #[gpui::test]
@@ -688,6 +731,12 @@ fn test_undo_history_serialization_rejects_invalid_payload(cx: &mut TestAppConte
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     value["version"] = serde_json::json!(u32::MAX);
+    let bytes = serde_json::to_vec(&value).unwrap();
+    assert!(SerializedUndoHistory::from_json_bytes(&bytes, 100).is_err());
+
+    let mut value: serde_json::Value = serde_json::from_slice(&history.to_json_bytes().unwrap())
+        .expect("history should serialize as JSON");
+    value["nodes"][0]["id"] = serde_json::json!(100);
     let bytes = serde_json::to_vec(&value).unwrap();
     assert!(SerializedUndoHistory::from_json_bytes(&bytes, 100).is_err());
 

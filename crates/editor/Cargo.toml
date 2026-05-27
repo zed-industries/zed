@@ -52,7 +52,6 @@ fuzzy.workspace = true
 fs.workspace = true
 git.workspace = true
 gpui.workspace = true
-hex.workspace = true
 indoc.workspace = true
 edit_prediction_types.workspace = true
 itertools.workspace = true
@@ -74,10 +73,10 @@ regex.workspace = true
 rpc.workspace = true
 rope.workspace = true
 schemars.workspace = true
+seahash.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-sha2.workspace = true
 smallvec.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
@@ -149,4 +148,8 @@ harness = false
 
 [[bench]]
 name = "display_map"
+harness = false
+
+[[bench]]
+name = "undo_tree"
 harness = false
