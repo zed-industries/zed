@@ -17229,6 +17229,7 @@ dependencies = [
  "http_client",
  "language",
  "menu",
+ "notifications",
  "platform_title_bar",
  "release_channel",
  "serde_json",

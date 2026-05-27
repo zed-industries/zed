@@ -21,6 +21,7 @@ gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 menu.workspace = true
+notifications.workspace = true
 platform_title_bar.workspace = true
 release_channel.workspace = true
 serde_yaml_ng.workspace = true

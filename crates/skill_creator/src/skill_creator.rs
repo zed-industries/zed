@@ -13,6 +13,7 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request, StatusCode, Url};
 use language::{Buffer, LanguageRegistry, language_settings::SoftWrap};
+use notifications::status_toast::StatusToast;
 use platform_title_bar::PlatformTitleBar;
 use release_channel::ReleaseChannel;
 use settings::{ActionSequence, Settings};
@@ -27,9 +28,7 @@ use ui::{
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
-use workspace::{
-    Toast, Workspace, WorkspaceSettings, client_side_decorations, notifications::NotificationId,
-};
+use workspace::{Workspace, WorkspaceSettings, client_side_decorations};
 use worktree::WorktreeId;
 
 actions!(
@@ -755,16 +754,19 @@ impl SkillCreator {
                         }
                         if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
                             workspace.update(cx, |workspace, cx| {
-                                workspace.show_toast(
-                                    Toast::new(
-                                        NotificationId::unique::<SaveSkill>(),
-                                        format!(
-                                            "Saved skill \"{name}\" to {scope_label} ({})",
-                                            path.display()
-                                        ),
-                                    ),
-                                    cx,
+                                let message = format!(
+                                    "Saved skill \"{name}\" to {scope_label} ({})",
+                                    path.display()
                                 );
+                                let status_toast = StatusToast::new(message, cx, |this, _cx| {
+                                    this.icon(
+                                        Icon::new(IconName::Check)
+                                            .size(IconSize::Small)
+                                            .color(Color::Success),
+                                    )
+                                    .dismiss_button(true)
+                                });
+                                workspace.toggle_status_toast(status_toast, cx);
                             });
                         }
                         window.remove_window();
