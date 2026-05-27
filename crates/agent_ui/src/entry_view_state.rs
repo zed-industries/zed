@@ -1,9 +1,8 @@
 use std::ops::Range;
 
-use super::thread_history::ThreadHistory;
 use acp_thread::{AcpThread, AgentThreadEntry};
 use agent::ThreadStore;
-use agent_client_protocol::ToolCallId;
+use agent_client_protocol::schema as acp;
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
 use gpui::{
@@ -26,7 +25,6 @@ pub struct EntryViewState {
     workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
     thread_store: Option<Entity<ThreadStore>>,
-    history: Option<WeakEntity<ThreadHistory>>,
     prompt_store: Option<Entity<PromptStore>>,
     entries: Vec<Entry>,
     session_capabilities: SharedSessionCapabilities,
@@ -38,7 +36,6 @@ impl EntryViewState {
         workspace: WeakEntity<Workspace>,
         project: WeakEntity<Project>,
         thread_store: Option<Entity<ThreadStore>>,
-        history: Option<WeakEntity<ThreadHistory>>,
         prompt_store: Option<Entity<PromptStore>>,
         session_capabilities: SharedSessionCapabilities,
         agent_id: AgentId,
@@ -47,7 +44,6 @@ impl EntryViewState {
             workspace,
             project,
             thread_store,
-            history,
             prompt_store,
             entries: Vec::new(),
             session_capabilities,
@@ -90,7 +86,6 @@ impl EntryViewState {
                             self.workspace.clone(),
                             self.project.clone(),
                             self.thread_store.clone(),
-                            self.history.clone(),
                             self.prompt_store.clone(),
                             self.session_capabilities.clone(),
                             self.agent_id.clone(),
@@ -288,9 +283,9 @@ pub struct EntryViewEvent {
 }
 
 pub enum ViewEvent {
-    NewDiff(ToolCallId),
-    NewTerminal(ToolCallId),
-    TerminalMovedToBackground(ToolCallId),
+    NewDiff(acp::ToolCallId),
+    NewTerminal(acp::ToolCallId),
+    TerminalMovedToBackground(acp::ToolCallId),
     MessageEditorEvent(Entity<MessageEditor>, MessageEditorEvent),
     OpenDiffLocation {
         path: String,
@@ -454,7 +449,7 @@ fn create_editor_diff(
         editor.set_show_vertical_scrollbar(false, cx);
         editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
         editor.set_soft_wrap_mode(SoftWrap::None, cx);
-        editor.scroll_manager.set_forbid_vertical_scroll(true);
+        editor.set_forbid_vertical_scroll(true);
         editor.set_show_indent_guides(false, cx);
         editor.set_read_only(true);
         editor.set_delegate_open_excerpts(true);
@@ -487,7 +482,7 @@ mod tests {
     use std::sync::Arc;
 
     use acp_thread::{AgentConnection, StubAgentConnection};
-    use agent_client_protocol as acp;
+    use agent_client_protocol::schema as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
     use fs::FakeFs;
@@ -544,14 +539,12 @@ mod tests {
         });
 
         let thread_store = None;
-        let history: Option<gpui::WeakEntity<crate::ThreadHistory>> = None;
 
         let view_state = cx.new(|_cx| {
             EntryViewState::new(
                 workspace.downgrade(),
                 project.downgrade(),
                 thread_store,
-                history,
                 None,
                 Arc::new(RwLock::new(SessionCapabilities::default())),
                 "Test Agent".into(),

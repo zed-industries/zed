@@ -116,6 +116,7 @@ impl Render for WindowShadow {
                                     },
                                     blur_radius: shadow_size / 2.,
                                     spread_radius: px(0.),
+                                    inset: false,
                                     offset: point(px(0.0), px(0.0)),
                                 }])
                             }),
@@ -156,6 +157,7 @@ impl Render for WindowShadow {
                                             },
                                             blur_radius: px(20.0),
                                             spread_radius: px(0.0),
+                                            inset: false,
                                             offset: point(px(0.0), px(0.0)),
                                         }])
                                         .map(|div| match decorations {

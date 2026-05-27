@@ -1,22 +1,34 @@
+use std::error::Error;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use askpass::AskPassDelegate;
 use collections::HashSet;
 use fs::Fs;
-use gpui::{AsyncWindowContext, Entity, SharedString, WeakEntity};
+use gpui::{
+    AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString,
+    TaskExt, WeakEntity,
+};
 use project::Project;
 use project::git_store::Repository;
 use project::project_settings::ProjectSettings;
 use project::trusted_worktrees::{PathTrust, TrustedWorktrees};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
-use workspace::{MultiWorkspace, OpenMode, PreviousWorkspaceState, Workspace, dock::DockPosition};
+use ui::prelude::*;
+use workspace::{
+    MultiWorkspace, OpenMode, PreviousWorkspaceState, ToastView, Workspace, dock::DockPosition,
+};
 use zed_actions::NewWorktreeBranchTarget;
+
+use git::repository::{FetchOptions, Remote};
 
 use util::ResultExt as _;
 
-use crate::git_panel::show_error_toast;
+use crate::askpass_modal::AskPassModal;
+use crate::git_panel::{open_output, show_error_toast};
 use crate::worktree_names;
 
 /// Whether a worktree operation is creating a new one or switching to an
@@ -25,6 +37,185 @@ use crate::worktree_names;
 enum WorktreeOperation {
     Create,
     Switch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemoteBranchFetchMode {
+    Fetch,
+    UseLocal,
+}
+
+impl RemoteBranchFetchMode {
+    fn should_fetch(self) -> bool {
+        matches!(self, Self::Fetch)
+    }
+}
+
+#[derive(Debug)]
+struct WorktreeFetchError {
+    remote_name: String,
+    branch_name: String,
+    source: anyhow::Error,
+}
+
+impl WorktreeFetchError {
+    fn remote_branch_name(&self) -> String {
+        format!("{}/{}", self.remote_name, self.branch_name)
+    }
+
+    fn output(&self) -> String {
+        format!("git fetch {} failed:\n{:#}", self.remote_name, self.source)
+    }
+}
+
+impl fmt::Display for WorktreeFetchError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "git fetch {} failed while creating worktree from {}: {}",
+            self.remote_name,
+            self.remote_branch_name(),
+            self.source
+        )
+    }
+}
+
+impl Error for WorktreeFetchError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
+
+struct WorktreeFetchFailedToast {
+    workspace: WeakEntity<Workspace>,
+    worktree_name: Option<String>,
+    branch_target: NewWorktreeBranchTarget,
+    focused_dock: Option<DockPosition>,
+    remote_branch_name: String,
+    operation: SharedString,
+    output: String,
+    focus_handle: FocusHandle,
+}
+
+impl WorktreeFetchFailedToast {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        worktree_name: Option<String>,
+        branch_target: NewWorktreeBranchTarget,
+        focused_dock: Option<DockPosition>,
+        fetch_error: &WorktreeFetchError,
+        cx: &mut gpui::Context<Self>,
+    ) -> Self {
+        Self {
+            workspace,
+            worktree_name,
+            branch_target,
+            focused_dock,
+            remote_branch_name: fetch_error.remote_branch_name(),
+            operation: format!("fetch {}", fetch_error.remote_name).into(),
+            output: fetch_error.output(),
+            focus_handle: cx.focus_handle(),
+        }
+    }
+}
+
+impl Focusable for WorktreeFetchFailedToast {
+    fn focus_handle(&self, _cx: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for WorktreeFetchFailedToast {}
+
+impl ToastView for WorktreeFetchFailedToast {
+    fn action(&self) -> Option<workspace::ToastAction> {
+        None
+    }
+
+    fn auto_dismiss(&self) -> bool {
+        false
+    }
+}
+
+impl Render for WorktreeFetchFailedToast {
+    fn render(&mut self, _window: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+        let workspace_for_retry = self.workspace.clone();
+        let worktree_name = self.worktree_name.clone();
+        let branch_target = self.branch_target.clone();
+        let focused_dock = self.focused_dock;
+
+        let workspace_for_log = self.workspace.clone();
+        let operation = self.operation.clone();
+        let output = self.output.clone();
+
+        h_flex()
+            .id("worktree-fetch-failed-toast")
+            .elevation_3(cx)
+            .gap_2()
+            .py_1p5()
+            .pl_2p5()
+            .pr_1p5()
+            .flex_none()
+            .bg(cx.theme().colors().surface_background)
+            .shadow_lg()
+            .child(
+                Icon::new(IconName::XCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
+            )
+            .child(Label::new(format!(
+                "git fetch failed for {}",
+                self.remote_branch_name
+            )))
+            .child(
+                Button::new(
+                    "use-local-worktree-base",
+                    format!("Use local {}", self.remote_branch_name),
+                )
+                .color(Color::Muted)
+                .on_click(cx.listener(move |_, _event, window, cx| {
+                    cx.emit(DismissEvent);
+                    if let Some(workspace) = workspace_for_retry.upgrade() {
+                        workspace.update(cx, |workspace, cx| {
+                            handle_create_worktree_inner(
+                                workspace,
+                                &zed_actions::CreateWorktree {
+                                    worktree_name: worktree_name.clone(),
+                                    branch_target: branch_target.clone(),
+                                },
+                                window,
+                                focused_dock,
+                                RemoteBranchFetchMode::UseLocal,
+                                cx,
+                            );
+                        });
+                    }
+                })),
+            )
+            .child(
+                Button::new("view-worktree-fetch-log", "Show Error Logs")
+                    .color(Color::Muted)
+                    .on_click(cx.listener(move |_, _event, window, cx| {
+                        cx.emit(DismissEvent);
+                        let output = output.clone();
+                        let operation = operation.clone();
+                        workspace_for_log
+                            .update(cx, move |workspace, cx| {
+                                open_output(operation, workspace, &output, window, cx)
+                            })
+                            .ok();
+                    })),
+            )
+            .child(
+                IconButton::new("dismiss-worktree-fetch-failed-toast", IconName::Close)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener(|_, _event, _window, cx| {
+                        cx.emit(DismissEvent);
+                    })),
+            )
+    }
 }
 
 /// Classifies the project's visible worktrees into git-managed repositories
@@ -77,7 +268,82 @@ pub fn resolve_worktree_branch_target(branch_target: &NewWorktreeBranchTarget) -
     match branch_target {
         NewWorktreeBranchTarget::CurrentBranch => None,
         NewWorktreeBranchTarget::ExistingBranch { name } => Some(name.clone()),
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name,
+            branch_name,
+        } => Some(format!("refs/remotes/{remote_name}/{branch_name}")),
     }
+}
+
+fn remote_branch_to_fetch(branch_target: &NewWorktreeBranchTarget) -> Option<(&str, &str)> {
+    match branch_target {
+        NewWorktreeBranchTarget::RemoteBranch {
+            remote_name,
+            branch_name,
+        } => Some((remote_name, branch_name)),
+        NewWorktreeBranchTarget::CurrentBranch | NewWorktreeBranchTarget::ExistingBranch { .. } => {
+            None
+        }
+    }
+}
+
+fn create_worktree_askpass_delegate(
+    workspace: WeakEntity<Workspace>,
+    operation: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> AskPassDelegate {
+    let operation = operation.into();
+    let window = window.window_handle();
+    AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
+        window
+            .update(cx, |_, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
+                    });
+                })
+            })
+            .ok();
+    })
+}
+
+async fn fetch_remote_for_worktree_base(
+    git_repos: &[Entity<Repository>],
+    remote_name: String,
+    askpass_delegates: Vec<AskPassDelegate>,
+    cx: &mut AsyncWindowContext,
+) -> anyhow::Result<()> {
+    if askpass_delegates.len() != git_repos.len() {
+        return Err(anyhow!(
+            "Unable to fetch {remote_name}: missing credential prompt delegate"
+        ));
+    }
+
+    let fetches = cx.update(|_, cx| {
+        git_repos
+            .iter()
+            .cloned()
+            .zip(askpass_delegates)
+            .map(|(repo, askpass)| {
+                repo.update(cx, |repo, cx| {
+                    repo.fetch(
+                        FetchOptions::Remote(Remote {
+                            name: remote_name.clone().into(),
+                        }),
+                        askpass,
+                        cx,
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    })?;
+
+    for fetch in futures::future::join_all(fetches).await {
+        fetch??;
+    }
+
+    Ok(())
 }
 
 /// Kicks off an async git-worktree creation for each repository. Returns:
@@ -252,17 +518,11 @@ fn maybe_propagate_worktree_trust(
         if ProjectSettings::get_global(cx).session.trust_all_worktrees {
             return;
         }
-        let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) else {
-            return;
-        };
-
         let source_is_trusted = source_workspace
             .upgrade()
             .map(|workspace| {
                 let source_worktree_store = workspace.read(cx).project().read(cx).worktree_store();
-                !trusted_store
-                    .read(cx)
-                    .has_restricted_worktrees(&source_worktree_store, cx)
+                !TrustedWorktrees::has_restricted_worktrees(&source_worktree_store, cx)
             })
             .unwrap_or(false);
 
@@ -280,10 +540,21 @@ fn maybe_propagate_worktree_trust(
             .collect();
 
         if !paths_to_trust.is_empty() {
-            trusted_store.update(cx, |store, cx| {
-                store.trust(&worktree_store, paths_to_trust, cx);
-            });
+            if let Some(trusted_store) = TrustedWorktrees::try_get_global(cx) {
+                trusted_store.update(cx, |store, cx| {
+                    store.trust(&worktree_store, paths_to_trust, cx);
+                });
+            }
         }
+    })
+    .ok();
+
+    // After trust propagation, refresh the security modal on the new workspace
+    // so it dismisses itself if there are no more restricted worktrees.
+    cx.update(|window, cx| {
+        new_workspace.update(cx, |workspace, cx| {
+            workspace.show_worktree_trust_security_modal(false, window, cx);
+        });
     })
     .ok();
 }
@@ -295,6 +566,24 @@ pub fn handle_create_worktree(
     action: &zed_actions::CreateWorktree,
     window: &mut gpui::Window,
     fallback_focused_dock: Option<DockPosition>,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    handle_create_worktree_inner(
+        workspace,
+        action,
+        window,
+        fallback_focused_dock,
+        RemoteBranchFetchMode::Fetch,
+        cx,
+    );
+}
+
+fn handle_create_worktree_inner(
+    workspace: &mut Workspace,
+    action: &zed_actions::CreateWorktree,
+    window: &mut gpui::Window,
+    fallback_focused_dock: Option<DockPosition>,
+    remote_branch_fetch_mode: RemoteBranchFetchMode,
     cx: &mut gpui::Context<Workspace>,
 ) {
     let project = workspace.project().clone();
@@ -349,6 +638,25 @@ pub fn handle_create_worktree(
 
     let worktree_name = action.worktree_name.clone();
     let branch_target = action.branch_target.clone();
+    let fetch_askpass_delegates = if remote_branch_fetch_mode.should_fetch() {
+        remote_branch_to_fetch(&branch_target)
+            .map(|(remote_name, _branch_name)| {
+                git_repos
+                    .iter()
+                    .map(|_| {
+                        create_worktree_askpass_delegate(
+                            workspace_handle.clone(),
+                            format!("git fetch {remote_name}"),
+                            window,
+                            cx,
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let display_name: SharedString = worktree_name
         .as_deref()
         .unwrap_or("worktree")
@@ -361,8 +669,10 @@ pub fn handle_create_worktree(
         let result = do_create_worktree(
             git_repos,
             non_git_paths,
-            worktree_name,
-            branch_target,
+            worktree_name.clone(),
+            branch_target.clone(),
+            fetch_askpass_delegates,
+            remote_branch_fetch_mode,
             previous_state,
             workspace_handle.clone(),
             window_handle,
@@ -376,7 +686,21 @@ pub fn handle_create_worktree(
             workspace_handle
                 .update(cx, |workspace, cx| {
                     workspace.set_active_worktree_creation(None, false, cx);
-                    show_error_toast(cx.entity(), "worktree create", anyhow!("{err:#}"), cx);
+                    if let Some(fetch_error) = err.downcast_ref::<WorktreeFetchError>() {
+                        let toast = cx.new(|cx| {
+                            WorktreeFetchFailedToast::new(
+                                workspace.weak_handle(),
+                                worktree_name,
+                                branch_target,
+                                fallback_focused_dock,
+                                fetch_error,
+                                cx,
+                            )
+                        });
+                        workspace.toggle_status_toast(toast, cx);
+                    } else {
+                        show_error_toast(cx.entity(), "worktree create", anyhow!("{err:#}"), cx);
+                    }
                 })
                 .ok();
         }
@@ -461,6 +785,8 @@ async fn do_create_worktree(
     non_git_paths: Vec<PathBuf>,
     worktree_name: Option<String>,
     branch_target: NewWorktreeBranchTarget,
+    fetch_askpass_delegates: Vec<AskPassDelegate>,
+    remote_branch_fetch_mode: RemoteBranchFetchMode,
     previous_state: PreviousWorkspaceState,
     workspace: WeakEntity<Workspace>,
     window_handle: Option<gpui::WindowHandle<MultiWorkspace>>,
@@ -502,6 +828,28 @@ async fn do_create_worktree(
                 Err::<(), _>(err).log_err();
             }
             Err(_) => {}
+        }
+    }
+
+    if remote_branch_fetch_mode.should_fetch()
+        && let Some((remote_name, branch_name)) = remote_branch_to_fetch(&branch_target)
+    {
+        let remote_name = remote_name.to_string();
+        let branch_name = branch_name.to_string();
+        if let Err(error) = fetch_remote_for_worktree_base(
+            &git_repos,
+            remote_name.clone(),
+            fetch_askpass_delegates,
+            cx,
+        )
+        .await
+        {
+            return Err(WorktreeFetchError {
+                remote_name,
+                branch_name,
+                source: error,
+            }
+            .into());
         }
     }
 
@@ -787,23 +1135,343 @@ async fn open_worktree_workspace(
     window_handle.update(cx, |multi_workspace, window, cx| {
         multi_workspace.activate(new_workspace.clone(), source_for_transfer, window, cx);
 
-        new_workspace.update(cx, |workspace, cx| {
-            workspace.run_create_worktree_tasks(window, cx);
-        });
-    })?;
+        if is_creating_new_worktree {
+            new_workspace.update(cx, |workspace, cx| {
+                workspace.run_create_worktree_tasks(window, cx);
 
-    if is_creating_new_worktree {
-        if let Some(dock_position) = focused_dock {
-            window_handle.update(cx, |_multi_workspace, window, cx| {
-                new_workspace.update(cx, |workspace, cx| {
+                if let Some(dock_position) = focused_dock {
                     let dock = workspace.dock_at_position(dock_position);
                     if let Some(panel) = dock.read(cx).active_panel() {
                         panel.panel_focus_handle(cx).focus(window, cx);
                     }
-                });
-            })?;
+                }
+            });
+        }
+    })?;
+
+    anyhow::Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::Fs;
+    use gpui::{App, Task, TestAppContext};
+    use language::language_settings::AllLanguageSettings;
+    use project::project_settings::ProjectSettings;
+    use project::task_store::{TaskSettingsLocation, TaskStore};
+    use project::{FakeFs, WorktreeSettings};
+    use serde_json::json;
+    use settings::{SettingsLocation, SettingsStore};
+    use std::path::{Path, PathBuf};
+    use std::process::ExitStatus;
+    use std::sync::Mutex;
+    use task::SpawnInTerminal;
+    use theme::LoadThemes;
+    use util::path;
+    use util::rel_path::rel_path;
+    use workspace::{TerminalProvider, WorkspaceSettings};
+
+    struct CountingTerminalProvider {
+        spawned_task_labels: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl TerminalProvider for CountingTerminalProvider {
+        fn spawn(
+            &self,
+            task: SpawnInTerminal,
+            _window: &mut ui::Window,
+            _cx: &mut App,
+        ) -> Task<Option<anyhow::Result<ExitStatus>>> {
+            self.spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .push(task.label);
+            Task::ready(Some(Ok(ExitStatus::default())))
         }
     }
 
-    anyhow::Ok(())
+    fn init_test(cx: &mut TestAppContext) {
+        zlog::init_test();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(LoadThemes::JustBase, cx);
+            AllLanguageSettings::register(cx);
+            editor::init(cx);
+            ProjectSettings::register(cx);
+            WorktreeSettings::register(cx);
+            WorkspaceSettings::register(cx);
+            TaskStore::init(None);
+        });
+    }
+
+    fn install_counting_provider_and_worktree_hook(
+        workspace: &Entity<Workspace>,
+        spawned_task_labels: &Arc<Mutex<Vec<String>>>,
+        main_project_root: &Path,
+        hook_tasks_json: &str,
+        cx: &mut App,
+    ) {
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_terminal_provider(CountingTerminalProvider {
+                spawned_task_labels: spawned_task_labels.clone(),
+            });
+
+            let project = workspace.project().clone();
+            let Some(worktree) = project.read(cx).worktrees(cx).next() else {
+                return;
+            };
+            let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
+            let worktree_root = worktree.abs_path().to_path_buf();
+            if worktree_root == main_project_root {
+                return;
+            }
+
+            let Some(task_inventory) = project
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+            else {
+                return;
+            };
+            task_inventory.update(cx, |inventory, _| {
+                inventory
+                    .update_file_based_tasks(
+                        TaskSettingsLocation::Worktree(SettingsLocation {
+                            worktree_id,
+                            path: rel_path(".zed"),
+                        }),
+                        Some(hook_tasks_json),
+                    )
+                    .expect("should inject create_worktree hook tasks for linked worktree");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_create_worktree_hook_does_not_run_when_switching_back_to_main_worktree(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let hook_tasks_json = r#"[{"label":"setup worktree","command":"echo","hide":"never","hooks":["create_worktree"]}]"#;
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    ".zed": {
+                        "tasks.json": hook_tasks_json,
+                    },
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let main_project_root = PathBuf::from(path!("/root/project"));
+        let project = Project::test(fs.clone(), [main_project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let spawned_task_labels = Arc::new(Mutex::new(Vec::new()));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.retain_active_workspace(cx);
+            let active_workspace = multi_workspace.workspace().clone();
+            install_counting_provider_and_worktree_hook(
+                &active_workspace,
+                &spawned_task_labels,
+                &main_project_root,
+                hook_tasks_json,
+                cx,
+            );
+        });
+
+        let main_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        main_workspace.update_in(cx, |workspace, window, cx| {
+            handle_create_worktree(
+                workspace,
+                &zed_actions::CreateWorktree {
+                    worktree_name: Some("feature".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let active_workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.update(|_, cx| {
+            install_counting_provider_and_worktree_hook(
+                &active_workspace,
+                &spawned_task_labels,
+                &main_project_root,
+                hook_tasks_json,
+                cx,
+            );
+        });
+        active_workspace.update_in(cx, |workspace, window, cx| {
+            workspace.run_create_worktree_tasks(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .as_slice(),
+            ["setup worktree"],
+            "create_worktree hook should run once for the created linked worktree"
+        );
+
+        active_workspace.update_in(cx, |workspace, window, cx| {
+            handle_switch_worktree(
+                workspace,
+                &zed_actions::SwitchWorktree {
+                    path: main_project_root.clone(),
+                    display_name: "project".to_string(),
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            spawned_task_labels
+                .lock()
+                .expect("terminal spawn mutex should not be poisoned")
+                .as_slice(),
+            ["setup worktree"],
+            "switching back to the main worktree should not rerun create_worktree hooks"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_linked_worktree_inherits_trust_from_main_worktree(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            project::trusted_worktrees::init(collections::HashMap::default(), cx);
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                },
+            }),
+        )
+        .await;
+
+        let main_project_root = PathBuf::from(path!("/root/project"));
+        let project =
+            Project::test_with_worktree_trust(fs.clone(), [main_project_root.as_path()], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        // The main worktree starts restricted; trust it explicitly
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let main_worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store
+                .worktrees()
+                .next()
+                .map(|wt| wt.read(cx).id())
+                .expect("should have a worktree")
+        });
+        let trusted_store = cx
+            .read(|cx| project::trusted_worktrees::TrustedWorktrees::try_get_global(cx))
+            .expect("trust store should exist");
+        trusted_store.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                collections::HashSet::from_iter([project::trusted_worktrees::PathTrust::Worktree(
+                    main_worktree_id,
+                )]),
+                cx,
+            );
+        });
+
+        // Verify main worktree is now trusted
+        let has_restricted = cx.read(|cx| {
+            project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                &worktree_store,
+                cx,
+            )
+        });
+        assert!(
+            !has_restricted,
+            "main worktree should be trusted after explicit trust"
+        );
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.retain_active_workspace(cx);
+        });
+
+        // Create a linked worktree from the trusted main worktree
+        let main_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        main_workspace.update_in(cx, |workspace, window, cx| {
+            handle_create_worktree(
+                workspace,
+                &zed_actions::CreateWorktree {
+                    worktree_name: Some("feature".to_string()),
+                    branch_target: NewWorktreeBranchTarget::CurrentBranch,
+                },
+                window,
+                None,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // The new workspace (linked worktree) should inherit trust
+        let new_workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let new_worktree_store =
+            new_workspace.read_with(cx, |ws, cx| ws.project().read(cx).worktree_store());
+        let new_has_restricted = cx.read(|cx| {
+            project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+                &new_worktree_store,
+                cx,
+            )
+        });
+        assert!(
+            !new_has_restricted,
+            "linked worktree should inherit trust from the main worktree"
+        );
+
+        // The security modal should not be showing
+        let has_modal = new_workspace.read_with(cx, |ws, cx| {
+            ws.active_modal::<workspace::security_modal::SecurityModal>(cx)
+                .is_some()
+        });
+        assert!(
+            !has_modal,
+            "security modal should not show for a linked worktree created from a trusted main worktree"
+        );
+    }
 }

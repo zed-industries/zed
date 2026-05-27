@@ -12,8 +12,8 @@ use editor::{
 };
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
-    Render, Subscription, Task, TextStyle, WeakEntity, actions,
+    Action as _, AppContext, Context, Entity, FocusHandle, Focusable, HighlightStyle, Hsla, Render,
+    Subscription, Task, TextStyle, WeakEntity, actions,
 };
 use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
@@ -386,7 +386,7 @@ impl Console {
                     })
                 },
             )
-            .anchor(Corner::TopRight)
+            .anchor(gpui::Anchor::TopRight)
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -676,6 +676,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Custom,
                         insert_text_mode: None,
+                        group: None,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -787,6 +788,7 @@ impl ConsoleQueryBarCompletionProvider {
                         confirm: None,
                         source: project::CompletionSource::Dap { sort_text },
                         insert_text_mode: None,
+                        group: None,
                     }
                 })
                 .collect();

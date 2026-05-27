@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent_client_protocol as acp;
+use agent_client_protocol::schema as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -53,7 +53,7 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
@@ -92,7 +92,7 @@ pub struct SerializedScrollPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
@@ -206,7 +206,7 @@ impl DbThread {
                     crate::Message::User(UserMessage {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
                         id,
-                        content,
+                        content: Arc::from(content),
                     })
                 }
                 language_model::Role::Assistant => {
@@ -261,7 +261,7 @@ impl DbThread {
                                 tool_use_id: tool_result.tool_use_id,
                                 tool_name: name.into(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content,
+                                content: vec![tool_result.content],
                                 output: tool_result.output,
                             },
                         );
@@ -285,7 +285,7 @@ impl DbThread {
                 }
             };
 
-            messages.push(message);
+            messages.push(Arc::new(message));
         }
 
         Ok(Self {

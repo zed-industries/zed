@@ -40,6 +40,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
+    theme_settings::init(theme::LoadThemes::JustBase, cx);
 
     let user_agent = format!(
         "Zed Agent CLI/{} ({}; {})",
@@ -70,6 +71,7 @@ pub fn init(cx: &mut App) -> Arc<AgentCliAppState> {
         git_binary_path,
         cx.background_executor().clone(),
     ));
+    <dyn fs::Fs>::set_global(fs.clone(), cx);
 
     let mut languages = LanguageRegistry::new(cx.background_executor().clone());
     languages.set_language_server_download_dir(paths::languages_dir().clone());

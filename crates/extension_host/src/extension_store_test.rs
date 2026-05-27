@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
@@ -26,10 +26,10 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use util::test::TempTree;
+use util::{rel_path::rel_path_buf, test::TempTree};
 
 #[cfg(test)]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -150,7 +150,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         themes: Default::default(),
                         icon_themes: Vec::new(),
                         lib: Default::default(),
-                        languages: vec!["languages/erb".into(), "languages/ruby".into()],
+                        languages: vec![
+                            rel_path_buf("languages/erb"),
+                            rel_path_buf("languages/ruby"),
+                        ],
                         grammars: [
                             ("embedded_template".into(), GrammarManifestEntry::default()),
                             ("ruby".into(), GrammarManifestEntry::default()),
@@ -159,7 +162,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .collect(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -182,8 +184,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: vec![],
                         repository: None,
                         themes: vec![
-                            "themes/monokai-pro.json".into(),
-                            "themes/monokai.json".into(),
+                            rel_path_buf("themes/monokai-pro.json"),
+                            rel_path_buf("themes/monokai.json"),
                         ],
                         icon_themes: Vec::new(),
                         lib: Default::default(),
@@ -191,7 +193,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
-                        agent_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
@@ -367,14 +368,13 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 description: None,
                 authors: vec![],
                 repository: None,
-                themes: vec!["themes/gruvbox.json".into()],
+                themes: vec![rel_path_buf("themes/gruvbox.json")],
                 icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
-                agent_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),

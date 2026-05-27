@@ -46,6 +46,7 @@ impl PlainOpenAiClient {
             temperature: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            service_tier: None,
             tools: Vec::new(),
             prompt_cache_key: None,
             reasoning_effort: None,
@@ -485,6 +486,7 @@ impl BatchingOpenAiClient {
                         "assistant" => RequestMessage::Assistant {
                             content: Some(MessageContent::Plain(msg.content)),
                             tool_calls: Vec::new(),
+                            reasoning_content: None,
                         },
                         "system" => RequestMessage::System {
                             content: MessageContent::Plain(msg.content),
@@ -505,6 +507,7 @@ impl BatchingOpenAiClient {
                     temperature: None,
                     tool_choice: None,
                     parallel_tool_calls: None,
+                    service_tier: None,
                     tools: Vec::new(),
                     prompt_cache_key: None,
                     reasoning_effort: None,

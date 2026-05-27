@@ -5,8 +5,8 @@ use call::{ActiveCall, Room};
 use channel::ChannelStore;
 use client::{User, proto::PeerId};
 use gpui::{
-    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, WeakEntity,
-    canvas, point,
+    AnyElement, Hsla, IntoElement, MouseButton, Path, ScreenCaptureSource, Styled, TaskExt,
+    WeakEntity, canvas, point,
 };
 use gpui::{App, Task, Window};
 use icons::IconName;
@@ -214,7 +214,7 @@ impl TitleBar {
 
                         Some(
                             v_flex()
-                                .id(("collaborator", collaborator.user.id))
+                                .id(("collaborator", collaborator.user.legacy_id))
                                 .child(facepile)
                                 .child(render_color_ribbon(player_color.cursor))
                                 .cursor_pointer()
@@ -261,7 +261,7 @@ impl TitleBar {
         current_user: &Arc<User>,
         cx: &App,
     ) -> Option<Div> {
-        if room.role_for_user(user.id) == Some(proto::ChannelRole::Guest) {
+        if room.role_for_user(user.legacy_id) == Some(proto::ChannelRole::Guest) {
             return None;
         }
 

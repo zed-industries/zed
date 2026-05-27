@@ -8,60 +8,13 @@ use std::{
 
 use gpui::{BackgroundExecutor, SharedString};
 use nucleo::Utf32Str;
-use nucleo::pattern::{Atom, AtomKind, CaseMatching, Normalization};
 
 use crate::{
-    Cancelled, Case, LengthPenalty,
+    Cancelled, Case, LengthPenalty, Query, case_penalty, count_case_mismatches,
     matcher::{self, LENGTH_PENALTY},
     positions_from_sorted,
 };
 use fuzzy::CharBag;
-
-// String matching is always case-insensitive at the nucleo level — using
-// `CaseMatching::Smart` there would reject queries whose capitalization
-// doesn't match the candidate, breaking pickers like the command palette
-// (`"Editor: Backspace"` against the action named `"editor: backspace"`).
-// `Case::Smart` is still honored as a *scoring hint*: when the query
-// contains uppercase, candidates whose matched characters disagree in case
-// are downranked rather than dropped.
-const SMART_CASE_PENALTY_PER_MISMATCH: f64 = 0.9;
-
-struct Query {
-    atoms: Vec<Atom>,
-    source_words: Option<Vec<Vec<char>>>,
-    char_bag: CharBag,
-}
-
-impl Query {
-    fn build(query: &str, case: Case) -> Option<Self> {
-        let mut atoms = Vec::new();
-        let mut source_words = Vec::new();
-        let wants_case_penalty = case.is_smart() && query.chars().any(|c| c.is_uppercase());
-
-        for word in query.split_whitespace() {
-            atoms.push(Atom::new(
-                word,
-                CaseMatching::Ignore,
-                Normalization::Smart,
-                AtomKind::Fuzzy,
-                false,
-            ));
-            if wants_case_penalty {
-                source_words.push(word.chars().collect());
-            }
-        }
-
-        if atoms.is_empty() {
-            return None;
-        }
-
-        Some(Query {
-            atoms,
-            source_words: wants_case_penalty.then_some(source_words),
-            char_bag: CharBag::from(query),
-        })
-    }
-}
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -165,7 +118,8 @@ where
     };
 
     let num_cpus = executor.num_cpus().min(candidates.len());
-    let segment_size = candidates.len().div_ceil(num_cpus);
+    let base_size = candidates.len() / num_cpus;
+    let remainder = candidates.len() % num_cpus;
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
@@ -182,8 +136,9 @@ where
             {
                 let query = &query;
                 scope.spawn(async move {
-                    let segment_start = segment_idx * segment_size;
-                    let segment_end = (segment_start + segment_size).min(candidates.len());
+                    let segment_start = segment_idx * base_size + segment_idx.min(remainder);
+                    let segment_end =
+                        (segment_idx + 1) * base_size + (segment_idx + 1).min(remainder);
 
                     match_string_helper(
                         &candidates[segment_start..segment_end],
@@ -279,7 +234,6 @@ where
 {
     let mut buf = Vec::new();
     let mut matched_chars: Vec<u32> = Vec::new();
-    let mut atom_matched_chars = Vec::new();
     let mut candidate_chars: Vec<char> = Vec::new();
 
     for candidate in candidates {
@@ -295,67 +249,35 @@ where
             continue;
         }
 
-        let haystack: Utf32Str = Utf32Str::new(&borrowed.string, &mut buf);
+        let haystack: Utf32Str = Utf32Str::new(borrowed.string.as_ref(), &mut buf);
 
-        if query.source_words.is_some() {
-            candidate_chars.clear();
-            candidate_chars.extend(borrowed.string.chars());
-        }
+        let Some(score) = query.pattern.indices(haystack, matcher, &mut matched_chars) else {
+            continue;
+        };
 
-        let mut total_score: u32 = 0;
-        let mut case_mismatches: u32 = 0;
-        let mut all_matched = true;
+        let case_mismatches = count_case_mismatches(
+            query.query_chars.as_deref(),
+            &matched_chars,
+            borrowed.string.as_ref(),
+            &mut candidate_chars,
+        );
 
-        for (atom_idx, atom) in query.atoms.iter().enumerate() {
-            atom_matched_chars.clear();
-            let Some(score) = atom.indices(haystack, matcher, &mut atom_matched_chars) else {
-                all_matched = false;
-                break;
-            };
-            total_score = total_score.saturating_add(score as u32);
-            if let Some(source_words) = query.source_words.as_deref() {
-                let query_chars = &source_words[atom_idx];
-                if query_chars.len() == atom_matched_chars.len() {
-                    for (&query_char, &pos) in query_chars.iter().zip(&atom_matched_chars) {
-                        if let Some(&candidate_char) = candidate_chars.get(pos as usize)
-                            && candidate_char != query_char
-                            && candidate_char.eq_ignore_ascii_case(&query_char)
-                        {
-                            case_mismatches += 1;
-                        }
-                    }
-                }
-            }
-            matched_chars.extend_from_slice(&atom_matched_chars);
-        }
+        matched_chars.sort_unstable();
+        matched_chars.dedup();
 
-        if all_matched {
-            matched_chars.sort_unstable();
-            matched_chars.dedup();
+        let positive = score as f64 * case_penalty(case_mismatches);
+        let adjusted_score =
+            positive - length_penalty_for(borrowed.string.as_ref(), length_penalty);
+        let positions = positions_from_sorted(borrowed.string.as_ref(), &matched_chars);
 
-            let positive = total_score as f64 * case_penalty(case_mismatches);
-            let adjusted_score =
-                positive - length_penalty_for(borrowed.string.as_ref(), length_penalty);
-            let positions = positions_from_sorted(borrowed.string.as_ref(), &matched_chars);
-
-            results.push(StringMatch {
-                candidate_id: borrowed.id,
-                score: adjusted_score,
-                positions,
-                string: borrowed.string.clone(),
-            });
-        }
+        results.push(StringMatch {
+            candidate_id: borrowed.id,
+            score: adjusted_score,
+            positions,
+            string: borrowed.string.clone(),
+        });
     }
     Ok(())
-}
-
-#[inline]
-fn case_penalty(mismatches: u32) -> f64 {
-    if mismatches == 0 {
-        1.0
-    } else {
-        SMART_CASE_PENALTY_PER_MISMATCH.powi(mismatches as i32)
-    }
 }
 
 #[inline]
@@ -737,5 +659,106 @@ mod tests {
             results.is_empty(),
             "no candidate contains 'xyzzy', so nothing should match"
         );
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_not_divisible_by_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(4);
+        let cs = candidates(&["alpha", "beta", "gamma", "delta", "epsilon"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"alpha"));
+        assert!(matched.contains(&"gamma"));
+        assert!(matched.contains(&"delta"));
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_with_many_cpus_few_candidates(executor: BackgroundExecutor) {
+        executor.set_num_cpus(16);
+        let cs = candidates(&["one", "two", "three"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "o",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"one"));
+        assert!(matched.contains(&"two"));
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_single_candidate(executor: BackgroundExecutor) {
+        executor.set_num_cpus(8);
+        let cs = candidates(&["lonely"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "lone",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].string.as_ref(), "lonely");
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_candidates_equal_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(4);
+        let cs = candidates(&["aaa", "bbb", "ccc", "ddd"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].string.as_ref(), "aaa");
+    }
+
+    #[gpui::test]
+    async fn test_segment_size_candidates_one_more_than_cpus(executor: BackgroundExecutor) {
+        executor.set_num_cpus(3);
+        let cs = candidates(&["ant", "ape", "dog", "axe"]);
+        let cancel = AtomicBool::new(false);
+        let results = match_strings_async(
+            &cs,
+            "a",
+            Case::Ignore,
+            LengthPenalty::Off,
+            10,
+            &cancel,
+            executor,
+        )
+        .await;
+        let matched: Vec<&str> = results.iter().map(|m| m.string.as_ref()).collect();
+        assert!(matched.contains(&"ant"));
+        assert!(matched.contains(&"ape"));
+        assert!(matched.contains(&"axe"));
+        assert!(!matched.contains(&"dog"));
     }
 }

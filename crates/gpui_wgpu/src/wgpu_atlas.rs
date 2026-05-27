@@ -82,6 +82,15 @@ impl WgpuAtlas {
         }
     }
 
+    /// Clears all cached textures and tiles, forcing them to be recreated.
+    /// Use this for incremental recovery when the device is still valid.
+    pub fn clear(&self) {
+        let mut lock = self.0.lock();
+        lock.storage = WgpuAtlasStorage::default();
+        lock.tiles_by_key.clear();
+        lock.pending_uploads.clear();
+    }
+
     /// Handles device lost by clearing all textures and cached tiles.
     /// The atlas will lazily recreate textures as needed on subsequent frames.
     pub fn handle_device_lost(&self, context: &WgpuContext) {
@@ -390,8 +399,8 @@ fn swizzle_upload_data(bytes: &[u8], format: wgpu::TextureFormat) -> Vec<u8> {
 #[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use super::*;
+    use gpui::block_on;
     use gpui::{ImageId, RenderImageParams};
-    use pollster::block_on;
     use std::sync::Arc;
 
     fn test_device_and_queue() -> anyhow::Result<(Arc<wgpu::Device>, Arc<wgpu::Queue>)> {

@@ -16,18 +16,6 @@ impl FeatureFlag for PanicFeatureFlag {
 }
 register_feature_flag!(PanicFeatureFlag);
 
-pub struct AgentV2FeatureFlag;
-
-impl FeatureFlag for AgentV2FeatureFlag {
-    const NAME: &'static str = "agent-v2";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-register_feature_flag!(AgentV2FeatureFlag);
-
 /// A feature flag for granting access to beta ACP features.
 ///
 /// We reuse this feature flag for new betas, so don't delete it if it is not currently in use.
@@ -59,18 +47,6 @@ impl FeatureFlag for DiffReviewFeatureFlag {
 }
 register_feature_flag!(DiffReviewFeatureFlag);
 
-pub struct StreamingEditFileToolFeatureFlag;
-
-impl FeatureFlag for StreamingEditFileToolFeatureFlag {
-    const NAME: &'static str = "streaming-edit-file-tool";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-register_feature_flag!(StreamingEditFileToolFeatureFlag);
-
 pub struct UpdatePlanToolFeatureFlag;
 
 impl FeatureFlag for UpdatePlanToolFeatureFlag {
@@ -82,6 +58,42 @@ impl FeatureFlag for UpdatePlanToolFeatureFlag {
     }
 }
 register_feature_flag!(UpdatePlanToolFeatureFlag);
+
+pub struct UpdateTitleToolFeatureFlag;
+
+impl FeatureFlag for UpdateTitleToolFeatureFlag {
+    const NAME: &'static str = "update-title-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(UpdateTitleToolFeatureFlag);
+
+pub struct LspToolFeatureFlag;
+
+impl FeatureFlag for LspToolFeatureFlag {
+    const NAME: &'static str = "lsp-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(LspToolFeatureFlag);
+
+pub struct RenameToolFeatureFlag;
+
+impl FeatureFlag for RenameToolFeatureFlag {
+    const NAME: &'static str = "rename-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        true
+    }
+}
+register_feature_flag!(RenameToolFeatureFlag);
 
 pub struct ProjectPanelUndoRedoFeatureFlag;
 
@@ -115,3 +127,11 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
     }
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
+
+pub struct AutoWatchFeatureFlag;
+
+impl FeatureFlag for AutoWatchFeatureFlag {
+    const NAME: &'static str = "auto-watch-screens";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(AutoWatchFeatureFlag);

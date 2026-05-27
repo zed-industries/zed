@@ -257,6 +257,22 @@ pub enum QuitMode {
     Explicit,
 }
 
+/// Controls when GPUI hides the mouse cursor in response to keyboard input.
+///
+/// Restoration on mouse motion is handled by the platform layer; this enum
+/// only describes the policy for *triggering* a hide.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CursorHideMode {
+    /// Never hide the cursor automatically.
+    Never,
+    /// Hide on character-producing key presses (typing).
+    OnTyping,
+    /// Hide on character-producing key presses, *and* when a key binding
+    /// resolves to an action that consumes the keystroke.
+    #[default]
+    OnTypingAndAction,
+}
+
 #[doc(hidden)]
 #[derive(Clone, PartialEq, Eq)]
 pub struct SystemWindowTab {
@@ -638,6 +654,7 @@ pub struct App {
     pub(crate) window_invalidators_by_entity:
         FxHashMap<EntityId, FxHashMap<WindowId, WindowInvalidator>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    pub(crate) current_window_by_entity: FxHashMap<EntityId, WindowId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_renderer: Option<crate::InspectorRenderer>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -648,6 +665,7 @@ pub struct App {
 
     pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) mode: GpuiMode,
+    pub(crate) cursor_hide_mode: CursorHideMode,
     flushing_effects: bool,
     pending_updates: usize,
     quit_mode: QuitMode,
@@ -715,6 +733,7 @@ impl App {
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
                 window_invalidators_by_entity: FxHashMap::default(),
+                current_window_by_entity: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -735,6 +754,7 @@ impl App {
                 inspector_element_registry: InspectorElementRegistry::default(),
                 quit_mode: QuitMode::default(),
                 quitting: false,
+                cursor_hide_mode: CursorHideMode::default(),
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
                 name: None,
@@ -875,6 +895,27 @@ impl App {
         self.platform.quit();
     }
 
+    /// Returns the current policy for hiding the cursor in response to
+    /// keyboard input.
+    pub fn cursor_hide_mode(&self) -> CursorHideMode {
+        self.cursor_hide_mode
+    }
+
+    /// Sets the policy controlling when GPUI hides the cursor in response
+    /// to keyboard input.
+    pub fn set_cursor_hide_mode(&mut self, mode: CursorHideMode) {
+        self.cursor_hide_mode = mode;
+    }
+
+    /// Returns whether the cursor is currently visible according to the
+    /// platform. This will report `false` after a keyboard input has hidden
+    /// the cursor and the user has not yet moved the mouse to restore it.
+    ///
+    /// See [`App::set_cursor_hide_mode`].
+    pub fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
+    }
+
     /// Schedules all windows in the application to be redrawn. This can be called
     /// multiple times in an update cycle and still result in a single redraw.
     pub fn refresh_windows(&mut self) {
@@ -952,6 +993,8 @@ impl App {
                 .entry(*entity)
                 .or_default()
                 .insert(window_handle.id, invalidator.clone());
+            self.current_window_by_entity
+                .insert(*entity, window_handle.id);
         }
         tracked_entities.clear();
         tracked_entities.extend(entities.iter().copied());
@@ -1458,6 +1501,8 @@ impl App {
             for (entity_id, mut entity) in dropped {
                 self.observers.remove(&entity_id);
                 self.event_listeners.remove(&entity_id);
+                self.window_invalidators_by_entity.remove(&entity_id);
+                self.current_window_by_entity.remove(&entity_id);
                 for release_callback in self.release_listeners.remove(&entity_id) {
                     release_callback(entity.as_mut(), self);
                 }
@@ -1534,6 +1579,13 @@ impl App {
         tid: TypeId,
         window: Option<WindowId>,
     ) {
+        // Seed the entity's current window from its creation context so
+        // `with_window` resolves correctly before the entity has ever been
+        // rendered.
+        if let Some(id) = window {
+            self.current_window_by_entity.insert(entity.entity_id(), id);
+        }
+
         self.new_entity_observers.clone().retain(&tid, |observer| {
             if let Some(id) = window {
                 self.update_window_id(id, {
@@ -1548,7 +1600,28 @@ impl App {
         });
     }
 
-    fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
+    /// Run `f` against the entity's *current* window — the most recently
+    /// rendered window that referenced the entity, or its creation window if
+    /// it has yet to be rendered. Returns `None` if the entity has no
+    /// current window, or if that window has been closed, or if it is
+    /// already on the update stack.
+    pub fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        let window_id = *self.current_window_by_entity.get(&entity_id)?;
+        self.update_window_id(window_id, |_, window, cx| f(window, cx))
+            .ok()
+    }
+
+    fn ensure_window(&mut self, entity_id: EntityId, window: WindowId) {
+        self.current_window_by_entity
+            .entry(entity_id)
+            .or_insert(window);
+    }
+
+    pub(crate) fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
     where
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
@@ -1565,6 +1638,18 @@ impl App {
                 if window.removed {
                     cx.window_handles.remove(&id);
                     cx.windows.remove(id);
+                    if let Some(tracked) = cx.tracked_entities.remove(&id) {
+                        for entity_id in tracked {
+                            if let Some(windows) =
+                                cx.window_invalidators_by_entity.get_mut(&entity_id)
+                            {
+                                windows.remove(&id);
+                            }
+                            if cx.current_window_by_entity.get(&entity_id) == Some(&id) {
+                                cx.current_window_by_entity.remove(&entity_id);
+                            }
+                        }
+                    }
 
                     cx.window_closed_observers.clone().retain(&(), |callback| {
                         callback(cx, id);
@@ -1680,8 +1765,7 @@ impl App {
         self.globals_by_type
             .get(&TypeId::of::<G>())
             .map(|any_state| any_state.downcast_ref::<G>().unwrap())
-            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
-            .unwrap()
+            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
     }
 
     /// Access the global of the given type if a value has been assigned.
@@ -1699,8 +1783,7 @@ impl App {
         self.globals_by_type
             .get_mut(&global_type)
             .and_then(|any_state| any_state.downcast_mut::<G>())
-            .with_context(|| format!("no state of type {} exists", type_name::<G>()))
-            .unwrap()
+            .unwrap_or_else(|| panic!("no state of type {} exists", type_name::<G>()))
     }
 
     /// Access the global of the given type mutably. A default value is assigned if a global of this type has not
@@ -1735,7 +1818,7 @@ impl App {
         *self
             .globals_by_type
             .remove(&global_type)
-            .unwrap_or_else(|| panic!("no global added for {}", std::any::type_name::<G>()))
+            .unwrap_or_else(|| panic!("no global added for {}", type_name::<G>()))
             .downcast()
             .unwrap()
     }
@@ -2283,13 +2366,27 @@ impl App {
                 .or_default(),
         );
 
-        if window_invalidators.is_empty() {
+        // `window_invalidators_by_entity` is monotonic, so an entry alone
+        // doesn't mean the window is currently rendering the entity. Filter
+        // through `tracked_entities` to keep invalidation tight to windows
+        // that actually display this entity right now.
+        let live_invalidators: SmallVec<[WindowInvalidator; 2]> = window_invalidators
+            .iter()
+            .filter(|(window_id, _)| {
+                self.tracked_entities
+                    .get(window_id)
+                    .is_some_and(|set| set.contains(&entity_id))
+            })
+            .map(|(_, invalidator)| invalidator.clone())
+            .collect();
+
+        if live_invalidators.is_empty() {
             if self.pending_notifications.insert(entity_id) {
                 self.pending_effects
                     .push_back(Effect::Notify { emitter: entity_id });
             }
         } else {
-            for invalidator in window_invalidators.values() {
+            for invalidator in &live_invalidators {
                 invalidator.invalidate_view(entity_id, self);
             }
         }
@@ -2423,6 +2520,14 @@ impl AppContext for App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update_window_id(handle.id, update)
+    }
+
+    fn with_window<R>(
+        &mut self,
+        entity_id: EntityId,
+        f: impl FnOnce(&mut Window, &mut App) -> R,
+    ) -> Option<R> {
+        App::with_window(self, entity_id, f)
     }
 
     fn read_window<T, R>(

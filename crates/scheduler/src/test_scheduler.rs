@@ -57,10 +57,14 @@ impl TestScheduler {
             .map(|seed| seed.parse().unwrap())
             .unwrap_or(0);
 
+        let interactive = !std::env::var("SCHEDULER_NONINTERACTIVE").is_ok();
+
         (seed..seed + num_iterations as u64)
             .map(|seed| {
                 let mut unwind_safe_f = AssertUnwindSafe(&mut f);
-                eprintln!("Running seed: {seed}");
+                if interactive {
+                    eprintln!("Running seed: {seed}");
+                }
                 match panic::catch_unwind(move || Self::with_seed(seed, &mut *unwind_safe_f)) {
                     Ok(result) => result,
                     Err(error) => {
@@ -108,7 +112,12 @@ impl TestScheduler {
     pub fn end_test(&self) {
         let mut state = self.state.lock();
         if let Some((message, backtrace)) = &state.non_determinism_error {
-            panic!("{}\n{:?}", message, backtrace)
+            if cfg!(miri) {
+                // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+                panic!("{}", message)
+            } else {
+                panic!("{}\n{:?}", message, backtrace)
+            }
         }
         state.finished = true;
     }
@@ -458,6 +467,9 @@ impl TestScheduler {
             }
         } else if deadline.is_some() {
             false
+        } else if cfg!(miri) {
+            // miri cannot debug print backtraces with `miri-disable-isolation` enabled
+            panic!("Parking forbidden.");
         } else if self.state.lock().capture_pending_traces {
             let mut pending_traces = String::new();
             for (_, trace) in mem::take(&mut self.state.lock().pending_traces) {
