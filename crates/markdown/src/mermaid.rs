@@ -148,11 +148,11 @@ impl CachedMermaidDiagram {
 }
 
 /// Merman has somewhat limited text measurement capabilities.
-/// 
+///
 /// When it doesn't have metrics for any of the specified fonts, it chooses a
 /// fairly narrow width, which causes visible overflow. Adding `sans-serif`
 /// allows it to fall back to a more conservative (i.e. wider) measurement.
-/// 
+///
 /// This isn't perfect - very wide fonts will likely still cause overflow. A
 /// proper fix would involve somehow piping `resvg`'s actual measurements into
 /// `merman`, but that is a lot of work for a fairly uncommon edge case.
