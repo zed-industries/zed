@@ -23,15 +23,13 @@ graph TD
     A[Start] --> B[End]
 ```
 
+The renderer supports the following diagram types: flowchart, sequence, class, state, ER, gantt, pie, gitgraph, mindmap, timeline, quadrant chart, xy chart, and journey. Other diagram types will only show as code.
+
 Mermaid diagrams are automatically themed to match the user's editor theme. Do not include `%%{init}%%` directives or define your own `classDef` styles.
 
 Do *NOT* include inline HTML elements in mermaid diagrams, as they cannot be rendered. It is better to simply skip formatting (e.g. bold/italic/etc.).
 
-When you need accent colors for emphasis (e.g. color-coding layers, categories, or states), use the pre-defined classes `accent0` through `accent7` with the `:::` syntax:
-
-    A:::accent0 --> B:::accent1 --> C:::accent2
-
-These classes automatically match the user's theme. Do not hardcode hex color values unless an exact color match is specifically required. Note that the rendered view may be narrow, so try to prioritize generating taller diagrams over wider ones.
+Mermaid diagrams are automatically color-coded using the user's theme accent palette. Do not hardcode hex color values unless an exact color match is specifically required. Note that the rendered view may be narrow, so try to prioritize generating taller diagrams over wider ones.
 
 {{#if (gt (len available_tools) 0)}}
 ## Tool Use
