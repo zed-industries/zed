@@ -946,7 +946,7 @@ mod tests {
             .add(first_path.clone(), WatcherMode::Native, |_| {})
             .expect("native watch limit is handled");
         let second_registration = watcher
-            .add(second_path.clone(), WatcherMode::Native, |_| {})
+            .add(second_path, WatcherMode::Native, |_| {})
             .expect("native watch limit backoff is handled");
 
         assert!(first_registration.is_none());
