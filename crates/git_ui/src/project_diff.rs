@@ -148,7 +148,7 @@ impl ProjectDiff {
                     Self::deploy_branch_diff_with_base_ref(
                         workspace,
                         project,
-                        Some(intended_repo),
+                        intended_repo,
                         base_ref,
                         window,
                         cx,
@@ -167,7 +167,16 @@ impl ProjectDiff {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let repository = project.read(cx).active_repository(cx);
+        let Some(repository) = project.read(cx).active_repository(cx) else {
+            let workspace = cx.entity().downgrade();
+            window
+                .spawn(cx, async |_cx| {
+                    let result: Result<()> = Err(anyhow!("No active repository"));
+                    result
+                })
+                .detach_and_notify_err(workspace, window, cx);
+            return;
+        };
         let selected_branch = workspace.active_item_as::<Self>(cx).and_then(|item| {
             match item.read(cx).diff_base(cx) {
                 DiffBase::Merge { base_ref } => Some(base_ref.clone()),
@@ -198,7 +207,7 @@ impl ProjectDiff {
         workspace.toggle_modal(window, cx, |window, cx| {
             branch_picker::select_modal(
                 workspace_handle,
-                repository,
+                Some(repository),
                 selected_branch,
                 on_select,
                 window,
@@ -210,7 +219,7 @@ impl ProjectDiff {
     fn deploy_branch_diff_with_base_ref(
         workspace: &mut Workspace,
         project: Entity<Project>,
-        intended_repo: Option<Entity<Repository>>,
+        intended_repo: Entity<Repository>,
         base_ref: SharedString,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -225,23 +234,21 @@ impl ProjectDiff {
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
 
-            if let Some(intended_repo) = intended_repo {
-                let needs_switch = existing
-                    .read(cx)
-                    .branch_diff
-                    .read(cx)
-                    .repo()
-                    .map_or(true, |current| {
-                        current.read(cx).id != intended_repo.read(cx).id
-                    });
+            let needs_switch = existing
+                .read(cx)
+                .branch_diff
+                .read(cx)
+                .repo()
+                .map_or(true, |current| {
+                    current.read(cx).id != intended_repo.read(cx).id
+                });
 
-                if needs_switch {
-                    existing.update(cx, |project_diff, cx| {
-                        project_diff.branch_diff.update(cx, |branch_diff, cx| {
-                            branch_diff.set_repo(Some(intended_repo), cx);
-                        });
+            if needs_switch {
+                existing.update(cx, |project_diff, cx| {
+                    project_diff.branch_diff.update(cx, |branch_diff, cx| {
+                        branch_diff.set_repo(Some(intended_repo), cx);
                     });
-                }
+                });
             }
 
             return;
@@ -252,22 +259,15 @@ impl ProjectDiff {
         window
             .spawn(cx, async move |cx| {
                 let this = cx
-                    .update(|window, cx| match intended_repo {
-                        Some(repo) => Self::new_with_target_branch_for_repo(
+                    .update(|window, cx| {
+                        Self::new_with_branch_base(
                             project,
                             workspace.clone(),
                             base_ref,
-                            repo,
+                            intended_repo,
                             window,
                             cx,
-                        ),
-                        None => Self::new_with_target_branch(
-                            project,
-                            workspace.clone(),
-                            base_ref,
-                            window,
-                            cx,
-                        ),
+                        )
                     })?
                     .await?;
                 workspace
@@ -463,23 +463,10 @@ impl ProjectDiff {
         })
     }
 
-    fn new_with_target_branch(
+    fn new_with_branch_base(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
-        target_branch: SharedString,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<Entity<Self>>> {
-        let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
-            return Task::ready(Err(anyhow!("No active repository")));
-        };
-        Self::new_with_target_branch_for_repo(project, workspace, target_branch, repo, window, cx)
-    }
-
-    fn new_with_target_branch_for_repo(
-        project: Entity<Project>,
-        workspace: Entity<Workspace>,
-        target_branch: SharedString,
+        base_ref: SharedString,
         repo: Entity<Repository>,
         window: &mut Window,
         cx: &mut App,
@@ -487,9 +474,7 @@ impl ProjectDiff {
         window.spawn(cx, async move |cx| {
             let branch_diff = cx.new_window_entity(|window, cx| {
                 let mut branch_diff = branch_diff::BranchDiff::new(
-                    DiffBase::Merge {
-                        base_ref: target_branch,
-                    },
+                    DiffBase::Merge { base_ref },
                     project.clone(),
                     window,
                     cx,
