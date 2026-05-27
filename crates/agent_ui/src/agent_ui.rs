@@ -653,7 +653,10 @@ fn update_command_palette_filter(cx: &mut App) {
         ];
 
         let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
-        let open_skill_creator_action = [TypeId::of::<zed_actions::assistant::OpenSkillCreator>()];
+        let skill_creator_actions = [
+            TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
+            TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
+        ];
 
         if disable_ai {
             filter.hide_namespace("agent");
@@ -711,10 +714,10 @@ fn update_command_palette_filter(cx: &mut App) {
         // rest of that namespace's actions.
         if !disable_ai {
             filter.hide_action_types(&open_rules_library_action);
-            filter.show_action_types(open_skill_creator_action.iter());
+            filter.show_action_types(skill_creator_actions.iter());
         } else {
             filter.show_action_types(open_rules_library_action.iter());
-            filter.hide_action_types(&open_skill_creator_action);
+            filter.hide_action_types(&skill_creator_actions);
         }
     });
 }
@@ -855,6 +858,14 @@ mod tests {
             assert!(
                 !filter.is_hidden(&NewTerminalThread),
                 "NewTerminalThread should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::OpenSkillCreator),
+                "OpenSkillCreator should be visible by default"
+            );
+            assert!(
+                !filter.is_hidden(&zed_actions::assistant::CreateSkillFromUrl),
+                "CreateSkillFromUrl should be visible by default"
             );
         });
 
