@@ -131,7 +131,9 @@ pub struct OutlinePanel {
     _subscriptions: Vec<Subscription>,
     new_entries_for_fs_update: HashSet<BufferId>,
     fs_entries_update_task: Task<()>,
+    fs_entries_update_pending: bool,
     cached_entries_update_task: Task<()>,
+    cached_entries_update_pending: bool,
     reveal_selection_task: Task<anyhow::Result<()>>,
     outline_fetch_tasks: HashMap<BufferId, Task<()>>,
     buffers: HashMap<BufferId, BufferOutlines>,
@@ -878,7 +880,9 @@ impl OutlinePanel {
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 pending_default_expansion_depth: None,
                 fs_entries_update_task: Task::ready(()),
+                fs_entries_update_pending: false,
                 cached_entries_update_task: Task::ready(()),
+                cached_entries_update_pending: false,
                 reveal_selection_task: Task::ready(Ok(())),
                 outline_fetch_tasks: HashMap::default(),
                 buffers: HashMap::default(),
@@ -2722,12 +2726,11 @@ impl OutlinePanel {
             return;
         }
 
-        let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
-        let active_multi_buffer = active_editor.read(cx).buffer().clone();
-        let new_entries = self.new_entries_for_fs_update.clone();
-        let repo_snapshots = self.project.update(cx, |project, cx| {
-            project.git_store().read(cx).repo_snapshots(cx)
-        });
+        if debounce.is_some() && self.fs_entries_update_pending {
+            return;
+        }
+        self.fs_entries_update_pending = true;
+
         self.fs_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
@@ -2737,65 +2740,77 @@ impl OutlinePanel {
             let mut new_unfolded_dirs = HashMap::default();
             let mut root_entries = HashSet::default();
             let mut new_buffers = HashMap::<BufferId, BufferOutlines>::default();
-            let Ok(buffer_excerpts) = outline_panel.update(cx, |outline_panel, cx| {
-                let git_store = outline_panel.project.read(cx).git_store().clone();
-                new_collapsed_entries = outline_panel.collapsed_entries.clone();
-                new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
-                let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+            let Ok((buffer_excerpts, auto_fold_dirs, repo_snapshots)) =
+                outline_panel.update(cx, |outline_panel, cx| {
+                    outline_panel.fs_entries_update_pending = false;
+                    let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
+                    let active_multi_buffer = active_editor.read(cx).buffer().clone();
+                    let new_entries = outline_panel.new_entries_for_fs_update.clone();
+                    let repo_snapshots = outline_panel.project.update(cx, |project, cx| {
+                        project.git_store().read(cx).repo_snapshots(cx)
+                    });
+                    let git_store = outline_panel.project.read(cx).git_store().clone();
+                    new_collapsed_entries = outline_panel.collapsed_entries.clone();
+                    new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
+                    let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
 
-                multi_buffer_snapshot.excerpts().fold(
-                    HashMap::default(),
-                    |mut buffer_excerpts, excerpt_range| {
-                        let Some(buffer_snapshot) = multi_buffer_snapshot
-                            .buffer_for_id(excerpt_range.context.start.buffer_id)
-                        else {
-                            return buffer_excerpts;
-                        };
-                        let buffer_id = buffer_snapshot.remote_id();
-                        let file = File::from_dyn(buffer_snapshot.file());
-                        let entry_id = file.and_then(|file| file.project_entry_id());
-                        let worktree = file.map(|file| file.worktree.read(cx).snapshot());
-                        let is_new = new_entries.contains(&buffer_id)
-                            || !outline_panel.buffers.contains_key(&buffer_id);
-                        let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
-                        let status = git_store
-                            .read(cx)
-                            .repository_and_path_for_buffer_id(buffer_id, cx)
-                            .and_then(|(repo, path)| {
-                                Some(repo.read(cx).status_for_path(&path)?.status)
-                            });
-                        buffer_excerpts
-                            .entry(buffer_id)
-                            .or_insert_with(|| {
-                                (is_new, is_folded, Vec::new(), entry_id, worktree, status)
-                            })
-                            .2
-                            .push(excerpt_range.clone());
+                    let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+                        HashMap::default(),
+                        |mut buffer_excerpts, excerpt_range| {
+                            let Some(buffer_snapshot) = multi_buffer_snapshot
+                                .buffer_for_id(excerpt_range.context.start.buffer_id)
+                            else {
+                                return buffer_excerpts;
+                            };
+                            let buffer_id = buffer_snapshot.remote_id();
+                            let file = File::from_dyn(buffer_snapshot.file());
+                            let entry_id = file.and_then(|file| file.project_entry_id());
+                            let worktree = file.map(|file| file.worktree.read(cx).snapshot());
+                            let is_new = new_entries.contains(&buffer_id)
+                                || !outline_panel.buffers.contains_key(&buffer_id);
+                            let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
+                            let status = git_store
+                                .read(cx)
+                                .repository_and_path_for_buffer_id(buffer_id, cx)
+                                .and_then(|(repo, path)| {
+                                    Some(repo.read(cx).status_for_path(&path)?.status)
+                                });
+                            buffer_excerpts
+                                .entry(buffer_id)
+                                .or_insert_with(|| {
+                                    (is_new, is_folded, Vec::new(), entry_id, worktree, status)
+                                })
+                                .2
+                                .push(excerpt_range.clone());
 
-                        new_buffers
-                            .entry(buffer_id)
-                            .or_insert_with(|| {
-                                let outlines = match outline_panel.buffers.get(&buffer_id) {
-                                    Some(old_buffer) => match &old_buffer.outlines {
-                                        OutlineState::Outlines(outlines) => {
-                                            OutlineState::Outlines(outlines.clone())
-                                        }
-                                        OutlineState::Invalidated(_) => OutlineState::NotFetched,
-                                        OutlineState::NotFetched => OutlineState::NotFetched,
-                                    },
-                                    None => OutlineState::NotFetched,
-                                };
-                                BufferOutlines {
-                                    outlines,
-                                    excerpts: Vec::new(),
-                                }
-                            })
-                            .excerpts
-                            .push(excerpt_range);
-                        buffer_excerpts
-                    },
-                )
-            }) else {
+                            new_buffers
+                                .entry(buffer_id)
+                                .or_insert_with(|| {
+                                    let outlines = match outline_panel.buffers.get(&buffer_id) {
+                                        Some(old_buffer) => match &old_buffer.outlines {
+                                            OutlineState::Outlines(outlines) => {
+                                                OutlineState::Outlines(outlines.clone())
+                                            }
+                                            OutlineState::Invalidated(_) => {
+                                                OutlineState::NotFetched
+                                            }
+                                            OutlineState::NotFetched => OutlineState::NotFetched,
+                                        },
+                                        None => OutlineState::NotFetched,
+                                    };
+                                    BufferOutlines {
+                                        outlines,
+                                        excerpts: Vec::new(),
+                                    }
+                                })
+                                .excerpts
+                                .push(excerpt_range);
+                            buffer_excerpts
+                        },
+                    );
+                    (buffer_excerpts, auto_fold_dirs, repo_snapshots)
+                })
+            else {
                 return;
             };
 
@@ -3163,8 +3178,10 @@ impl OutlinePanel {
 
     fn clear_previous(&mut self, window: &mut Window, cx: &mut App) {
         self.fs_entries_update_task = Task::ready(());
+        self.fs_entries_update_pending = false;
         self.outline_fetch_tasks.clear();
         self.cached_entries_update_task = Task::ready(());
+        self.cached_entries_update_pending = false;
         self.reveal_selection_task = Task::ready(Ok(()));
         self.filter_editor
             .update(cx, |editor, cx| editor.clear(window, cx));
@@ -3591,14 +3608,23 @@ impl OutlinePanel {
             return;
         }
 
-        let is_singleton = self.is_singleton_active(cx);
-        let query = self.query(cx);
+        // A pending debounced update will read the latest state when it fires,
+        // so we don't need to reschedule. Constantly rescheduling under a steady stream
+        // of events (e.g. project search streaming results) would starve the task forever.
+        if debounce.is_some() && self.cached_entries_update_pending {
+            return;
+        }
+        self.cached_entries_update_pending = true;
+
         self.cached_entries_update_task = cx.spawn_in(window, async move |outline_panel, cx| {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
             let Some(new_cached_entries) = outline_panel
                 .update_in(cx, |outline_panel, window, cx| {
+                    outline_panel.cached_entries_update_pending = false;
+                    let is_singleton = outline_panel.is_singleton_active(cx);
+                    let query = outline_panel.query(cx);
                     outline_panel.generate_cached_entries(is_singleton, query, window, cx)
                 })
                 .ok()
@@ -4264,31 +4290,37 @@ impl OutlinePanel {
                 )
             };
 
-            let mut previous_matches = HashMap::default();
-            update_cached_entries = match &mut self.mode {
-                ItemsDisplayMode::Search(current_search_state) => {
-                    let update = current_search_state.query != new_search_query
-                        || current_search_state.kind != kind
-                        || current_search_state.matches.is_empty()
-                        || current_search_state.matches.iter().enumerate().any(
-                            |(i, (match_range, _))| new_search_matches.get(i) != Some(match_range),
-                        );
-                    if current_search_state.kind == kind {
-                        previous_matches.extend(current_search_state.matches.drain(..));
-                    }
-                    update
+            let changed = match &self.mode {
+                ItemsDisplayMode::Search(current) => {
+                    current.query != new_search_query
+                        || current.kind != kind
+                        || current.matches.len() != new_search_matches.len()
+                        || current
+                            .matches
+                            .iter()
+                            .zip(&new_search_matches)
+                            .any(|((existing, _), incoming)| existing != incoming)
                 }
                 ItemsDisplayMode::Outline => true,
             };
-            self.mode = ItemsDisplayMode::Search(SearchState::new(
-                kind,
-                new_search_query,
-                previous_matches,
-                new_search_matches,
-                cx.theme().syntax().clone(),
-                window,
-                cx,
-            ));
+            if changed {
+                let previous_matches = match &mut self.mode {
+                    ItemsDisplayMode::Search(current) if current.kind == kind => {
+                        current.matches.drain(..).collect()
+                    }
+                    _ => HashMap::default(),
+                };
+                self.mode = ItemsDisplayMode::Search(SearchState::new(
+                    kind,
+                    new_search_query,
+                    previous_matches,
+                    new_search_matches,
+                    cx.theme().syntax().clone(),
+                    window,
+                    cx,
+                ));
+                update_cached_entries = true;
+            }
         }
         update_cached_entries
     }
