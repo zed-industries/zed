@@ -9,21 +9,24 @@ use futures::StreamExt;
 use futures::future::BoxFuture;
 use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
-    AuthenticateError, IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, ZED_CLOUD_PROVIDER_ID,
-    ZED_CLOUD_PROVIDER_NAME,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 use language_models_cloud::{CloudLlmTokenProvider, CloudModelProvider};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use release_channel::AppVersion;
 
 use settings::SettingsStore;
 pub use settings::ZedDotDevAvailableModel as AvailableModel;
 pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use std::sync::Arc;
+use std::time::Duration;
 use ui::{TintColor, prelude::*};
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = ZED_CLOUD_PROVIDER_NAME;
+const MODELS_REFRESH_DEBOUNCE: Duration = Duration::from_secs(5 * 60);
 
 struct ClientTokenProvider {
     client: Arc<Client>,
@@ -84,10 +87,12 @@ pub struct State {
     user_store: Entity<UserStore>,
     status: client::Status,
     provider: Entity<CloudModelProvider<ClientTokenProvider>>,
+    pending_models_refresh: Option<Task<()>>,
     _user_store_subscription: Subscription,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
     _provider_subscription: Subscription,
+    _cloud_reconnect_task: Task<()>,
 }
 
 impl State {
@@ -112,10 +117,32 @@ impl State {
             )
         });
 
+        let cloud_reconnect_task = cx.spawn({
+            let client = client.clone();
+            async move |this, cx| {
+                let mut connection_id_rx = client.cloud_connection_id();
+                while let Some(connection_id) = connection_id_rx.next().await {
+                    // The initial value `0` means no connection has been
+                    // established since this `Client` was created; only real
+                    // reconnects trigger a refresh.
+                    if connection_id == 0 {
+                        continue;
+                    }
+                    if this
+                        .update(cx, |this, cx| this.schedule_debounced_models_refresh(cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+
         Self {
             client: client.clone(),
             user_store: user_store.clone(),
             status,
+            pending_models_refresh: None,
             _provider_subscription: cx.observe(&provider, |_, _, cx| cx.notify()),
             provider,
             _user_store_subscription: cx.subscribe(
@@ -141,6 +168,7 @@ impl State {
                     this.refresh_models(cx);
                 },
             ),
+            _cloud_reconnect_task: cloud_reconnect_task,
         }
     }
 
@@ -166,6 +194,24 @@ impl State {
         self.provider.update(cx, |provider, cx| {
             provider.refresh_models(cx).detach_and_log_err(cx);
         });
+    }
+
+    /// Schedules a model list refresh, replacing any previously scheduled
+    /// refresh.
+    fn schedule_debounced_models_refresh(&mut self, cx: &mut Context<Self>) {
+        self.pending_models_refresh = Some(cx.spawn(async move |this, cx| {
+            #[cfg(any(test, feature = "test-support"))]
+            let mut rng = StdRng::seed_from_u64(0);
+            #[cfg(not(any(test, feature = "test-support")))]
+            let mut rng = StdRng::from_os_rng();
+            let jitter = Duration::from_millis(
+                rng.random_range(0..MODELS_REFRESH_DEBOUNCE.as_millis() as u64),
+            );
+            cx.background_executor()
+                .timer(MODELS_REFRESH_DEBOUNCE + jitter)
+                .await;
+            this.update(cx, |this, cx| this.refresh_models(cx)).ok();
+        }));
     }
 }
 
@@ -305,6 +351,16 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
+    }
+
+    fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
+        Some(FastModeConfirmation {
+            title: "Enable Fast Mode for Zed?".into(),
+            message: "Fast mode routes requests through the upstream provider's fast mode or priority tier. The \
+                upstream provider's premium per-token pricing applies and is passed through to \
+                your Zed billing."
+                .into(),
+        })
     }
 }
 

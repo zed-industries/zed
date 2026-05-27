@@ -62,7 +62,7 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    let mut pages = vec![
+    vec![
         general_page(cx),
         appearance_page(),
         keymap_page(),
@@ -77,56 +77,58 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-    ];
-
-    use feature_flags::FeatureFlagAppExt as _;
-    if cx.is_staff() || cfg!(debug_assertions) {
-        pages.push(developer_page());
-    }
-
-    pages
+        developer_page(cx),
+    ]
 }
 
-fn developer_page() -> SettingsPage {
+fn developer_page(cx: &App) -> SettingsPage {
+    use feature_flags::FeatureFlagAppExt as _;
+
+    let mut items: Vec<SettingsPageItem> = Vec::new();
+
+    // Feature flag overrides are a staff-only affordance, so only surface the section when the overrides are enabled.
+    if cx.feature_flag_overrides_enabled() {
+        items.push(SettingsPageItem::SectionHeader("Feature Flags"));
+        items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Feature Flags".into(),
+            r#type: Default::default(),
+            description: None,
+            json_path: Some("feature_flags"),
+            in_json: true,
+            files: USER,
+            render: crate::pages::render_feature_flags_page,
+        }));
+    }
+
+    items.push(SettingsPageItem::SectionHeader("Instrumentation"));
+    items.push(SettingsPageItem::SettingItem(SettingItem {
+        title: "Performance Profiler",
+        description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
+        field: Box::new(SettingField {
+            json_path: Some("instrumentation.performance_profiler.enabled"),
+            pick: |settings_content| {
+                settings_content
+                    .instrumentation
+                    .as_ref()
+                    .and_then(|i| i.performance_profiler.as_ref())
+                    .and_then(|p| p.enabled.as_ref())
+            },
+            write: |settings_content, value, _| {
+                settings_content
+                    .instrumentation
+                    .get_or_insert_default()
+                    .performance_profiler
+                    .get_or_insert_default()
+                    .enabled = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    }));
+
     SettingsPage {
         title: "Developer",
-        items: Box::new([
-            SettingsPageItem::SectionHeader("Feature Flags"),
-            SettingsPageItem::SubPageLink(SubPageLink {
-                title: "Feature Flags".into(),
-                r#type: Default::default(),
-                description: None,
-                json_path: Some("feature_flags"),
-                in_json: true,
-                files: USER,
-                render: crate::pages::render_feature_flags_page,
-            }),
-            SettingsPageItem::SectionHeader("Instrumentation"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Performance Profiler",
-                description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
-                field: Box::new(SettingField {
-                    json_path: Some("instrumentation.performance_profiler.enabled"),
-                    pick: |settings_content| {
-                        settings_content
-                            .instrumentation
-                            .as_ref()
-                            .and_then(|i| i.performance_profiler.as_ref())
-                            .and_then(|p| p.enabled.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .instrumentation
-                            .get_or_insert_default()
-                            .performance_profiler
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]),
+        items: items.into_boxed_slice(),
     }
 }
 
