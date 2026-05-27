@@ -866,8 +866,13 @@ impl OpenAiResponseEventMapper {
                 let message = response_failure_message(&response);
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(message)))]
             }
-            ResponsesStreamEvent::Error { error }
-            | ResponsesStreamEvent::GenericError { error } => {
+            ResponsesStreamEvent::Error { error } => {
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    response_error_message(&error)
+                )))]
+            }
+            ResponsesStreamEvent::GenericError { error } => {
+                let error = error.into_response_error();
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(
                     response_error_message(&error)
                 )))]
@@ -2113,6 +2118,34 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+    }
+
+    #[test]
+    fn responses_stream_deserializes_nested_error_event() {
+        // In practice the Responses API often nests error fields under an
+        // `error` object even though the public spec documents them at the top
+        // level. Make sure we don't lose the message and code in that case.
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "context_length_exceeded",
+                "message": "Your input exceeds the context window of this model. Please adjust your input and try again.",
+                "param": "input"
+            },
+            "sequence_number": 2
+        }))
+        .expect("nested error event");
+
+        let mut mapper = OpenAiResponseEventMapper::new();
+        let mapped = mapper.map_event(event);
+
+        assert_eq!(mapped.len(), 1);
+        let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "context_length_exceeded: Your input exceeds the context window of this model. Please adjust your input and try again."
+        );
     }
 
     #[test]

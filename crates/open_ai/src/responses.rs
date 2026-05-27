@@ -156,6 +156,43 @@ pub struct ResponseError {
     pub param: Option<Value>,
 }
 
+/// Payload of the top-level `error` SSE event from the Responses API.
+///
+/// OpenAI's spec documents the error fields as being at the top level of the
+/// event, but in practice the API often nests them under an `error` object.
+#[derive(Deserialize, Debug, Clone, Default)]
+pub struct GenericStreamErrorPayload {
+    #[serde(flatten)]
+    top_level: PartialResponseError,
+    #[serde(default)]
+    error: Option<PartialResponseError>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+struct PartialResponseError {
+    #[serde(default)]
+    code: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    param: Option<Value>,
+}
+
+impl GenericStreamErrorPayload {
+    pub fn into_response_error(self) -> ResponseError {
+        let nested = self.error.unwrap_or_default();
+        ResponseError {
+            code: self.top_level.code.or(nested.code),
+            message: self
+                .top_level
+                .message
+                .or(nested.message)
+                .unwrap_or_default(),
+            param: self.top_level.param.or(nested.param),
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(tag = "type")]
 pub enum StreamEvent {
@@ -276,7 +313,7 @@ pub enum StreamEvent {
     #[serde(rename = "error")]
     GenericError {
         #[serde(flatten)]
-        error: ResponseError,
+        error: GenericStreamErrorPayload,
     },
     #[serde(other)]
     Unknown,
