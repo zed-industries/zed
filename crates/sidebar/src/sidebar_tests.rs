@@ -8344,17 +8344,20 @@ async fn test_restore_worktree_when_branch_has_moved(cx: &mut TestAppContext) {
 
     let result = cx
         .spawn(|mut cx| async move {
+            let row = agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                id: 1,
+                worktree_path: PathBuf::from("/wt-feature-a"),
+                main_repo_path: PathBuf::from("/project"),
+                branch_name: Some("feature-a".to_string()),
+                staged_commit_hash: staged_hash,
+                unstaged_commit_hash: unstaged_hash,
+                original_commit_hash: "original-sha".to_string(),
+            };
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
             agent_ui::thread_worktree_archive::restore_worktree_via_git(
-                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
-                    id: 1,
-                    worktree_path: PathBuf::from("/wt-feature-a"),
-                    main_repo_path: PathBuf::from("/project"),
-                    branch_name: Some("feature-a".to_string()),
-                    staged_commit_hash: staged_hash,
-                    unstaged_commit_hash: unstaged_hash,
-                    original_commit_hash: "original-sha".to_string(),
-                },
+                &row,
                 None,
+                &confirmed_paths,
                 &mut cx,
             )
             .await
@@ -8453,17 +8456,20 @@ async fn test_restore_worktree_when_branch_has_not_moved(cx: &mut TestAppContext
 
     let result = cx
         .spawn(|mut cx| async move {
+            let row = agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                id: 1,
+                worktree_path: PathBuf::from("/wt-feature-b"),
+                main_repo_path: PathBuf::from("/project"),
+                branch_name: Some("feature-b".to_string()),
+                staged_commit_hash: staged_hash,
+                unstaged_commit_hash: unstaged_hash,
+                original_commit_hash: "original-sha".to_string(),
+            };
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
             agent_ui::thread_worktree_archive::restore_worktree_via_git(
-                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
-                    id: 1,
-                    worktree_path: PathBuf::from("/wt-feature-b"),
-                    main_repo_path: PathBuf::from("/project"),
-                    branch_name: Some("feature-b".to_string()),
-                    staged_commit_hash: staged_hash,
-                    unstaged_commit_hash: unstaged_hash,
-                    original_commit_hash: "original-sha".to_string(),
-                },
+                &row,
                 None,
+                &confirmed_paths,
                 &mut cx,
             )
             .await
@@ -8554,17 +8560,20 @@ async fn test_restore_worktree_when_branch_does_not_exist(cx: &mut TestAppContex
 
     let result = cx
         .spawn(|mut cx| async move {
+            let row = agent_ui::thread_metadata_store::ArchivedGitWorktree {
+                id: 1,
+                worktree_path: PathBuf::from("/wt-feature-d"),
+                main_repo_path: PathBuf::from("/project"),
+                branch_name: Some("feature-d".to_string()),
+                staged_commit_hash: staged_hash,
+                unstaged_commit_hash: unstaged_hash,
+                original_commit_hash: "original-sha".to_string(),
+            };
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
             agent_ui::thread_worktree_archive::restore_worktree_via_git(
-                &agent_ui::thread_metadata_store::ArchivedGitWorktree {
-                    id: 1,
-                    worktree_path: PathBuf::from("/wt-feature-d"),
-                    main_repo_path: PathBuf::from("/project"),
-                    branch_name: Some("feature-d".to_string()),
-                    staged_commit_hash: staged_hash,
-                    unstaged_commit_hash: unstaged_hash,
-                    original_commit_hash: "original-sha".to_string(),
-                },
+                &row,
                 None,
+                &confirmed_paths,
                 &mut cx,
             )
             .await
@@ -8601,7 +8610,14 @@ async fn test_restore_worktree_cleans_up_backup_on_success(cx: &mut TestAppConte
     let row = fixture.archived_row();
     let result = cx
         .spawn(|mut cx| async move {
-            agent_ui::thread_worktree_archive::restore_worktree_via_git(&row, None, &mut cx).await
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &row,
+                None,
+                &confirmed_paths,
+                &mut cx,
+            )
+            .await
         })
         .await;
 
@@ -8644,6 +8660,46 @@ async fn test_restore_worktree_cleans_up_backup_on_success(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_restore_worktree_refuses_unconfirmed_new_content(cx: &mut TestAppContext) {
+    let fixture = setup_archived_worktree_fixture(
+        "feature-unconfirmed",
+        serde_json::json!({ "src": {} }),
+        cx,
+    )
+    .await;
+    let fs = fixture.fs.clone();
+    fs.write(
+        Path::new("/wt-feature-unconfirmed/sentinel.txt"),
+        b"new user content",
+    )
+    .await
+    .expect("writing sentinel.txt should succeed");
+
+    let row = fixture.archived_row();
+    let result = cx
+        .spawn(|mut cx| async move {
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &row,
+                None,
+                &std::collections::HashSet::default(),
+                &mut cx,
+            )
+            .await
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "restore should refuse unconfirmed content that appeared after preflight"
+    );
+    let sentinel = fs
+        .load(Path::new("/wt-feature-unconfirmed/sentinel.txt"))
+        .await
+        .expect("unconfirmed content should remain in place");
+    assert_eq!(sentinel, "new user content");
+}
+
+#[gpui::test]
 async fn test_restore_worktree_rolls_back_backup_on_failure(cx: &mut TestAppContext) {
     // When restore_worktree_via_git fails partway through (here, because
     // the archive checkpoint SHAs are bogus), it must restore the user's
@@ -8673,7 +8729,14 @@ async fn test_restore_worktree_rolls_back_backup_on_failure(cx: &mut TestAppCont
 
     let result = cx
         .spawn(|mut cx| async move {
-            agent_ui::thread_worktree_archive::restore_worktree_via_git(&row, None, &mut cx).await
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &row,
+                None,
+                &confirmed_paths,
+                &mut cx,
+            )
+            .await
         })
         .await;
 
@@ -8855,6 +8918,7 @@ async fn test_restore_worktree_round_trips_git_admin_state(cx: &mut TestAppConte
                     original_commit_hash: "original-sha".to_string(),
                 },
                 None,
+                &std::collections::HashSet::default(),
                 &mut cx,
             )
             .await
@@ -8944,7 +9008,14 @@ async fn test_restore_worktree_rolls_back_when_create_worktree_detached_fails(
     let row = fixture.archived_row();
     let result = cx
         .spawn(|mut cx| async move {
-            agent_ui::thread_worktree_archive::restore_worktree_via_git(&row, None, &mut cx).await
+            let confirmed_paths = std::collections::HashSet::from([row.worktree_path.clone()]);
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &row,
+                None,
+                &confirmed_paths,
+                &mut cx,
+            )
+            .await
         })
         .await;
 
@@ -15236,8 +15307,13 @@ async fn test_restore_worktree_succeeds_when_path_is_missing(cx: &mut TestAppCon
     let restore_row = fixture.archived_row();
     let result = cx
         .spawn(|mut cx| async move {
-            agent_ui::thread_worktree_archive::restore_worktree_via_git(&restore_row, None, &mut cx)
-                .await
+            agent_ui::thread_worktree_archive::restore_worktree_via_git(
+                &restore_row,
+                None,
+                &std::collections::HashSet::default(),
+                &mut cx,
+            )
+            .await
         })
         .await;
 

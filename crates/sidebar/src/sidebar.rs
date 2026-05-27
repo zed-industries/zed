@@ -790,16 +790,19 @@ struct RestoreOutcome {
 async fn run_destructive_restore_pass(
     archived_worktrees: &[ArchivedGitWorktree],
     remote_connection: Option<&RemoteConnectionOptions>,
+    confirmed_overwrite_paths: &HashSet<PathBuf>,
     cx: &mut AsyncApp,
 ) -> anyhow::Result<Vec<RestoreOutcome>> {
     let mut outcomes = Vec::with_capacity(archived_worktrees.len());
     for row in archived_worktrees {
-        let restored_path =
-            thread_worktree_archive::restore_worktree_via_git(row, remote_connection, cx)
-                .await
-                .with_context(|| {
-                    format!("restoring worktree at {}", row.worktree_path.display())
-                })?;
+        let restored_path = thread_worktree_archive::restore_worktree_via_git(
+            row,
+            remote_connection,
+            confirmed_overwrite_paths,
+            cx,
+        )
+        .await
+        .with_context(|| format!("restoring worktree at {}", row.worktree_path.display()))?;
         outcomes.push(RestoreOutcome {
             archived: row.clone(),
             restored_path,
@@ -828,28 +831,21 @@ async fn commit_db_state_after_restore(
     store: &Entity<ThreadMetadataStore>,
     thread_id: ThreadId,
     path_replacements: &[(PathBuf, PathBuf)],
+    archived_worktree_ids: Vec<i64>,
     cx: &mut AsyncApp,
-) -> Option<ThreadMetadata> {
+) -> anyhow::Result<Option<ThreadMetadata>> {
     if path_replacements.is_empty() {
-        return None;
+        return Ok(None);
     }
-    // `AsyncApp::update` panics if the App is fully dropped (process
-    // shutdown); for our purposes that's fine, since at that point the
-    // task is being torn down with the rest of the process.
-    cx.update(|cx| {
+    let persist_task = cx.update(|cx| {
         store.update(cx, |store, cx| {
-            store.update_restored_worktree_paths(thread_id, path_replacements, cx);
-        });
+            store.complete_worktree_restore(thread_id, path_replacements, archived_worktree_ids, cx)
+        })
     });
-    let updated_metadata = cx.update(|cx| store.read(cx).entry(thread_id).cloned());
-    if updated_metadata.is_some() {
-        cx.update(|cx| {
-            store.update(cx, |store, cx| {
-                store.unarchive(thread_id, cx);
-            });
-        });
-    }
-    updated_metadata
+    let Some(persist_task) = persist_task else {
+        return Ok(None);
+    };
+    persist_task.await.map(Some)
 }
 
 #[derive(Clone)]
@@ -4076,9 +4072,12 @@ impl Sidebar {
                 }
 
                 // Destructive pass.
+                let confirmed_overwrite_paths: HashSet<PathBuf> =
+                    paths_to_overwrite.iter().cloned().collect();
                 let outcomes = match run_destructive_restore_pass(
                     &archived_worktrees,
                     metadata.remote_connection.as_ref(),
+                    &confirmed_overwrite_paths,
                     cx,
                 )
                 .await
@@ -4119,8 +4118,16 @@ impl Sidebar {
                 // restore`'s docs). The activation `update_in` below is
                 // window-bound and best-effort; correctness lives in the
                 // commit above.
-                let updated_metadata =
-                    commit_db_state_after_restore(&store, thread_id, &path_replacements, cx).await;
+                let archived_worktree_ids =
+                    outcomes.iter().map(|outcome| outcome.archived.id).collect();
+                let updated_metadata = commit_db_state_after_restore(
+                    &store,
+                    thread_id,
+                    &path_replacements,
+                    archived_worktree_ids,
+                    cx,
+                )
+                .await?;
 
                 match updated_metadata {
                     Some(updated_metadata) => {
@@ -4162,25 +4169,11 @@ impl Sidebar {
                     None => {}
                 }
 
-                // Finally, drop the archive records for everything that
-                // was actually restored. Driving cleanup off `outcomes`
-                // rather than `archived_worktrees` is a structural
-                // safeguard: today they're length-equal (because the
-                // destructive pass is all-or-nothing), but if it ever
-                // gains partial-success behaviour, this loop won't
-                // accidentally delete records for un-restored worktrees.
-                // `cleanup_archived_worktree_record` swallows its own
-                // errors, so a cleanup failure leaks a DB row but
-                // doesn't break the thread.
-                //
-                // Run cleanups concurrently for symmetry with the parallel
-                // preflight: each is an independent DB delete and there's
-                // no ordering requirement between them.
                 let remote_connection = metadata.remote_connection.as_ref();
                 let cleanups = outcomes.iter().map(|outcome| {
                     let mut cx = cx.clone();
                     async move {
-                        thread_worktree_archive::cleanup_archived_worktree_record(
+                        thread_worktree_archive::cleanup_archived_worktree_ref(
                             &outcome.archived,
                             remote_connection,
                             &mut cx,

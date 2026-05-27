@@ -654,24 +654,22 @@ impl Drop for RestoreGuard {
             return;
         };
         let thread_id = self.thread_id;
+        if self
+            .cx
+            .try_update({
+                let store = store.clone();
+                move |cx| {
+                    store.update(cx, |store, _| {
+                        store.active_restores.release(thread_id);
+                    });
+                }
+            })
+            .is_ok()
+        {
+            return;
+        }
+
         let cx = self.cx.clone();
-        // Defer the release onto the next foreground tick instead of running
-        // it inline. The guard normally drops outside any `App::update`
-        // borrow (the restore task is detached, so its locals drop on the
-        // executor between updates), but if a future caller ever drops it
-        // mid-update an inline release would either panic on a double
-        // borrow or — with `try_update` — silently leak the claim until
-        // process exit.
-        //
-        // Why deferring is safe: GPUI's foreground executor never runs a
-        // queued task while an `App::update` borrow is held. Tasks are
-        // drained between events / between `update` calls, after effects
-        // flush. So by the time the runtime polls the closure below, the
-        // outer borrow (if any) has been released and `try_update` will
-        // succeed. The closure still uses `try_update` rather than `update`
-        // as a belt-and-suspenders safeguard: if a future GPUI change ever
-        // breaks that scheduler invariant, the worst outcome is a logged
-        // leak rather than a process abort.
         self.cx
             .foreground_executor()
             .spawn(async move {
@@ -686,10 +684,42 @@ impl Drop for RestoreGuard {
     }
 }
 
-#[derive(Debug, PartialEq)]
 enum DbOperation {
     Upsert(ThreadMetadata),
     Delete(ThreadId),
+    CompleteRestore {
+        metadata: ThreadMetadata,
+        archived_worktree_ids: Vec<i64>,
+        completion_tx: async_channel::Sender<anyhow::Result<()>>,
+    },
+}
+
+impl std::fmt::Debug for DbOperation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Upsert(metadata) => formatter.debug_tuple("Upsert").field(metadata).finish(),
+            Self::Delete(thread_id) => formatter.debug_tuple("Delete").field(thread_id).finish(),
+            Self::CompleteRestore {
+                metadata,
+                archived_worktree_ids,
+                ..
+            } => formatter
+                .debug_struct("CompleteRestore")
+                .field("metadata", metadata)
+                .field("archived_worktree_ids", archived_worktree_ids)
+                .finish_non_exhaustive(),
+        }
+    }
+}
+
+impl PartialEq for DbOperation {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Upsert(left), Self::Upsert(right)) => left == right,
+            (Self::Delete(left), Self::Delete(right)) => left == right,
+            _ => false,
+        }
+    }
 }
 
 impl DbOperation {
@@ -697,6 +727,7 @@ impl DbOperation {
         match self {
             DbOperation::Upsert(thread) => thread.thread_id,
             DbOperation::Delete(thread_id) => *thread_id,
+            DbOperation::CompleteRestore { metadata, .. } => metadata.thread_id,
         }
     }
 }
@@ -1114,62 +1145,56 @@ impl ThreadMetadataStore {
         })
     }
 
-    /// Updates a thread's `folder_paths` after an archived worktree has been
-    /// restored to disk. The restored worktree may land at a different path
-    /// than it had before archival, so each `(old_path, new_path)` pair in
-    /// `path_replacements` is applied to the thread's stored folder paths.
-    pub fn update_restored_worktree_paths(
-        &mut self,
-        thread_id: ThreadId,
-        path_replacements: &[(PathBuf, PathBuf)],
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(thread) = self.threads.get(&thread_id).cloned() {
-            let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
-            for (old_path, new_path) in path_replacements {
-                if let Some(pos) = paths.iter().position(|p| p == old_path) {
-                    paths[pos] = new_path.clone();
-                }
-            }
-            let new_folder_paths = PathList::new(&paths);
-            self.save_internal(ThreadMetadata {
-                worktree_paths: WorktreePaths::from_path_lists(
-                    thread.main_worktree_paths().clone(),
-                    new_folder_paths.clone(),
-                )
-                .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
-                ..thread
-            });
-            cx.notify();
-        }
-    }
-
     pub fn complete_worktree_restore(
         &mut self,
         thread_id: ThreadId,
         path_replacements: &[(PathBuf, PathBuf)],
+        archived_worktree_ids: Vec<i64>,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(thread) = self.threads.get(&thread_id).cloned() {
-            let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
-            for (old_path, new_path) in path_replacements {
-                for path in &mut paths {
-                    if path == old_path {
-                        *path = new_path.clone();
-                    }
+    ) -> Option<Task<anyhow::Result<ThreadMetadata>>> {
+        let thread = self.threads.get(&thread_id).cloned()?;
+        let mut paths: Vec<PathBuf> = thread.folder_paths().paths().to_vec();
+        for (old_path, new_path) in path_replacements {
+            for path in &mut paths {
+                if path == old_path {
+                    *path = new_path.clone();
                 }
             }
-            let new_folder_paths = PathList::new(&paths);
-            self.save_internal(ThreadMetadata {
-                worktree_paths: WorktreePaths::from_path_lists(
-                    thread.main_worktree_paths().clone(),
-                    new_folder_paths.clone(),
-                )
-                .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
-                ..thread
-            });
-            cx.notify();
         }
+        let new_folder_paths = PathList::new(&paths);
+        let metadata = ThreadMetadata {
+            worktree_paths: WorktreePaths::from_path_lists(
+                thread.main_worktree_paths().clone(),
+                new_folder_paths.clone(),
+            )
+            .unwrap_or_else(|_| WorktreePaths::from_folder_paths(&new_folder_paths)),
+            archived: false,
+            ..thread
+        };
+        self.save_internal(metadata.clone());
+        cx.notify();
+
+        let (completion_tx, completion_rx) = async_channel::bounded(1);
+        if let Err(error) = self
+            .pending_thread_ops_tx
+            .try_send(DbOperation::CompleteRestore {
+                metadata: metadata.clone(),
+                archived_worktree_ids,
+                completion_tx,
+            })
+        {
+            return Some(Task::ready(Err(anyhow::anyhow!(
+                "failed to queue restore completion: {error}"
+            ))));
+        }
+
+        Some(cx.background_spawn(async move {
+            completion_rx
+                .recv()
+                .await
+                .context("restore completion task was canceled")??;
+            Ok(metadata)
+        }))
     }
 
     /// Apply a mutation to the worktree paths of all threads whose current
@@ -1430,6 +1455,21 @@ impl ThreadMetadataStore {
                             DbOperation::Delete(thread_id) => {
                                 db.delete(thread_id).await.log_err();
                             }
+                            DbOperation::CompleteRestore {
+                                metadata,
+                                archived_worktree_ids,
+                                completion_tx,
+                            } => {
+                                let result = async {
+                                    db.save(metadata).await?;
+                                    for archived_worktree_id in archived_worktree_ids {
+                                        db.delete_archived_worktree(archived_worktree_id).await?;
+                                    }
+                                    anyhow::Ok(())
+                                }
+                                .await;
+                                completion_tx.send(result).await.log_err();
+                            }
                         }
                     }
                 }
@@ -1454,14 +1494,24 @@ impl ThreadMetadataStore {
     }
 
     fn dedup_db_operations(operations: Vec<DbOperation>) -> Vec<DbOperation> {
-        let mut ops = HashMap::default();
+        let mut seen = HashSet::default();
+        let mut deduped = Vec::new();
         for operation in operations.into_iter().rev() {
-            if ops.contains_key(&operation.id()) {
-                continue;
+            let id = operation.id();
+            match &operation {
+                DbOperation::CompleteRestore { .. } => {
+                    seen.insert(id);
+                    deduped.push(operation);
+                }
+                DbOperation::Upsert(_) | DbOperation::Delete(_) => {
+                    if seen.insert(id) {
+                        deduped.push(operation);
+                    }
+                }
             }
-            ops.insert(operation.id(), operation);
         }
-        ops.into_values().collect()
+        deduped.reverse();
+        deduped
     }
 
     fn handle_conversation_event(
@@ -3710,9 +3760,14 @@ mod tests {
             ),
         ];
 
-        store.update(cx, |store, cx| {
-            store.complete_worktree_restore(thread_id, &replacements, cx);
-        });
+        let persist_task = store
+            .update(cx, |store, cx| {
+                store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
+            })
+            .expect("thread should exist");
+        persist_task
+            .await
+            .expect("restore completion should persist");
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3748,9 +3803,14 @@ mod tests {
             ),
         ];
 
-        store.update(cx, |store, cx| {
-            store.complete_worktree_restore(thread_id, &replacements, cx);
-        });
+        let persist_task = store
+            .update(cx, |store, cx| {
+                store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
+            })
+            .expect("thread should exist");
+        persist_task
+            .await
+            .expect("restore completion should persist");
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3762,7 +3822,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_update_restored_worktree_paths_multiple(cx: &mut TestAppContext) {
+    async fn test_complete_worktree_restore_replaces_multiple_paths(cx: &mut TestAppContext) {
         init_test(cx);
         let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
@@ -3789,9 +3849,14 @@ mod tests {
             ),
         ];
 
-        store.update(cx, |store, cx| {
-            store.update_restored_worktree_paths(thread_id, &replacements, cx);
-        });
+        let persist_task = store
+            .update(cx, |store, cx| {
+                store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
+            })
+            .expect("thread should exist");
+        persist_task
+            .await
+            .expect("restore completion should persist");
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();
@@ -3803,7 +3868,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_update_restored_worktree_paths_preserves_unmatched(cx: &mut TestAppContext) {
+    async fn test_complete_worktree_restore_preserves_unmatched_replacements(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let store = cx.update(|cx| ThreadMetadataStore::global(cx));
 
@@ -3827,9 +3894,14 @@ mod tests {
             ),
         ];
 
-        store.update(cx, |store, cx| {
-            store.update_restored_worktree_paths(thread_id, &replacements, cx);
-        });
+        let persist_task = store
+            .update(cx, |store, cx| {
+                store.complete_worktree_restore(thread_id, &replacements, Vec::new(), cx)
+            })
+            .expect("thread should exist");
+        persist_task
+            .await
+            .expect("restore completion should persist");
 
         let entry = store.read_with(cx, |store, _cx| store.entry(thread_id).cloned());
         let entry = entry.unwrap();

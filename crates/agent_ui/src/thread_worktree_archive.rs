@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -589,6 +590,7 @@ pub async fn rollback_persist(archived_worktree_id: i64, root: &RootPlan, cx: &m
 pub async fn restore_worktree_via_git(
     row: &ArchivedGitWorktree,
     remote_connection: Option<&RemoteConnectionOptions>,
+    confirmed_overwrite_paths: &HashSet<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<PathBuf> {
     if remote_connection.is_some() {
@@ -625,7 +627,8 @@ pub async fn restore_worktree_via_git(
     // [`restore_would_overwrite`] (which also treats empty dirs as
     // "no content") so the destructive pass cannot silently delete
     // something the user wasn't warned about.
-    let session = BackupSession::take(fs, worktree_path).await?;
+    let overwrite_confirmed = confirmed_overwrite_paths.contains(worktree_path);
+    let session = BackupSession::take(fs, worktree_path, overwrite_confirmed).await?;
 
     // From here on, every destructive step either (a) calls
     // `session.try_step(...)` so a failure rolls the backup back, or
@@ -747,8 +750,12 @@ impl<'a> BackupSession<'a> {
     /// sibling backup directory and returns a session that can roll it
     /// back. If the path was already missing or an empty directory, the
     /// session holds no backup and rollback / commit become no-ops.
-    async fn take(fs: &'a dyn Fs, worktree_path: &'a Path) -> Result<Self> {
-        let backup = take_backup_if_needed(fs, worktree_path).await?;
+    async fn take(
+        fs: &'a dyn Fs,
+        worktree_path: &'a Path,
+        overwrite_confirmed: bool,
+    ) -> Result<Self> {
+        let backup = take_backup_if_needed(fs, worktree_path, overwrite_confirmed).await?;
         Ok(Self {
             fs,
             worktree_path,
@@ -796,9 +803,19 @@ impl<'a> BackupSession<'a> {
 ///
 /// Used by [`BackupSession::take`]; not called directly from the restore
 /// flow.
-async fn take_backup_if_needed(fs: &dyn Fs, worktree_path: &Path) -> Result<Option<Backup>> {
+async fn take_backup_if_needed(
+    fs: &dyn Fs,
+    worktree_path: &Path,
+    overwrite_confirmed: bool,
+) -> Result<Option<Backup>> {
     if !worktree_path_has_content(fs, worktree_path).await? {
         return Ok(None);
+    }
+    if !overwrite_confirmed {
+        anyhow::bail!(
+            "refusing to restore worktree at '{}' because content appeared after the overwrite confirmation",
+            worktree_path.display()
+        );
     }
     let backup_dir = create_backup_dir(fs, worktree_path).await?;
     let backup = Backup { dir: backup_dir };
@@ -1316,14 +1333,11 @@ async fn remove_new_worktree_on_error(
     }
 }
 
-/// Deletes the git ref and DB records for a single archived worktree.
-/// Used when an archived worktree is no longer referenced by any thread.
-pub async fn cleanup_archived_worktree_record(
+pub async fn cleanup_archived_worktree_ref(
     row: &ArchivedGitWorktree,
     remote_connection: Option<&RemoteConnectionOptions>,
     cx: &mut AsyncApp,
 ) {
-    // Delete the git ref from the main repo
     if let Ok((main_repo, _temp_project)) =
         find_or_create_repository(&row.main_repo_path, remote_connection, cx).await
     {
@@ -1334,12 +1348,18 @@ pub async fn cleanup_archived_worktree_record(
             Ok(Err(error)) => log::warn!("Failed to delete archive ref: {error}"),
             Err(_) => log::warn!("Archive ref deletion was canceled"),
         }
-        // `_temp_project` lives to end of this block so a temporary
-        // project (if `find_or_create_repository` made one) stays alive
-        // through the await above.
     }
+}
 
-    // Delete the DB records
+/// Deletes the git ref and DB records for a single archived worktree.
+/// Used when an archived worktree is no longer referenced by any thread.
+pub async fn cleanup_archived_worktree_record(
+    row: &ArchivedGitWorktree,
+    remote_connection: Option<&RemoteConnectionOptions>,
+    cx: &mut AsyncApp,
+) {
+    cleanup_archived_worktree_ref(row, remote_connection, cx).await;
+
     let store = cx.update(|cx| ThreadMetadataStore::global(cx));
     store
         .read_with(cx, |store, cx| store.delete_archived_worktree(row.id, cx))
@@ -2244,7 +2264,13 @@ mod tests {
             .spawn(|mut cx| {
                 let remote_connection = remote_connection.clone();
                 async move {
-                    restore_worktree_via_git(&restore_row, Some(&remote_connection), &mut cx).await
+                    restore_worktree_via_git(
+                        &restore_row,
+                        Some(&remote_connection),
+                        &HashSet::default(),
+                        &mut cx,
+                    )
+                    .await
                 }
             })
             .await;
