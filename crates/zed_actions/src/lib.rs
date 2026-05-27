@@ -574,6 +574,12 @@ pub mod assistant {
             OpenSkillCreator,
             /// Opens the skill creator window to import a skill from a GitHub URL.
             CreateSkillFromUrl,
+            /// Opens the user-global AGENTS.md rules file.
+            #[action(name = "OpenGlobalAGENTS.mdRules")]
+            OpenGlobalAgentsMdRules,
+            /// Opens the project AGENTS.md rules file.
+            #[action(name = "OpenProjectAGENTS.mdRules")]
+            OpenProjectAgentsMdRules,
         ]
     );
 
