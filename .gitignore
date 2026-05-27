@@ -22,7 +22,6 @@
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .venv
 .vscode
-.agents
 .wrangler
 .perf-runs
 /assets/*licenses.*
