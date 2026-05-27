@@ -111,6 +111,7 @@ dependencies = [
  "project",
  "prompt_store",
  "rand 0.9.4",
+ "sandbox",
  "serde",
  "serde_json",
  "settings",
