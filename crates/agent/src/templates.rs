@@ -177,7 +177,7 @@ mod tests {
                 rules_file: None,
             },
         ];
-        let project = ProjectContext::new(worktrees, Vec::new());
+        let project = ProjectContext::new(worktrees);
         let template = SystemPromptTemplate {
             project: &project,
             available_tools: vec!["echo".into()],
@@ -243,6 +243,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            sandboxing: false,
         };
         let templates = Templates::new();
         let rendered = template.render(&templates).unwrap();
