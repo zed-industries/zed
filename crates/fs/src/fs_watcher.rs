@@ -423,7 +423,6 @@ fn push_notify_event(
         .collect::<Vec<_>>();
 
     if event.need_rescan() {
-        log::warn!("filesystem watcher lost sync for {watched_root:?}; scheduling rescan");
         path_events.retain(|path_event| path_event.path != watched_root);
         path_events.push(PathEvent {
             path: watched_root.to_path_buf(),
@@ -750,6 +749,12 @@ fn handle_event(mode: WatcherMode, event: Result<notify::Event, notify::Error>) 
 
     match event {
         Ok(event) => {
+            if event.need_rescan() {
+                log::warn!(
+                    "filesystem watcher lost sync for {mode:?}; scheduling rescans for {} registrations",
+                    callbacks.len()
+                );
+            }
             for callback in callbacks {
                 callback(&event);
             }
