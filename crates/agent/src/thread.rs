@@ -3171,6 +3171,7 @@ impl Thread {
             model_name: self.model.as_ref().map(|m| m.name().0.to_string()),
             date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
+            sandboxing: crate::sandboxing::sandboxing_enabled(cx),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
