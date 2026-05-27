@@ -163,6 +163,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "context_server",
+ "criterion",
  "ctor",
  "db",
  "editor",
