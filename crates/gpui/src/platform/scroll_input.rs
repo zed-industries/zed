@@ -58,40 +58,40 @@ impl ScrollDirection {
 /// - `ctrl-scroll-down` - ctrl + scroll down (e.g., decrease font size)
 /// - `cmd-scroll-up` - cmd + scroll up (macOS)
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct ScrollStroke {
+pub struct ScrollInput {
     /// The modifier keys that must be held
     pub modifiers: Modifiers,
     /// The scroll direction
     pub direction: ScrollDirection,
 }
 
-/// Error type for `ScrollStroke::parse`
+/// Error type for `ScrollInput::parse`
 #[derive(Debug)]
-pub struct InvalidScrollStrokeError {
+pub struct InvalidScrollInputError {
     /// The invalid input string
     pub input: String,
 }
 
-impl Error for InvalidScrollStrokeError {}
+impl Error for InvalidScrollInputError {}
 
-impl Display for InvalidScrollStrokeError {
+impl Display for InvalidScrollInputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Invalid scroll stroke \"{}\". {}",
-            self.input, SCROLL_STROKE_PARSE_EXPECTED_MESSAGE
+            "Invalid scroll input \"{}\". {}",
+            self.input, SCROLL_INPUT_PARSE_EXPECTED_MESSAGE
         )
     }
 }
 
-/// Help message for scroll stroke parsing errors
-pub const SCROLL_STROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected format: \
+/// Help message for scroll input parsing errors
+pub const SCROLL_INPUT_PARSE_EXPECTED_MESSAGE: &str = "Expected format: \
     <modifiers->scroll-<up|down>. \
     At least one modifier is required. \
     Modifiers: ctrl, alt, shift, fn, cmd/super/win.";
 
-impl ScrollStroke {
-    /// Create a new scroll stroke
+impl ScrollInput {
+    /// Create a new scroll input
     pub fn new(direction: ScrollDirection, modifiers: Modifiers) -> Self {
         Self {
             modifiers,
@@ -99,14 +99,14 @@ impl ScrollStroke {
         }
     }
 
-    /// Parse a scroll stroke string.
+    /// Parse a scroll input string.
     ///
     /// Syntax: `<modifiers->scroll-<up|down>`
     ///
     /// Examples:
     /// - `ctrl-scroll-up` - ctrl + scroll up
     /// - `cmd-scroll-down` - cmd + scroll down
-    pub fn parse(source: &str) -> Result<Self, InvalidScrollStrokeError> {
+    pub fn parse(source: &str) -> Result<Self, InvalidScrollInputError> {
         let mut modifiers = Modifiers::none();
         let mut direction = None;
 
@@ -128,7 +128,7 @@ impl ScrollStroke {
                     "up" => Some(ScrollDirection::Up),
                     "down" => Some(ScrollDirection::Down),
                     _ => {
-                        return Err(InvalidScrollStrokeError {
+                        return Err(InvalidScrollInputError {
                             input: source.to_owned(),
                         });
                     }
@@ -138,27 +138,48 @@ impl ScrollStroke {
             }
 
             // Unknown component
-            return Err(InvalidScrollStrokeError {
+            return Err(InvalidScrollInputError {
                 input: source.to_owned(),
             });
         }
 
-        let direction = direction.ok_or_else(|| InvalidScrollStrokeError {
+        let direction = direction.ok_or_else(|| InvalidScrollInputError {
             input: source.to_owned(),
         })?;
         if !modifiers.modified() {
-            return Err(InvalidScrollStrokeError {
+            return Err(InvalidScrollInputError {
                 input: source.to_owned(),
             });
         }
 
-        Ok(ScrollStroke {
+        Ok(ScrollInput {
             modifiers,
             direction,
         })
     }
 
-    /// Check if a scroll event matches this stroke
+    /// Attempt to parse `source` as a scroll input.
+    ///
+    /// Returns `Ok(None)` if `source` is not in the scroll-input grammar at
+    /// all (it does not end with `scroll-<direction>`). Returns `Err` if it
+    /// is recognizably a scroll input but malformed.
+    pub fn try_parse(source: &str) -> Result<Option<Self>, InvalidScrollInputError> {
+        let mut tail = source.rsplit('-');
+        let Some(direction) = tail.next() else {
+            return Ok(None);
+        };
+        let Some(scroll_keyword) = tail.next() else {
+            return Ok(None);
+        };
+        if !scroll_keyword.eq_ignore_ascii_case("scroll")
+            || !matches!(direction.to_ascii_lowercase().as_str(), "up" | "down")
+        {
+            return Ok(None);
+        }
+        Self::parse(source).map(Some)
+    }
+
+    /// Check if a scroll event matches this input
     pub fn matches(&self, direction: ScrollDirection, modifiers: Modifiers) -> bool {
         self.direction == direction && self.modifiers == modifiers
     }
@@ -198,15 +219,10 @@ impl ScrollStroke {
     }
 }
 
-impl Display for ScrollStroke {
+impl Display for ScrollInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.unparse())
     }
-}
-
-/// Check if a string looks like a scroll stroke (contains "scroll-")
-pub fn looks_like_scroll_stroke(s: &str) -> bool {
-    s.to_ascii_lowercase().contains("scroll-")
 }
 
 #[cfg(test)]
@@ -215,50 +231,50 @@ mod tests {
 
     #[test]
     fn test_parse_simple_scroll() {
-        let stroke = ScrollStroke::parse("ctrl-scroll-down").unwrap();
+        let stroke = ScrollInput::parse("ctrl-scroll-down").unwrap();
         assert_eq!(stroke.direction, ScrollDirection::Down);
         assert!(stroke.modifiers.control);
     }
 
     #[test]
     fn test_parse_with_modifiers() {
-        let stroke = ScrollStroke::parse("ctrl-scroll-up").unwrap();
+        let stroke = ScrollInput::parse("ctrl-scroll-up").unwrap();
         assert_eq!(stroke.direction, ScrollDirection::Up);
         assert!(stroke.modifiers.control);
 
-        let stroke = ScrollStroke::parse("alt-scroll-down").unwrap();
+        let stroke = ScrollInput::parse("alt-scroll-down").unwrap();
         assert_eq!(stroke.direction, ScrollDirection::Down);
         assert!(stroke.modifiers.alt);
 
-        let stroke = ScrollStroke::parse("ctrl-shift-scroll-up").unwrap();
+        let stroke = ScrollInput::parse("ctrl-shift-scroll-up").unwrap();
         assert!(stroke.modifiers.control);
         assert!(stroke.modifiers.shift);
     }
 
     #[test]
     fn test_parse_case_insensitive() {
-        let stroke = ScrollStroke::parse("CTRL-SCROLL-UP").unwrap();
+        let stroke = ScrollInput::parse("CTRL-SCROLL-UP").unwrap();
         assert_eq!(stroke.direction, ScrollDirection::Up);
         assert!(stroke.modifiers.control);
 
-        let stroke = ScrollStroke::parse("CTRL-Scroll-Down").unwrap();
+        let stroke = ScrollInput::parse("CTRL-Scroll-Down").unwrap();
         assert!(stroke.modifiers.control);
         assert_eq!(stroke.direction, ScrollDirection::Down);
     }
 
     #[test]
     fn test_parse_invalid() {
-        assert!(ScrollStroke::parse("scroll").is_err());
-        assert!(ScrollStroke::parse("scroll-up").is_err());
-        assert!(ScrollStroke::parse("scroll-left").is_err());
-        assert!(ScrollStroke::parse("scroll-").is_err());
-        assert!(ScrollStroke::parse("").is_err());
-        assert!(ScrollStroke::parse("ctrl-scroll").is_err());
+        assert!(ScrollInput::parse("scroll").is_err());
+        assert!(ScrollInput::parse("scroll-up").is_err());
+        assert!(ScrollInput::parse("scroll-left").is_err());
+        assert!(ScrollInput::parse("scroll-").is_err());
+        assert!(ScrollInput::parse("").is_err());
+        assert!(ScrollInput::parse("ctrl-scroll").is_err());
     }
 
     #[test]
     fn test_matches() {
-        let stroke = ScrollStroke::parse("ctrl-scroll-up").unwrap();
+        let stroke = ScrollInput::parse("ctrl-scroll-up").unwrap();
 
         let mut mods = Modifiers::none();
         mods.control = true;
@@ -270,10 +286,10 @@ mod tests {
 
     #[test]
     fn test_unparse() {
-        let stroke = ScrollStroke::parse("ctrl-scroll-up").unwrap();
+        let stroke = ScrollInput::parse("ctrl-scroll-up").unwrap();
         assert_eq!(stroke.unparse(), "ctrl-scroll-up");
 
-        let stroke = ScrollStroke::parse("alt-shift-scroll-down").unwrap();
+        let stroke = ScrollInput::parse("alt-shift-scroll-down").unwrap();
         assert_eq!(stroke.unparse(), "alt-shift-scroll-down");
     }
 }

@@ -16,7 +16,7 @@ use editor::{CompletionProvider, Editor, EditorEvent, EditorMode, SizingBehavior
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext as _, AsyncApp, BindingInputKind, ClickEvent, Context, DismissEvent, Entity,
+    Action, AppContext as _, AsyncApp, BindingInput, ClickEvent, Context, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
     KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
@@ -231,7 +231,7 @@ impl FilterState {
 
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 struct ActionMapping {
-    input: BindingInputKind,
+    input: BindingInput,
     context: Option<SharedString>,
 }
 
@@ -257,7 +257,7 @@ impl SourceFilters {
 impl Default for ActionMapping {
     fn default() -> Self {
         Self {
-            input: BindingInputKind::Keystrokes(Default::default()),
+            input: BindingInput::Keystrokes(Default::default()),
             context: None,
         }
     }
@@ -321,7 +321,7 @@ struct ConflictState {
 }
 
 type ConflictKeybindMapping = HashMap<
-    BindingInputKind,
+    BindingInput,
     Vec<(
         Option<gpui::KeyBindingContextPredicate>,
         Vec<ConflictOrigin>,
@@ -1747,7 +1747,7 @@ impl HumanizedActionNameCache {
 
 #[derive(Clone)]
 struct KeyBinding {
-    input: BindingInputKind,
+    input: BindingInput,
     keystrokes: Rc<[KeybindingKeystroke]>,
     source: KeybindSource,
 }
@@ -1848,8 +1848,8 @@ impl ProcessedBinding {
 
     fn keystrokes(&self) -> Option<&[KeybindingKeystroke]> {
         self.key_binding().and_then(|binding| match binding.input {
-            BindingInputKind::Keystrokes(_) => Some(binding.keystrokes.as_ref()),
-            BindingInputKind::Mouse(_) | BindingInputKind::Scroll(_) => None,
+            BindingInput::Keystrokes(_) => Some(binding.keystrokes.as_ref()),
+            BindingInput::Mouse(_) | BindingInput::Scroll(_) => None,
         })
     }
 
@@ -2203,19 +2203,19 @@ impl Render for KeymapEditor {
                                             let platform_style = ui::PlatformStyle::platform();
                                             let vim_mode = kb.source == KeybindSource::Vim;
                                             match &kb.input {
-                                                BindingInputKind::Keystrokes(_) if !kb.keystrokes.is_empty() => {
+                                                BindingInput::Keystrokes(_) if !kb.keystrokes.is_empty() => {
                                                     ui::KeyBinding::from_keystrokes(kb.keystrokes.clone(), vim_mode).into_any_element()
                                                 }
-                                                BindingInputKind::Mouse(mouse_stroke) => {
+                                                BindingInput::Mouse(mouse_input) => {
                                                     h_flex()
                                                         .gap_0p5()
-                                                        .children(ui::render_mouse_stroke(mouse_stroke, None, None, platform_style, vim_mode))
+                                                        .children(ui::render_mouse_stroke(mouse_input, None, None, platform_style, vim_mode))
                                                         .into_any_element()
                                                 }
-                                                BindingInputKind::Scroll(scroll_stroke) => {
+                                                BindingInput::Scroll(scroll_input) => {
                                                     h_flex()
                                                         .gap_0p5()
-                                                        .children(ui::render_scroll_stroke(scroll_stroke, None, None, platform_style, vim_mode))
+                                                        .children(ui::render_scroll_stroke(scroll_input, None, None, platform_style, vim_mode))
                                                         .into_any_element()
                                                 }
                                                 _ => binding
@@ -2819,7 +2819,7 @@ impl KeybindingEditorModal {
             .map_err(InputError::error)?;
 
         let action_mapping = ActionMapping {
-            input: BindingInputKind::Keystrokes(new_keystrokes.into()),
+            input: BindingInput::Keystrokes(new_keystrokes.into()),
             context: new_context.map(SharedString::from),
         };
 
@@ -3666,8 +3666,8 @@ async fn save_keybinding_update(
     };
 
     let source_keystrokes: &[KeybindingKeystroke] = match &action_mapping.input {
-        BindingInputKind::Keystrokes(ks) => ks.as_slice(),
-        BindingInputKind::Mouse(_) | BindingInputKind::Scroll(_) => {
+        BindingInput::Keystrokes(ks) => ks.as_slice(),
+        BindingInput::Mouse(_) | BindingInput::Scroll(_) => {
             anyhow::bail!("Mouse and scroll bindings cannot be edited from the keymap editor yet");
         }
     };

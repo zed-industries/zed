@@ -1,9 +1,7 @@
 mod binding;
-mod binding_input;
 mod context;
 
 pub use binding::*;
-pub use binding_input::*;
 pub use context::*;
 
 use crate::{
@@ -951,8 +949,8 @@ mod tests {
         let mut keymap = Keymap::default();
 
         // Simulate zoom bindings: ctrl-scroll-up for zoom in, ctrl-scroll-down for zoom out
-        let zoom_in_binding = KeyBinding::new_scroll("ctrl-scroll-up", ActionAlpha {}, None);
-        let zoom_out_binding = KeyBinding::new_scroll("ctrl-scroll-down", ActionBeta {}, None);
+        let zoom_in_binding = KeyBinding::new("ctrl-scroll-up", ActionAlpha {}, None);
+        let zoom_out_binding = KeyBinding::new("ctrl-scroll-down", ActionBeta {}, None);
 
         keymap.add_bindings([zoom_in_binding, zoom_out_binding]);
 
@@ -988,9 +986,9 @@ mod tests {
 
         // Add scroll bindings with context - only active in Editor
         let editor_zoom_in =
-            KeyBinding::new_scroll("ctrl-scroll-up", ActionAlpha {}, Some("Editor"));
+            KeyBinding::new("ctrl-scroll-up", ActionAlpha {}, Some("Editor"));
         let editor_zoom_out =
-            KeyBinding::new_scroll("ctrl-scroll-down", ActionBeta {}, Some("Editor"));
+            KeyBinding::new("ctrl-scroll-down", ActionBeta {}, Some("Editor"));
 
         keymap.add_bindings([editor_zoom_in, editor_zoom_out]);
 
@@ -1018,9 +1016,9 @@ mod tests {
         let mut keymap = Keymap::default();
 
         // Add mouse bindings for common operations
-        let cmd_click = KeyBinding::new_mouse("cmd-mouse1", ActionAlpha {}, Some("Editor"));
-        let alt_click = KeyBinding::new_mouse("alt-mouse1", ActionBeta {}, Some("Editor"));
-        let alt_middle_click = KeyBinding::new_mouse("alt-mouse3", ActionGamma {}, Some("Editor"));
+        let cmd_click = KeyBinding::new("cmd-mouse1", ActionAlpha {}, Some("Editor"));
+        let alt_click = KeyBinding::new("alt-mouse1", ActionBeta {}, Some("Editor"));
+        let alt_middle_click = KeyBinding::new("alt-mouse3", ActionGamma {}, Some("Editor"));
 
         keymap.add_bindings([cmd_click, alt_click, alt_middle_click]);
 
@@ -1066,8 +1064,8 @@ mod tests {
         let mut keymap = Keymap::default();
 
         // Single click and double click should be distinguishable
-        let single_click = KeyBinding::new_mouse("alt-mouse1", ActionAlpha {}, None);
-        let double_click = KeyBinding::new_mouse("alt-double-mouse1", ActionBeta {}, None);
+        let single_click = KeyBinding::new("alt-mouse1", ActionAlpha {}, None);
+        let double_click = KeyBinding::new("alt-double-mouse1", ActionBeta {}, None);
 
         keymap.add_bindings([single_click, double_click]);
 

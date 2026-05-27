@@ -5,8 +5,8 @@ use crate::utils::capitalize;
 use crate::{Icon, IconName, IconSize, h_flex, prelude::*};
 use gpui::{
     Action, AnyElement, App, ClickCount, FocusHandle, Global, IntoElement, KeybindingKeystroke,
-    Keystroke, Modifiers, MouseButton, MouseStroke, NavigationDirection, ScrollDirection,
-    ScrollStroke, Window, relative,
+    Keystroke, Modifiers, MouseButton, MouseInput, NavigationDirection, ScrollDirection,
+    ScrollInput, Window, relative,
 };
 use itertools::Itertools;
 
@@ -557,7 +557,7 @@ fn keystroke_text(
 
 /// Render a mouse stroke with the same styling as keystrokes.
 pub fn render_mouse_stroke(
-    mouse_stroke: &MouseStroke,
+    mouse_input: &MouseInput,
     color: Option<Color>,
     size: impl Into<Option<AbsoluteLength>>,
     platform_style: PlatformStyle,
@@ -572,8 +572,8 @@ pub fn render_mouse_stroke(
 
     if use_text {
         let text = mouse_stroke_text(
-            &mouse_stroke.modifiers,
-            mouse_stroke,
+            &mouse_input.modifiers,
+            mouse_input,
             platform_style,
             vim_mode,
         );
@@ -581,14 +581,14 @@ pub fn render_mouse_stroke(
     } else {
         let mut elements = Vec::new();
         elements.extend(render_modifiers(
-            &mouse_stroke.modifiers,
+            &mouse_input.modifiers,
             platform_style,
             color,
             size,
             true,
         ));
         elements.push(render_key(
-            &mouse_button_key(mouse_stroke),
+            &mouse_button_key(mouse_input),
             color,
             platform_style,
             size,
@@ -599,7 +599,7 @@ pub fn render_mouse_stroke(
 
 /// Render a scroll stroke with the same styling as keystrokes.
 pub fn render_scroll_stroke(
-    scroll_stroke: &ScrollStroke,
+    scroll_input: &ScrollInput,
     color: Option<Color>,
     size: impl Into<Option<AbsoluteLength>>,
     platform_style: PlatformStyle,
@@ -614,8 +614,8 @@ pub fn render_scroll_stroke(
 
     if use_text {
         let text = scroll_stroke_text(
-            &scroll_stroke.modifiers,
-            scroll_stroke,
+            &scroll_input.modifiers,
+            scroll_input,
             platform_style,
             vim_mode,
         );
@@ -623,14 +623,14 @@ pub fn render_scroll_stroke(
     } else {
         let mut elements = Vec::new();
         elements.extend(render_modifiers(
-            &scroll_stroke.modifiers,
+            &scroll_input.modifiers,
             platform_style,
             color,
             size,
             true,
         ));
         elements.push(render_key(
-            &scroll_direction_key(scroll_stroke.direction),
+            &scroll_direction_key(scroll_input.direction),
             color,
             platform_style,
             size,
@@ -640,7 +640,7 @@ pub fn render_scroll_stroke(
 }
 
 /// Returns a textual representation for the mouse button part of a mouse stroke.
-fn mouse_button_key(stroke: &MouseStroke) -> String {
+fn mouse_button_key(stroke: &MouseInput) -> String {
     let mut key = String::new();
 
     match stroke.click_count {
@@ -671,7 +671,7 @@ fn scroll_direction_key(direction: ScrollDirection) -> String {
 /// Returns a textual representation of the given mouse stroke.
 fn mouse_stroke_text(
     modifiers: &Modifiers,
-    stroke: &MouseStroke,
+    stroke: &MouseInput,
     platform_style: PlatformStyle,
     vim_mode: bool,
 ) -> String {
@@ -682,7 +682,7 @@ fn mouse_stroke_text(
 /// Returns a textual representation of the given scroll stroke.
 fn scroll_stroke_text(
     modifiers: &Modifiers,
-    stroke: &ScrollStroke,
+    stroke: &ScrollInput,
     platform_style: PlatformStyle,
     vim_mode: bool,
 ) -> String {

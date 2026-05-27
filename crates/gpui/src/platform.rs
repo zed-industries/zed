@@ -1,8 +1,8 @@
 mod app_menu;
 mod keyboard;
 mod keystroke;
-mod mouse_stroke;
-mod scroll_stroke;
+mod mouse_input;
+mod scroll_input;
 
 #[cfg(all(target_os = "linux", feature = "wayland"))]
 #[expect(missing_docs)]
@@ -72,8 +72,8 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keyboard::*;
 pub use keystroke::*;
-pub use mouse_stroke::*;
-pub use scroll_stroke::*;
+pub use mouse_input::*;
+pub use scroll_input::*;
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) use test::*;

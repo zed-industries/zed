@@ -40,7 +40,7 @@ impl ClickCount {
 /// - `cmd-mouse5` - platform modifier + forward button
 /// - `ctrl-double-mouse1` - ctrl + double left click
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Default)]
-pub struct MouseStroke {
+pub struct MouseInput {
     /// The modifier keys that must be held
     pub modifiers: Modifiers,
     /// The mouse button
@@ -49,35 +49,35 @@ pub struct MouseStroke {
     pub click_count: ClickCount,
 }
 
-/// Error type for `MouseStroke::parse`
+/// Error type for `MouseInput::parse`
 #[derive(Debug)]
-pub struct InvalidMouseStrokeError {
+pub struct InvalidMouseInputError {
     /// The invalid input string
     pub input: String,
 }
 
-impl Error for InvalidMouseStrokeError {}
+impl Error for InvalidMouseInputError {}
 
-impl Display for InvalidMouseStrokeError {
+impl Display for InvalidMouseInputError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Invalid mouse stroke \"{}\". {}",
-            self.input, MOUSE_STROKE_PARSE_EXPECTED_MESSAGE
+            "Invalid mouse input \"{}\". {}",
+            self.input, MOUSE_INPUT_PARSE_EXPECTED_MESSAGE
         )
     }
 }
 
-/// Help message for mouse stroke parsing errors
-pub const MOUSE_STROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected format: \
+/// Help message for mouse input parsing errors
+pub const MOUSE_INPUT_PARSE_EXPECTED_MESSAGE: &str = "Expected format: \
     <modifiers->[clickcount-]mouse<1-5>. \
     At least one modifier is required. \
     Modifiers: ctrl, alt, shift, fn, cmd/super/win. \
     Click count: double, triple. \
     Mouse buttons: mouse1 (left), mouse2 (right), mouse3 (middle), mouse4 (back), mouse5 (forward).";
 
-impl MouseStroke {
-    /// Create a new mouse stroke
+impl MouseInput {
+    /// Create a new mouse input
     pub fn new(button: MouseButton, modifiers: Modifiers, click_count: ClickCount) -> Self {
         Self {
             modifiers,
@@ -86,7 +86,7 @@ impl MouseStroke {
         }
     }
 
-    /// Parse a mouse stroke string.
+    /// Parse a mouse input string.
     ///
     /// Syntax: `<modifiers->[clickcount-]mouse<1-5>`
     ///
@@ -94,7 +94,7 @@ impl MouseStroke {
     /// - `alt-mouse1` - alt + left click
     /// - `shift-mouse2` - shift + right click
     /// - `ctrl-double-mouse1` - ctrl + double left click
-    pub fn parse(source: &str) -> Result<Self, InvalidMouseStrokeError> {
+    pub fn parse(source: &str) -> Result<Self, InvalidMouseInputError> {
         let mut modifiers = Modifiers::none();
         let mut click_count = ClickCount::Single;
         let mut button = None;
@@ -127,28 +127,42 @@ impl MouseStroke {
             }
 
             // Unknown component
-            return Err(InvalidMouseStrokeError {
+            return Err(InvalidMouseInputError {
                 input: source.to_owned(),
             });
         }
 
-        let button = button.ok_or_else(|| InvalidMouseStrokeError {
+        let button = button.ok_or_else(|| InvalidMouseInputError {
             input: source.to_owned(),
         })?;
         if !modifiers.modified() {
-            return Err(InvalidMouseStrokeError {
+            return Err(InvalidMouseInputError {
                 input: source.to_owned(),
             });
         }
 
-        Ok(MouseStroke {
+        Ok(MouseInput {
             modifiers,
             button,
             click_count,
         })
     }
 
-    /// Check if a mouse event matches this stroke
+    /// Attempt to parse `source` as a mouse input.
+    ///
+    /// Returns `Ok(None)` if `source` is not in the mouse-input grammar at all
+    /// (its final `-`-separated component is not a mouse button token like
+    /// `mouse1`..`mouse5`). Returns `Err` if it is recognizably a mouse input
+    /// but malformed.
+    pub fn try_parse(source: &str) -> Result<Option<Self>, InvalidMouseInputError> {
+        let last = source.rsplit('-').next().unwrap_or("").to_ascii_lowercase();
+        if parse_mouse_button(&last).is_none() {
+            return Ok(None);
+        }
+        Self::parse(source).map(Some)
+    }
+
+    /// Check if a mouse event matches this input
     pub fn matches(
         &self,
         button: MouseButton,
@@ -204,7 +218,7 @@ impl MouseStroke {
     }
 }
 
-impl Display for MouseStroke {
+impl Display for MouseInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.unparse())
     }
@@ -221,35 +235,30 @@ fn parse_mouse_button(s: &str) -> Option<MouseButton> {
     }
 }
 
-/// Check if a string looks like a mouse stroke (contains "mouse")
-pub fn looks_like_mouse_stroke(s: &str) -> bool {
-    s.to_ascii_lowercase().contains("mouse")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_parse_mouse_buttons() {
-        let stroke = MouseStroke::parse("alt-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-mouse1").unwrap();
         assert_eq!(stroke.button, MouseButton::Left);
         assert!(stroke.modifiers.alt);
         assert_eq!(stroke.click_count, ClickCount::Single);
 
-        let stroke = MouseStroke::parse("alt-mouse2").unwrap();
+        let stroke = MouseInput::parse("alt-mouse2").unwrap();
         assert_eq!(stroke.button, MouseButton::Right);
 
-        let stroke = MouseStroke::parse("alt-mouse3").unwrap();
+        let stroke = MouseInput::parse("alt-mouse3").unwrap();
         assert_eq!(stroke.button, MouseButton::Middle);
 
-        let stroke = MouseStroke::parse("alt-mouse4").unwrap();
+        let stroke = MouseInput::parse("alt-mouse4").unwrap();
         assert_eq!(
             stroke.button,
             MouseButton::Navigate(NavigationDirection::Back)
         );
 
-        let stroke = MouseStroke::parse("alt-mouse5").unwrap();
+        let stroke = MouseInput::parse("alt-mouse5").unwrap();
         assert_eq!(
             stroke.button,
             MouseButton::Navigate(NavigationDirection::Forward)
@@ -258,18 +267,18 @@ mod tests {
 
     #[test]
     fn test_parse_with_modifiers() {
-        let stroke = MouseStroke::parse("alt-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-mouse1").unwrap();
         assert_eq!(stroke.button, MouseButton::Left);
         assert!(stroke.modifiers.alt);
         assert!(!stroke.modifiers.control);
 
-        let stroke = MouseStroke::parse("ctrl-mouse1").unwrap();
+        let stroke = MouseInput::parse("ctrl-mouse1").unwrap();
         assert!(stroke.modifiers.control);
 
-        let stroke = MouseStroke::parse("shift-mouse1").unwrap();
+        let stroke = MouseInput::parse("shift-mouse1").unwrap();
         assert!(stroke.modifiers.shift);
 
-        let stroke = MouseStroke::parse("ctrl-alt-shift-mouse1").unwrap();
+        let stroke = MouseInput::parse("ctrl-alt-shift-mouse1").unwrap();
         assert!(stroke.modifiers.control);
         assert!(stroke.modifiers.alt);
         assert!(stroke.modifiers.shift);
@@ -277,15 +286,15 @@ mod tests {
 
     #[test]
     fn test_parse_with_click_count() {
-        let stroke = MouseStroke::parse("alt-double-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-double-mouse1").unwrap();
         assert_eq!(stroke.click_count, ClickCount::Double);
         assert!(stroke.modifiers.alt);
 
-        let stroke = MouseStroke::parse("alt-triple-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-triple-mouse1").unwrap();
         assert_eq!(stroke.click_count, ClickCount::Triple);
         assert!(stroke.modifiers.alt);
 
-        let stroke = MouseStroke::parse("ctrl-shift-triple-mouse3").unwrap();
+        let stroke = MouseInput::parse("ctrl-shift-triple-mouse3").unwrap();
         assert_eq!(stroke.click_count, ClickCount::Triple);
         assert_eq!(stroke.button, MouseButton::Middle);
         assert!(stroke.modifiers.control);
@@ -294,31 +303,31 @@ mod tests {
 
     #[test]
     fn test_parse_case_insensitive() {
-        let stroke = MouseStroke::parse("ALT-MOUSE1").unwrap();
+        let stroke = MouseInput::parse("ALT-MOUSE1").unwrap();
         assert_eq!(stroke.button, MouseButton::Left);
 
-        let stroke = MouseStroke::parse("ALT-Mouse1").unwrap();
+        let stroke = MouseInput::parse("ALT-Mouse1").unwrap();
         assert!(stroke.modifiers.alt);
 
-        let stroke = MouseStroke::parse("Alt-Double-MOUSE1").unwrap();
+        let stroke = MouseInput::parse("Alt-Double-MOUSE1").unwrap();
         assert_eq!(stroke.click_count, ClickCount::Double);
     }
 
     #[test]
     fn test_parse_invalid() {
-        assert!(MouseStroke::parse("mouse0").is_err());
-        assert!(MouseStroke::parse("mouse1").is_err());
-        assert!(MouseStroke::parse("mouse6").is_err());
-        assert!(MouseStroke::parse("double-mouse1").is_err());
-        assert!(MouseStroke::parse("click").is_err());
-        assert!(MouseStroke::parse("").is_err());
-        assert!(MouseStroke::parse("alt-").is_err());
-        assert!(MouseStroke::parse("alt-click").is_err());
+        assert!(MouseInput::parse("mouse0").is_err());
+        assert!(MouseInput::parse("mouse1").is_err());
+        assert!(MouseInput::parse("mouse6").is_err());
+        assert!(MouseInput::parse("double-mouse1").is_err());
+        assert!(MouseInput::parse("click").is_err());
+        assert!(MouseInput::parse("").is_err());
+        assert!(MouseInput::parse("alt-").is_err());
+        assert!(MouseInput::parse("alt-click").is_err());
     }
 
     #[test]
     fn test_matches() {
-        let stroke = MouseStroke::parse("alt-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-mouse1").unwrap();
 
         let mut mods = Modifiers::none();
         mods.alt = true;
@@ -331,10 +340,10 @@ mod tests {
 
     #[test]
     fn test_unparse() {
-        let stroke = MouseStroke::parse("alt-double-mouse1").unwrap();
+        let stroke = MouseInput::parse("alt-double-mouse1").unwrap();
         assert_eq!(stroke.unparse(), "alt-double-mouse1");
 
-        let stroke = MouseStroke::parse("ctrl-shift-mouse3").unwrap();
+        let stroke = MouseInput::parse("ctrl-shift-mouse3").unwrap();
         assert_eq!(stroke.unparse(), "ctrl-shift-mouse3");
     }
 }
