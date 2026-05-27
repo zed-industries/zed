@@ -75,14 +75,28 @@ git cherry-pick <commit-sha>
 
 The branch name **must** match `cherry-pick-<branch-name>-<short-sha>` exactly (script convention; reviewers and tooling expect it).
 
-### 3. Resolve the conflicts
+### 3. Check for missing prerequisite cherry-picks
+
+If the cherry-pick conflicts, do not immediately resolve the conflicts manually.
+
+First determine whether the conflict is likely caused by other PRs or commits that are already on `main` but missing from the release branch. If so, point out those candidate prerequisite PRs/commits to the user, including PR links, and offer to either resolve the conflicts manually or let the user run the GitHub cherry-pick workflow for those commits first.
+
+If the user wants to run the workflow for the missing prerequisites, stop here. This often keeps cherry-picks clean and eligible for automatic approval.
+
+Only resolve conflicts manually if:
+- no likely missing prerequisites are found, or
+- the user chooses manual conflict resolution instead of cherry-picking the prerequisites first.
+
+### 4. Resolve the conflicts manually
+
+Do this only after checking for missing prerequisite cherry-picks.
 
 - Inspect every conflicted file with `grep -n '<<<<<<<\\|>>>>>>>\\|=======' <path>` to find the markers.
 - Conflicts are usually `diff3` style with three sections: HEAD (release branch), `||||||| parent of <sha>` (merge base on `main`), and the incoming change.
 - Read the **original commit** (`git --no-pager show <commit-sha> -- <path>`) to understand the author's intent, then pick the resolution that produces the equivalent end state on the release branch.
 - Don't grab unrelated changes from `main` that happen to surround the conflict — keep the cherry-pick minimal.
 
-### 4. Validate
+### 5. Validate
 
 Always build and (if reasonable) test the affected crate(s) before continuing the cherry-pick.
 
@@ -93,7 +107,7 @@ cargo test  -p <affected_crate>
 
 If validation fails, fix the resolution — do **not** continue with a broken build. If you can't reach a clean state, abort with `git cherry-pick --abort` and report back to the user.
 
-### 5. Finish the cherry-pick
+### 6. Finish the cherry-pick
 
 `git cherry-pick --continue` opens an editor by default. Prevent that:
 
@@ -104,7 +118,7 @@ GIT_EDITOR=true git cherry-pick --continue
 
 This preserves the original commit message verbatim, which is what the script does.
 
-### 6. Push and open the PR
+### 7. Push and open the PR
 
 ```
 git push origin -f cherry-pick-<branch-name>-<short-sha>
