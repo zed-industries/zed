@@ -4,7 +4,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{ReasoningEffort, RequestError, Role, ToolChoice};
+use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 
 #[derive(Serialize, Debug)]
 pub struct Request {
@@ -35,6 +35,8 @@ pub struct Request {
     pub reasoning: Option<ReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
