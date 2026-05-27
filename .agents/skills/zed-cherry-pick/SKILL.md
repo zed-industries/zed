@@ -1,6 +1,6 @@
 ---
 name: zed-cherry-pick
-description: Cherry-pick a merged PR or commit into Zed's `preview` or `stable` release branch. Use this whenever the user mentions cherry-picking to preview/stable, a failed cherry-pick run, or wants to manually port a fix into a release branch.
+description: Cherry-pick one or more merged PRs and/or commits into Zed's `preview` or `stable` release branch. Use this whenever the user mentions cherry-picking to preview/stable, a failed cherry-pick run, or wants to manually port fix(es) into a release branch.
 ---
 
 # Zed Cherry-Pick
@@ -16,9 +16,8 @@ A merged PR on `main` gets ported to a release branch by `script/cherry-pick`, n
 
 ## When to use
 
-Use this when the user asks to cherry-pick a commit or PR (by number or URL) to `preview` or `stable`.
-Optionally, the user may specify whether to resolve merge conflicts; if unspecified, assume the user would
-like you to resolve merge conflicts and verify that tests pass locally before committing.
+Use this when the user asks to cherry-pick one or more commits and/or Pull Requests (by number or URL) to `preview` or `stable`.
+Optionally, the user may specify whether to resolve merge conflicts; if unspecified, attempt the cherry-pick, and then if there are merge conflicts in practice, stop and inform the user that there are merge conflicts and offer to resolve them. (Users may prefer to resolve the merge conflicts themselves before continuing.)
 
 ## The script you're emulating
 
@@ -154,3 +153,7 @@ Tell the user:
 - **Worktree index lock**: if a previous git command was interrupted, you may see `index.lock` errors. The lock lives at `<gitdir>/index.lock` where `<gitdir>` is what `cat .git` points to (for a worktree). Remove it only if you're sure no git process is running.
 - **Don't expand the cherry-pick's scope**: when resolving conflicts, never pull in unrelated changes from `main` just because they sit next to the conflict region. The PR should be the smallest diff that reproduces the original commit's intent on the release branch.
 - **Channel branches are not called `preview`/`stable`**: don't try to `git fetch origin preview`. Look up the actual `vX.Y.x` branch name first.
+
+## When Finished
+
+After everything is finished, the last thing to do is to provide a link to the opened pull request(s) for the cherry-pick(s).
