@@ -82,13 +82,6 @@ enum ScopeChoice {
 }
 
 impl ScopeChoice {
-    fn label(&self) -> SharedString {
-        match self {
-            ScopeChoice::Global => "Global".into(),
-            ScopeChoice::Project { root_name, .. } => root_name.clone(),
-        }
-    }
-
     fn key(&self) -> SharedString {
         match self {
             ScopeChoice::Global => "global".into(),
@@ -727,7 +720,10 @@ impl SkillCreator {
         let disable_model_invocation = self.disable_model_invocation;
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-        let scope_label = scope.label();
+        let scope_description: SharedString = match &scope {
+            ScopeChoice::Global => "your global skills".into(),
+            ScopeChoice::Project { root_name, .. } => root_name.clone(),
+        };
 
         self.saving = true;
         self.save_error = None;
@@ -748,16 +744,14 @@ impl SkillCreator {
                 this.saving = false;
                 this.save_task = None;
                 match result {
-                    Ok(path) => {
+                    Ok(_) => {
                         if let Some(on_saved) = &this.on_saved {
                             on_saved(cx);
                         }
                         if let Some(workspace) = workspace.as_ref().and_then(|w| w.upgrade()) {
                             workspace.update(cx, |workspace, cx| {
-                                let message = format!(
-                                    "Saved skill \"{name}\" to {scope_label} ({})",
-                                    path.display()
-                                );
+                                let message =
+                                    format!("Saved skill \"{name}\" to {scope_description}");
                                 let status_toast = StatusToast::new(message, cx, |this, _cx| {
                                     this.icon(
                                         Icon::new(IconName::Check)
