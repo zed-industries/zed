@@ -29,7 +29,8 @@ use zed_actions::{
         ResolveConflictsWithAgent, ReviewBranchDiff,
     },
     assistant::{
-        CreateSkillFromUrl, FocusAgent, OpenRulesLibrary, OpenSkillCreator, Toggle, ToggleFocus,
+        CreateSkillFromUrl, FocusAgent, OpenGlobalAgentsMdRules, OpenProjectAgentsMdRules,
+        OpenRulesLibrary, OpenSkillCreator, Toggle, ToggleFocus,
     },
 };
 
@@ -179,6 +180,60 @@ fn read_global_last_created_entry_kind(kvp: &KeyValueStore) -> Option<AgentPanel
         .map(|entry| entry.entry_kind)
 }
 
+fn project_agents_md_path(
+    project: &Entity<Project>,
+    require_existing_file: bool,
+    cx: &App,
+) -> Option<PathBuf> {
+    let rel_path = util::rel_path::RelPath::unix("AGENTS.md").ok()?;
+    project
+        .read(cx)
+        .visible_worktrees(cx)
+        .next()
+        .and_then(|worktree| {
+            let worktree = worktree.read(cx);
+
+            if require_existing_file {
+                let entry = worktree.entry_for_path(rel_path)?;
+                if !entry.is_file() {
+                    return None;
+                }
+            }
+
+            Some(worktree.absolutize(rel_path))
+        })
+}
+
+fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    workspace
+        .open_abs_path(
+            paths::agents_file().clone(),
+            workspace::OpenOptions {
+                focus: Some(true),
+                ..Default::default()
+            },
+            window,
+            cx,
+        )
+        .detach_and_log_err(cx);
+}
+
+fn open_project_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    if let Some(path) = project_agents_md_path(workspace.project(), false, cx) {
+        workspace
+            .open_abs_path(
+                path,
+                workspace::OpenOptions {
+                    focus: Some(true),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx);
+    }
+}
+
 async fn write_global_last_created_entry_kind(kvp: KeyValueStore, entry_kind: AgentPanelEntryKind) {
     if let Some(json) = serde_json::to_string(&LastCreatedEntryKind { entry_kind }).log_err() {
         kvp.write_kvp(LAST_CREATED_ENTRY_KIND_KEY.to_string(), json)
@@ -314,6 +369,12 @@ pub fn init(cx: &mut App) {
                             panel.deploy_rules_library(action, window, cx)
                         });
                     }
+                })
+                .register_action(|workspace, _: &OpenGlobalAgentsMdRules, window, cx| {
+                    open_global_rules(workspace, window, cx);
+                })
+                .register_action(|workspace, _: &OpenProjectAgentsMdRules, window, cx| {
+                    open_project_rules(workspace, window, cx);
                 })
                 .register_action(|workspace, action: &OpenSkillCreator, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -4862,21 +4923,7 @@ impl AgentPanel {
             .active_conversation_view()
             .is_some_and(|conversation_view| conversation_view.read(cx).supports_logout());
 
-        let project_agents_md_path: Option<PathBuf> = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .next()
-            .and_then(|worktree| {
-                let worktree = worktree.read(cx);
-                let rel_path = util::rel_path::RelPath::unix("AGENTS.md").ok()?;
-                let entry = worktree.entry_for_path(rel_path)?;
-                if entry.is_file() {
-                    Some(worktree.absolutize(rel_path))
-                } else {
-                    None
-                }
-            });
+        let project_agents_md_path = project_agents_md_path(&self.project, true, cx);
 
         let global_agents_md_loaded = UserAgentsMd::global(cx)
             .and_then(|md| md.content())
@@ -4976,24 +5023,14 @@ impl AgentPanel {
                                         move |window, cx| {
                                             workspace
                                                 .update(cx, |workspace, cx| {
-                                                    workspace
-                                                        .open_abs_path(
-                                                            paths::agents_file().clone(),
-                                                            workspace::OpenOptions {
-                                                                focus: Some(true),
-                                                                ..Default::default()
-                                                            },
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx);
+                                                    open_global_rules(workspace, window, cx);
                                                 })
                                                 .log_err();
                                         },
                                     );
                                 }
 
-                                if let Some(path) = project_agents_md_path.clone() {
+                                if project_agents_md_path.is_some() {
                                     let workspace = workspace.clone();
                                     menu = menu.custom_entry(
                                         |_window, _cx| {
@@ -5009,20 +5046,9 @@ impl AgentPanel {
                                                 .into_any_element()
                                         },
                                         move |window, cx| {
-                                            let path = path.clone();
                                             workspace
                                                 .update(cx, |workspace, cx| {
-                                                    workspace
-                                                        .open_abs_path(
-                                                            path,
-                                                            workspace::OpenOptions {
-                                                                focus: Some(true),
-                                                                ..Default::default()
-                                                            },
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx);
+                                                    open_project_rules(workspace, window, cx);
                                                 })
                                                 .log_err();
                                         },
