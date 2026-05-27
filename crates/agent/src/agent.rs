@@ -10,7 +10,6 @@ mod thread;
 mod thread_store;
 mod tool_permissions;
 mod tools;
-mod user_agents_md;
 
 use context_server::ContextServerId;
 pub use db::*;
@@ -23,7 +22,6 @@ pub use thread::*;
 pub use thread_store::*;
 pub use tool_permissions::*;
 pub use tools::*;
-pub use user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 use acp_thread::{
     AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
@@ -1844,10 +1842,10 @@ impl NativeAgentConnection {
                         match event {
                             ThreadEvent::UserMessage(message) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    for content in message.content {
+                                    for content in &*message.content {
                                         thread.push_user_content_block(
                                             Some(message.id.clone()),
-                                            content.into(),
+                                            content.clone().into(),
                                             cx,
                                         );
                                     }

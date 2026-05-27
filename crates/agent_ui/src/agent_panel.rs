@@ -10,9 +10,10 @@ use std::{
 };
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
-use agent::{ContextServerRegistry, SharedThread, ThreadStore, UserAgentsMd};
+use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema as acp;
 use agent_servers::AgentServer;
+use agent_settings::UserAgentsMd;
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
@@ -27,7 +28,9 @@ use zed_actions::{
         ResetAgentZoom, ResetOnboarding, ResolveConflictedFilesWithAgent,
         ResolveConflictsWithAgent, ReviewBranchDiff,
     },
-    assistant::{FocusAgent, OpenRulesLibrary, OpenSkillCreator, Toggle, ToggleFocus},
+    assistant::{
+        CreateSkillFromUrl, FocusAgent, OpenRulesLibrary, OpenSkillCreator, Toggle, ToggleFocus,
+    },
 };
 
 use crate::ExpandMessageEditor;
@@ -39,10 +42,10 @@ use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadata
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
     LoadThreadFromClipboard, NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata,
-    ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
+    OpenAgentDiff, ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell,
+    ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    conversation_view::{AcpThreadViewEvent, ThreadView},
+    conversation_view::{AcpThreadViewEvent, ThreadView, reset_fast_mode_warnings},
     ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
 };
 use crate::{
@@ -55,7 +58,7 @@ use anyhow::Result;
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
-use client::UserStore;
+use client::{UserStore, zed_urls};
 use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
@@ -74,7 +77,7 @@ use project::{Project, ProjectPath, Worktree};
 use prompt_store::PromptStore;
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
-use skill_creator::open_skill_creator;
+use skill_creator::{SkillCreatorOpenMode, is_supported_skill_url, open_skill_creator};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use theme_settings::ThemeSettings;
@@ -320,6 +323,14 @@ pub fn init(cx: &mut App) {
                         });
                     }
                 })
+                .register_action(|workspace, action: &CreateSkillFromUrl, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.deploy_skill_creator_from_url(action, window, cx)
+                        });
+                    }
+                })
                 .register_action(|workspace, _: &Follow, window, cx| {
                     workspace.follow(CollaboratorId::Agent, window, cx);
                 })
@@ -370,6 +381,9 @@ pub fn init(cx: &mut App) {
                 })
                 .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
                     TrialEndUpsell::set_dismissed(false, cx);
+                })
+                .register_action(|_workspace, _: &ResetFastModeWarnings, _window, cx| {
+                    reset_fast_mode_warnings(cx);
                 })
                 .register_action(|workspace, _: &ResetAgentZoom, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
@@ -3070,8 +3084,27 @@ impl AgentPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_skill_creator(SkillCreatorOpenMode::Form, cx);
+    }
+
+    fn deploy_skill_creator_from_url(
+        &mut self,
+        _action: &CreateSkillFromUrl,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let initial_url = cx
+            .read_from_clipboard()
+            .and_then(|clipboard| clipboard.text())
+            .map(|text| text.trim().to_string())
+            .filter(|text| is_supported_skill_url(text));
+
+        self.open_skill_creator(SkillCreatorOpenMode::Url { initial_url }, cx);
+    }
+
+    fn open_skill_creator(&mut self, open_mode: SkillCreatorOpenMode, cx: &mut Context<Self>) {
         let this = cx.weak_entity();
-        let on_saved = Rc::new(move |cx: &mut App| {
+        let on_saved: Rc<dyn Fn(&mut App)> = Rc::new(move |cx: &mut App| {
             this.update(cx, |this, cx| {
                 if !this.has_open_project(cx) {
                     return;
@@ -3098,13 +3131,14 @@ impl AgentPanel {
                 })
                 .detach_and_log_err(cx);
             })
-            .ok();
+            .log_err();
         });
 
         open_skill_creator(
             Some(self.workspace.clone()),
             self.language_registry.clone(),
             self.fs.clone(),
+            open_mode,
             Some(on_saved),
             cx,
         )
@@ -3614,6 +3648,22 @@ impl AgentPanel {
             VisibleSurface::AgentThread(conversation_view) => Some(conversation_view),
             _ => None,
         }
+    }
+
+    pub fn conversation_view_for_id(
+        &self,
+        thread_id: &ThreadId,
+        cx: &App,
+    ) -> Option<&Entity<ConversationView>> {
+        self.retained_threads.get(thread_id).or_else(|| {
+            if let Some(view) = self.active_conversation_view()
+                && view.read(cx).thread_id == *thread_id
+            {
+                Some(view)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
@@ -4909,9 +4959,20 @@ impl AgentPanel {
 
                                 if global_agents_md_loaded {
                                     let workspace = workspace.clone();
-                                    menu = menu.entry(
-                                        "Open Global AGENTS.md",
-                                        None,
+
+                                    menu = menu.custom_entry(
+                                        |_window, _cx| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(Label::new("Open Global Rules"))
+                                                .child(
+                                                    Label::new("(AGENTS.md)")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                                .into_any_element()
+                                        },
                                         move |window, cx| {
                                             workspace
                                                 .update(cx, |workspace, cx| {
@@ -4934,9 +4995,19 @@ impl AgentPanel {
 
                                 if let Some(path) = project_agents_md_path.clone() {
                                     let workspace = workspace.clone();
-                                    menu = menu.entry(
-                                        "Open Project AGENTS.md",
-                                        None,
+                                    menu = menu.custom_entry(
+                                        |_window, _cx| {
+                                            h_flex()
+                                                .w_full()
+                                                .gap_1()
+                                                .child(Label::new("Open Project Rules"))
+                                                .child(
+                                                    Label::new("(AGENTS.md)")
+                                                        .color(Color::Muted)
+                                                        .size(LabelSize::Small),
+                                                )
+                                                .into_any_element()
+                                        },
                                         move |window, cx| {
                                             let path = path.clone();
                                             workspace
@@ -4957,6 +5028,10 @@ impl AgentPanel {
                                         },
                                     );
                                 }
+
+                                menu = menu.entry("Rules Library", None, |_window, cx| {
+                                    cx.open_url(&zed_urls::rules_docs(cx));
+                                });
 
                                 menu = menu.separator();
                             }
@@ -9904,6 +9979,14 @@ mod tests {
             &NewWorktreeBranchTarget::CurrentBranch,
         );
         assert_eq!(resolved, None);
+
+        let resolved = git_ui::worktree_service::resolve_worktree_branch_target(
+            &NewWorktreeBranchTarget::RemoteBranch {
+                remote_name: "origin".to_string(),
+                branch_name: "main".to_string(),
+            },
+        );
+        assert_eq!(resolved, Some("refs/remotes/origin/main".to_string()));
     }
 
     #[gpui::test]

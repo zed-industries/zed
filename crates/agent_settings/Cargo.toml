@@ -21,6 +21,7 @@ futures.workspace = true
 gpui.workspace = true
 language_model.workspace = true
 log.workspace = true
+paths.workspace = true
 project.workspace = true
 regex.workspace = true
 schemars.workspace = true
@@ -31,7 +32,6 @@ util.workspace = true
 [dev-dependencies]
 fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
-paths.workspace = true
 
 serde_json_lenient.workspace = true
 serde_json.workspace = true

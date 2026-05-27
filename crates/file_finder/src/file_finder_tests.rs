@@ -10,10 +10,11 @@ use serde_json::json;
 use settings::SettingsStore;
 use util::{path, rel_path::rel_path};
 use workspace::{
-    AppState, CloseActiveItem, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace, open_paths,
+    AppState, CloseActiveItem, Item, MultiWorkspace, OpenOptions, ToggleFileFinder, Workspace,
+    open_paths,
 };
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -1540,7 +1541,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
         assert_eq!(
             project_path,
             Some(ProjectPath {
@@ -1618,7 +1619,7 @@ async fn test_create_file_focused_file_does_not_belong_to_available_worktrees(
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
 
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
 
         assert!(
             project_path.is_some(),
@@ -1690,7 +1691,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
     cx.run_until_parked();
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        let project_path = active_editor.read(cx).project_path(cx);
+        let project_path = active_editor.read(cx).active_project_path(cx);
         assert_eq!(
             project_path,
             Some(ProjectPath {
