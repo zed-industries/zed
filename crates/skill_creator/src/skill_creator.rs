@@ -23,7 +23,7 @@ use std::time::Duration;
 use theme_settings::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, DropdownStyle, Headline, HeadlineSize, SwitchField,
-    WithScrollbar, prelude::*, utils::platform_title_bar_height,
+    WithScrollbar, prelude::*,
 };
 use ui_input::{ErasedEditorEvent, InputField};
 use util::ResultExt;
@@ -1059,18 +1059,16 @@ impl SkillCreator {
             )
     }
 
-    fn render_header(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
+    fn render_header(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let needs_traffic_light_clearance = cfg!(target_os = "macos");
-        let header_height = platform_title_bar_height(window);
 
         h_flex()
             .w_full()
-            .h(header_height)
+            .h_11()
             .px_4()
             .when(needs_traffic_light_clearance, |this| this.pl(px(84.)))
             .border_b_1()
-            .border_color(theme.colors().border)
+            .border_color(cx.theme().colors().border)
             .child(Headline::new("Skill Creator").size(HeadlineSize::XSmall))
     }
 
