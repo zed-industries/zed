@@ -1067,7 +1067,7 @@ impl EditPredictionStore {
         worktree_id: WorktreeId,
         events: Vec<StoredEvent>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<HashMap<Arc<Path>, Entity<BufferDiff>>>> {
+    ) -> Task<Option<HashMap<Arc<Path>, Entity<BufferDiff>>>> {
         let project_id = project.entity_id();
         let git_store = project.read(cx).git_store().clone();
         cx.spawn(async move |this, cx| {
@@ -1103,7 +1103,7 @@ impl EditPredictionStore {
                             .uncommitted_diff
                             .clone()
                     })
-                    .log_err()
+                    .ok()
                     .flatten()
                 }) {
                     diffs_by_path.insert(relative_path, diff);
@@ -1112,16 +1112,19 @@ impl EditPredictionStore {
 
                 let buffer = project
                     .update(cx, |project, cx| project.open_buffer(project_path, cx))
-                    .await?;
+                    .await
+                    .ok()?;
                 let diff = git_store
                     .update(cx, |git_store, cx| {
                         git_store.open_uncommitted_diff(buffer.clone(), cx)
                     })
-                    .await?;
+                    .await
+                    .ok()?;
                 this.update(cx, |store, _| {
                     let Some(project) = store.projects.get_mut(&project_id) else {
                         return;
                     };
+                    // todo! this can probably be removed, and make it so the following loop just sets all events where path eq to the new diff
                     let Some(target_index) = project.events.iter().position(|event| {
                         event.old_snapshot.remote_id() == old_snapshot_remote_id
                             && event.new_snapshot_version == new_snapshot_version
@@ -1136,11 +1139,11 @@ impl EditPredictionStore {
                     }
                     project.events[target_index].uncommitted_diff = Some(diff.clone());
                 })
-                .log_err();
+                .ok()?;
                 diffs_by_path.insert(relative_path, diff);
             }
 
-            Ok(diffs_by_path)
+            Some(diffs_by_path)
         })
     }
 
@@ -2698,22 +2701,20 @@ impl EditPredictionStore {
 
         let task = match self.edit_prediction_model {
             EditPredictionModel::Zeta => {
-                let capture_data = (can_collect_data && rand::random_ratio(1, 10))
-                    .then(|| capture_worktree_id)
-                    .flatten()
-                    .map(|worktree_id| {
-                        (
+                let capture_data = if let Some(worktree_id) = capture_worktree_id
+                    && can_collect_data
+                {
+                    let uncommitted_diff_snapshot = self
+                        .uncommitted_diffs_for_events(
+                            project.clone(),
+                            worktree_id,
                             stored_events.clone(),
-                            self.uncommitted_diffs_for_events(
-                                project.clone(),
-                                worktree_id,
-                                stored_events.clone(),
-                                cx,
-                            ),
+                            cx,
                         )
-                    });
-                if can_collect_data {
-                    jump_example::start_jump_example_capture(
+                        .shared();
+                    jump_example::try_start_jump_example_capture(
+                        project_state,
+                        uncommitted_diff_snapshot.clone(),
                         inputs.project.clone(),
                         inputs.snapshot.clone(),
                         inputs.position.clone(),
@@ -2727,7 +2728,11 @@ impl EditPredictionStore {
                         inputs.diagnostic_search_range.clone(),
                         cx,
                     );
-                }
+                    rand::random_ratio(1, 10)
+                        .then(|| (stored_events.clone(), uncommitted_diff_snapshot))
+                } else {
+                    None
+                };
 
                 zeta::request_prediction_with_zeta(self, inputs, capture_data, repo_url, cx)
             }

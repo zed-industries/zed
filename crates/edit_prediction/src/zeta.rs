@@ -11,6 +11,7 @@ use cloud_llm_client::{
     AcceptEditPredictionBody, EditPredictionRejectReason, predict_edits_v3::RawCompletionRequest,
 };
 use edit_prediction_types::PredictedCursorPosition;
+use futures::future::Shared;
 use gpui::{App, AppContext as _, Entity, Task, TaskExt, WeakEntity, prelude::*};
 use language::{
     Buffer, BufferSnapshot, DiagnosticSeverity, EditPredictionPromptFormat, OffsetRangeExt as _,
@@ -51,7 +52,7 @@ pub fn request_prediction_with_zeta(
     }: EditPredictionModelInput,
     capture_data: Option<(
         Vec<crate::StoredEvent>,
-        Task<Result<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>,
+        Shared<Task<Option<collections::HashMap<Arc<Path>, Entity<BufferDiff>>>>>,
     )>,
     repo_url: Option<String>,
     cx: &mut Context<EditPredictionStore>,
@@ -420,19 +421,20 @@ pub fn request_prediction_with_zeta(
                     let project = project.clone();
                     let edited_buffer = edited_buffer.clone();
                     async move |cx| {
-                        let uncommitted_diffs = uncommitted_diffs.await?;
-                        let Some(task) = cx.update(|cx| {
-                            crate::capture_example::capture_example(
-                                project.clone(),
-                                edited_buffer.clone(),
-                                position,
-                                events,
-                                recently_opened_files,
-                                recently_viewed_files,
-                                uncommitted_diffs,
-                                false,
-                                cx,
-                            )
+                        let Some(task) = uncommitted_diffs.await.and_then(|uncommitted_diffs| {
+                            cx.update(|cx| {
+                                crate::capture_example::capture_example(
+                                    project.clone(),
+                                    edited_buffer.clone(),
+                                    position,
+                                    events,
+                                    recently_opened_files,
+                                    recently_viewed_files,
+                                    uncommitted_diffs,
+                                    false,
+                                    cx,
+                                )
+                            })
                         }) else {
                             return Err(anyhow::anyhow!("failed to capture example"));
                         };

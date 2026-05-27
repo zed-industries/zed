@@ -6,7 +6,10 @@ use gpui::{AsyncApp, Entity};
 use language::{Buffer, BufferSnapshot};
 use project::{Project, WorktreeId};
 use std::{collections::hash_map, fmt::Write as _, ops::Range, path::Path, sync::Arc};
-use text::Point;
+use text::{OffsetRangeExt, Point};
+
+// todo! make this a Vec. Usages just use it like vec. Identity provided by path key is not helpful
+type UncomittedDiffSnapshot = HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)>;
 
 pub async fn uncommitted_diff_for_events(
     project: Entity<Project>,
@@ -15,10 +18,7 @@ pub async fn uncommitted_diff_for_events(
     mut events: Vec<StoredEvent>,
     uncommitted_diffs_by_path: HashMap<Arc<Path>, Entity<BufferDiff>>,
     cx: &mut AsyncApp,
-) -> Result<(
-    HashMap<Arc<Path>, (BufferSnapshot, BufferDiffSnapshot)>,
-    Vec<StoredEvent>,
-)> {
+) -> Result<(UncomittedDiffSnapshot, Vec<StoredEvent>)> {
     let mut diff_buffers_by_path: HashMap<Arc<Path>, (Entity<Buffer>, Entity<BufferDiff>)> =
         HashMap::default();
     for stored_event in &events {
@@ -64,11 +64,9 @@ pub async fn uncommitted_diff_for_events(
     Ok((uncommitted_diff_snapshots, events))
 }
 
-pub fn compute_uncommitted_diff(
-    snapshots_by_path: HashMap<Arc<Path>, (language::BufferSnapshot, BufferDiffSnapshot)>,
-) -> String {
+pub fn compute_uncommitted_diff(snapshot: UncomittedDiffSnapshot) -> String {
     let mut uncommitted_diff = String::new();
-    let mut snapshots_by_path = snapshots_by_path.into_iter().collect::<Vec<_>>();
+    let mut snapshots_by_path = snapshot.into_iter().collect::<Vec<_>>();
     snapshots_by_path.sort_by(|(left_path, _), (right_path, _)| left_path.cmp(right_path));
     for (relative_path, (buffer_snapshot, diff_snapshot)) in snapshots_by_path {
         let base_snapshot = diff_snapshot.base_text();
@@ -147,6 +145,17 @@ pub fn compute_uncommitted_diff(
         }
     }
     uncommitted_diff
+}
+
+pub fn estimate_uncomitted_diff_byte_size(snapshot: &UncomittedDiffSnapshot) -> usize {
+    let mut size = 0;
+    for (_, (buffer_snapshot, diff_snapshot)) in snapshot {
+        for hunk in diff_snapshot.hunks(buffer_snapshot) {
+            size += hunk.diff_base_byte_range.len();
+            size += hunk.range.to_offset(buffer_snapshot).len();
+        }
+    }
+    size
 }
 
 fn row_start_or_max(snapshot: &language::BufferSnapshot, row: u32) -> Point {

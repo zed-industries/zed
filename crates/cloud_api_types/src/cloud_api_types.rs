@@ -163,7 +163,7 @@ pub struct JumpExampleSpec {
     pub trigger: JumpExampleTrigger,
     pub repository_url: Option<String>,
     pub revision: Option<String>,
-    pub uncommitted_diff: String,
+    pub uncommitted_diff: Option<String>,
     pub recently_opened_files: Vec<JumpExampleRecentFile>,
     pub recently_viewed_files: Vec<JumpExampleRecentFile>,
     pub cursor_path: Arc<Path>,

@@ -1,33 +1,43 @@
 use std::{
     ops::Range,
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result};
+use buffer_diff::BufferDiff;
 pub use cloud_api_types::JumpExampleTrigger;
 use cloud_api_types::{
     JumpExampleRecentFile, JumpExampleSpec, SubmitJumpExampleBody, SubmitJumpExampleResponse,
 };
+use collections::HashMap;
+use futures::future::Shared;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, TaskExt as _, WeakEntity};
 use language::{BufferSnapshot, File, Point};
-use project::Project;
+use project::{Project, WorktreeId};
 use release_channel::AppVersion;
 
 use text::ToPoint as _;
+use util::rel_path::RelPath;
 
 use crate::{
     EditPredictionStore, ProjectState, StoredEvent,
-    data_collection::{compute_uncommitted_diff, uncommitted_diff_for_events},
+    data_collection::{
+        compute_uncommitted_diff, estimate_uncomitted_diff_byte_size, uncommitted_diff_for_events,
+    },
     example_spec::RecentFile,
     zeta,
 };
 
+pub const JUMP_EXAMPLE_MAX_PENDING_CAPTURE_COUNT: usize = 10;
 pub const JUMP_EXAMPLE_FUTURE_EVENT_COUNT: usize = 2;
 pub const JUMP_EXAMPLE_TTL: Duration = Duration::from_secs(60 * 2);
 pub const JUMP_EXAMPLE_NAVIGATION_COUNT: usize = 20;
+pub const JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE: usize = 64 * 1024;
 
 pub struct PendingJumpExampleCapture {
+    key: PendingJumpExampleCaptureKey,
     trigger: JumpExampleTrigger,
     file: Arc<dyn File>,
     edit_history: Vec<Arc<zeta_prompt::Event>>,
@@ -35,7 +45,7 @@ pub struct PendingJumpExampleCapture {
     recently_viewed_files: Vec<RecentFile>,
     worktree_root_name: String,
     started_at: Instant,
-    uncommitted_diff: String,
+    uncommitted_diff: Option<String>,
     pub future_events: Vec<Arc<zeta_prompt::Event>>,
     pub navigation_history: Vec<RecentFile>,
     diagnostics: Vec<zeta_prompt::ActiveBufferDiagnostic>,
@@ -43,7 +53,16 @@ pub struct PendingJumpExampleCapture {
     revision: Option<String>,
 }
 
-pub fn start_jump_example_capture(
+#[derive(Eq, PartialEq, Hash)]
+pub struct PendingJumpExampleCaptureKey {
+    worktree_id: WorktreeId,
+    file_path: Arc<RelPath>,
+    row_bucket: u32,
+}
+
+pub fn try_start_jump_example_capture(
+    project_state: &ProjectState,
+    uncommitted_diffs: Shared<Task<Option<HashMap<Arc<Path>, Entity<BufferDiff>>>>>,
     project: Entity<Project>,
     snapshot: BufferSnapshot,
     position: language::Anchor,
@@ -52,10 +71,27 @@ pub fn start_jump_example_capture(
     diagnostic_search_range: Range<Point>,
     cx: &mut Context<EditPredictionStore>,
 ) {
+    let Some(file) = snapshot.file().cloned() else {
+        return;
+    };
+
+    let example_key = PendingJumpExampleCaptureKey {
+        worktree_id: file.worktree_id(cx),
+        file_path: file.path().clone(),
+        row_bucket: position.to_point(&snapshot).row / 10,
+    };
+    let should_capture_example = !project_state.pending_jump_example_captures.len()
+        >= JUMP_EXAMPLE_MAX_PENDING_CAPTURE_COUNT
+        && !project_state
+            .pending_jump_example_captures
+            .iter()
+            .any(|capture| &capture.key == &example_key);
+
+    if !should_capture_example {
+        return;
+    }
+
     cx.spawn(async move |ep_store, cx| {
-        let Some(file) = snapshot.file().cloned() else {
-            return anyhow::Ok(());
-        };
         let Some(ep_store) = ep_store.upgrade() else {
             return anyhow::Ok(());
         };
@@ -84,21 +120,16 @@ pub fn start_jump_example_capture(
             100,
         );
 
-        let (uncommitted_diff, edit_history_events) = if repository.is_some() {
-            let uncommitted_diffs = ep_store
-                .update(cx, |ep_store, cx| {
-                    // todo! this just cx.spawns. Better api
-                    ep_store.uncommitted_diffs_for_events(
-                        project.clone(),
-                        worktree_id,
-                        stored_events.clone(),
-                        cx,
-                    )
-                })
+        let (uncommitted_diff, edit_history_events) = 'uncomitted_diff: {
+            if repository.is_none() {
+                break 'uncomitted_diff (None, stored_events.clone());
+            }
+            let uncommitted_diffs = uncommitted_diffs
                 .await
                 .context("failed to get uncommitted diffs for events")?;
             // todo! why does this return events?
-            let (uncommitted_diff_snapshots, edit_history_events) = uncommitted_diff_for_events(
+            // todo! investigate split between this, and above uncomitted diffs function
+            let (uncommitted_diff_snapshot, edit_history_events) = uncommitted_diff_for_events(
                 project.clone(),
                 worktree_id,
                 worktree_root_name.clone(),
@@ -107,14 +138,20 @@ pub fn start_jump_example_capture(
                 cx,
             )
             .await?;
+            let estimated_byte_size =
+                estimate_uncomitted_diff_byte_size(&uncommitted_diff_snapshot);
+            if estimated_byte_size > JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE {
+                break 'uncomitted_diff (None, edit_history_events);
+            }
 
             let uncommitted_diff = cx
                 .background_executor()
-                .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshots) })
+                .spawn(async move { compute_uncommitted_diff(uncommitted_diff_snapshot) })
                 .await;
-            (uncommitted_diff, edit_history_events)
-        } else {
-            (String::new(), stored_events.clone())
+            if uncommitted_diff.len() > JUMP_EXAMPLE_MAX_UNCOMMITTED_DIFF_SIZE {
+                break 'uncomitted_diff (None, edit_history_events);
+            }
+            (Some(uncommitted_diff), edit_history_events)
         };
 
         let edit_history = edit_history_events
@@ -146,6 +183,7 @@ pub fn start_jump_example_capture(
             project_state
                 .pending_jump_example_captures
                 .push(PendingJumpExampleCapture {
+                    key: example_key,
                     trigger,
                     file,
                     uncommitted_diff,
@@ -219,6 +257,7 @@ fn submit_jump_example_capture_task(
     };
     cx.background_spawn(async move {
         let PendingJumpExampleCapture {
+            key: _,
             trigger,
             file,
             edit_history,
