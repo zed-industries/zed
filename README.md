@@ -44,6 +44,7 @@ https://github.com/zed-industries/zed/compare/main...Dima-369:zed:dima
 - add many defaults in `project_settings.rs` to not crash on startup (not sure if that is only from my code)
 - add `bundle-mac-without-licenses` which is faster than generating licenses, and skips the `sentry-cli` at end
 - try to fix panic in `anchor_at_offset` when buffer has Umlaute, seems to work, no idea if my fix has other consequences
+- fix crash "offset is greater than snapshot.len()" in `MultiBufferOffset::to_offset` by clamping out-of-bounds offsets to `snapshot.len()` instead of panicking. This happens when stale offsets (from a previous buffer state) are used after the buffer is edited and becomes shorter — common with async edits from agent/LSP format-on-save
 - changed `fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {` to only strip trailing newlines instead of leading indents
 - lower `MIN_NAVIGATION_HISTORY_ROW_DELTA` to 3, from 10, as a test which seems fine
 - opening a workspace which has no tabs initially, will trigger `workspace::NewFile` for proper editor focus. Before, there seems to be a bug where the project panel does not have proper focus

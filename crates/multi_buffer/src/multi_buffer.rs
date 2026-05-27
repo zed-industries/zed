@@ -8351,12 +8351,14 @@ impl ToOffset for Point {
 impl ToOffset for MultiBufferOffset {
     #[track_caller]
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffset {
-        assert!(
-            *self <= snapshot.len(),
-            "offset {} is greater than the snapshot.len() {}",
-            self.0,
-            snapshot.len().0,
-        );
+        if *self > snapshot.len() {
+            log::warn!(
+                "MultiBufferOffset clamped: offset {} is greater than snapshot.len() {}",
+                self.0,
+                snapshot.len().0
+            );
+            return snapshot.len();
+        }
         *self
     }
     fn to_offset_utf16(&self, snapshot: &MultiBufferSnapshot) -> MultiBufferOffsetUtf16 {
