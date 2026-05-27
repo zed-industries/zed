@@ -11,13 +11,13 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId};
 use project::{
-    ConflictRegion, ConflictSet, ConflictSetUpdate, Project, ProjectItem as _,
+    ConflictRegion, ConflictSet, ConflictSetUpdate, Project,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
-use util::{ResultExt as _, debug_panic, maybe};
+use util::{debug_panic, maybe};
 use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
@@ -28,6 +28,7 @@ pub(crate) struct ConflictAddon {
 }
 
 impl ConflictAddon {
+    #[cfg(test)]
     pub(crate) fn conflict_set(&self, buffer_id: BufferId) -> Option<Entity<ConflictSet>> {
         self.buffers
             .get(&buffer_id)
@@ -82,42 +83,62 @@ pub fn register_editor(editor: &mut Editor, buffer: Entity<MultiBuffer>, cx: &mu
     .detach();
 }
 
-fn buffer_ranges_updated(editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
-    let Some(project) = editor.project() else {
-        return;
-    };
-    let git_store = project.read(cx).git_store().clone();
+fn buffer_ranges_updated(_editor: &mut Editor, buffer: Entity<Buffer>, cx: &mut Context<Editor>) {
+    let buffer = buffer.downgrade();
 
-    let buffer_conflicts = editor
-        .addon_mut::<ConflictAddon>()
-        .unwrap()
-        .buffers
-        .entry(buffer.read(cx).remote_id())
-        .or_insert_with(|| {
-            let conflict_set = git_store.update(cx, |git_store, cx| {
-                git_store.open_conflict_set(buffer.clone(), cx)
-            });
-            let subscription = cx.subscribe(&conflict_set, conflicts_updated);
-            BufferConflicts {
-                block_ids: Vec::new(),
+    cx.spawn(async move |editor, cx| {
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
+        let Some(project) = editor.read_with(cx, |editor, _| editor.project().cloned())? else {
+            return anyhow::Ok(());
+        };
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+        let Some(buffer) = buffer.upgrade() else {
+            return Ok(());
+        };
+        let conflict_set = editor
+            .update(cx, |editor, cx| {
+                let addon = editor.addon_mut::<ConflictAddon>().unwrap();
+                if let Some(buffer_conflicts) = addon.buffers.get(&buffer_id) {
+                    Task::ready(buffer_conflicts.conflict_set.clone())
+                } else {
+                    git_store.update(cx, |git_store, cx| {
+                        git_store.open_conflict_set(buffer.clone(), cx)
+                    })
+                }
+            })?
+            .await;
+        editor.update(cx, |editor, cx| {
+            let buffer_conflicts = editor
+                .addon_mut::<ConflictAddon>()
+                .unwrap()
+                .buffers
+                .entry(buffer_id)
+                .or_insert_with(|| {
+                    let subscription = cx.subscribe(&conflict_set, conflicts_updated);
+                    BufferConflicts {
+                        block_ids: Vec::new(),
+                        conflict_set,
+                        _subscription: subscription,
+                    }
+                });
+
+            let conflict_set = buffer_conflicts.conflict_set.clone();
+            let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
+            let addon_conflicts_len = buffer_conflicts.block_ids.len();
+            conflicts_updated(
+                editor,
                 conflict_set,
-                _subscription: subscription,
-            }
-        });
-
-    let conflict_set = buffer_conflicts.conflict_set.clone();
-    let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
-    let addon_conflicts_len = buffer_conflicts.block_ids.len();
-    conflicts_updated(
-        editor,
-        conflict_set,
-        &ConflictSetUpdate {
-            buffer_range: None,
-            old_range: 0..addon_conflicts_len,
-            new_range: 0..conflicts_len,
-        },
-        cx,
-    );
+                &ConflictSetUpdate {
+                    buffer_range: None,
+                    old_range: 0..addon_conflicts_len,
+                    new_range: 0..conflicts_len,
+                },
+                cx,
+            );
+        })?;
+        Ok(())
+    })
+    .detach();
 }
 
 fn buffers_removed(editor: &mut Editor, removed_buffer_ids: &[BufferId], cx: &mut Context<Editor>) {
@@ -447,10 +468,8 @@ pub(crate) fn resolve_conflict(
     cx: &mut App,
 ) -> Task<()> {
     window.spawn(cx, async move |cx| {
-        let Some((workspace, project, multibuffer, buffer)) = editor
+        editor
             .update(cx, |editor, cx| {
-                let workspace = editor.workspace()?;
-                let project = editor.project()?.clone();
                 let multibuffer = editor.buffer().clone();
                 let buffer_id = resolved_conflict.ours.end.buffer_id;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;
@@ -481,34 +500,9 @@ pub(crate) fn resolve_conflict(
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![range.clone()], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![range], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
-                Some((workspace, project, multibuffer, buffer))
+                Some(())
             })
-            .ok()
-            .flatten()
-        else {
-            return;
-        };
-        let save = project.update(cx, |project, cx| {
-            if multibuffer.read(cx).all_diff_hunks_expanded() {
-                project.save_buffer(buffer.clone(), cx)
-            } else {
-                Task::ready(Ok(()))
-            }
-        });
-        if save.await.log_err().is_none() {
-            let open_path = maybe!({
-                let path = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))?;
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.open_path_preview(path, None, false, false, false, window, cx)
-                    })
-                    .ok()
-            });
-
-            if let Some(open_path) = open_path {
-                open_path.await.log_err();
-            }
-        }
+            .ok();
     })
 }
 
