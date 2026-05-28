@@ -229,9 +229,10 @@ impl LanguageServerState {
             .upgrade()
             .map(|workspace| {
                 let project = workspace.read(cx).project();
-                let worktree_store = project.read(cx).worktree_store();
-                let restricted = TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx);
-                let downloads_disabled = project_blocks_binary_downloads(project.read(cx), cx);
+                let project_ref = project.read(cx);
+                let restricted =
+                    TrustedWorktrees::has_restricted_worktrees(&project_ref.worktree_store(), cx);
+                let downloads_disabled = project_blocks_binary_downloads(project_ref, cx);
                 (restricted, downloads_disabled)
             })
             .unwrap_or((false, false));
@@ -1355,9 +1356,10 @@ impl Render for LspButton {
             .upgrade()
             .map(|workspace| {
                 let project = workspace.read(cx).project();
-                let worktree_store = project.read(cx).worktree_store();
-                let restricted = TrustedWorktrees::has_restricted_worktrees(&worktree_store, cx);
-                let downloads_disabled = project_blocks_binary_downloads(project.read(cx), cx);
+                let project_ref = project.read(cx);
+                let restricted =
+                    TrustedWorktrees::has_restricted_worktrees(&project_ref.worktree_store(), cx);
+                let downloads_disabled = project_blocks_binary_downloads(project_ref, cx);
                 (restricted, downloads_disabled)
             })
             .unwrap_or((false, false));

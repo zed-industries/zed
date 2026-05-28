@@ -8,6 +8,7 @@
 use fs::Fs;
 use gpui::{DismissEvent, EventEmitter, FocusHandle, Focusable};
 use project::{Project, project_settings::ProjectSettings};
+use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation, update_settings_file};
 use theme::ActiveTheme;
 use ui::{AlertModal, ButtonStyle, KeyBinding, ListBulletItem, prelude::*};
@@ -207,7 +208,17 @@ impl Render for BinaryDownloadsModal {
 
 /// Whether the given project has the `allow_binary_downloads` setting
 /// effectively turned off (globally and/or via a per-worktree override).
+///
+/// Returns `false` for collab guests (whose settings can't take effect on the
+/// host) and Docker projects (sandboxed in a disposable container) — both
+/// cases skip the indicator and the modal.
 pub fn project_blocks_binary_downloads(project: &Project, cx: &App) -> bool {
+    if project.is_via_collab() {
+        return false;
+    }
+    if let Some(RemoteConnectionOptions::Docker(_)) = project.remote_connection_options(cx) {
+        return false;
+    }
     scope_for_project(project, cx).is_some()
 }
 

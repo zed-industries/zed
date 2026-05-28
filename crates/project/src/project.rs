@@ -1420,7 +1420,10 @@ impl Project {
                     cx,
                 );
             }
-            binary_downloads::track_binary_downloads(worktree_store.clone(), cx);
+            // Binary-downloads tracking is intentionally not registered for
+            // remote projects: the local Zed never downloads anything for
+            // them, and the remote server has its own `BinaryDownloads`
+            // global wired up in `HeadlessProject::new`.
 
             let weak_self = cx.weak_entity();
 

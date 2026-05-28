@@ -313,6 +313,19 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
+    // Pin `allow_binary_downloads = false` on the guest to exercise the
+    // contract that a collab guest's local setting has no effect on the host's
+    // language servers/formatters: the guest never invokes those subsystems,
+    // they all run on the host. The rest of the test asserting that LSP
+    // completion still works is the actual proof.
+    cx_b.update(|cx| {
+        project::binary_downloads::init(cx);
+        settings::SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.allow_binary_downloads = Some(false);
+            });
+        });
+    });
     server
         .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
         .await;
