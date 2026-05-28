@@ -27,7 +27,7 @@ use ui::{
 
 use util::{ResultExt, paths::PathExt, rel_path::RelPath};
 use workspace::{
-    StatusItemView, ToggleBinaryDownloadsRestriction, ToggleWorktreeSecurity, Workspace,
+    StatusItemView, ToggleWorktreeSecurity, Workspace,
     binary_downloads_modal::project_blocks_binary_downloads,
 };
 
@@ -290,7 +290,7 @@ impl LanguageServerState {
                         .into_any_element()
                 },
                 move |window, cx| {
-                    window.dispatch_action(ToggleBinaryDownloadsRestriction.boxed_clone(), cx);
+                    window.dispatch_action(ToggleWorktreeSecurity.boxed_clone(), cx);
                 },
             );
         }

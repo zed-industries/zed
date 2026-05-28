@@ -51,7 +51,7 @@ use ui::{
 use update_version::UpdateVersion;
 use util::ResultExt;
 use workspace::{
-    MultiWorkspace, ToggleBinaryDownloadsRestriction, ToggleWorktreeSecurity, Workspace,
+    MultiWorkspace, ToggleWorktreeSecurity, Workspace,
     binary_downloads_modal::project_blocks_binary_downloads,
     notifications::{NotifyResultExt, NotifyTaskExt as _},
 };
@@ -693,7 +693,7 @@ impl TitleBar {
             .tooltip(|_, cx| {
                 Tooltip::with_meta(
                     "Tool downloads disabled",
-                    Some(&ToggleBinaryDownloadsRestriction),
+                    Some(&ToggleWorktreeSecurity),
                     "Zed won't install new language servers, MCP servers, debug adapters, or npm packages",
                     cx,
                 )
@@ -701,7 +701,7 @@ impl TitleBar {
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| {
-                        workspace.show_binary_downloads_restriction_modal(window, cx)
+                        workspace.show_worktree_trust_security_modal(true, window, cx)
                     })
                     .log_err();
             }));

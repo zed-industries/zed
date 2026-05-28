@@ -13,7 +13,7 @@ use theme::ActiveTheme;
 use ui::{AlertModal, ButtonStyle, KeyBinding, ListBulletItem, prelude::*};
 use util::rel_path::RelPath;
 
-use crate::{DismissDecision, ModalView, ToggleBinaryDownloadsRestriction};
+use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 /// Where the `allow_binary_downloads = false` setting is taking effect.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -122,11 +122,9 @@ impl Render for BinaryDownloadsModal {
             .width(rems(40.))
             .key_context("BinaryDownloadsModal")
             .track_focus(&self.focus_handle(cx))
-            .on_action(
-                cx.listener(|this, _: &ToggleBinaryDownloadsRestriction, _, cx| {
-                    this.acknowledge_and_dismiss(cx);
-                }),
-            )
+            .on_action(cx.listener(|this, _: &ToggleWorktreeSecurity, _, cx| {
+                this.acknowledge_and_dismiss(cx);
+            }))
             .header(
                 v_flex()
                     .p_3()
@@ -194,7 +192,7 @@ impl Render for BinaryDownloadsModal {
                             .style(ButtonStyle::Filled)
                             .layer(ui::ElevationIndex::ModalSurface)
                             .key_binding(
-                                KeyBinding::for_action(&ToggleBinaryDownloadsRestriction, cx)
+                                KeyBinding::for_action(&ToggleWorktreeSecurity, cx)
                                     .map(|kb| kb.size(rems_from_px(12.))),
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
