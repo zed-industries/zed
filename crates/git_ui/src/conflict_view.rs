@@ -410,6 +410,35 @@ fn render_conflict_buttons(
                     }
                 }),
         )
+        .when_some(
+            conflict
+                .base
+                .clone()
+                .filter(|_| crate::git_panel_settings::GitPanelSettings::get_global(cx).merge_editor),
+            |this, base| {
+                this.child(
+                    Button::new("base", "Use Base")
+                        .label_size(LabelSize::Small)
+                        .tooltip(Tooltip::text(
+                            "Discard both sides and keep the common ancestor",
+                        ))
+                        .on_click({
+                            let editor = editor.clone();
+                            let conflict = conflict.clone();
+                            move |_, window, cx| {
+                                resolve_conflict(
+                                    editor.clone(),
+                                    conflict.clone(),
+                                    vec![base.clone()],
+                                    window,
+                                    cx,
+                                )
+                                .detach()
+                            }
+                        }),
+                )
+            },
+        )
         .when(is_ai_enabled, |this| {
             this.child(Divider::vertical()).child(
                 Button::new("resolve-with-agent", "Resolve with Agent")
