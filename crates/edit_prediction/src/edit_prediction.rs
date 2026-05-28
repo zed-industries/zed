@@ -2551,11 +2551,24 @@ impl EditPredictionStore {
             EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
         };
 
-        let is_open_source = snapshot
-            .file()
-            .map_or(false, |file| self.is_file_open_source(&project, file, cx))
-            && events.iter().all(|event| event.in_open_source_repo())
-            && related_files.iter().all(|file| file.in_open_source_repo);
+        let buffer_id = active_buffer.read(cx).remote_id();
+        let repo_url = project
+            .read(cx)
+            .git_store()
+            .read(cx)
+            .repository_and_path_for_buffer_id(buffer_id, cx)
+            .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+        let is_staff_zed_repo = cx.is_staff()
+            && repo_url
+                .as_ref()
+                .is_some_and(|url| is_zed_industries_repo(url));
+        let is_open_source = is_staff_zed_repo
+            || (snapshot
+                .file()
+                .map_or(false, |file| self.is_file_open_source(&project, file, cx))
+                && events.iter().all(|event| event.in_open_source_repo())
+                && related_files.iter().all(|file| file.in_open_source_repo));
 
         let can_collect_data = !cfg!(test)
             && is_open_source
@@ -2594,7 +2607,7 @@ impl EditPredictionStore {
                         )
                     });
 
-                zeta::request_prediction_with_zeta(self, inputs, capture_events, cx)
+                zeta::request_prediction_with_zeta(self, inputs, capture_events, repo_url, cx)
             }
             EditPredictionModel::Fim { format } => fim::request_prediction(inputs, format, cx),
             EditPredictionModel::Mercury => {
@@ -3285,4 +3298,12 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+}
+
+fn is_zed_industries_repo(url: &str) -> bool {
+    url.strip_prefix("https://github.com/zed-industries/")
+        .or_else(|| url.strip_prefix("http://github.com/zed-industries/"))
+        .or_else(|| url.strip_prefix("git@github.com:zed-industries/"))
+        .or_else(|| url.strip_prefix("ssh://git@github.com/zed-industries/"))
+        .is_some_and(|repo| !repo.is_empty())
 }
