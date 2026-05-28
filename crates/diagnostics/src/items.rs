@@ -169,7 +169,6 @@ impl DiagnosticIndicator {
     }
 
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let diagnostics_already_active = self.any_active_diagnostics(cx);
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
                 editor.go_to_diagnostic_at_cursor(
