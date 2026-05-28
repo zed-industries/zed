@@ -108,7 +108,7 @@ pub(crate) type A11yActionListener =
 /// needed to dispatch incoming action requests back to the right elements.
 pub(crate) struct A11y {
     /// Whether accessibility has been [forcibly disabled] for this window.
-    /// 
+    ///
     /// [forcibly disabled]: crate::Application::new_inaccessible
     force_disabled: bool,
     /// Whether a11y features have been requested by the system.
@@ -174,7 +174,7 @@ impl A11y {
         // Zed currently doesn't set any a11y APIs on *any* UI elements, so a
         // tree with nodes other than the root indicates a bug in the
         // `TreeUpdate`-producing logic.
-        // 
+        //
         // Remove this when adding aria attributes.
         if tree_update.nodes.len() > 1 {
             log::warn!(
