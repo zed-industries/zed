@@ -35,7 +35,15 @@ mod tests {
     use http_client::{
         AsyncBody, HttpClient, Request as HttpRequest, Response as HttpResponse, Url,
     };
-    use std::sync::Arc;
+    use std::{
+        io::{Cursor, Read},
+        pin::Pin,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicBool, Ordering},
+        },
+        task::{Context, Poll, Waker},
+    };
 
     struct TestHttpClient {
         handler: Arc<
@@ -73,6 +81,65 @@ mod tests {
             request: HttpRequest<AsyncBody>,
         ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>> {
             (self.handler)(request)
+        }
+    }
+
+    struct DelayedBody {
+        state: Arc<DelayedBodyState>,
+        bytes: Cursor<Vec<u8>>,
+    }
+
+    struct DelayedBodyState {
+        released: AtomicBool,
+        waker: Mutex<Option<Waker>>,
+    }
+
+    struct DelayedBodyHandle {
+        state: Arc<DelayedBodyState>,
+    }
+
+    impl DelayedBody {
+        fn new(bytes: Vec<u8>) -> (Self, DelayedBodyHandle) {
+            let state = Arc::new(DelayedBodyState {
+                released: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            });
+
+            (
+                Self {
+                    state: state.clone(),
+                    bytes: Cursor::new(bytes),
+                },
+                DelayedBodyHandle { state },
+            )
+        }
+    }
+
+    impl DelayedBodyHandle {
+        fn release(&self) {
+            self.state.released.store(true, Ordering::SeqCst);
+            if let Some(waker) = self.state.waker.lock().expect("lock poisoned").take() {
+                waker.wake();
+            }
+        }
+    }
+
+    impl futures::AsyncRead for DelayedBody {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buffer: &mut [u8],
+        ) -> Poll<std::io::Result<usize>> {
+            if !self.state.released.load(Ordering::SeqCst) {
+                self.state
+                    .waker
+                    .lock()
+                    .expect("lock poisoned")
+                    .replace(cx.waker().clone());
+                return Poll::Pending;
+            }
+
+            Poll::Ready(self.bytes.read(buffer))
         }
     }
 
@@ -130,12 +197,20 @@ mod tests {
     #[test]
     fn stream_response_does_not_timeout_after_headers_arrive() {
         futures::executor::block_on(async {
-            let client = TestHttpClient::new(|_| {
+            let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
+            let (delayed_body, delayed_body_handle) =
+                DelayedBody::new(format!("{body}\n\n").into_bytes());
+            let delayed_body = Mutex::new(Some(delayed_body));
+            let client = TestHttpClient::new(move |_| {
+                let delayed_body = delayed_body
+                    .lock()
+                    .expect("lock poisoned")
+                    .take()
+                    .expect("test sends only one request");
                 async {
-                    let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
                     Ok(HttpResponse::builder()
                         .status(200)
-                        .body(AsyncBody::from(format!("{body}\n\n")))?)
+                        .body(AsyncBody::from_reader(delayed_body))?)
                 }
                 .boxed()
             });
@@ -151,14 +226,27 @@ mod tests {
                 StreamResponseOptions::response_header_timeout(
                     Duration::from_secs(10),
                     async move {
-                        let _ = timeout_rx.await;
+                        assert!(
+                            timeout_rx.await.is_ok(),
+                            "timer should be dropped after headers arrive"
+                        );
                     },
                 ),
             )
             .await
             .expect("headers should arrive before timeout");
 
-            let _ = timeout_tx.send(());
+            assert!(
+                timeout_tx.send(()).is_err(),
+                "timeout future should be dropped after headers arrive"
+            );
+
+            assert!(
+                stream.next().now_or_never().is_none(),
+                "stream should wait for delayed body bytes"
+            );
+
+            delayed_body_handle.release();
 
             let event = stream
                 .next()
