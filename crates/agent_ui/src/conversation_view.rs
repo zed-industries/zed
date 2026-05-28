@@ -3790,9 +3790,10 @@ pub(crate) mod tests {
                 .update(cx, |thread, cx| {
                     thread.handle_session_update(
                         acp::SessionUpdate::AvailableCommandsUpdate(
-                            acp::AvailableCommandsUpdate::new(vec![acp::AvailableCommand::new(
-                                "help", "Get help",
-                            )]),
+                            acp::AvailableCommandsUpdate::new(vec![
+                                acp::AvailableCommand::new("help", "Get help"),
+                                acp::AvailableCommand::new("circle", "Show Circle state"),
+                            ]),
                         ),
                         cx,
                     )
@@ -3879,9 +3880,14 @@ pub(crate) mod tests {
                 .read()
                 .available_commands()
                 .to_vec();
-            assert_eq!(available_commands.len(), 1);
+            assert_eq!(available_commands.len(), 2);
             assert_eq!(available_commands[0].name.as_str(), "help");
             assert_eq!(available_commands[0].description.as_str(), "Get help");
+            assert_eq!(available_commands[1].name.as_str(), "circle");
+            assert_eq!(
+                available_commands[1].description.as_str(),
+                "Show Circle state"
+            );
         });
 
         assert_eq!(
@@ -3898,6 +3904,21 @@ pub(crate) mod tests {
             .await;
 
         assert!(contents_result.is_ok());
+
+        for command in ["/circle startup", "/circle doctor", "/circle surface"] {
+            message_editor.update_in(cx, |editor, window, cx| {
+                editor.set_text(command, window, cx);
+            });
+
+            let contents_result = message_editor
+                .update(cx, |editor, cx| editor.contents(false, cx))
+                .await;
+
+            assert!(
+                contents_result.is_ok(),
+                "restored ACP slash command should accept command arguments: {command}"
+            );
+        }
     }
 
     #[gpui::test]
