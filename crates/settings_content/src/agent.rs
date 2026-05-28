@@ -8,6 +8,7 @@ use std::{borrow::Cow, path::PathBuf};
 use crate::ExtendingVec;
 
 use crate::DockPosition;
+use crate::Shell;
 
 /// Where to position the threads sidebar.
 #[derive(
@@ -200,6 +201,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
+    pub terminal_command: Option<Shell>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///

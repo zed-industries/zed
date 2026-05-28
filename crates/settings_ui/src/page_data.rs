@@ -5859,7 +5859,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn agent_panel_section() -> [SettingsPageItem; 7] {
+    fn agent_panel_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Agent Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5986,6 +5986,222 @@ fn panels_page() -> SettingsPage {
                         metadata: None,
                     }],
                 ],
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Terminal Agent Command",
+                    description: "Program the agent panel auto-launches as a terminal-based agent (e.g. `claude`).",
+                    field: Box::new(SettingField {
+                        json_path: Some("agent.terminal_command$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::Shell>()[settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .terminal_command
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value, _| {
+                            let Some(value) = value else {
+                                if let Some(agent) = settings_content.agent.as_mut() {
+                                    agent.terminal_command = None;
+                                }
+                                return;
+                            };
+                            let agent = settings_content.agent.get_or_insert_default();
+                            let current = agent.terminal_command.clone();
+                            agent.terminal_command = Some(match value {
+                                settings::ShellDiscriminants::System => settings::Shell::System,
+                                settings::ShellDiscriminants::Program => {
+                                    let program = match current {
+                                        Some(settings::Shell::Program(program)) => program,
+                                        Some(settings::Shell::WithArguments { program, .. }) => {
+                                            program
+                                        }
+                                        _ => String::new(),
+                                    };
+                                    settings::Shell::Program(program)
+                                }
+                                settings::ShellDiscriminants::WithArguments => {
+                                    let (program, args, title_override) = match current {
+                                        Some(settings::Shell::Program(program)) => {
+                                            (program, vec![], None)
+                                        }
+                                        Some(settings::Shell::WithArguments {
+                                            program,
+                                            args,
+                                            title_override,
+                                        }) => (program, args, title_override),
+                                        _ => (String::new(), vec![], None),
+                                    };
+                                    settings::Shell::WithArguments {
+                                        program,
+                                        args,
+                                        title_override,
+                                    }
+                                }
+                            });
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .agent
+                            .as_ref()?
+                            .terminal_command
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::Shell>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::ShellDiscriminants::System => vec![],
+                        settings::ShellDiscriminants::Program => vec![SettingItem {
+                            files: USER,
+                            title: "Program",
+                            description: "The program to run as the terminal-based agent.",
+                            field: Box::new(SettingField {
+                                json_path: Some("agent.terminal_command"),
+                                pick: |settings_content| match settings_content
+                                    .agent
+                                    .as_ref()?
+                                    .terminal_command
+                                    .as_ref()
+                                {
+                                    Some(settings::Shell::Program(program)) => Some(program),
+                                    _ => None,
+                                },
+                                write: |settings_content, value, _| {
+                                    let Some(value) = value else { return };
+                                    let agent = settings_content.agent.get_or_insert_default();
+                                    match agent.terminal_command.as_mut() {
+                                        Some(settings::Shell::Program(program)) => {
+                                            *program = value
+                                        }
+                                        _ => {
+                                            agent.terminal_command =
+                                                Some(settings::Shell::Program(value));
+                                        }
+                                    }
+                                },
+                            }),
+                            metadata: None,
+                        }],
+                        settings::ShellDiscriminants::WithArguments => vec![
+                            SettingItem {
+                                files: USER,
+                                title: "Program",
+                                description: "The program to run as the terminal-based agent.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("agent.terminal_command.program"),
+                                    pick: |settings_content| {
+                                        match settings_content
+                                            .agent
+                                            .as_ref()?
+                                            .terminal_command
+                                            .as_ref()
+                                        {
+                                            Some(settings::Shell::WithArguments {
+                                                program, ..
+                                            }) => Some(program),
+                                            _ => None,
+                                        }
+                                    },
+                                    write: |settings_content, value, _| {
+                                        let Some(value) = value else { return };
+                                        let agent = settings_content.agent.get_or_insert_default();
+                                        if let Some(settings::Shell::WithArguments {
+                                            program,
+                                            ..
+                                        }) = agent.terminal_command.as_mut()
+                                        {
+                                            *program = value;
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Arguments",
+                                description: "Arguments to pass to the agent program.",
+                                field: Box::new(
+                                    SettingField {
+                                        json_path: Some("agent.terminal_command.args"),
+                                        pick: |settings_content| {
+                                            match settings_content
+                                                .agent
+                                                .as_ref()?
+                                                .terminal_command
+                                                .as_ref()
+                                            {
+                                                Some(settings::Shell::WithArguments {
+                                                    args, ..
+                                                }) => Some(args),
+                                                _ => None,
+                                            }
+                                        },
+                                        write: |settings_content, value, _| {
+                                            let Some(value) = value else { return };
+                                            let agent =
+                                                settings_content.agent.get_or_insert_default();
+                                            if let Some(settings::Shell::WithArguments {
+                                                args,
+                                                ..
+                                            }) = agent.terminal_command.as_mut()
+                                            {
+                                                *args = value;
+                                            }
+                                        },
+                                    }
+                                    .unimplemented(),
+                                ),
+                                metadata: None,
+                            },
+                            SettingItem {
+                                files: USER,
+                                title: "Title Override",
+                                description: "Optional string to override the title of the terminal tab.",
+                                field: Box::new(SettingField {
+                                    json_path: Some("agent.terminal_command.title_override"),
+                                    pick: |settings_content| {
+                                        match settings_content
+                                            .agent
+                                            .as_ref()?
+                                            .terminal_command
+                                            .as_ref()
+                                        {
+                                            Some(settings::Shell::WithArguments {
+                                                title_override,
+                                                ..
+                                            }) => title_override.as_ref().or(DEFAULT_EMPTY_STRING),
+                                            _ => None,
+                                        }
+                                    },
+                                    write: |settings_content, value, _| {
+                                        let agent = settings_content.agent.get_or_insert_default();
+                                        if let Some(settings::Shell::WithArguments {
+                                            title_override,
+                                            ..
+                                        }) = agent.terminal_command.as_mut()
+                                        {
+                                            *title_override =
+                                                value.filter(|s| !s.is_empty());
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            },
+                        ],
+                    })
+                    .collect(),
             }),
         ]
     }
