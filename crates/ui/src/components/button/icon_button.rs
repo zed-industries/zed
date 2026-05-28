@@ -2,7 +2,8 @@ use gpui::{AnyView, DefiniteLength, Hsla};
 
 use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
 use crate::{
-    ElevationIndex, Icon, IconWithIndicator, Indicator, SelectableButton, TintColor, prelude::*,
+    ElevationIndex, Icon, IconWithIndicator, Indicator, SelectableButton, TintColor, Tooltip,
+    prelude::*,
 };
 use crate::{IconName, IconSize};
 
@@ -241,8 +242,8 @@ impl Component for IconButton {
     }
 
     fn description() -> &'static str {
-        "A compact button that displays a single icon, used for actions where a \
-        textual label would be redundant or take too much space."
+        "A compact button that displays a single icon with an optional tooltip.\
+        The most frequently used button in the Zed codebase."
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
@@ -371,6 +372,14 @@ impl Component for IconButton {
                                 .indicator(Indicator::dot().color(Color::Success))
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::Background)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Tooltip",
+                            IconButton::new("tooltip", IconName::Check)
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::Background)
+                                .tooltip(Tooltip::text("As mentioned - with a tooltip"))
                                 .into_any_element(),
                         ),
                     ],

@@ -7103,9 +7103,7 @@ impl Component for PanelRepoFooter {
     }
 
     fn description() -> &'static str {
-        "The footer shown at the bottom of the git panel, \
-        displaying the active repository, current branch, and \
-        upstream tracking status alongside fetch, pull, and push controls."
+        "The footer shown at the bottom of the git panel."
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {

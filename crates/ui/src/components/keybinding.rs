@@ -130,6 +130,11 @@ impl KeyBinding {
         self.disabled = disabled;
         self
     }
+
+    fn vim_mode(mut self, vim_mode: bool) -> Self {
+        self.vim_mode = vim_mode;
+        self
+    }
 }
 
 fn render_key(
@@ -581,29 +586,57 @@ impl Component for KeyBinding {
 
         v_flex()
             .gap_6()
-            .children(vec![example_group_with_title(
-                "Platform Styles",
-                vec![
-                    single_example(
-                        "Mac Style",
-                        keybinding("cmd-s")
-                            .platform_style(PlatformStyle::Mac)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Linux Style",
-                        keybinding("ctrl-s")
-                            .platform_style(PlatformStyle::Linux)
-                            .into_any_element(),
-                    ),
-                    single_example(
-                        "Windows Style",
-                        keybinding("ctrl-s")
-                            .platform_style(PlatformStyle::Windows)
-                            .into_any_element(),
-                    ),
-                ],
-            )])
+            .children(vec![
+                example_group_with_title(
+                    "Platform Styles",
+                    vec![
+                        single_example(
+                            "Mac Style",
+                            keybinding("cmd-s")
+                                .platform_style(PlatformStyle::Mac)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Linux Style",
+                            keybinding("ctrl-s")
+                                .platform_style(PlatformStyle::Linux)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Windows Style",
+                            keybinding("ctrl-s")
+                                .platform_style(PlatformStyle::Windows)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Vim Mode Style",
+                    vec![
+                        single_example(
+                            "Simple",
+                            keybinding("s")
+                                .platform_style(PlatformStyle::Mac)
+                                .vim_mode(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With Modifiers",
+                            keybinding("ctrl-s")
+                                .platform_style(PlatformStyle::Linux)
+                                .vim_mode(true)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "With other special key",
+                            keybinding("ctrl-escape")
+                                .platform_style(PlatformStyle::Windows)
+                                .vim_mode(true)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
             .into_any_element()
     }
 }
