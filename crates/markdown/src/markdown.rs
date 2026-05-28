@@ -3236,6 +3236,7 @@ impl MarkdownElementBuilder {
                 source_index: source_range.start,
             }],
             source_end: source_range.end,
+            text_align: text_style.text_align,
             language: None,
         });
         div()
@@ -3258,6 +3259,7 @@ impl MarkdownElementBuilder {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
+            text_align: self.text_style().text_align,
             language: self.code_block_stack.last().cloned().flatten(),
         });
         self.div_stack.last_mut().unwrap().extend([text.into_any()]);
@@ -3281,6 +3283,7 @@ struct RenderedLine {
     layout: TextLayout,
     source_mappings: Vec<SourceMapping>,
     source_end: usize,
+    text_align: TextAlign,
     language: Option<Arc<Language>>,
 }
 
@@ -3350,6 +3353,10 @@ impl RenderedLine {
     }
 
     fn source_index_for_position(&self, position: Point<Pixels>) -> Result<usize, usize> {
+        let position = point(
+            position.x - self.alignment_offset_for_position(position),
+            position.y,
+        );
         let line_rendered_index;
         let out_of_bounds;
         match self.layout.index_for_position(position) {
@@ -3368,6 +3375,84 @@ impl RenderedLine {
         } else {
             Ok(source_index)
         }
+    }
+
+    fn position_for_source_index(&self, source_index: usize) -> Option<(Point<Pixels>, Pixels)> {
+        let line_height = self.layout.line_height();
+        let rendered_index = self.rendered_index_for_source_index(source_index);
+        let mut position = self.layout.position_for_index(rendered_index)?;
+        position.x += self.alignment_offset_for_rendered_index(rendered_index)?;
+        Some((position, line_height))
+    }
+
+    fn alignment_offset_for_position(&self, position: Point<Pixels>) -> Pixels {
+        if matches!(self.text_align, TextAlign::Left) {
+            return Pixels::ZERO;
+        }
+
+        let bounds = self.layout.bounds();
+        let line_height = self.layout.line_height();
+        let row_index = ((position.y - bounds.top()) / line_height).max(0.) as usize;
+        self.alignment_offset_for_row(row_index)
+    }
+
+    fn alignment_offset_for_rendered_index(&self, rendered_index: usize) -> Option<Pixels> {
+        if matches!(self.text_align, TextAlign::Left) {
+            return Some(Pixels::ZERO);
+        }
+
+        let position = self.layout.position_for_index(rendered_index)?;
+        let bounds = self.layout.bounds();
+        let line_height = self.layout.line_height();
+        let row_index = ((position.y - bounds.top()) / line_height).max(0.) as usize;
+        Some(self.alignment_offset_for_row(row_index))
+    }
+
+    fn alignment_offset_for_row(&self, target_row: usize) -> Pixels {
+        let bounds = self.layout.bounds();
+        let mut row_index = 0;
+        let mut wrapped_line_start = 0;
+
+        while wrapped_line_start <= self.layout.len() {
+            let Some(wrapped_line) = self.layout.line_layout_for_index(wrapped_line_start) else {
+                break;
+            };
+
+            let unwrapped_layout = &wrapped_line.unwrapped_layout;
+            let mut row_start_x = Pixels::ZERO;
+
+            let row_end_xs = wrapped_line
+                .wrap_boundaries()
+                .iter()
+                .map(|wrap_boundary| {
+                    unwrapped_layout.runs[wrap_boundary.run_ix].glyphs[wrap_boundary.glyph_ix]
+                        .position
+                        .x
+                })
+                .chain([unwrapped_layout.width]);
+
+            for row_end_x in row_end_xs {
+                if row_index == target_row {
+                    let row_width = row_end_x - row_start_x;
+                    return match self.text_align {
+                        TextAlign::Left => Pixels::ZERO,
+                        TextAlign::Center => (bounds.size.width - row_width) / 2.,
+                        TextAlign::Right => bounds.size.width - row_width,
+                    };
+                }
+
+                row_index += 1;
+                row_start_x = row_end_x;
+            }
+
+            let next_wrapped_line_start = wrapped_line_start + wrapped_line.len() + 1;
+            if next_wrapped_line_start <= wrapped_line_start {
+                break;
+            }
+            wrapped_line_start = next_wrapped_line_start;
+        }
+
+        Pixels::ZERO
     }
 }
 
@@ -3475,8 +3560,15 @@ impl RenderedText {
                     let selection_end = rendered_end.min(row_end);
 
                     if selection_start < selection_end {
+                        let row_width = row_end_x - row_start_x;
+                        let align_offset = match line.text_align {
+                            TextAlign::Left => Pixels::ZERO,
+                            TextAlign::Center => (line_bounds.size.width - row_width) / 2.,
+                            TextAlign::Right => line_bounds.size.width - row_width,
+                        };
                         let x_for_index = |index| {
                             line_bounds.left()
+                                + align_offset
                                 + unwrapped_layout.x_for_index(index - wrapped_line_start)
                                 - row_start_x
                         };
@@ -3541,10 +3633,7 @@ impl RenderedText {
             } else if source_index > line.source_end {
                 continue;
             } else {
-                let line_height = line.layout.line_height();
-                let rendered_index_within_line = line.rendered_index_for_source_index(source_index);
-                let position = line.layout.position_for_index(rendered_index_within_line)?;
-                return Some((position, line_height));
+                return line.position_for_source_index(source_index);
             }
         }
         None
@@ -4011,6 +4100,80 @@ mod tests {
 
         assert_eq!(first_word, "a");
         assert_eq!(second_word, "b");
+    }
+
+    #[gpui::test]
+    fn test_table_aligned_text_positions_match_painted_text(cx: &mut TestAppContext) {
+        let rendered = render_markdown(
+            "| Name | Centered | Right |\n\
+             |---|:---:|---:|\n\
+             | one | alpha | 10 |\n\
+             | two | beta | 200 |",
+            cx,
+        );
+
+        let centered_header = rendered
+            .lines
+            .iter()
+            .find(|line| line.layout.text() == "Centered")
+            .expect("expected centered table header");
+        let centered_bounds = centered_header.layout.bounds();
+        let centered_start = centered_header.source_mappings[0].source_index;
+        let (centered_position, centered_line_height) = rendered
+            .position_for_source_index(centered_start)
+            .expect("expected centered header source position");
+        assert!(
+            centered_position.x > centered_bounds.left() + centered_bounds.size.width / 4.,
+            "center-aligned text should not map to the left edge of its cell"
+        );
+
+        let centered_hit_position = point(
+            centered_position.x + px(2.),
+            centered_position.y + centered_line_height / 2.,
+        );
+        let centered_hit_index = rendered
+            .source_index_for_position(centered_hit_position)
+            .expect("expected source index over centered text");
+        assert!(centered_header.source_mappings[0].source_index <= centered_hit_index);
+        assert!(centered_hit_index <= centered_header.source_end);
+        let centered_selection_bounds =
+            rendered.bounds_for_source_range(centered_start..centered_header.source_end);
+        assert!(
+            centered_selection_bounds[0].left()
+                > centered_bounds.left() + centered_bounds.size.width / 4.,
+            "center-aligned selection bounds should match the painted text"
+        );
+
+        let right_aligned_cell = rendered
+            .lines
+            .iter()
+            .find(|line| line.layout.text() == "200")
+            .expect("expected right-aligned table cell");
+        let right_bounds = right_aligned_cell.layout.bounds();
+        let right_start = right_aligned_cell.source_mappings[0].source_index;
+        let (right_position, right_line_height) = rendered
+            .position_for_source_index(right_start)
+            .expect("expected right-aligned cell source position");
+        assert!(
+            right_position.x > right_bounds.right() - right_bounds.size.width / 4.,
+            "right-aligned text should map near the right edge of its cell"
+        );
+
+        let right_hit_position = point(
+            right_position.x + px(2.),
+            right_position.y + right_line_height / 2.,
+        );
+        let right_hit_index = rendered
+            .source_index_for_position(right_hit_position)
+            .expect("expected source index over right-aligned text");
+        assert!(right_aligned_cell.source_mappings[0].source_index <= right_hit_index);
+        assert!(right_hit_index <= right_aligned_cell.source_end);
+        let right_selection_bounds =
+            rendered.bounds_for_source_range(right_start..right_aligned_cell.source_end);
+        assert!(
+            right_selection_bounds[0].left() > right_bounds.right() - right_bounds.size.width / 4.,
+            "right-aligned selection bounds should match the painted text"
+        );
     }
 
     #[test]
