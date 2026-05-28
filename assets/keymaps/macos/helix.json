@@ -1,0 +1,36 @@
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "space f": "file_finder::Toggle",
+      "space b": "tab_switcher::Toggle",
+      "space s": "outline_panel::Toggle",
+      "space p": "project_panel::Toggle",
+      "space /": "project_search::Toggle",
+      "space c": "pane::CloseActiveItem",
+      "space w s": "pane::SplitDown",
+      "space w v": "pane::SplitRight",
+      "space w c": "pane::CloseActiveItem",
+      "space w o": "pane::CloseOtherItems",
+      "space w h": "workspace::ActivatePaneLeft",
+      "space w l": "workspace::ActivatePaneRight",
+      "space w j": "workspace::ActivatePaneDown",
+      "space w k": "workspace::ActivatePaneUp"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
+      "space a": "editor::ToggleCodeActions",
+      "space r": "editor::Rename",
+      "space y": "editor::Copy",
+      "space k": "editor::Hover",
+      "g g": "editor::MoveToBeginning",
+      "g e": "editor::MoveToEnd",
+      "g d": "editor::GoToDefinition",
+      "g y": "editor::GoToTypeDefinition",
+      "g r": "editor::FindAllReferences",
+      "g i": "editor::GoToImplementation"
+    }
+  }
+]
