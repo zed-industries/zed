@@ -50,46 +50,47 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
-    /// Request network access for this command.
+    /// Set to `true` only if the command needs outbound network access.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands
-    /// cannot make outbound network connections; set this to `true` only
-    /// when the command needs network access. The user will be prompted
-    /// to approve before the command runs.
+    /// Only relevant when the system prompt includes a "Terminal sandbox"
+    /// section; otherwise leave unset. Sandboxed commands cannot reach the
+    /// network by default, so set this when running commands that fetch or
+    /// upload (installing dependencies, cloning, pushing, downloading,
+    /// etc.). Requesting it triggers a user approval prompt, so only set it
+    /// when you expect the command to need network.
     #[serde(default)]
     pub allow_network: Option<bool>,
-    /// Request write access to specific paths for this command.
+    /// Paths the command needs to write to outside the default-writable
+    /// locations.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. By default sandboxed commands can
-    /// only write to the project worktree directories and a per-command
-    /// temporary directory. List the absolute (or worktree-relative) paths
-    /// the command needs to write to here; each directory grants write
-    /// access to its whole subtree. Prefer this over `allow_fs_write_all`
-    /// whenever the set of paths is known. The user will be prompted to
-    /// approve before the command runs, and can grant access for just this
-    /// command or for the rest of the conversation.
+    /// Only relevant when the system prompt includes a "Terminal sandbox"
+    /// section; otherwise leave empty. Sandboxed commands can already write
+    /// to the project worktree directories and a per-command temporary
+    /// directory, so only list paths outside those. Provide absolute or
+    /// worktree-relative paths; each directory grants write access to its
+    /// whole subtree. Prefer this over `allow_fs_write_all` whenever you can
+    /// enumerate the paths. Requesting paths triggers a user approval
+    /// prompt.
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
-    /// Request unrestricted filesystem-write access for this command.
+    /// Set to `true` only when the command needs to write outside the
+    /// default-writable locations but the specific paths cannot be
+    /// enumerated up front.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. This is the broad escape hatch: use
-    /// it only when the specific paths to write can't be enumerated up
-    /// front; otherwise prefer `fs_write_paths`. The user will be prompted
-    /// to approve before the command runs.
+    /// Only relevant when the system prompt includes a "Terminal sandbox"
+    /// section; otherwise leave unset. This is a broad escape hatch — prefer
+    /// `fs_write_paths` whenever the set of paths is known. Requesting it
+    /// triggers a user approval prompt.
     #[serde(default)]
     pub allow_fs_write_all: Option<bool>,
-    /// Request to run this command outside the sandbox entirely.
+    /// Set to `true` only as a last resort, to run the command fully outside
+    /// the sandbox.
     ///
-    /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. Prefer `allow_network: true`,
-    /// `fs_write_paths`, or `allow_fs_write_all: true` when one of those is
-    /// enough. Set this to `true` ONLY when the command needs behavior that
-    /// the sandbox can't grant on a per-permission basis. The user will be
-    /// prompted to approve before the command runs without sandbox
-    /// restrictions.
+    /// Only relevant when the system prompt includes a "Terminal sandbox"
+    /// section; otherwise leave unset. First try the narrower options
+    /// (`allow_network`, `fs_write_paths`, `allow_fs_write_all`); use this
+    /// only when the command needs behavior the sandbox can't grant on a
+    /// per-permission basis. Requesting it triggers a user approval prompt.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
 }
