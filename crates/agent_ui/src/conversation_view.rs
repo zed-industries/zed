@@ -3985,6 +3985,39 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_session_info_update_updates_title_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        let session_id = active_thread(&conversation_view, cx).read_with(cx, |thread, cx| {
+            thread.thread.read(cx).session_id().clone()
+        });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id,
+                acp::SessionUpdate::SessionInfoUpdate(
+                    acp::SessionInfoUpdate::new().title("Circle Session"),
+                ),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let title_editor_text = active_thread(&conversation_view, cx).read_with(cx, |thread, cx| {
+            thread.title_editor.read(cx).text(cx)
+        });
+
+        assert_eq!(
+            title_editor_text, "Circle Session",
+            "ACP session_info_update title should update the Agent Panel title editor"
+        );
+    }
+
+    #[gpui::test]
     async fn test_connect_failure_transitions_to_load_error(cx: &mut TestAppContext) {
         init_test(cx);
 
