@@ -130,6 +130,7 @@ members = [
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
+    "crates/mermaid_render",
     "crates/media",
     "crates/menu",
     "crates/migrator",
@@ -172,6 +173,7 @@ members = [
     "crates/rope",
     "crates/rpc",
     "crates/rules_library",
+    "crates/sandbox",
     "crates/skill_creator",
     "crates/scheduler",
     "crates/schema_generator",
@@ -389,10 +391,10 @@ lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
+mermaid_render = { path = "crates/mermaid_render" }
 svg_preview = { path = "crates/svg_preview" }
 media = { path = "crates/media" }
 menu = { path = "crates/menu" }
-mermaid-rs-renderer = { git = "https://github.com/zed-industries/mermaid-rs-renderer", rev = "782b89a7da3f0e91e51f98d00a93acba679be6fb", default-features = false }
 migrator = { path = "crates/migrator" }
 mistral = { path = "crates/mistral" }
 multi_buffer = { path = "crates/multi_buffer" }
@@ -435,6 +437,7 @@ rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 skill_creator = { path = "crates/skill_creator" }
 scheduler = { path = "crates/scheduler" }
+sandbox = { path = "crates/sandbox" }
 search = { path = "crates/search" }
 session = { path = "crates/session" }
 sidebar = { path = "crates/sidebar" }
@@ -502,6 +505,10 @@ ztracing_macro = { path = "crates/ztracing_macro" }
 # External crates
 #
 
+accesskit = "0.24.0"
+accesskit_macos = "0.26.0"
+accesskit_unix = "0.21.0"
+accesskit_windows = "0.32.1"
 agent-client-protocol = { version = "=0.12.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "9d9640d4" }
@@ -592,7 +599,7 @@ futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
-git2 = { version = "0.20.1", default-features = false, features = ["vendored-libgit2"] }
+git2 = { version = "0.21.0", default-features = false, features = ["vendored-libgit2", "unstable-sha256"] }
 globset = "0.4"
 heapless = "0.9.2"
 handlebars = "4.3"

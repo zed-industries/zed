@@ -8,7 +8,8 @@ use agent_client_protocol::schema as acp;
 use std::cell::RefCell;
 
 use acp_thread::{ContentBlock, PlanEntry};
-use agent::{SkillLoadingError, SkillLoadingErrorsUpdated, UserAgentsMd};
+use agent::{SkillLoadingError, SkillLoadingErrorsUpdated};
+use agent_settings::UserAgentsMd;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
 use feature_flags::AcpBetaFeatureFlag;
@@ -9463,17 +9464,15 @@ impl ThreadView {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "one folder".to_string());
 
-        let description = format!(
-            "This agent only operates on \"{}\". Other folders in this workspace are not accessible to it.",
-            active_dir
-        );
-
         Some(
             Callout::new()
                 .severity(Severity::Warning)
                 .icon(IconName::Warning)
-                .title("External Agents currently don't support multi-root workspaces")
-                .description(description)
+                .title("This agent doesn't currently support multi-root workspaces")
+                .description(format!(
+                    "It currently only operates by default on \"{}\".",
+                    active_dir
+                ))
                 .border_position(ui::BorderPosition::Bottom)
                 .dismiss_action(
                     IconButton::new("dismiss-multi-root-callout", IconName::Close)
