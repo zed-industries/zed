@@ -4158,6 +4158,18 @@ impl ToolCallEventStream {
         })
     }
 
+    /// The sandbox permissions to actually enforce for a command: the union
+    /// of this command's `request` and everything granted "for the rest of
+    /// the conversation".
+    ///
+    /// Callers must apply this to the enforced sandbox policy (rather than
+    /// the raw `request`) so a conversation grant keeps working for later
+    /// commands that write to a previously approved path without
+    /// re-requesting it.
+    pub(crate) fn effective_sandbox_request(&self, request: &SandboxRequest) -> SandboxRequest {
+        self.sandbox_grants.borrow().effective(request)
+    }
+
     /// Prompts the user to choose between an explicit set of actions and
     /// returns the chosen `option_id`.
     ///

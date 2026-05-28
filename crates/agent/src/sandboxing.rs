@@ -38,8 +38,7 @@ pub(crate) struct SandboxRequest {
     /// Allow unrestricted filesystem writes (the broad escape hatch).
     pub allow_fs_write_all: bool,
     /// Concrete paths the command needs to write to. Each grants its whole
-    /// subtree. These are never globs — write access is always a concrete
-    /// path subtree (mirroring Codex's model).
+    /// subtree. These are never globs — write access is always a concrete path subtree
     pub write_paths: Vec<PathBuf>,
 }
 
@@ -72,7 +71,7 @@ impl ConversationSandboxGrants {
     /// Whether everything `request` asks for has already been granted for the
     /// conversation, so the command can run without prompting again.
     ///
-    /// Write coverage is pure subtree containment (Codex-style): every
+    /// Write coverage is pure subtree containment: every
     /// requested path must sit under some granted path. This is fully
     /// deterministic and never widens scope, because grants are concrete
     /// paths rather than globs.
@@ -101,20 +100,41 @@ impl ConversationSandboxGrants {
         self.network |= request.network;
         self.allow_fs_write_all |= request.allow_fs_write_all;
         for path in &request.write_paths {
-            // Already covered by an existing (broader or equal) grant.
-            if self
-                .write_paths
-                .iter()
-                .any(|granted| path.starts_with(granted))
-            {
-                continue;
-            }
-            // Drop any existing grants that are now subsumed by this path.
-            self.write_paths
-                .retain(|granted| !granted.starts_with(path));
-            self.write_paths.push(path.clone());
+            add_write_path(&mut self.write_paths, path);
         }
     }
+
+    /// Compute the effective sandbox permissions to actually enforce for a
+    /// command: the union of everything granted for the conversation and
+    /// what this specific command requested.
+    ///
+    /// This is what makes a conversation grant "stick": every sandboxed
+    /// command applies the accumulated grants, so the model can write to a
+    /// previously approved path without re-requesting it. Passing the current `request` in
+    /// also covers "allow once" grants, which are enforced for this command
+    /// without being recorded for the conversation.
+    pub fn effective(&self, request: &SandboxRequest) -> SandboxRequest {
+        let mut write_paths = self.write_paths.clone();
+        for path in &request.write_paths {
+            add_write_path(&mut write_paths, path);
+        }
+        SandboxRequest {
+            network: self.network || request.network,
+            allow_fs_write_all: self.allow_fs_write_all || request.allow_fs_write_all,
+            write_paths,
+        }
+    }
+}
+
+/// Insert `path` into a set of write-grant subtrees, keeping it minimal:
+/// a no-op if already covered by a broader grant, otherwise added with any
+/// now-subsumed child grants pruned.
+fn add_write_path(write_paths: &mut Vec<PathBuf>, path: &std::path::Path) {
+    if write_paths.iter().any(|granted| path.starts_with(granted)) {
+        return;
+    }
+    write_paths.retain(|granted| !granted.starts_with(path));
+    write_paths.push(path.to_path_buf());
 }
 
 #[cfg(test)]
@@ -181,5 +201,40 @@ mod tests {
         grants.record(&request(true, false, &[]));
         assert!(grants.covers(&request(true, false, &[])));
         assert!(!grants.covers(&request(true, false, &["/tmp/build"])));
+    }
+
+    #[test]
+    fn effective_applies_conversation_grants_to_empty_request() {
+        // The core fix: a command that requests nothing still gets the
+        // conversation's granted write paths in its enforced policy.
+        let mut grants = ConversationSandboxGrants::default();
+        grants.record(&request(false, false, &["/tmp/build"]));
+
+        let effective = grants.effective(&request(false, false, &[]));
+        assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
+    }
+
+    #[test]
+    fn effective_unions_grants_with_once_request() {
+        // An "allow once" path (passed via `request`, never recorded) is
+        // enforced for this command alongside the standing grants.
+        let mut grants = ConversationSandboxGrants::default();
+        grants.record(&request(true, false, &["/tmp/build"]));
+
+        let effective = grants.effective(&request(false, false, &["/tmp/once"]));
+        assert!(effective.network);
+        assert_eq!(
+            effective.write_paths,
+            vec![PathBuf::from("/tmp/build"), PathBuf::from("/tmp/once")]
+        );
+    }
+
+    #[test]
+    fn effective_dedupes_request_already_covered_by_grant() {
+        let mut grants = ConversationSandboxGrants::default();
+        grants.record(&request(false, false, &["/tmp/build"]));
+
+        let effective = grants.effective(&request(false, false, &["/tmp/build/cache"]));
+        assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/build")]);
     }
 }

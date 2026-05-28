@@ -179,8 +179,14 @@ impl AgentTool for TerminalTool {
                 Vec::new()
             };
 
+            let request = crate::sandboxing::SandboxRequest {
+                network: want_network,
+                allow_fs_write_all: want_fs_write_all,
+                write_paths,
+            };
+
             // `unsandboxed: true` bypasses the wrap entirely, so the
-            // per-permission requests below are moot — it gets its own,
+            // per-permission requests are moot — it gets its own,
             // always-prompt confirmation as the strongest trust boundary.
             if want_unsandboxed {
                 let approve = cx.update(|cx| {
@@ -199,26 +205,18 @@ impl AgentTool for TerminalTool {
                         "Command cancelled: user denied permission to run outside the sandbox ({error})."
                     ));
                 }
-            } else {
-                let request = crate::sandboxing::SandboxRequest {
-                    network: want_network,
-                    allow_fs_write_all: want_fs_write_all,
-                    write_paths: write_paths.clone(),
-                };
-                if request.needs_escalation() {
-                    let title = sandbox_approval_title(&request);
-                    // Sandbox escalations always prompt (unless already
-                    // granted for the conversation), independent of any
-                    // `always_allow` tool-permission rules — the escalation
-                    // is a stronger trust boundary than the baseline command
-                    // approval.
-                    let approve =
-                        cx.update(|cx| event_stream.authorize_sandbox(title, request, cx));
-                    if let Err(error) = approve.await {
-                        return Ok(format!(
-                            "Command cancelled: user denied the requested sandbox permissions ({error})."
-                        ));
-                    }
+            } else if request.needs_escalation() {
+                let title = sandbox_approval_title(&request);
+                // Sandbox escalations always prompt (unless already granted
+                // for the conversation), independent of any `always_allow`
+                // tool-permission rules — the escalation is a stronger trust
+                // boundary than the baseline command approval.
+                let approve =
+                    cx.update(|cx| event_stream.authorize_sandbox(title, request.clone(), cx));
+                if let Err(error) = approve.await {
+                    return Ok(format!(
+                        "Command cancelled: user denied the requested sandbox permissions ({error})."
+                    ));
                 }
             }
 
@@ -240,6 +238,11 @@ impl AgentTool for TerminalTool {
             // let the model widen its own write permissions outside the
             // project.
             let sandbox_wrap = if sandboxing && !want_unsandboxed {
+                // Apply the conversation's standing grants on top of this
+                // command's request, so a path approved "for the rest of the
+                // conversation" stays writable for later commands even when
+                // the model doesn't re-request it.
+                let effective = event_stream.effective_sandbox_request(&request);
                 let writable_paths: Vec<PathBuf> = cx.update(|cx| {
                     self.project
                         .read(cx)
@@ -249,9 +252,9 @@ impl AgentTool for TerminalTool {
                 });
                 Some(acp_thread::SandboxWrap {
                     writable_paths,
-                    extra_write_paths: write_paths,
-                    allow_network: want_network,
-                    allow_fs_write: want_fs_write_all,
+                    extra_write_paths: effective.write_paths,
+                    allow_network: effective.network,
+                    allow_fs_write: effective.allow_fs_write_all,
                 })
             } else {
                 None
