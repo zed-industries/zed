@@ -4349,6 +4349,158 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
     );
 }
 
+fn remote_proto_entry(id: u64, path: &str, is_dir: bool) -> proto::Entry {
+    proto::Entry {
+        id,
+        is_dir,
+        path: path.to_string(),
+        inode: id,
+        mtime: Some(proto::Timestamp {
+            seconds: 0,
+            nanos: 0,
+        }),
+        is_ignored: false,
+        is_hidden: false,
+        is_external: false,
+        is_fifo: false,
+        size: None,
+        canonical_path: None,
+    }
+}
+
+// Regression test: a remote worktree used to emit `UpdatedEntries` with an
+// empty changeset (`Arc::default()`), discarding the changed paths. Consumers
+// that key off those paths - notably the agent's `.agents/skills` refresh -
+// therefore never fired on remote projects, so skills pasted into an already
+// open project were never picked up. The changeset must carry the real paths.
+#[gpui::test]
+async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+    });
+
+    let client = AnyProtoClient::new(NoopProtoClient::new());
+
+    let worktree = cx.update(|cx| {
+        Worktree::remote(
+            1,
+            clock::ReplicaId::new(1),
+            proto::WorktreeMetadata {
+                id: 1,
+                root_name: "project".to_string(),
+                visible: true,
+                abs_path: "/home/user/project".to_string(),
+                root_repo_common_dir: None,
+            },
+            client,
+            PathStyle::Posix,
+            cx,
+        )
+    });
+
+    // Collect the (path, change) pairs from every `UpdatedEntries` event.
+    let changes: Arc<Mutex<Vec<(String, PathChange)>>> = Arc::new(Mutex::new(Vec::new()));
+    cx.update(|cx| {
+        let changes = changes.clone();
+        cx.subscribe(&worktree, move |_, event, _cx| {
+            if let Event::UpdatedEntries(updated) = event {
+                changes.lock().extend(
+                    updated
+                        .iter()
+                        .map(|(path, _, change)| (path.as_unix_str().to_string(), *change)),
+                );
+            }
+        })
+        .detach();
+    });
+
+    // Simulate pasting two skill folders into `.agents/skills`.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: "/home/user/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: vec![
+                    remote_proto_entry(1, "", true),
+                    remote_proto_entry(2, ".agents", true),
+                    remote_proto_entry(3, ".agents/skills", true),
+                    remote_proto_entry(4, ".agents/skills/skill-1", true),
+                    remote_proto_entry(5, ".agents/skills/skill-1/SKILL.md", false),
+                    remote_proto_entry(6, ".agents/skills/skill-2", true),
+                    remote_proto_entry(7, ".agents/skills/skill-2/SKILL.md", false),
+                ],
+                removed_entries: vec![],
+                scan_id: 1,
+                is_last_update: true,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: None,
+            });
+    });
+
+    cx.run_until_parked();
+
+    {
+        let changes = changes.lock();
+        assert!(
+            changes
+                .iter()
+                .any(|(path, change)| path == ".agents/skills/skill-1/SKILL.md"
+                    && *change == PathChange::AddedOrUpdated),
+            "remote UpdatedEntries should carry the added skill paths, got {:?}",
+            changes
+        );
+        assert!(
+            changes
+                .iter()
+                .any(|(path, _)| path == ".agents/skills/skill-2/SKILL.md"),
+            "remote UpdatedEntries should carry every added path, got {:?}",
+            changes
+        );
+    }
+    changes.lock().clear();
+
+    // Now remove one skill folder. The wire format only carries entry ids for
+    // removals, so the worktree must resolve their paths against the previous
+    // snapshot before it is replaced.
+    worktree.update(cx, |worktree, _cx| {
+        worktree
+            .as_remote()
+            .unwrap()
+            .update_from_remote(proto::UpdateWorktree {
+                project_id: 1,
+                worktree_id: 1,
+                abs_path: "/home/user/project".to_string(),
+                root_name: "project".to_string(),
+                updated_entries: vec![],
+                removed_entries: vec![6, 7],
+                scan_id: 2,
+                is_last_update: true,
+                updated_repositories: vec![],
+                removed_repositories: vec![],
+                root_repo_common_dir: None,
+            });
+    });
+
+    cx.run_until_parked();
+
+    let changes = changes.lock();
+    assert!(
+        changes
+            .iter()
+            .any(|(path, change)| path == ".agents/skills/skill-2/SKILL.md"
+                && *change == PathChange::Removed),
+        "remote UpdatedEntries should carry removed paths resolved from the \
+         previous snapshot, got {:?}",
+        changes
+    );
+}
+
 #[gpui::test]
 async fn test_deferred_watch_repository_above_root(
     executor: BackgroundExecutor,
