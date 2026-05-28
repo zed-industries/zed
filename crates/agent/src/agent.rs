@@ -346,6 +346,15 @@ static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
         .map(|path| path.into_arc())
 });
 
+fn path_affects_project_context(path: &RelPath) -> bool {
+    RULES_FILE_REL_PATHS
+        .iter()
+        .any(|rules_path| path == rules_path.as_ref())
+        || SKILLS_PREFIX
+            .as_ref()
+            .is_some_and(|prefix| path.starts_with(prefix))
+}
+
 impl NativeAgent {
     pub fn new(
         thread_store: Entity<ThreadStore>,
@@ -1046,30 +1055,33 @@ impl NativeAgent {
         &mut self,
         project: Entity<Project>,
         event: &project::Event,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
         let project_id = project.entity_id();
-        let Some(state) = self.projects.get_mut(&project_id) else {
+        if !self.projects.contains_key(&project_id) {
             return;
+        }
+
+        let should_refresh_project_context = match event {
+            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => true,
+            project::Event::WorktreeUpdatedEntries(_, items) => items
+                .iter()
+                .any(|(path, _, _)| path_affects_project_context(path)),
+            project::Event::DeletedEntry(worktree_id, entry_id) => project
+                .read(cx)
+                .worktree_for_id(*worktree_id, cx)
+                .and_then(|worktree| {
+                    worktree
+                        .read(cx)
+                        .entry_for_id(*entry_id)
+                        .map(|entry| entry.path.clone())
+                })
+                .is_some_and(|path| path_affects_project_context(&path)),
+            _ => false,
         };
-        match event {
-            project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
-                state.project_context_needs_refresh.send(()).ok();
-            }
-            project::Event::WorktreeUpdatedEntries(_, items) => {
-                if items.iter().any(|(path, _, _)| {
-                    let path_ref = path.as_ref();
-                    RULES_FILE_REL_PATHS
-                        .iter()
-                        .any(|rules_path| path_ref == rules_path.as_ref())
-                        || SKILLS_PREFIX
-                            .as_ref()
-                            .is_some_and(|prefix| path_ref.starts_with(prefix))
-                }) {
-                    state.project_context_needs_refresh.send(()).ok();
-                }
-            }
-            _ => {}
+
+        if should_refresh_project_context && let Some(state) = self.projects.get_mut(&project_id) {
+            state.project_context_needs_refresh.send(()).ok();
         }
     }
 
@@ -3078,7 +3090,7 @@ mod internal_tests {
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
-    use fs::FakeFs;
+    use fs::{FakeFs, RemoveOptions};
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
@@ -4149,6 +4161,98 @@ mod internal_tests {
             assert!(
                 skill_names.contains(&"my-skill"),
                 "trusted skill should appear in available skills: {skill_names:?}"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deleted_project_skill_refreshes_available_skills(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "test-skill": {
+                            "SKILL.md": "---\nname: test-skill\ndescription: A project skill\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/project")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let project_id = project.entity_id();
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+            assert!(
+                skill_names.contains(&"test-skill"),
+                "skill should be available before deletion: {skill_names:?}"
+            );
+        });
+
+        let (worktree_id, skill_dir_entry_id) = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree = worktree.read(cx);
+            let skill_dir = worktree
+                .entry_for_path(rel_path(".agents/skills/test-skill"))
+                .unwrap();
+            (worktree.id(), skill_dir.id)
+        });
+
+        fs.remove_dir(
+            Path::new("/project/.agents/skills/test-skill"),
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        agent.update(cx, |agent, cx| {
+            agent.handle_project_event(
+                project.clone(),
+                &project::Event::DeletedEntry(worktree_id, skill_dir_entry_id),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                user_skills(&state.skills).is_empty(),
+                "deleted project skill should be removed from state: {:?}",
+                state.skills
+            );
+        });
+        cx.update(|cx| {
+            let skills = connection.available_skills(&session_id, cx);
+            let skill_names: Vec<&str> = skills.iter().map(|skill| skill.name.as_str()).collect();
+            assert!(
+                !skill_names.contains(&"test-skill"),
+                "deleted skill should be removed from available skills: {skill_names:?}"
             );
         });
     }
