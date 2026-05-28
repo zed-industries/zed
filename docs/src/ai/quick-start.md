@@ -7,7 +7,7 @@ description: Choose the right Zed AI setup path for agents, models, subscription
 
 Use this page to choose the right AI setup path in Zed. If you already know the company, subscription, model provider, agent, or CLI you want to use, start with [AI by Company](./by-company.md).
 
-## I want Zed's built-in agent {#zed-agent}
+## Use the Zed Agent {#zed-agent}
 
 Use [Zed Agent](./zed-agent.md) when you want Zed's native agent to read, edit, search, and run code in your project.
 
@@ -15,7 +15,7 @@ Zed Agent uses Zed-configured models from [LLM Providers](./llm-providers.md). I
 
 Start in the [Agent Panel](./agent-panel.md) to prompt the agent, add context, review changes, and manage threads.
 
-## I want to use another coding agent in Zed {#agent-cli}
+## Use Another Coding Agent in Zed {#agent-cli}
 
 Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, Gemini CLI, or another coding agent.
 
@@ -26,7 +26,9 @@ Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, Gem
 
 External Agents and Terminal Threads usually own their own auth, model configuration, subscriptions, tools, instructions, and MCP configuration.
 
-## I want to choose which models Zed uses {#model-access}
+## Choose Which Models the Zed Agent Uses {#model-access}
+
+The Zed Agent and other model-backed Zed AI features use models configured through [LLM Providers](./llm-providers.md).
 
 | If you want to...                                                             | Use                                                               |
 | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- |
@@ -38,7 +40,7 @@ External Agents and Terminal Threads usually own their own auth, model configura
 
 Provider keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
-## I want to change AI settings {#ai-settings}
+## Change AI Settings {#ai-settings}
 
 | If you want to...                                                           | Go to                                                                    |
 | --------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
@@ -48,7 +50,7 @@ Provider keys saved through Zed are stored in the system keychain, not in `setti
 
 For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 
-## I want a specific AI feature {#features}
+## Use a Specific AI Feature {#features}
 
 | If you want to...                              | Use                                                                                                                                            |
 | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -61,7 +63,7 @@ For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 | Understand privacy and data controls           | [AI Privacy](./privacy-and-security.md) and [Feedback and Training Data](./ai-improvement.md)                                                  |
 | Understand plans, usage, and billing           | [Plans & Pricing](../account/plans-and-pricing.md), [Zed-Hosted Models](../account/zed-hosted-models.md), and [Billing](../account/billing.md) |
 
-## I want to turn AI off {#turn-ai-off}
+## Turn AI Off {#turn-ai-off}
 
 Open the Settings Editor with {#action zed::OpenSettings}, search for `Disable AI`, and enable it.
 
