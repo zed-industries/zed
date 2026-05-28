@@ -2327,6 +2327,10 @@ impl SettingsWindow {
     }
 
     fn open_navbar_entry_page(&mut self, navbar_entry: usize) {
+        // Navigating to another page dismisses the transient "copied share
+        // link" checkmark shown on a Skills page row.
+        self.last_copied_skill_directory_path = None;
+
         if !self.is_nav_entry_visible(navbar_entry) {
             self.open_first_nav_page();
         }

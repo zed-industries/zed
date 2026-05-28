@@ -186,7 +186,7 @@ impl OpenRequest {
                 } else {
                     log::error!("Invalid session ID in URL: {}", session_id_str);
                 }
-            } else if url.starts_with("zed://skill") {
+            } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
                 this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
                 this.parse_agent_url(agent_path)
