@@ -3703,6 +3703,8 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sqlez",
+ "tempfile",
 ]
 
 [[package]]
