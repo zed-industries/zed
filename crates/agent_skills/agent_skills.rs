@@ -731,6 +731,40 @@ pub fn is_agents_skills_path(path: &Path) -> bool {
     false
 }
 
+pub const SKILL_SHARE_LINK_PREFIX: &str = "zed://skill";
+
+/// Build a shareable `zed://skill?data=…` link that fully embeds the given
+/// `SKILL.md` file contents.
+pub fn encode_skill_share_link(skill_file_content: &str) -> String {
+    use base64::Engine as _;
+    let data =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(skill_file_content.as_bytes());
+    format!("{SKILL_SHARE_LINK_PREFIX}?data={data}")
+}
+
+/// Recover the `SKILL.md` contents embedded in a `zed://skill?data=…` link
+/// produced by [`encode_skill_share_link`].
+pub fn decode_skill_share_link(link: &str) -> Result<String> {
+    use base64::Engine as _;
+    let query = link
+        .strip_prefix(SKILL_SHARE_LINK_PREFIX)
+        .and_then(|rest| rest.strip_prefix('?'))
+        .context("not a skill share link")?;
+    let data = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("data="))
+        .context("skill share link is missing the `data` parameter")?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(data.as_bytes())
+        .context("skill share link `data` is not valid base64")?;
+    anyhow::ensure!(
+        bytes.len() <= MAX_SKILL_FILE_SIZE,
+        "shared skill exceeds the maximum size of {MAX_SKILL_FILE_SIZE} bytes"
+    );
+    let content = String::from_utf8(bytes).context("skill share link `data` is not valid UTF-8")?;
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1958,5 +1992,26 @@ description: A skill with no body content
                 );
             }
         }
+    }
+
+    #[test]
+    fn skill_share_link_round_trips() {
+        let content =
+            "---\nname: my-skill\ndescription: Does a thing.\n---\n\n## Steps\n\nDo the thing.\n";
+        let link = encode_skill_share_link(content);
+        let data = link
+            .strip_prefix("zed://skill?data=")
+            .expect("link should start with the skill share prefix");
+        // base64url (no-pad) output must not require percent-encoding.
+        assert!(!data.contains('+') && !data.contains('/') && !data.contains('='));
+        assert_eq!(decode_skill_share_link(&link).unwrap(), content);
+    }
+
+    #[test]
+    fn decode_skill_share_link_rejects_non_skill_links() {
+        assert!(decode_skill_share_link("zed://settings/agent.skills").is_err());
+        assert!(decode_skill_share_link("zed://skill").is_err());
+        assert!(decode_skill_share_link("zed://skill?other=1").is_err());
+        assert!(decode_skill_share_link("zed://skill?data=!!!notbase64").is_err());
     }
 }

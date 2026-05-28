@@ -13,6 +13,7 @@ path = "agent_skills.rs"
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 const_format.workspace = true
 fs.workspace = true
 futures.workspace = true
