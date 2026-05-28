@@ -320,6 +320,21 @@ impl MarkdownStyle {
 
 pub struct Markdown {
     source: SharedString,
+    /// Pending append buffer.
+    ///
+    /// `Markdown::append` historically rebuilt `self.source` as
+    /// `SharedString::new(self.source.to_string() + text)` on every call, which
+    /// is O(n) per append and therefore O(n^2) on the streamed total. Real
+    /// hot path: ACP agent streams drain into `Markdown::append` at frame rate
+    /// (see `crates/acp_thread/src/acp_thread.rs` streaming buffer loop).
+    ///
+    /// When `Some`, this buffer is the authoritative content; `self.source` is
+    /// the last promoted snapshot used by the background parse task. The
+    /// buffer is promoted into `self.source` exactly when a new parse task is
+    /// spawned (see `source_for_parse`), so the amortised cost per `append`
+    /// stays at `String::push_str` (~O(1)). `replace`/`reset` invalidate the
+    /// buffer to keep the contract simple.
+    source_buf: Option<String>,
     selection: Selection,
     pressed_link: Option<RenderedLink>,
     pressed_footnote_ref: Option<RenderedFootnoteRef>,
@@ -512,6 +527,7 @@ impl Markdown {
         };
         let mut this = Self {
             source,
+            source_buf: None,
             selection: Selection::default(),
             pressed_link: None,
             pressed_footnote_ref: None,
@@ -641,7 +657,11 @@ impl Markdown {
     }
 
     pub fn source(&self) -> &str {
-        &self.source
+        if let Some(buf) = self.source_buf.as_deref() {
+            buf
+        } else {
+            &self.source
+        }
     }
 
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
@@ -667,11 +687,15 @@ impl Markdown {
     }
 
     pub fn append(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.source = SharedString::new(self.source.to_string() + text);
+        let buf = self
+            .source_buf
+            .get_or_insert_with(|| self.source.to_string());
+        buf.push_str(text);
         self.parse(cx);
     }
 
     pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.source_buf = None;
         self.source = source.into();
         self.parse(cx);
     }
@@ -711,6 +735,7 @@ impl Markdown {
         if source == self.source() {
             return;
         }
+        self.source_buf = None;
         self.source = source;
         self.selection = Selection::default();
         self.autoscroll_request = None;
@@ -819,8 +844,28 @@ impl Markdown {
         self.context_menu_link.as_ref()
     }
 
+    /// Promote any pending append buffer into `self.source` and return a clone
+    /// of the resulting `SharedString`. Callers that are about to spawn a parse
+    /// task use this so the spawned task sees the latest content and the next
+    /// `append` starts from a fresh, empty buffer.
+    fn source_for_parse(&mut self) -> SharedString {
+        if let Some(buf) = self.source_buf.take() {
+            self.source = SharedString::from(buf);
+        }
+        self.source.clone()
+    }
+
     fn parse(&mut self, cx: &mut Context<Self>) {
-        if self.source.is_empty() {
+        let is_empty = match self.source_buf.as_deref() {
+            Some(buf) => buf.is_empty(),
+            None => self.source.is_empty(),
+        };
+
+        if is_empty {
+            self.source_buf = None;
+            if !self.source.is_empty() {
+                self.source = SharedString::default();
+            }
             self.should_reparse = false;
             self.pending_parse.take();
             self.parsed_markdown = ParsedMarkdown {
@@ -840,11 +885,11 @@ impl Markdown {
             return;
         }
         self.should_reparse = false;
-        self.pending_parse = Some(self.start_background_parse(cx));
+        let source = self.source_for_parse();
+        self.pending_parse = Some(self.start_background_parse(source, cx));
     }
 
-    fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
-        let source = self.source.clone();
+    fn start_background_parse(&self, source: SharedString, cx: &Context<Self>) -> Task<()> {
         let should_parse_links_only = self.options.parse_links_only;
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
@@ -4672,5 +4717,83 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn append_buffered_accumulates_correctly(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new("prefix".into(), None, None, cx));
+        cx.run_until_parked();
+
+        markdown.update(cx, |md, cx| {
+            for _ in 0..1000 {
+                md.append("x", cx);
+            }
+        });
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            let expected = format!("prefix{}", "x".repeat(1000));
+            assert_eq!(markdown.read(cx).source(), expected.as_str());
+        });
+    }
+
+    #[gpui::test]
+    fn source_getter_reflects_pending_buffer(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new("hello".into(), None, None, cx));
+        cx.run_until_parked();
+
+        // First append spawns a background parse, so the second append's parse()
+        // call short-circuits on `pending_parse.is_some()` and leaves the buffer
+        // un-promoted. The getter must still reflect the accumulated content.
+        markdown.update(cx, |md, cx| {
+            md.append(" world", cx);
+            md.append("!", cx);
+            assert!(md.source_buf.is_some());
+            assert_eq!(md.source(), "hello world!");
+        });
+    }
+
+    #[gpui::test]
+    fn replace_clears_pending_buffer(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| Markdown::new("".into(), None, None, cx));
+        cx.run_until_parked();
+
+        markdown.update(cx, |md, cx| {
+            // Two appends ensures the second one leaves a populated `source_buf`
+            // (the first append's spawned parse is still pending).
+            md.append("a", cx);
+            md.append("a", cx);
+            assert!(md.source_buf.is_some());
+            md.replace(SharedString::new_static("b"), cx);
+            assert!(md.source_buf.is_none());
+            assert_eq!(md.source(), "b");
+        });
     }
 }
