@@ -1,15 +1,174 @@
 use anyhow::{Result, anyhow};
-use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, AsyncReadExt, FutureExt, StreamExt,
+    future::BoxFuture,
+    io::BufReader,
+    stream::BoxStream,
+};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Default)]
 pub struct StreamResponseOptions {
-    pub response_header_timeout: Option<Duration>,
+    response_header_timeout: Option<(Duration, BoxFuture<'static, ()>)>,
+}
+
+impl StreamResponseOptions {
+    pub fn response_header_timeout(
+        timeout: Duration,
+        timer: impl Future<Output = ()> + Send + 'static,
+    ) -> Self {
+        Self {
+            response_header_timeout: Some((timeout, timer.boxed())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::{FutureExt, StreamExt, future};
+    use http_client::{
+        AsyncBody, HttpClient, Request as HttpRequest, Response as HttpResponse, Url,
+    };
+    use std::sync::Arc;
+
+    struct TestHttpClient {
+        handler: Arc<
+            dyn Fn(HttpRequest<AsyncBody>) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+                + Send
+                + Sync,
+        >,
+    }
+
+    impl TestHttpClient {
+        fn new<F>(handler: F) -> Self
+        where
+            F: Fn(HttpRequest<AsyncBody>) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>>
+                + Send
+                + Sync
+                + 'static,
+        {
+            Self {
+                handler: Arc::new(handler),
+            }
+        }
+    }
+
+    impl HttpClient for TestHttpClient {
+        fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            request: HttpRequest<AsyncBody>,
+        ) -> BoxFuture<'static, anyhow::Result<HttpResponse<AsyncBody>>> {
+            (self.handler)(request)
+        }
+    }
+
+    fn test_request() -> Request {
+        Request {
+            model: "gpt-test".into(),
+            instructions: None,
+            input: Vec::new(),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+        }
+    }
+
+    #[test]
+    fn stream_response_times_out_before_headers() {
+        futures::executor::block_on(async {
+            let client = TestHttpClient::new(|_| {
+                future::pending::<anyhow::Result<HttpResponse<AsyncBody>>>().boxed()
+            });
+
+            let result = stream_response_with_options(
+                &client,
+                "Test Provider",
+                "https://api.test/v1",
+                "test-key",
+                test_request(),
+                Vec::new(),
+                StreamResponseOptions::response_header_timeout(
+                    Duration::from_secs(10),
+                    future::ready(()),
+                ),
+            )
+            .await;
+
+            assert!(matches!(
+                result,
+                Err(RequestError::ResponseHeaderTimeout {
+                    provider,
+                    timeout
+                }) if provider == "Test Provider" && timeout == Duration::from_secs(10)
+            ));
+        });
+    }
+
+    #[test]
+    fn stream_response_does_not_timeout_after_headers_arrive() {
+        futures::executor::block_on(async {
+            let client = TestHttpClient::new(|_| {
+                async {
+                    let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
+                    Ok(HttpResponse::builder()
+                        .status(200)
+                        .body(AsyncBody::from(format!("{body}\n\n")))?)
+                }
+                .boxed()
+            });
+            let (timeout_tx, timeout_rx) = futures::channel::oneshot::channel::<()>();
+
+            let mut stream = stream_response_with_options(
+                &client,
+                "Test Provider",
+                "https://api.test/v1",
+                "test-key",
+                test_request(),
+                Vec::new(),
+                StreamResponseOptions::response_header_timeout(
+                    Duration::from_secs(10),
+                    async move {
+                        let _ = timeout_rx.await;
+                    },
+                ),
+            )
+            .await
+            .expect("headers should arrive before timeout");
+
+            let _ = timeout_tx.send(());
+
+            let event = stream
+                .next()
+                .await
+                .expect("stream should produce an event")
+                .expect("event should parse");
+
+            assert!(matches!(event, StreamEvent::Completed { .. }));
+        });
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -468,7 +627,6 @@ pub async fn stream_response_with_options(
     extra_headers: Vec<(String, String)>,
     options: StreamResponseOptions,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
-    let _ = options;
     let uri = format!("{api_url}/responses");
     let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
@@ -486,7 +644,24 @@ pub async fn stream_response_with_options(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    let mut response = if let Some((timeout, timer)) = options.response_header_timeout {
+        let send_request = client.send(request).fuse();
+        let timer = timer.fuse();
+        futures::pin_mut!(send_request);
+        futures::pin_mut!(timer);
+
+        futures::select! {
+            response = send_request => response?,
+            () = timer => {
+                return Err(RequestError::ResponseHeaderTimeout {
+                    provider: provider_name.to_owned(),
+                    timeout,
+                });
+            }
+        }
+    } else {
+        client.send(request).await?
+    };
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
