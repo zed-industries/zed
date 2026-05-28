@@ -203,8 +203,13 @@ mod tests {
         assert!(rendered.contains("allow_hosts"));
         assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("fs_write_paths"));
+        assert!(rendered.contains("allow_git_access: true"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
+        assert!(rendered.contains("file contents under `.git` directories"));
+        assert!(rendered.contains("Git metadata directories needed by opened worktrees"));
+        assert!(rendered.contains("inherited SSH agent socket"));
+        assert!(rendered.contains("does not allow packet-sending network access"));
         assert!(rendered.contains("for the rest of the thread"));
     }
 

@@ -73,6 +73,8 @@ impl NetworkRequest {
 pub(crate) struct SandboxRequest {
     /// Outbound network access requested for this command.
     pub network: NetworkRequest,
+    /// Allow access to protected Git metadata paths.
+    pub allow_git_access: bool,
     /// Allow unrestricted filesystem writes (the broad escape hatch).
     pub allow_fs_write_all: bool,
     /// Run the command fully outside the sandbox.
@@ -87,6 +89,7 @@ impl SandboxRequest {
     /// scope, and therefore needs user approval.
     pub fn needs_escalation(&self) -> bool {
         self.network.is_requested()
+            || self.allow_git_access
             || self.allow_fs_write_all
             || self.unsandboxed
             || !self.write_paths.is_empty()
@@ -107,6 +110,7 @@ pub(crate) struct ThreadSandboxGrants {
     /// Host patterns granted network access for the thread. Each covers its
     /// whole subdomain space; redundant entries are pruned on insert.
     network_hosts: Vec<HostPattern>,
+    allow_git_access: bool,
     allow_fs_write_all: bool,
     unsandboxed: bool,
     /// Whether the user approved running commands *without* a sandbox for the
@@ -138,6 +142,9 @@ impl ThreadSandboxGrants {
             return self.unsandboxed || persistent.allow_unsandboxed;
         }
         if !self.network_covered(&request.network, persistent) {
+            return false;
+        }
+        if request.allow_git_access && !(self.allow_git_access || persistent.allow_git_access) {
             return false;
         }
         if request.allow_fs_write_all && !(self.allow_fs_write_all || persistent.allow_fs_write_all)
@@ -208,6 +215,7 @@ impl ThreadSandboxGrants {
                 }
             }
         }
+        self.allow_git_access |= request.allow_git_access;
         self.allow_fs_write_all |= request.allow_fs_write_all;
         self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
@@ -259,6 +267,9 @@ impl ThreadSandboxGrants {
         }
         SandboxRequest {
             network,
+            allow_git_access: persistent.allow_git_access
+                || self.allow_git_access
+                || request.allow_git_access,
             allow_fs_write_all: persistent.allow_fs_write_all
                 || self.allow_fs_write_all
                 || request.allow_fs_write_all,
@@ -312,6 +323,7 @@ mod tests {
     fn request(network: NetworkRequest, all: bool, paths: &[&str]) -> SandboxRequest {
         SandboxRequest {
             network,
+            allow_git_access: false,
             allow_fs_write_all: all,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
@@ -321,6 +333,7 @@ mod tests {
     fn unsandboxed_request() -> SandboxRequest {
         SandboxRequest {
             network: NetworkRequest::None,
+            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: true,
             write_paths: Vec::new(),
@@ -496,12 +509,40 @@ mod tests {
     }
 
     #[test]
+    fn git_access_grant_tracked_independently() {
+        let mut git_request = request(NetworkRequest::None, false, &[]);
+        git_request.allow_git_access = true;
+
+        let mut grants = ThreadSandboxGrants::default();
+        assert!(!covers(&grants, &git_request));
+
+        grants.record(&git_request);
+        assert!(covers(&grants, &git_request));
+        assert!(!covers(
+            &grants,
+            &request(NetworkRequest::AnyHost, false, &[])
+        ));
+        assert!(!covers(&grants, &request(NetworkRequest::None, true, &[])));
+    }
+
+    #[test]
+    fn unrestricted_writes_do_not_cover_git_access() {
+        let mut grants = ThreadSandboxGrants::default();
+        grants.record(&request(NetworkRequest::None, true, &[]));
+
+        let mut git_request = request(NetworkRequest::None, false, &[]);
+        git_request.allow_git_access = true;
+        assert!(!covers(&grants, &git_request));
+    }
+
+    #[test]
     fn persistent_grants_combine_with_thread_grants() {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(hosts(&["github.com"]), false, &[]));
         let persistent = SandboxPermissions {
             allow_all_hosts: false,
             network_hosts: Vec::new(),
+            allow_git_access: false,
             allow_fs_write_all: false,
             allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/build")],
@@ -523,6 +564,7 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_all_hosts: false,
             network_hosts: vec!["*.npmjs.org".to_string()],
+            allow_git_access: false,
             allow_fs_write_all: false,
             allow_unsandboxed: false,
             write_paths: Vec::new(),
@@ -544,6 +586,7 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_all_hosts: false,
             network_hosts: Vec::new(),
+            allow_git_access: false,
             allow_fs_write_all: true,
             allow_unsandboxed: false,
             write_paths: Vec::new(),
@@ -568,6 +611,7 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_all_hosts: false,
             network_hosts: Vec::new(),
+            allow_git_access: false,
             allow_fs_write_all: false,
             allow_unsandboxed: true,
             write_paths: Vec::new(),
@@ -627,6 +671,7 @@ mod tests {
         let persistent = SandboxPermissions {
             allow_all_hosts: true,
             network_hosts: Vec::new(),
+            allow_git_access: true,
             allow_fs_write_all: false,
             allow_unsandboxed: false,
             write_paths: vec![PathBuf::from("/tmp/always")],
@@ -635,6 +680,7 @@ mod tests {
         let effective = grants
             .effective_with_persistent(&request(NetworkRequest::None, false, &[]), &persistent);
         assert_eq!(effective.network, NetworkRequest::AnyHost);
+        assert!(effective.allow_git_access);
         assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/always")]);
     }
 
