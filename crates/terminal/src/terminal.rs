@@ -551,7 +551,7 @@ impl TerminalBuilder {
                     env: env.clone().into_iter().collect(),
                     // We pass in the foreground thread's signal mask to the child process via pty_options,
                     // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                    // otherwise the termial would inherit the background executor's signal mask which blocks
+                    // otherwise the terminal would inherit the background executor's signal mask which blocks
                     // some terminal signals
                     #[cfg(not(windows))]
                     child_signal_mask,
