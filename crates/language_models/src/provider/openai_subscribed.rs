@@ -12,12 +12,15 @@ use language_model::{
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, RateLimiter,
 };
-use open_ai::{ReasoningEffort, responses::stream_response};
+use open_ai::{
+    ReasoningEffort,
+    responses::{StreamResponseOptions, stream_response_with_options},
+};
 use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use ui::{ConfiguredApiCard, prelude::*};
 use url::form_urlencoded;
 use util::ResultExt as _;
@@ -35,6 +38,7 @@ const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
 const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const CODEX_RESPONSE_HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -521,15 +525,20 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             }
 
             let access_token = creds.access_token.clone();
+            let background_executor = cx.background_executor().clone();
             request_limiter
                 .stream(async move {
-                    stream_response(
+                    stream_response_with_options(
                         http_client.as_ref(),
                         PROVIDER_NAME.0.as_str(),
                         CODEX_BASE_URL,
                         &access_token,
                         responses_request,
                         extra_headers,
+                        StreamResponseOptions::response_header_timeout(
+                            CODEX_RESPONSE_HEADER_TIMEOUT,
+                            background_executor.timer(CODEX_RESPONSE_HEADER_TIMEOUT),
+                        ),
                     )
                     .await
                     .map_err(LanguageModelCompletionError::from)
