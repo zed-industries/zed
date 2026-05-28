@@ -914,6 +914,76 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn cycling_model_and_thought_config_options_saves_selected_values_as_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        let agent_server = Rc::new(TestAgentServer::default());
+        let config_options = Rc::new(TestSessionConfigOptions::new(vec![
+            acp::SessionConfigOption::select(
+                "model",
+                "Model",
+                "gpt-4.1",
+                vec![
+                    acp::SessionConfigSelectOption::new("gpt-4.1", "GPT-4.1"),
+                    acp::SessionConfigSelectOption::new("gpt-5", "GPT-5"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::Model),
+            acp::SessionConfigOption::select(
+                "thinking_level",
+                "Thinking",
+                "medium",
+                vec![
+                    acp::SessionConfigSelectOption::new("medium", "Medium"),
+                    acp::SessionConfigSelectOption::new("high", "High"),
+                ],
+            )
+            .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+        ]));
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        cx.update(|cx| {
+            let config_options: Rc<dyn AgentSessionConfigOptions> = config_options.clone();
+            let agent_server: Rc<dyn AgentServer> = agent_server.clone();
+            let fs = fs.clone();
+            let view = cx.new(|_| ConfigOptionsView {
+                config_option_ids: ConfigOptionsView::config_option_ids(&config_options),
+                config_options,
+                selectors: Vec::new(),
+                agent_server,
+                fs,
+                _refresh_task: Task::ready(()),
+            });
+
+            assert!(view.update(cx, |view, cx| {
+                view.cycle_category_option(acp::SessionConfigOptionCategory::Model, false, cx)
+            }));
+            assert!(view.update(cx, |view, cx| {
+                view.cycle_category_option(
+                    acp::SessionConfigOptionCategory::ThoughtLevel,
+                    false,
+                    cx,
+                )
+            }));
+        });
+
+        assert_eq!(
+            agent_server.saved_defaults.lock().as_slice(),
+            &[
+                ("model".to_string(), Some("gpt-5".to_string())),
+                ("thinking_level".to_string(), Some("high".to_string())),
+            ]
+        );
+        assert_eq!(
+            config_options.set_values.borrow().as_slice(),
+            &[
+                ("model".to_string(), "gpt-5".to_string()),
+                ("thinking_level".to_string(), "high".to_string()),
+            ]
+        );
+    }
+
     #[derive(Default)]
     struct TestAgentServer {
         saved_defaults: Arc<Mutex<Vec<(String, Option<String>)>>>,
