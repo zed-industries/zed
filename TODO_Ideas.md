@@ -4,6 +4,8 @@ after next main merge, test this:
 `cmd-k, cmd-/` (or `ctrl-k, ctrl-/`)
 - try out bookmarks: <https://bsky.app/profile/zed.dev/post/3mjxczuagbc22>
 - The file finder now matches search terms in any order.
+- `editor: toggle all diff hunks` from <https://bsky.app/profile/zed.dev/post/3mmwfd26hyg2r>
+- `git: branch diff` now lets you choose the base branch to compare against. from <https://bsky.app/profile/zed.dev/post/3mmwfd26hyg2r>
 - With "Focus Follows Mouse" enabled, focus is automatically transferred to whichever panel your mouse is hovering over.
 - https://github.com/zed-industries/zed/pull/49802 (project_panel: Add diagnostic count badges and color priority)
 - outline UI ("document_symbols": "on"). (enable this and test) (https://github.com/zed-industries/zed/pull/48780)
