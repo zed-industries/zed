@@ -538,6 +538,7 @@ pub struct SelectedPermissionOutcome {
     pub option_id: acp::PermissionOptionId,
     pub option_kind: acp::PermissionOptionKind,
     pub params: Option<SelectedPermissionParams>,
+    pub meta: Option<acp::Meta>,
 }
 
 impl SelectedPermissionOutcome {
@@ -546,6 +547,7 @@ impl SelectedPermissionOutcome {
             option_id,
             option_kind,
             params: None,
+            meta: None,
         }
     }
 
@@ -553,11 +555,16 @@ impl SelectedPermissionOutcome {
         self.params = params;
         self
     }
+
+    pub fn meta(mut self, meta: Option<acp::Meta>) -> Self {
+        self.meta = meta;
+        self
+    }
 }
 
 impl From<SelectedPermissionOutcome> for acp::SelectedPermissionOutcome {
     fn from(value: SelectedPermissionOutcome) -> Self {
-        Self::new(value.option_id)
+        Self::new(value.option_id).meta(value.meta)
     }
 }
 
@@ -3273,6 +3280,25 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn selected_permission_outcome_preserves_acp_meta() {
+        let mut meta = acp::Meta::default();
+        meta.insert("value".into(), json!("typed value"));
+
+        let selected: acp::SelectedPermissionOutcome = SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new("submit"),
+            acp::PermissionOptionKind::AllowOnce,
+        )
+        .meta(Some(meta))
+        .into();
+
+        assert_eq!(selected.option_id, acp::PermissionOptionId::new("submit"));
+        assert_eq!(
+            selected.meta.as_ref().and_then(|meta| meta.get("value")),
+            Some(&json!("typed value"))
+        );
     }
 
     #[gpui::test]
