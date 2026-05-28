@@ -1984,7 +1984,7 @@ impl Interactivity {
                 if let Some(global_id) = global_id {
                     let node_id = global_id.accesskit_node_id();
                     window.a11y.focus_ids.insert(node_id, focus_handle.id);
-                    if focus_handle.is_focused(window) {
+                    if focus_handle.is_focused(window) && window.a11y.nodes.has_node(node_id) {
                         window.a11y.nodes.set_focus(node_id);
                     }
                 }
