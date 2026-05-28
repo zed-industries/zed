@@ -289,6 +289,7 @@ actions!(
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
         NewTerminalThread,
+        NewAgentTerminalCommand,
     ]
 );
 

@@ -42,7 +42,8 @@ use crate::terminal_thread_metadata_store::{TerminalThreadMetadata, TerminalThre
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
     AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
-    LoadThreadFromClipboard, NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown,
+    LoadThreadFromClipboard, NewAgentTerminalCommand, NewTerminalThread, NewThread,
+    OpenActiveThreadAsMarkdown,
     OpenAgentDiff, ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell,
     ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
@@ -121,6 +122,22 @@ const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
 
 fn is_known_terminal_agent_command(command: &str) -> bool {
     KNOWN_TERMINAL_AGENT_COMMANDS.contains(&command)
+}
+
+fn settings_shell_to_task_shell(shell: settings::Shell) -> task::Shell {
+    match shell {
+        settings::Shell::System => task::Shell::System,
+        settings::Shell::Program(program) => task::Shell::Program(program),
+        settings::Shell::WithArguments {
+            program,
+            args,
+            title_override,
+        } => task::Shell::WithArguments {
+            program,
+            args,
+            title_override,
+        },
+    }
 }
 
 fn terminal_program_to_report(
@@ -362,6 +379,19 @@ pub fn init(cx: &mut App) {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
                             panel.new_terminal(
+                                Some(workspace),
+                                AgentThreadSource::AgentPanel,
+                                window,
+                                cx,
+                            )
+                        });
+                        workspace.focus_panel::<AgentPanel>(window, cx);
+                    }
+                })
+                .register_action(|workspace, _: &NewAgentTerminalCommand, window, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel.new_terminal_command(
                                 Some(workspace),
                                 AgentThreadSource::AgentPanel,
                                 window,
@@ -1050,6 +1080,7 @@ pub struct AgentPanel {
     last_context_source: Option<AgentContextSource>,
 
     is_active: bool,
+    auto_launched_terminal_command: bool,
 }
 
 impl AgentPanel {
@@ -1334,6 +1365,14 @@ impl AgentPanel {
                             window,
                             cx,
                         );
+                    } else if AgentSettings::get_global(cx).terminal_command.is_some() {
+                        panel.auto_launched_terminal_command = true;
+                        panel.new_terminal_command(
+                            Some(workspace),
+                            AgentThreadSource::AgentPanel,
+                            window,
+                            cx,
+                        );
                     }
                     if let Some(new_draft_thread_id) = serialized_panel
                         .as_ref()
@@ -1349,6 +1388,25 @@ impl AgentPanel {
 
             Ok(panel)
         })
+    }
+
+    fn maybe_auto_launch_terminal_command(
+        &mut self,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.auto_launched_terminal_command {
+            return;
+        }
+        if AgentSettings::get_global(cx).terminal_command.is_none() {
+            return;
+        }
+        self.auto_launched_terminal_command = true;
+        if !self.terminals.is_empty() || self.pending_terminal_spawn.is_some() {
+            return;
+        }
+        self.new_terminal_command(workspace, AgentThreadSource::AgentPanel, window, cx);
     }
 
     pub(crate) fn new(
@@ -1467,6 +1525,7 @@ impl AgentPanel {
             _thread_metadata_store_subscription,
             last_context_source: None,
             is_active: false,
+            auto_launched_terminal_command: false,
         };
 
         panel.ensure_native_agent_connection(cx);
@@ -1813,6 +1872,10 @@ impl AgentPanel {
         if !self.supports_terminal(cx) {
             return;
         }
+        if AgentSettings::get_global(cx).terminal_command.is_some() {
+            self.new_terminal_command(workspace, source, window, cx);
+            return;
+        }
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         let working_directory = self.terminal_working_directory(workspace, cx);
         self.spawn_terminal(
@@ -1880,53 +1943,171 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let terminal_working_directory = working_directory.clone();
-        let terminal_task = self.project.update(cx, |project, cx| {
-            project.create_terminal_shell(working_directory, cx)
-        });
-        let workspace = self.workspace.clone();
-        let workspace_id = self.workspace_id;
-        let project = self.project.downgrade();
+        self.spawn_terminal_inner(
+            terminal_id,
+            working_directory,
+            None,
+            custom_title,
+            initial_title,
+            created_at,
+            select,
+            focus,
+            source,
+            window,
+            cx,
+        );
+    }
 
-        cx.spawn_in(window, async move |this, cx| {
-            let terminal = match terminal_task.await {
-                Ok(terminal) => terminal,
-                Err(error) => {
-                    log::error!("failed to spawn agent panel terminal: {error:#}");
-                    workspace
-                        .update(cx, |workspace, cx| workspace.show_error(&error, cx))
-                        .log_err();
-                    this.update(cx, |this, cx| {
-                        if this.pending_terminal_spawn == Some(terminal_id) {
-                            this.pending_terminal_spawn = None;
-                            cx.notify();
-                        }
-                    })
-                    .log_err();
-                    return anyhow::Ok(());
-                }
-            };
-            this.update_in(cx, |this, window, cx| {
-                let terminal_view = cx.new(|cx| {
-                    TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
+    pub fn new_terminal_command(
+        &mut self,
+        workspace: Option<&Workspace>,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.supports_terminal(cx) {
+            return;
+        }
+        let Some(settings_shell) = AgentSettings::get_global(cx).terminal_command.clone() else {
+            if let Some(workspace) = self.workspace.upgrade() {
+                workspace.update(cx, |workspace, cx| {
+                    struct AgentTerminalCommandUnset;
+                    workspace.show_toast(
+                        workspace::Toast::new(
+                            workspace::notifications::NotificationId::unique::<
+                                AgentTerminalCommandUnset,
+                            >(),
+                            "Set `agent.terminal_command` in settings to use this action.",
+                        )
+                        .autohide(),
+                        cx,
+                    );
                 });
-                this.insert_terminal(
-                    terminal_id,
-                    terminal_view,
-                    terminal_working_directory,
-                    custom_title,
-                    initial_title,
-                    created_at,
-                    select,
-                    focus,
-                    source,
-                    window,
-                    cx,
-                );
-            })?;
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            }
+            return;
+        };
+        let shell = settings_shell_to_task_shell(settings_shell);
+        let title = match &shell {
+            task::Shell::Program(program) => Some(SharedString::from(program.clone())),
+            task::Shell::WithArguments {
+                program,
+                title_override,
+                ..
+            } => Some(SharedString::from(
+                title_override.clone().unwrap_or_else(|| program.clone()),
+            )),
+            task::Shell::System => None,
+        };
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
+        let working_directory = self.terminal_working_directory(workspace, cx);
+        let terminal_id = TerminalId::new();
+        self.pending_terminal_spawn = Some(terminal_id);
+        self.spawn_terminal_inner(
+            terminal_id,
+            working_directory,
+            Some(shell),
+            title,
+            None,
+            None,
+            true,
+            true,
+            source,
+            window,
+            cx,
+        );
+    }
+
+    fn spawn_terminal_inner(
+        &mut self,
+        terminal_id: TerminalId,
+        working_directory: Option<PathBuf>,
+        shell_override: Option<task::Shell>,
+        custom_title: Option<SharedString>,
+        initial_title: Option<SharedString>,
+        created_at: Option<DateTime<Utc>>,
+        select: bool,
+        focus: bool,
+        source: AgentThreadSource,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let terminal_working_directory = working_directory.clone();
+        #[cfg(test)]
+        {
+            // In tests, real terminal spawns require a PTY which is unavailable.
+            // Mirror `spawn_initial_terminal`'s test variant and insert a
+            // display-only terminal so the routing logic remains observable.
+            let _ = shell_override;
+            if let Err(error) = self.insert_display_only_terminal(
+                terminal_id,
+                terminal_working_directory,
+                custom_title,
+                initial_title,
+                created_at,
+                select,
+                focus,
+                source,
+                window,
+                cx,
+            ) {
+                log::error!("failed to spawn test agent panel terminal: {error:#}");
+                if self.pending_terminal_spawn == Some(terminal_id) {
+                    self.pending_terminal_spawn = None;
+                    cx.notify();
+                }
+            }
+            return;
+        }
+        #[cfg(not(test))]
+        {
+            let terminal_task = self.project.update(cx, |project, cx| match shell_override {
+                Some(shell) => project.create_terminal_with_shell(working_directory, shell, cx),
+                None => project.create_terminal_shell(working_directory, cx),
+            });
+            let workspace = self.workspace.clone();
+            let workspace_id = self.workspace_id;
+            let project = self.project.downgrade();
+
+            cx.spawn_in(window, async move |this, cx| {
+                let terminal = match terminal_task.await {
+                    Ok(terminal) => terminal,
+                    Err(error) => {
+                        log::error!("failed to spawn agent panel terminal: {error:#}");
+                        workspace
+                            .update(cx, |workspace, cx| workspace.show_error(&error, cx))
+                            .log_err();
+                        this.update(cx, |this, cx| {
+                            if this.pending_terminal_spawn == Some(terminal_id) {
+                                this.pending_terminal_spawn = None;
+                                cx.notify();
+                            }
+                        })
+                        .log_err();
+                        return anyhow::Ok(());
+                    }
+                };
+                this.update_in(cx, |this, window, cx| {
+                    let terminal_view = cx.new(|cx| {
+                        TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
+                    });
+                    this.insert_terminal(
+                        terminal_id,
+                        terminal_view,
+                        terminal_working_directory,
+                        custom_title,
+                        initial_title,
+                        created_at,
+                        select,
+                        focus,
+                        source,
+                        window,
+                        cx,
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     fn insert_terminal(
@@ -2194,9 +2375,17 @@ impl AgentPanel {
         self.pending_terminal_spawn = Some(metadata.terminal_id);
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         let initial_title = Self::terminal_restore_initial_title(&metadata);
-        self.spawn_terminal(
+        let shell_override = AgentSettings::get_global(cx)
+            .terminal_command
+            .clone()
+            .map(settings_shell_to_task_shell);
+        if shell_override.is_some() {
+            self.auto_launched_terminal_command = true;
+        }
+        self.spawn_terminal_inner(
             metadata.terminal_id,
             working_directory,
+            shell_override,
             metadata.custom_title.clone(),
             initial_title,
             Some(metadata.created_at),
@@ -4507,6 +4696,7 @@ impl Panel for AgentPanel {
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.is_active = active;
         if active {
+            self.maybe_auto_launch_terminal_command(None, window, cx);
             self.ensure_thread_initialized(window, cx);
         }
     }
@@ -6373,6 +6563,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_settings_shell_to_task_shell_maps_each_variant() {
+        assert!(matches!(
+            settings_shell_to_task_shell(settings::Shell::System),
+            task::Shell::System
+        ));
+
+        match settings_shell_to_task_shell(settings::Shell::Program("claude".into())) {
+            task::Shell::Program(program) => assert_eq!(program, "claude"),
+            other => panic!("expected Shell::Program, got {other:?}"),
+        }
+
+        match settings_shell_to_task_shell(settings::Shell::WithArguments {
+            program: "claude".into(),
+            args: vec!["--resume".into()],
+            title_override: Some("Claude".into()),
+        }) {
+            task::Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => {
+                assert_eq!(program, "claude");
+                assert_eq!(args, vec!["--resume".to_string()]);
+                assert_eq!(title_override.as_deref(), Some("Claude"));
+            }
+            other => panic!("expected Shell::WithArguments, got {other:?}"),
+        }
+    }
+
     #[derive(Clone, Default)]
     struct SessionTrackingConnection {
         next_session_number: Arc<Mutex<usize>>,
@@ -6770,6 +6990,95 @@ mod tests {
             assert!(
                 panel.active_conversation_view().is_none(),
                 "activation while a terminal restore is pending should not fall back to a draft"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_command_without_setting_does_not_spawn(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_terminal_command(None, AgentThreadSource::AgentPanel, window, cx);
+        });
+        for _ in 0..4 {
+            cx.run_until_parked();
+        }
+
+        panel.read_with(&cx, |panel, cx| {
+            assert!(
+                panel.terminals(cx).is_empty(),
+                "no terminal should be spawned when agent.terminal_command is unset"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_command_spawns_configured_program(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    terminal_command: Some(settings::Shell::Program("claude".into())),
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_terminal_command(None, AgentThreadSource::AgentPanel, window, cx);
+        });
+        for _ in 0..4 {
+            cx.run_until_parked();
+        }
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(terminals.len(), 1, "configured command should spawn one terminal");
+            assert_eq!(
+                terminals[0].custom_title.as_deref(),
+                Some("claude"),
+                "spawned terminal should be titled by the configured program"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_terminal_routes_to_terminal_command_when_configured(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    terminal_command: Some(settings::Shell::WithArguments {
+                        program: "claude".into(),
+                        args: vec!["--resume".into()],
+                        title_override: Some("Claude".into()),
+                    }),
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.new_terminal(None, AgentThreadSource::AgentPanel, window, cx);
+        });
+        for _ in 0..4 {
+            cx.run_until_parked();
+        }
+
+        panel.read_with(&cx, |panel, cx| {
+            let terminals = panel.terminals(cx);
+            assert_eq!(
+                terminals.len(),
+                1,
+                "new_terminal should delegate to new_terminal_command when terminal_command is set"
+            );
+            assert_eq!(
+                terminals[0].custom_title.as_deref(),
+                Some("Claude"),
+                "title_override from the setting should win"
             );
         });
     }
