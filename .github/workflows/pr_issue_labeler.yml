@@ -39,7 +39,6 @@ jobs:
             const BOT_LABEL = 'bot';
             const STAFF_LABEL = 'staff';
             const FIRST_CONTRIBUTION_LABEL = 'first contribution';
-            const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const GUILD_LABEL = 'guild';
             const GUILD_MEMBERS = [
               '11happy',
@@ -82,6 +81,7 @@ jobs:
               'transitoryangel',
               'virajbhartiya',
             ];
+            const COMMUNITY_CHAMPION_LABEL = 'community champion';
             const COMMUNITY_CHAMPIONS = [
               '0x2CA',
               '5brian',
