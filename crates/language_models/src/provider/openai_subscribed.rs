@@ -1314,6 +1314,56 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_stream_completion_times_out_before_codex_headers(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_request| {
+            futures::future::pending::<anyhow::Result<http_client::Response<AsyncBody>>>()
+        });
+
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_fresh_credentials()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: Arc::new(FakeCredentialsProvider::new()),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt55.id().to_string()),
+            model: ChatGptModel::Gpt55,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-1".to_string()),
+            prompt_id: Some("prompt-1".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hello".into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let stream_completion = model.stream_completion(request, &cx.to_async());
+        cx.run_until_parked();
+        cx.executor().advance_clock(CODEX_RESPONSE_HEADER_TIMEOUT);
+
+        let error = match stream_completion.await {
+            Ok(_) => panic!("stream should time out before headers arrive"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::HttpSend { provider, .. }
+                if provider == PROVIDER_NAME
+        ));
+    }
+
+    #[gpui::test]
     async fn test_concurrent_refresh_deduplicates(cx: &mut TestAppContext) {
         let refresh_count = Arc::new(AtomicUsize::new(0));
         let refresh_count_clone = refresh_count.clone();
