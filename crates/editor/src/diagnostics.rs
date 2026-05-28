@@ -77,7 +77,8 @@ impl Editor {
         if !self.diagnostics_enabled() {
             return;
         }
-        self.go_to_diagnostic_impl(Direction::Next, action.severity, window, cx)
+
+        self.go_to_diagnostic_at_cursor(Direction::Next, action.severity, window, cx);
     }
 
     pub fn go_to_prev_diagnostic(
@@ -89,10 +90,43 @@ impl Editor {
         if !self.diagnostics_enabled() {
             return;
         }
-        self.go_to_diagnostic_impl(Direction::Prev, action.severity, window, cx)
+
+        self.go_to_diagnostic_at_cursor(Direction::Prev, action.severity, window, cx);
     }
 
-    pub fn go_to_diagnostic_impl(
+    fn diagnostics_before_cursor<'a>(
+        buffer: &'a MultiBufferSnapshot,
+        cursor: MultiBufferOffset,
+        severity: GoToDiagnosticSeverityFilter,
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'a, MultiBufferOffset>> {
+        buffer
+            .diagnostics_in_range(MultiBufferOffset(0)..cursor)
+            .filter(move |entry| entry.range.start <= cursor)
+            .filter(move |entry| severity.matches(entry.diagnostic.severity))
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| !entry.diagnostic.is_unnecessary)
+    }
+
+    fn diagnostics_after_cursor<'a>(
+        buffer: &'a MultiBufferSnapshot,
+        cursor: MultiBufferOffset,
+        severity: GoToDiagnosticSeverityFilter,
+    ) -> impl Iterator<Item = DiagnosticEntryRef<'a, MultiBufferOffset>> {
+        buffer
+            .diagnostics_in_range(cursor..buffer.len())
+            .filter(move |entry| entry.range.start >= cursor)
+            .filter(move |entry| severity.matches(entry.diagnostic.severity))
+            .filter(|entry| entry.range.start != entry.range.end)
+            .filter(|entry| !entry.diagnostic.is_unnecessary)
+    }
+
+    /// Attempts to expand the diagnostic at the current cursor position,
+    /// updating the cursor position to the diagnostic's start point.
+    ///
+    /// In case there's no diagnostic at the current cursor position, this will
+    /// fallback to finding the next or previous diagnostic instead, depending
+    /// on the provided `direction`.
+    pub fn go_to_diagnostic_at_cursor(
         &mut self,
         direction: Direction,
         severity: GoToDiagnosticSeverityFilter,
@@ -104,6 +138,71 @@ impl Editor {
             .selections
             .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
 
+        let before = Self::diagnostics_before_cursor(&buffer, selection.start, severity);
+        let after = Self::diagnostics_after_cursor(&buffer, selection.start, severity);
+        let active_group_id = match &self.active_diagnostics {
+            ActiveDiagnostic::Group(group) => Some(group.group_id),
+            _ => None,
+        };
+
+        let mut cursor_on_active = false;
+        let mut target = None;
+
+        for diagnostic in after.chain(before) {
+            let contains_cursor = diagnostic.range.contains(&selection.start)
+                || diagnostic.range.end == selection.head();
+
+            if !contains_cursor {
+                continue;
+            }
+
+            if active_group_id == Some(diagnostic.diagnostic.group_id) {
+                cursor_on_active = true;
+            } else if target.is_none() {
+                target = Some(diagnostic);
+            }
+        }
+
+        match (target, cursor_on_active) {
+            (Some(diagnostic), false) => self.activate_diagnostic(&buffer, diagnostic, window, cx),
+            _ => self.go_to_diagnostic_in_direction(
+                &buffer, &selection, direction, severity, window, cx,
+            ),
+        }
+    }
+
+    fn activate_diagnostic(
+        &mut self,
+        buffer: &MultiBufferSnapshot,
+        diagnostic: DiagnosticEntryRef<MultiBufferOffset>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let diagnostic_start = buffer.anchor_after(diagnostic.range.start);
+        let Some((buffer_anchor, _)) = buffer.anchor_to_buffer_anchor(diagnostic_start) else {
+            return;
+        };
+        let buffer_id = buffer_anchor.buffer_id;
+        let snapshot = self.snapshot(window, cx);
+        if snapshot.intersects_fold(diagnostic.range.start) {
+            self.unfold_ranges(std::slice::from_ref(&diagnostic.range), true, false, cx);
+        }
+        self.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges(vec![diagnostic.range.start..diagnostic.range.start])
+        });
+        self.activate_diagnostics(buffer_id, diagnostic, window, cx);
+        self.refresh_edit_prediction(false, true, window, cx);
+    }
+
+    pub fn go_to_diagnostic_in_direction(
+        &mut self,
+        buffer: &MultiBufferSnapshot,
+        selection: &Selection<MultiBufferOffset>,
+        direction: Direction,
+        severity: GoToDiagnosticSeverityFilter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let mut active_group_id = None;
         if let ActiveDiagnostic::Group(active_group) = &self.active_diagnostics
             && active_group.active_range.start.to_offset(&buffer) == selection.start
@@ -111,28 +210,8 @@ impl Editor {
             active_group_id = Some(active_group.group_id);
         }
 
-        fn filtered<'a>(
-            severity: GoToDiagnosticSeverityFilter,
-            diagnostics: impl Iterator<Item = DiagnosticEntryRef<'a, MultiBufferOffset>>,
-        ) -> impl Iterator<Item = DiagnosticEntryRef<'a, MultiBufferOffset>> {
-            diagnostics
-                .filter(move |entry| severity.matches(entry.diagnostic.severity))
-                .filter(|entry| entry.range.start != entry.range.end)
-                .filter(|entry| !entry.diagnostic.is_unnecessary)
-        }
-
-        let before = filtered(
-            severity,
-            buffer
-                .diagnostics_in_range(MultiBufferOffset(0)..selection.start)
-                .filter(|entry| entry.range.start <= selection.start),
-        );
-        let after = filtered(
-            severity,
-            buffer
-                .diagnostics_in_range(selection.start..buffer.len())
-                .filter(|entry| entry.range.start >= selection.start),
-        );
+        let before = Self::diagnostics_before_cursor(&buffer, selection.start, severity);
+        let after = Self::diagnostics_after_cursor(&buffer, selection.start, severity);
 
         let mut found: Option<DiagnosticEntryRef<MultiBufferOffset>> = None;
         if direction == Direction::Prev {
@@ -158,31 +237,12 @@ impl Editor {
                 }
             }
         }
+
         let Some(next_diagnostic) = found else {
             return;
         };
 
-        let next_diagnostic_start = buffer.anchor_after(next_diagnostic.range.start);
-        let Some((buffer_anchor, _)) = buffer.anchor_to_buffer_anchor(next_diagnostic_start) else {
-            return;
-        };
-        let buffer_id = buffer_anchor.buffer_id;
-        let snapshot = self.snapshot(window, cx);
-        if snapshot.intersects_fold(next_diagnostic.range.start) {
-            self.unfold_ranges(
-                std::slice::from_ref(&next_diagnostic.range),
-                true,
-                false,
-                cx,
-            );
-        }
-        self.change_selections(Default::default(), window, cx, |s| {
-            s.select_ranges(vec![
-                next_diagnostic.range.start..next_diagnostic.range.start,
-            ])
-        });
-        self.activate_diagnostics(buffer_id, next_diagnostic, window, cx);
-        self.refresh_edit_prediction(false, true, window, cx);
+        self.activate_diagnostic(&buffer, next_diagnostic, window, cx);
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -324,32 +384,37 @@ impl Editor {
             return;
         }
         self.dismiss_diagnostics(cx);
-        let snapshot = self.snapshot(window, cx);
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
-            return;
+
+        let blocks = if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {
+            let snapshot = self.snapshot(window, cx);
+            let diagnostic_group = buffer
+                .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
+                .collect::<Vec<_>>();
+
+            let language_registry = self
+                .project()
+                .map(|project| project.read(cx).languages().clone());
+
+            let blocks = renderer.render_group(
+                diagnostic_group,
+                buffer_id,
+                snapshot,
+                cx.weak_entity(),
+                language_registry,
+                cx,
+            );
+
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.insert_blocks(blocks, cx).into_iter().collect()
+            })
+        } else {
+            // Ensure that, even if there's no global renderer set, we still use
+            // an empty set of blocks, such that we can record the active group
+            // below instead of bailing out.
+            HashSet::default()
         };
 
-        let diagnostic_group = buffer
-            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
-            .collect::<Vec<_>>();
-
-        let language_registry = self
-            .project()
-            .map(|project| project.read(cx).languages().clone());
-
-        let blocks = renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            language_registry,
-            cx,
-        );
-
-        let blocks = self.display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(blocks, cx).into_iter().collect()
-        });
         self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
             active_range: buffer.anchor_before(diagnostic.range.start)
                 ..buffer.anchor_after(diagnostic.range.end),
@@ -515,5 +580,13 @@ impl Editor {
         self.refresh_inline_diagnostics(true, window, cx);
         self.scrollbar_marker_state.dirty = true;
         cx.notify();
+    }
+
+    pub fn any_active_diagnostics(&self) -> bool {
+        match &self.active_diagnostics {
+            ActiveDiagnostic::None => false,
+            ActiveDiagnostic::All => true,
+            ActiveDiagnostic::Group(_) => true,
+        }
     }
 }

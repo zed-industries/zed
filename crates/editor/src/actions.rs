@@ -323,7 +323,8 @@ pub struct SplitSelectionIntoLines {
     pub keep_selections: bool,
 }
 
-/// Goes to the next diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -332,7 +333,8 @@ pub struct GoToDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Goes to the previous diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the previous diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
