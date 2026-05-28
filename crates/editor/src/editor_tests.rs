@@ -51,8 +51,8 @@ use serde_json::{self, json};
 use settings::{
     AllLanguageSettingsContent, DelayMs, EditorSettingsContent, GlobalLspSettingsContent,
     GoToDefinitionScrollStrategy, IndentGuideBackgroundColoring, IndentGuideColoring,
-    InlayHintSettingsContent, ProjectSettingsContent, ScrollBeyondLastLine, SearchSettingsContent,
-    SettingsContent, SettingsStore,
+    InlayHintSettingsContent, ProjectSettingsContent, ScrollBeyondLastLine, ScrollbarContent,
+    SearchSettingsContent, SettingsContent, SettingsStore, ShowScrollbar,
 };
 use std::{borrow::Cow, sync::Arc};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -3111,6 +3111,112 @@ async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppC
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., max_scroll_top)
         );
+    });
+}
+
+#[gpui::test]
+async fn test_horizontal_scrollbar_does_not_cover_last_line_when_overscroll_disabled(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
+        settings.scrollbar = Some(ScrollbarContent {
+            show: Some(ShowScrollbar::Always),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let (line_height, scrollbar_width) = cx.update_editor(|editor, window, cx| {
+        (
+            editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size()),
+            editor.style(cx).scrollbar_width,
+        )
+    });
+
+    let window = cx.window;
+    let window_height = 6. * line_height;
+    cx.simulate_window_resize(window, size(px(100.), window_height));
+    cx.set_state(&format!(
+        "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n{}ˇ",
+        "a".repeat(500)
+    ));
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let visible_line_count = editor
+            .visible_line_count()
+            .expect("visible line count should be computed after layout");
+        let expected_visible_line_count =
+            f64::from((window_height - scrollbar_width).max(px(0.)) / line_height);
+        assert_eq!(visible_line_count, expected_visible_line_count);
+
+        let snapshot = editor.snapshot(window, cx);
+        let expected_scroll_top =
+            (snapshot.max_point().row().as_f64() - expected_visible_line_count + 1.).max(0.);
+        assert_eq!(snapshot.scroll_position().y, expected_scroll_top);
+
+        editor.set_scroll_position(point(0., 10_000.), window, cx);
+        let snapshot = editor.snapshot(window, cx);
+        let expected_scroll_top =
+            (snapshot.max_point().row().as_f64() - expected_visible_line_count + 1.).max(0.);
+        assert_eq!(snapshot.scroll_position().y, expected_scroll_top);
+    });
+}
+
+#[gpui::test]
+async fn test_horizontal_scrollbar_space_not_reserved_when_content_fits(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.scroll_beyond_last_line = Some(ScrollBeyondLastLine::Off);
+        settings.scrollbar = Some(ScrollbarContent {
+            show: Some(ShowScrollbar::Always),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let (line_height, _scrollbar_width) = cx.update_editor(|editor, window, cx| {
+        (
+            editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size()),
+            editor.style(cx).scrollbar_width,
+        )
+    });
+
+    let window = cx.window;
+    // Use a wide window so content fits without horizontal overflow.
+    let window_height = 6. * line_height;
+    cx.simulate_window_resize(window, size(px(1000.), window_height));
+    cx.set_state("one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\ntenˇ");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let visible_line_count = editor
+            .visible_line_count()
+            .expect("visible line count should be computed after layout");
+        // Content fits horizontally, so no horizontal scrollbar is rendered
+        // and visible_line_count should use the full window height.
+        let expected_visible_line_count = f64::from(window_height / line_height);
+        assert_eq!(visible_line_count, expected_visible_line_count);
+
+        let snapshot = editor.snapshot(window, cx);
+        let expected_scroll_top =
+            (snapshot.max_point().row().as_f64() - expected_visible_line_count + 1.).max(0.);
+        assert_eq!(snapshot.scroll_position().y, expected_scroll_top);
+
+        // Verify that setting an extreme scroll position gets clamped correctly.
+        editor.set_scroll_position(point(0., 10_000.), window, cx);
+        let snapshot = editor.snapshot(window, cx);
+        let expected_scroll_top =
+            (snapshot.max_point().row().as_f64() - expected_visible_line_count + 1.).max(0.);
+        assert_eq!(snapshot.scroll_position().y, expected_scroll_top);
     });
 }
 

@@ -2065,6 +2065,69 @@ impl EditorElement {
         ));
     }
 
+    fn should_show_scrollbar_tracks(
+        &self,
+        snapshot: &EditorSnapshot,
+        non_visible_cursors: bool,
+        cx: &App,
+    ) -> bool {
+        let editor_settings = EditorSettings::get_global(cx);
+        let scrollbar_settings = editor_settings.scrollbar;
+        match scrollbar_settings.show {
+            ShowScrollbar::Auto => {
+                let editor = self.editor.read(cx);
+                let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
+                // Git
+                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
+                ||
+                // Buffer Search Results
+                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
+                ||
+                // Selected Text Occurrences
+                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights(HighlightKey::SelectedTextHighlight))
+                ||
+                // Selected Symbol Occurrences
+                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights(HighlightKey::DocumentHighlightRead) || editor.has_background_highlights(HighlightKey::DocumentHighlightWrite)))
+                ||
+                // Diagnostics
+                (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot().has_diagnostics())
+                ||
+                // Cursors out of sight
+                non_visible_cursors
+                ||
+                // Scrollmanager
+                editor.scroll_manager.scrollbars_visible()
+            }
+            ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        }
+    }
+
+    fn horizontal_scrollbar_height(
+        &self,
+        snapshot: &EditorSnapshot,
+        scrollbar_layout_information: &ScrollbarLayoutInformation,
+        non_visible_cursors: bool,
+        editor_width: Pixels,
+        cx: &App,
+    ) -> Pixels {
+        if self.style.scrollbar_width.is_zero() {
+            return Pixels::ZERO;
+        }
+
+        let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+        if !scrollbar_settings.axes.horizontal
+            || !self.editor.read(cx).show_scrollbars.horizontal
+            || !self.should_show_scrollbar_tracks(snapshot, non_visible_cursors, cx)
+            || scrollbar_layout_information.scroll_range.width <= editor_width
+        {
+            return Pixels::ZERO;
+        }
+
+        self.style.scrollbar_width
+    }
+
     fn layout_scrollbars(
         &self,
         snapshot: &EditorSnapshot,
@@ -2094,35 +2157,10 @@ impl EditorElement {
 
         let editor_settings = EditorSettings::get_global(cx);
         let scrollbar_settings = editor_settings.scrollbar;
-        let show_scrollbars = match scrollbar_settings.show {
-            ShowScrollbar::Auto => {
-                let editor = self.editor.read(cx);
-                let is_singleton = editor.buffer_kind(cx) == ItemBufferKind::Singleton;
-                // Git
-                (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot().has_diff_hunks())
-                ||
-                // Buffer Search Results
-                (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights(HighlightKey::BufferSearchHighlights))
-                ||
-                // Selected Text Occurrences
-                (is_singleton && scrollbar_settings.selected_text && editor.has_background_highlights(HighlightKey::SelectedTextHighlight))
-                ||
-                // Selected Symbol Occurrences
-                (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights(HighlightKey::DocumentHighlightRead) || editor.has_background_highlights(HighlightKey::DocumentHighlightWrite)))
-                ||
-                // Diagnostics
-                (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot().has_diagnostics())
-                ||
-                // Cursors out of sight
-                non_visible_cursors
-                ||
-                // Scrollmanager
-                editor.scroll_manager.scrollbars_visible()
-            }
-            ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
-            ShowScrollbar::Always => true,
-            ShowScrollbar::Never => return None,
-        };
+        let show_scrollbars = self.should_show_scrollbar_tracks(snapshot, non_visible_cursors, cx);
+        if matches!(scrollbar_settings.show, ShowScrollbar::Never) {
+            return None;
+        }
 
         // The horizontal scrollbar is usually slightly offset to align nicely with
         // indent guides. However, this offset is not needed if indent guides are
@@ -9917,7 +9955,7 @@ impl Element for EditorElement {
                         snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let settings = EditorSettings::get_global(cx);
+                    let settings = EditorSettings::get_global(cx).clone();
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
@@ -9949,12 +9987,6 @@ impl Element for EditorElement {
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
-                        editor.set_visible_line_count(
-                            (bounds.size.height / line_height) as f64,
-                            window,
-                            cx,
-                        );
-                        editor.set_visible_column_count(f64::from(editor_width / em_advance));
 
                         if matches!(
                             editor.mode,
@@ -9976,26 +10008,12 @@ impl Element for EditorElement {
                         }
                     });
 
-                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-                    let gutter_hitbox = window.insert_hitbox(
-                        gutter_bounds(bounds, gutter_dimensions),
-                        HitboxBehavior::Normal,
-                    );
-                    let text_hitbox = window.insert_hitbox(
-                        Bounds {
-                            origin: gutter_hitbox.top_right(),
-                            size: size(text_width, bounds.size.height),
-                        },
-                        HitboxBehavior::Normal,
-                    );
-
-                    // Offset the content_bounds from the text_bounds by the gutter margin (which
-                    // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
-                    let content_origin = text_hitbox.origin + content_offset;
-
-                    let height_in_lines = f64::from(bounds.size.height / line_height);
-                    let max_row = snapshot.max_point().row().as_f64();
+                    let mut provisional_scroll_position = snapshot.scroll_position();
+                    if !line_height.is_zero() {
+                        provisional_scroll_position.y = window
+                            .pixel_snap_f64(provisional_scroll_position.y * f64::from(line_height))
+                            / f64::from(line_height);
+                    }
 
                     // Calculate how much of the editor is clipped by parent containers (e.g., List).
                     // This allows us to only render lines that are actually visible, which is
@@ -10005,6 +10023,111 @@ impl Element for EditorElement {
                     let clipped_top_in_lines = f64::from(clipped_top / line_height);
                     let visible_height_in_lines =
                         f64::from(visible_bounds.size.height / line_height);
+                    let max_row = snapshot.max_point().row();
+                    let provisional_start_row = cmp::min(
+                        DisplayRow(
+                            (provisional_scroll_position.y + clipped_top_in_lines).floor() as u32,
+                        ),
+                        max_row,
+                    );
+                    let provisional_end_row = DisplayRow(cmp::min(
+                        (provisional_scroll_position.y
+                            + clipped_top_in_lines
+                            + visible_height_in_lines)
+                            .ceil() as u32,
+                        max_row.next_row().0,
+                    ));
+                    let cursors = self.collect_cursors(&snapshot, cx);
+                    let initial_non_visible_cursors = cursors.iter().any(|cursor| {
+                        !(provisional_start_row..provisional_end_row).contains(&cursor.0.row())
+                    });
+
+                    let longest_line_blame_width = self
+                        .editor
+                        .update(cx, |editor, cx| {
+                            if !editor.show_git_blame_inline {
+                                return None;
+                            }
+                            let blame = editor.blame.as_ref()?;
+                            let (_, blame_entry) = blame
+                                .update(cx, |blame, cx| {
+                                    let row_infos =
+                                        snapshot.row_infos(snapshot.longest_row()).next()?;
+                                    blame.blame_for_rows(&[row_infos], cx).next()
+                                })
+                                .flatten()?;
+                            let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
+                            let inline_blame_padding =
+                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
+                                    * em_advance;
+                            Some(
+                                element
+                                    .layout_as_root(AvailableSpace::min_size(), window, cx)
+                                    .width
+                                    + inline_blame_padding,
+                            )
+                        })
+                        .unwrap_or(Pixels::ZERO);
+
+                    let longest_line_width = layout_line(
+                        snapshot.longest_row(),
+                        &snapshot,
+                        style,
+                        editor_width,
+                        |_| false,
+                        window,
+                        cx,
+                    )
+                    .width;
+
+                    let gutter_bounds = gutter_bounds(bounds, gutter_dimensions);
+                    let text_bounds = Bounds {
+                        origin: gutter_bounds.top_right(),
+                        size: size(text_width, bounds.size.height),
+                    };
+                    let scrollbar_layout_information = ScrollbarLayoutInformation::new(
+                        text_bounds,
+                        glyph_grid_cell,
+                        size(
+                            longest_line_width,
+                            Pixels::from(max_row.as_f64() * f64::from(line_height)),
+                        ),
+                        longest_line_blame_width,
+                        &settings,
+                        self.editor.read(cx).scroll_beyond_last_line(cx),
+                    );
+                    let horizontal_scrollbar_height = self.horizontal_scrollbar_height(
+                        &snapshot,
+                        &scrollbar_layout_information,
+                        initial_non_visible_cursors,
+                        editor_width,
+                        cx,
+                    );
+
+                    self.editor.update(cx, |editor, cx| {
+                        editor.set_visible_line_count(
+                            ((bounds.size.height - horizontal_scrollbar_height).max(Pixels::ZERO)
+                                / line_height) as f64,
+                            window,
+                            cx,
+                        );
+                        editor.set_visible_column_count(f64::from(editor_width / em_advance));
+                    });
+
+                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                    let gutter_hitbox = window.insert_hitbox(gutter_bounds, HitboxBehavior::Normal);
+                    let text_hitbox = window.insert_hitbox(text_bounds, HitboxBehavior::Normal);
+
+                    // Offset the content_bounds from the text_bounds by the gutter margin (which
+                    // is roughly half a character wide) to make hit testing work more like how we want.
+                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
+                    let content_origin = text_hitbox.origin + content_offset;
+
+                    let height_in_lines = f64::from(
+                        (bounds.size.height - horizontal_scrollbar_height).max(Pixels::ZERO)
+                            / line_height,
+                    );
+                    let max_row = max_row.as_f64();
 
                     // The max scroll position for the top of the window
                     let scroll_beyond_last_line = self.editor.read(cx).scroll_beyond_last_line(cx);
@@ -10475,57 +10598,11 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let longest_line_blame_width = self
-                        .editor
-                        .update(cx, |editor, cx| {
-                            if !editor.show_git_blame_inline {
-                                return None;
-                            }
-                            let blame = editor.blame.as_ref()?;
-                            let (_, blame_entry) = blame
-                                .update(cx, |blame, cx| {
-                                    let row_infos =
-                                        snapshot.row_infos(snapshot.longest_row()).next()?;
-                                    blame.blame_for_rows(&[row_infos], cx).next()
-                                })
-                                .flatten()?;
-                            let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
-                            let inline_blame_padding =
-                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
-                                    * em_advance;
-                            Some(
-                                element
-                                    .layout_as_root(AvailableSpace::min_size(), window, cx)
-                                    .width
-                                    + inline_blame_padding,
-                            )
-                        })
-                        .unwrap_or(Pixels::ZERO);
-
-                    let longest_line_width = layout_line(
-                        snapshot.longest_row(),
-                        &snapshot,
-                        style,
-                        editor_width,
-                        is_row_soft_wrapped,
-                        window,
-                        cx,
-                    )
-                    .width;
-
-                    let scrollbar_layout_information = ScrollbarLayoutInformation::new(
-                        text_hitbox.bounds,
-                        glyph_grid_cell,
-                        size(
-                            longest_line_width,
-                            Pixels::from(max_row.as_f64() * f64::from(line_height)),
-                        ),
-                        longest_line_blame_width,
-                        EditorSettings::get_global(cx),
-                        scroll_beyond_last_line,
-                    );
-
                     let mut scroll_width = scrollbar_layout_information.scroll_range.width;
+                    let visible_row_range = start_row..end_row;
+                    let non_visible_cursors = cursors
+                        .iter()
+                        .any(|c| !visible_row_range.contains(&c.0.row()));
 
                     let sticky_header_excerpt = if snapshot.buffer_snapshot().show_headers() {
                         snapshot.sticky_header_excerpt(scroll_position.y)
@@ -10873,12 +10950,6 @@ impl Element for EditorElement {
                             cx,
                         );
                     });
-
-                    let cursors = self.collect_cursors(&snapshot, cx);
-                    let visible_row_range = start_row..end_row;
-                    let non_visible_cursors = cursors
-                        .iter()
-                        .any(|c| !visible_row_range.contains(&c.0.row()));
 
                     let visible_cursors = self.layout_visible_cursors(
                         &snapshot,
