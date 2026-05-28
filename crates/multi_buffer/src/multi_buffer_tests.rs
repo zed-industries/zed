@@ -192,15 +192,15 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
         &[
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             },
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             },
             Event::Edited {
                 edited_buffer: None,
-                is_local: true,
+                source: language::BufferEditSource::User,
             }
         ]
     );
