@@ -7,9 +7,7 @@ use util::ResultExt;
 
 use crate::STARTUP_TIME;
 
-pub fn save_any(
-    main_thread_id: ThreadId,
-) -> Option<PathBuf> {
+pub fn save_any(main_thread_id: ThreadId) -> Option<PathBuf> {
     cleanup_old_hang_traces();
     let thread_timings = gpui::profiler::get_all_timings(TasksIncluded::CompletedAndRunning);
 
