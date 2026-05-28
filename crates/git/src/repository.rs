@@ -19,6 +19,7 @@ use smallvec::SmallVec;
 use smol::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use text::LineEnding;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::sync::atomic::AtomicBool;
@@ -736,14 +737,12 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_arg(&self) -> Result<&str> {
+    fn get_arg(&self) -> Cow<'_, str> {
         match self {
-            LogSource::All => Ok("--all"),
-            LogSource::Branch(branch) => Ok(branch.as_str()),
-            LogSource::Sha(oid) => {
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")
-            }
-            LogSource::Path(_) => Ok("--follow"),
+            LogSource::All => Cow::Borrowed("--all"),
+            LogSource::Branch(branch) => Cow::Borrowed(branch.as_str()),
+            LogSource::Sha(oid) => Cow::Owned(oid.to_string()),
+            LogSource::Path(_) => Cow::Borrowed("--follow"),
         }
     }
 }
@@ -2974,11 +2973,12 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
+            let log_source_arg = log_source.get_arg();
             let mut git_log_command = vec![
                 "log",
                 GRAPH_COMMIT_FORMAT,
                 log_order.as_arg(),
-                log_source.get_arg()?,
+                log_source_arg.as_ref(),
             ];
 
             if let LogSource::Path(path) = &log_source {
@@ -3054,7 +3054,8 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source.get_arg()?];
+            let log_source_arg = log_source.get_arg();
+            let mut args = vec!["log", SEARCH_COMMIT_FORMAT, log_source_arg.as_ref()];
 
             args.push("--fixed-strings");
 
@@ -3742,6 +3743,52 @@ mod tests {
         };
 
         assert_eq!(commit.tag_names(), ["v1.0.0", "v1.1.0"]);
+    }
+
+    #[gpui::test]
+    async fn test_initial_graph_data_accepts_sha_log_source(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+
+        let fixture_repo = git2::Repository::init(repo_dir.path()).unwrap();
+        fs::write(repo_dir.path().join("file"), "initial").unwrap();
+        let mut index = fixture_repo.index().unwrap();
+        index.add_path(Path::new("file")).unwrap();
+        let tree_oid = index.write_tree().unwrap();
+        let tree = fixture_repo.find_tree(tree_oid).unwrap();
+        let signature = git2::Signature::now("Zed", "hi@zed.dev").unwrap();
+        let commit_oid = fixture_repo
+            .commit(
+                Some("HEAD"),
+                &signature,
+                &signature,
+                "Initial commit",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let commit_sha = Oid::from_bytes(commit_oid.as_bytes()).unwrap();
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let (request_tx, request_rx) = async_channel::unbounded();
+
+        repo.initial_graph_data(LogSource::Sha(commit_sha), LogOrder::DateOrder, request_tx)
+            .await
+            .unwrap();
+
+        let graph_data = request_rx.recv().await.unwrap();
+        assert_eq!(graph_data.len(), 1);
+        assert_eq!(graph_data[0].sha, commit_sha);
     }
 
     #[gpui::test]
