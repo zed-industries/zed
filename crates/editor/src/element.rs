@@ -11568,40 +11568,67 @@ impl StickyHeaders {
     ) {
         let line_height = layout.position_map.line_height;
 
-        for line in self.lines.iter_mut().rev() {
+        let origin_y = layout.gutter_hitbox.origin.y;
+        let origin_x = layout.gutter_hitbox.origin.x;
+
+        let line_offsets = self.lines.iter().map(|line| line.offset).collect_vec();
+
+        for (index, line) in self.lines.iter_mut().enumerate().rev() {
+            let clip_top = if index > 0 {
+                origin_y + line_offsets[index - 1] + line_height
+            } else {
+                origin_y
+            };
+            let clip_bottom = origin_y + line.offset + line_height;
+
+            if clip_top >= clip_bottom {
+                continue;
+            }
+
             window.paint_layer(
                 Bounds::new(
                     layout.gutter_hitbox.origin + point(Pixels::ZERO, line.offset),
                     size(line.hitbox.size.width, line_height),
                 ),
                 |window| {
-                    let gutter_bounds = Bounds::new(
-                        layout.gutter_hitbox.origin + point(Pixels::ZERO, line.offset),
-                        size(layout.gutter_hitbox.size.width, line_height),
-                    );
-                    window.paint_quad(fill(gutter_bounds, self.gutter_background));
+                    window.with_content_mask(
+                        Some(ContentMask {
+                            bounds: Bounds::new(
+                                point(origin_x, clip_top),
+                                size(line.hitbox.size.width, clip_bottom - clip_top),
+                            ),
+                        }),
+                        |window| {
+                            let gutter_bounds = Bounds::new(
+                                layout.gutter_hitbox.origin + point(Pixels::ZERO, line.offset),
+                                size(layout.gutter_hitbox.size.width, line_height),
+                            );
+                            window.paint_quad(fill(gutter_bounds, self.gutter_background));
 
-                    let text_bounds = Bounds::new(
-                        layout.position_map.text_hitbox.origin + point(Pixels::ZERO, line.offset),
-                        size(line.available_text_width, line_height),
-                    );
-                    window.paint_quad(fill(text_bounds, self.content_background));
+                            let text_bounds = Bounds::new(
+                                layout.position_map.text_hitbox.origin
+                                    + point(Pixels::ZERO, line.offset),
+                                size(line.available_text_width, line_height),
+                            );
+                            window.paint_quad(fill(text_bounds, self.content_background));
 
-                    if line.hitbox.is_hovered(window) {
-                        let hover_overlay = cx.theme().colors().panel_overlay_hover;
-                        window.paint_quad(fill(gutter_bounds, hover_overlay));
-                        window.paint_quad(fill(text_bounds, hover_overlay));
-                    }
+                            if line.hitbox.is_hovered(window) {
+                                let hover_overlay = cx.theme().colors().panel_overlay_hover;
+                                window.paint_quad(fill(gutter_bounds, hover_overlay));
+                                window.paint_quad(fill(text_bounds, hover_overlay));
+                            }
 
-                    line.paint(
-                        layout,
-                        self.gutter_right_padding,
-                        line.available_text_width,
-                        layout.content_origin,
-                        line_height,
-                        whitespace_setting,
-                        window,
-                        cx,
+                            line.paint(
+                                layout,
+                                self.gutter_right_padding,
+                                line.available_text_width,
+                                layout.content_origin,
+                                line_height,
+                                whitespace_setting,
+                                window,
+                                cx,
+                            );
+                        },
                     );
                 },
             );
