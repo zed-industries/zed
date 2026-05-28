@@ -532,4 +532,11 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
             Some(CRASH_HANDLER_PING_TIMEOUT),
         )
         .expect("failed to run server");
+
+    // Workaround for upstream zed#57664: minidumper 0.9's Server::drop calls
+    // mach_port_deallocate on a kernel-guarded Mach port, terminating the
+    // crash-handler subprocess with EXC_GUARD/INVALID_RIGHT on quit. This
+    // subprocess is about to exit; let the kernel reclaim the port.
+    #[cfg(target_os = "macos")]
+    std::mem::forget(server);
 }
