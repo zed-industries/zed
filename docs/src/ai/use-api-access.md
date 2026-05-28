@@ -20,6 +20,7 @@ Zed supports these first-class API providers for model-backed Zed AI features:
 - [DeepSeek](#deepseek)
 - [xAI](#xai)
 - [OpenCode API](#opencode)
+  - [Custom OpenCode Models](#opencode-custom-models)
 - [OpenAI-compatible endpoints](#openai-compatible)
 
 ## What API Access Applies To {#support}
@@ -171,6 +172,50 @@ By default, models from all OpenCode subscription types are shown. You can hide 
   }
 }
 ```
+
+**Note:** Zed only bundles configuration for long-term OpenCode Free models. Free models that are available for a limited time are not included in Zed. To use those models, add a custom OpenCode model with configuration from [the OpenCode website](https://opencode.ai/docs/zen#pricing) and [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
+
+#### Custom OpenCode Models {#opencode-custom-models}
+
+The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models, limited-time Free models, or models with custom endpoints.
+
+Add custom models in your settings file:
+
+```json [settings]
+{
+  "language_models": {
+    "opencode": {
+      "available_models": [
+        {
+          "name": "my-custom-model",
+          "display_name": "My Custom Model",
+          "max_tokens": 123456,
+          "max_output_tokens": 98765,
+          "protocol": "openai_chat",
+          "reasoning_effort_levels": ["low", "medium", "high"],
+          "interleaved_reasoning": false,
+          "subscription": "go",
+          "custom_model_api_url": "https://example.com/zen"
+        }
+      ]
+    }
+  }
+}
+```
+
+The available configuration options for custom OpenCode models are:
+
+- `name` (required): model ID used by OpenCode, such as `glm-9000`
+- `display_name` (optional): human-readable model name shown in the UI, such as `Custom GLM 9000`
+- `max_tokens` (required): maximum model context window size, such as `1000000`
+- `max_output_tokens` (optional): maximum tokens the model can generate, such as `64000`
+- `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
+- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["low", "medium", "high"]`. The last value in the list is used as the default
+- `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
+- `subscription` (optional): `"zen"`, `"go"`, or `"free"`; defaults to `"zen"`
+- `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
+
+Custom OpenCode models are listed in the model dropdown in the Agent Panel.
 
 ### OpenAI-Compatible Endpoints {#openai-compatible}
 
