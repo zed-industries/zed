@@ -176,7 +176,7 @@ jobs:
               }
             };
 
-            const getIssueLabels = async () => {
+            const getIssueLabels = () => {
               if (listIncludesAuthor(COMMUNITY_CHAMPIONS, author)) {
                 return [COMMUNITY_CHAMPION_LABEL];
               }
@@ -221,15 +221,7 @@ jobs:
               return labelsToAdd;
             };
 
-            const getLabels = async () => {
-              if (pr) {
-                return await getPullRequestLabels();
-              }
-
-              return await getIssueLabels();
-            };
-
-            const labelsToAdd = await getLabels();
+            const labelsToAdd = pr ? await getPullRequestLabels() : getIssueLabels();
 
             if (labelsToAdd.length === 0) {
               return;
