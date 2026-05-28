@@ -78,11 +78,7 @@ impl Editor {
             return;
         }
 
-        if self.any_active_diagnostics() {
-            self.go_to_diagnostic_impl(Direction::Next, action.severity, window, cx)
-        } else {
-            self.go_to_diagnostic_at_cursor(Direction::Next, action.severity, window, cx);
-        };
+        self.go_to_diagnostic_at_cursor(Direction::Next, action.severity, window, cx);
     }
 
     pub fn go_to_prev_diagnostic(
@@ -94,7 +90,8 @@ impl Editor {
         if !self.diagnostics_enabled() {
             return;
         }
-        self.go_to_diagnostic_impl(Direction::Prev, action.severity, window, cx)
+
+        self.go_to_diagnostic_at_cursor(Direction::Prev, action.severity, window, cx);
     }
 
     fn diagnostics_before_cursor<'a>(
@@ -143,13 +140,34 @@ impl Editor {
 
         let before = Self::diagnostics_before_cursor(&buffer, selection.start, severity);
         let after = Self::diagnostics_after_cursor(&buffer, selection.start, severity);
-        let diagnostic = after.chain(before).find(|diagnostic| {
-            diagnostic.range.contains(&selection.start) || diagnostic.range.end == selection.head()
-        });
+        let active_group_id = match &self.active_diagnostics {
+            ActiveDiagnostic::Group(group) => Some(group.group_id),
+            _ => None,
+        };
 
-        match diagnostic {
-            Some(diagnostic) => self.activate_diagnostic(&buffer, diagnostic, window, cx),
-            None => self.go_to_diagnostic_impl(direction, severity, window, cx),
+        let mut cursor_on_active = false;
+        let mut target = None;
+
+        for diagnostic in after.chain(before) {
+            let contains_cursor = diagnostic.range.contains(&selection.start)
+                || diagnostic.range.end == selection.head();
+
+            if !contains_cursor {
+                continue;
+            }
+
+            if active_group_id == Some(diagnostic.diagnostic.group_id) {
+                cursor_on_active = true;
+            } else if target.is_none() {
+                target = Some(diagnostic);
+            }
+        }
+
+        match (target, cursor_on_active) {
+            (Some(diagnostic), false) => self.activate_diagnostic(&buffer, diagnostic, window, cx),
+            _ => self.go_to_diagnostic_in_direction(
+                &buffer, &selection, direction, severity, window, cx,
+            ),
         }
     }
 
@@ -176,18 +194,15 @@ impl Editor {
         self.refresh_edit_prediction(false, true, window, cx);
     }
 
-    pub fn go_to_diagnostic_impl(
+    pub fn go_to_diagnostic_in_direction(
         &mut self,
+        buffer: &MultiBufferSnapshot,
+        selection: &Selection<MultiBufferOffset>,
         direction: Direction,
         severity: GoToDiagnosticSeverityFilter,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self
-            .selections
-            .newest::<MultiBufferOffset>(&self.display_snapshot(cx));
-
         let mut active_group_id = None;
         if let ActiveDiagnostic::Group(active_group) = &self.active_diagnostics
             && active_group.active_range.start.to_offset(&buffer) == selection.start
@@ -369,32 +384,37 @@ impl Editor {
             return;
         }
         self.dismiss_diagnostics(cx);
-        let snapshot = self.snapshot(window, cx);
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let Some(renderer) = GlobalDiagnosticRenderer::global(cx) else {
-            return;
+
+        let blocks = if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {
+            let snapshot = self.snapshot(window, cx);
+            let diagnostic_group = buffer
+                .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
+                .collect::<Vec<_>>();
+
+            let language_registry = self
+                .project()
+                .map(|project| project.read(cx).languages().clone());
+
+            let blocks = renderer.render_group(
+                diagnostic_group,
+                buffer_id,
+                snapshot,
+                cx.weak_entity(),
+                language_registry,
+                cx,
+            );
+
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.insert_blocks(blocks, cx).into_iter().collect()
+            })
+        } else {
+            // Ensure that, even if there's no global renderer set, we still use
+            // an empty set of blocks, such that we can record the active group
+            // below instead of bailing out.
+            HashSet::default()
         };
 
-        let diagnostic_group = buffer
-            .diagnostic_group(buffer_id, diagnostic.diagnostic.group_id)
-            .collect::<Vec<_>>();
-
-        let language_registry = self
-            .project()
-            .map(|project| project.read(cx).languages().clone());
-
-        let blocks = renderer.render_group(
-            diagnostic_group,
-            buffer_id,
-            snapshot,
-            cx.weak_entity(),
-            language_registry,
-            cx,
-        );
-
-        let blocks = self.display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(blocks, cx).into_iter().collect()
-        });
         self.active_diagnostics = ActiveDiagnostic::Group(ActiveDiagnosticGroup {
             active_range: buffer.anchor_before(diagnostic.range.start)
                 ..buffer.anchor_after(diagnostic.range.end),

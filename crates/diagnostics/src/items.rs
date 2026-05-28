@@ -172,21 +172,12 @@ impl DiagnosticIndicator {
         let diagnostics_already_active = self.any_active_diagnostics(cx);
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
-                if diagnostics_already_active {
-                    editor.go_to_diagnostic_impl(
-                        editor::Direction::Next,
-                        GoToDiagnosticSeverityFilter::default(),
-                        window,
-                        cx,
-                    );
-                } else {
-                    editor.go_to_diagnostic_at_cursor(
-                        editor::Direction::Next,
-                        GoToDiagnosticSeverityFilter::default(),
-                        window,
-                        cx,
-                    );
-                }
+                editor.go_to_diagnostic_at_cursor(
+                    editor::Direction::Next,
+                    GoToDiagnosticSeverityFilter::default(),
+                    window,
+                    cx,
+                );
             })
         }
     }
