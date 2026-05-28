@@ -60,7 +60,7 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, RangeInclusive},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -2144,8 +2144,7 @@ impl Terminal {
                 .current
                 .read()
                 .as_ref()
-                .and_then(|process| process.argv.first())
-                .and_then(|command| normalize_path_command_name(command)),
+                .and_then(|process| foreground_process_command_from_argv(&process.argv)),
             TerminalType::DisplayOnly => None,
         }
     }
@@ -2507,6 +2506,44 @@ fn normalize_path_command_name(command: &str) -> Option<String> {
     Some(command)
 }
 
+fn foreground_process_command_from_argv(argv: &[String]) -> Option<String> {
+    let command = argv
+        .first()
+        .and_then(|command| normalize_path_command_name(command));
+
+    if !matches!(
+        command.as_deref(),
+        Some("node" | "python" | "python3" | "bun" | "deno")
+    ) {
+        return command;
+    }
+
+    argv.iter()
+        .skip(1)
+        .filter_map(|argument| normalize_script_command_name(argument))
+        .next()
+        .or(command)
+}
+
+fn normalize_script_command_name(argument: &str) -> Option<String> {
+    let path = Path::new(argument);
+    let file_stem = path
+        .file_stem()
+        .and_then(|file_stem| file_stem.to_str())
+        .and_then(normalize_path_command_name)?;
+
+    if file_stem != "index" {
+        return Some(file_stem);
+    }
+
+    path.parent()
+        .and_then(|parent| parent.parent())
+        .and_then(|package_path| package_path.file_name())
+        .and_then(|package_name| package_name.to_str())
+        .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
+        .and_then(normalize_path_command_name)
+}
+
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
     let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
     selection.update(*range.end(), AlacDirection::Right);
@@ -2664,6 +2701,31 @@ mod tests {
         assert_eq!(normalize_path_command_name("zsh"), Some("zsh".into()));
         assert_eq!(normalize_path_command_name("-zsh"), None);
         assert_eq!(normalize_path_command_name("pwsh.exe"), Some("pwsh".into()));
+    }
+
+    #[test]
+    fn test_foreground_process_command_from_interpreter_wrapper() {
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js".to_string(),
+            ]),
+            Some("gemini".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "python3".to_string(),
+                "/Users/me/.local/bin/codex.py".to_string(),
+            ]),
+            Some("codex".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/Users/me/private-project/scripts/customer-data-export.js".to_string(),
+            ]),
+            Some("customer-data-export".to_string())
+        );
     }
 
     #[cfg(not(target_os = "windows"))]

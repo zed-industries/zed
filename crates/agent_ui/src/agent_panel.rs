@@ -6252,6 +6252,13 @@ mod tests {
             None
         );
         assert_eq!(
+            terminal_program_to_report(
+                &mut last_observed_program,
+                Some("customer-data-export".to_string())
+            ),
+            None
+        );
+        assert_eq!(
             terminal_program_to_report(&mut last_observed_program, Some("codex".to_string())),
             Some("codex".to_string())
         );
