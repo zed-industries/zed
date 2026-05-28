@@ -2,9 +2,10 @@ use crate::{
     ApplyCodeActionTool, CodeActionStore, ContextServerRegistry, CopyPathTool, CreateDirectoryTool,
     DbLanguageModel, DbThread, DeletePathTool, DiagnosticsTool, EditFileTool, FetchTool,
     FindPathTool, FindReferencesTool, GetCodeActionsTool, GoToDefinitionTool, GrepTool,
-    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool, SpawnAgentTool,
-    SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision,
-    UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool, decide_permission_from_settings,
+    ListDirectoryTool, MovePathTool, ProjectSnapshot, ReadFileTool, RenameTool,
+    SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates, TerminalTool,
+    ToolPermissionDecision, UpdatePlanTool, UpdateTitleTool, WebSearchTool, WriteFileTool,
+    decide_permission_from_settings,
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -14,7 +15,7 @@ use feature_flags::{
     UpdateTitleToolFeatureFlag,
 };
 
-use crate::sandboxing::{ConversationSandboxGrants, SandboxRequest};
+use crate::sandboxing::{ConversationSandboxGrants, SandboxRequest, sandboxing_enabled};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
@@ -1737,7 +1738,13 @@ impl Thread {
             self.action_log.clone(),
             update_agent_location,
         ));
+        // Register both terminal tool variants; `enabled_tools` exposes the
+        // one matching the current sandbox state to the model as `terminal`.
         self.add_tool(TerminalTool::new(self.project.clone(), environment.clone()));
+        self.add_tool(SandboxedTerminalTool::new(
+            self.project.clone(),
+            environment.clone(),
+        ));
         self.add_tool(WebSearchTool);
 
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
@@ -3066,14 +3073,36 @@ impl Thread {
             }
         }
 
+        // When sandboxing is enabled we expose the sandboxed terminal tool
+        // (which advertises the sandbox-escalation params) to the model under
+        // the canonical `terminal` name; otherwise we expose the plain one.
+        // Both are always registered, so we drop whichever variant isn't
+        // selected here.
+        let use_sandboxed_terminal = sandboxing_enabled(cx);
+
         let mut tools = self
             .tools
             .iter()
             .filter_map(|(tool_name, tool)| {
+                // The sandboxed terminal tool is configured by users under the
+                // canonical `terminal` name, so check the profile against that.
+                let profile_tool_name = if tool_name == SandboxedTerminalTool::NAME {
+                    TerminalTool::NAME
+                } else {
+                    tool_name.as_ref()
+                };
+
                 if tool.supports_provider(&model.provider_id())
-                    && profile.is_tool_enabled(tool_name)
+                    && profile.is_tool_enabled(profile_tool_name)
                 {
-                    Some((truncate(tool_name), tool.clone()))
+                    match (tool_name.as_ref(), use_sandboxed_terminal) {
+                        (SandboxedTerminalTool::NAME, false) | (TerminalTool::NAME, true) => None,
+                        (SandboxedTerminalTool::NAME, true) => {
+                            // Expose the sandboxed terminal tool as `terminal`.
+                            Some((SharedString::from(TerminalTool::NAME), tool.clone()))
+                        }
+                        _ => Some((truncate(tool_name), tool.clone())),
+                    }
                 } else {
                     None
                 }

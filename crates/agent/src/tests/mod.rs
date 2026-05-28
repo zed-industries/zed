@@ -324,7 +324,6 @@ async fn test_terminal_tool_timeout_kills_handle(cx: &mut TestAppContext) {
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: Some(5),
-                ..Default::default()
             }),
             event_stream,
             cx,
@@ -392,7 +391,6 @@ async fn test_terminal_tool_without_timeout_does_not_kill_handle(cx: &mut TestAp
                 command: "sleep 1000".to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
-                ..Default::default()
             }),
             event_stream,
             cx,
@@ -4898,7 +4896,6 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "rm -rf /".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -4951,7 +4948,6 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -5010,7 +5006,6 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "sudo rm file".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -5058,7 +5053,6 @@ async fn test_terminal_tool_permission_rules(cx: &mut TestAppContext) {
                     command: "echo hello".to_string(),
                     cd: ".".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,

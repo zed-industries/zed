@@ -1,7 +1,7 @@
 use agent_client_protocol::schema as acp;
 use anyhow::Result;
 use futures::FutureExt as _;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,47 +50,74 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+}
+
+/// Executes a shell one-liner and returns the combined output.
+///
+/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+///
+/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+///
+/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+///
+/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
+///
+/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+///
+/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
+///
+/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+///
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
+///
+/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
+/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SandboxedTerminalToolInput {
+    /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
+    ///
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    pub command: String,
+    /// Working directory for the command. This must be one of the root directories of the project.
+    pub cd: String,
+    /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
+    pub timeout_ms: Option<u64>,
     /// Set to `true` only if the command needs outbound network access.
     ///
-    /// Only relevant when the system prompt includes a "Terminal sandbox"
-    /// section; otherwise leave unset. Sandboxed commands cannot reach the
-    /// network by default, so set this when running commands that fetch or
-    /// upload (installing dependencies, cloning, pushing, downloading,
-    /// etc.). Requesting it triggers a user approval prompt, so only set it
-    /// when you expect the command to need network.
+    /// Sandboxed commands cannot reach the network by default, so set this
+    /// when running commands that fetch or upload (installing dependencies,
+    /// cloning, pushing, downloading, etc.). Requesting it triggers a user
+    /// approval prompt, so only set it when you expect the command to need
+    /// network.
     #[serde(default)]
     pub allow_network: Option<bool>,
     /// Paths the command needs to write to outside the default-writable
     /// locations.
     ///
-    /// Only relevant when the system prompt includes a "Terminal sandbox"
-    /// section; otherwise leave empty. Sandboxed commands can already write
-    /// to the project worktree directories and a per-command temporary
-    /// directory, so only list paths outside those. Provide absolute or
-    /// worktree-relative paths; each directory grants write access to its
-    /// whole subtree. Prefer this over `allow_fs_write_all` whenever you can
-    /// enumerate the paths. Requesting paths triggers a user approval
-    /// prompt.
+    /// Sandboxed commands can already write to the project worktree
+    /// directories and a per-command temporary directory, so only list paths
+    /// outside those. Provide absolute or worktree-relative paths; each
+    /// directory grants write access to its whole subtree. Prefer this over
+    /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
+    /// paths triggers a user approval prompt.
     #[serde(default)]
     pub fs_write_paths: Vec<String>,
     /// Set to `true` only when the command needs to write outside the
     /// default-writable locations but the specific paths cannot be
     /// enumerated up front.
     ///
-    /// Only relevant when the system prompt includes a "Terminal sandbox"
-    /// section; otherwise leave unset. This is a broad escape hatch — prefer
-    /// `fs_write_paths` whenever the set of paths is known. Requesting it
-    /// triggers a user approval prompt.
+    /// This is a broad escape hatch — prefer `fs_write_paths` whenever the
+    /// set of paths is known. Requesting it triggers a user approval prompt.
     #[serde(default)]
     pub allow_fs_write_all: Option<bool>,
     /// Set to `true` only as a last resort, to run the command fully outside
     /// the sandbox.
     ///
-    /// Only relevant when the system prompt includes a "Terminal sandbox"
-    /// section; otherwise leave unset. First try the narrower options
-    /// (`allow_network`, `fs_write_paths`, `allow_fs_write_all`); use this
-    /// only when the command needs behavior the sandbox can't grant on a
-    /// per-permission basis. Requesting it triggers a user approval prompt.
+    /// First try the narrower options (`allow_network`, `fs_write_paths`,
+    /// `allow_fs_write_all`); use this only when the command needs behavior
+    /// the sandbox can't grant on a per-permission basis. Requesting it
+    /// triggers a user approval prompt.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
 }
@@ -140,11 +167,92 @@ impl AgentTool for TerminalTool {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
 
-            let (working_dir, authorize, sandboxing) = cx.update(|cx| {
+            let (working_dir, authorize) = cx.update(|cx| {
                 let working_dir =
-                    working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
+                    working_dir(&input.cd, &self.project, cx).map_err(|err| err.to_string())?;
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
+                let authorize =
+                    event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
+                Result::<_, String>::Ok((working_dir, authorize))
+            })?;
+
+            authorize.await.map_err(|e| e.to_string())?;
+
+            // This tool is only handed to the model when sandboxing is off, so
+            // commands run without any sandbox wrap.
+            run_terminal_command(
+                &self.environment,
+                input.command,
+                working_dir,
+                input.timeout_ms,
+                None,
+                &event_stream,
+                cx,
+            )
+            .await
+        })
+    }
+}
+
+pub struct SandboxedTerminalTool {
+    project: Entity<Project>,
+    environment: Rc<dyn ThreadEnvironment>,
+}
+
+impl SandboxedTerminalTool {
+    pub fn new(project: Entity<Project>, environment: Rc<dyn ThreadEnvironment>) -> Self {
+        Self {
+            project,
+            environment,
+        }
+    }
+}
+
+impl AgentTool for SandboxedTerminalTool {
+    type Input = SandboxedTerminalToolInput;
+    type Output = String;
+
+    // Distinct internal registry name so both terminal tool variants can be
+    // registered at once; `Thread::enabled_tools` exposes the selected variant
+    // to the model under the canonical `terminal` name.
+    const NAME: &'static str = "sandboxed_terminal";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Execute
+    }
+
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        if let Ok(input) = input {
+            input.command.into()
+        } else {
+            "".into()
+        }
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output, Self::Output>> {
+        cx.spawn(async move |cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+
+            let (working_dir, authorize, sandboxing) = cx.update(|cx| {
+                let working_dir =
+                    working_dir(&input.cd, &self.project, cx).map_err(|err| err.to_string())?;
+                // Authorize under the canonical `terminal` name so the
+                // terminal-specific permission rules and UI apply, regardless
+                // of this tool's internal registry name.
+                let context = crate::ToolPermissionContext::new(
+                    TerminalTool::NAME,
+                    vec![input.command.clone()],
+                );
                 let authorize =
                     event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
                 let sandboxing = sandboxing_enabled(cx);
@@ -153,10 +261,13 @@ impl AgentTool for TerminalTool {
 
             authorize.await.map_err(|e| e.to_string())?;
 
-            // Sandbox flags only do anything when sandboxing is on. When
-            // off, we treat them as `None` so the model can't surreptitiously
-            // change runtime behavior by setting flags described as a no-op
-            // in the system prompt.
+            // Sandbox flags only do anything when sandboxing is on. This tool
+            // is normally only exposed to the model while sandboxing is
+            // enabled, but the flag could flip between selection and
+            // execution, so we re-check here. When off, we treat the flags as
+            // `None` so the model can't surreptitiously change runtime
+            // behavior by setting flags described as a no-op in the system
+            // prompt.
             let want_network = sandboxing && input.allow_network == Some(true);
             let want_fs_write_all = sandboxing && input.allow_fs_write_all == Some(true);
             let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
@@ -192,7 +303,7 @@ impl AgentTool for TerminalTool {
             if want_unsandboxed {
                 let approve = cx.update(|cx| {
                     let context = crate::ToolPermissionContext::new(
-                        Self::NAME,
+                        TerminalTool::NAME,
                         vec![input.command.clone()],
                     );
                     event_stream.authorize_always_prompt(
@@ -220,16 +331,6 @@ impl AgentTool for TerminalTool {
                     ));
                 }
             }
-
-            // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/
-            // `TEMP` environment variables pointing at it) is provisioned by
-            // the thread environment in `create_terminal`, which also adds it
-            // to the sandbox's writable scope. We must not set `$TMPDIR` here:
-            // the environment overrides it with the per-thread directory, so a
-            // per-command directory set here would never be the `$TMPDIR` the
-            // command actually sees and would be left out of the writable
-            // scope, breaking writes into `$TMPDIR`.
-            let extra_env = Vec::new();
 
             // Build the writable scope from the project's worktrees. The
             // per-thread temp directory is appended by the thread environment
@@ -261,80 +362,110 @@ impl AgentTool for TerminalTool {
                 None
             };
 
-            let terminal = self
-                .environment
-                .create_terminal(
-                    input.command.clone(),
-                    extra_env,
-                    working_dir,
-                    Some(COMMAND_OUTPUT_LIMIT),
-                    sandbox_wrap,
-                    cx,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-
-            let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
-            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
-                acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
-            ]));
-
-            let timeout = input.timeout_ms.map(Duration::from_millis);
-
-            let mut timed_out = false;
-            let mut user_stopped_via_signal = false;
-            let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
-
-            match timeout {
-                Some(timeout) => {
-                    let timeout_task = cx.background_executor().timer(timeout);
-
-                    futures::select! {
-                        _ = wait_for_exit.clone().fuse() => {},
-                        _ = timeout_task.fuse() => {
-                            timed_out = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            user_stopped_via_signal = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                    }
-                }
-                None => {
-                    futures::select! {
-                        _ = wait_for_exit.clone().fuse() => {},
-                        _ = event_stream.cancelled_by_user().fuse() => {
-                            user_stopped_via_signal = true;
-                            terminal.kill(cx).map_err(|e| e.to_string())?;
-                            wait_for_exit.await;
-                        }
-                    }
-                }
-            };
-
-            // Check if user stopped - we check both:
-            // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
-            // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
-            // Note: user_stopped_via_signal is already set above if we detected cancellation in the select!
-            // but we also check was_cancelled_by_user() for cases where cancellation happened after wait_for_exit completed
-            let user_stopped_via_signal =
-                user_stopped_via_signal || event_stream.was_cancelled_by_user();
-            let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
-            let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
-
-            let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
-
-            Ok(process_content(
-                output,
-                &input.command,
-                timed_out,
-                user_stopped,
-            ))
+            run_terminal_command(
+                &self.environment,
+                input.command,
+                working_dir,
+                input.timeout_ms,
+                sandbox_wrap,
+                &event_stream,
+                cx,
+            )
+            .await
         })
     }
+}
+
+/// Shared execution path for both terminal tool variants: create the terminal,
+/// surface it to the UI, wait for it to exit (honoring an optional timeout and
+/// user cancellation), then format the captured output.
+///
+/// Callers are responsible for having already authorized the command and, for
+/// the sandboxed variant, resolved any `sandbox_wrap`. A `None` wrap runs the
+/// command without an OS-level sandbox.
+async fn run_terminal_command(
+    environment: &Rc<dyn ThreadEnvironment>,
+    command: String,
+    working_dir: Option<PathBuf>,
+    timeout_ms: Option<u64>,
+    sandbox_wrap: Option<acp_thread::SandboxWrap>,
+    event_stream: &ToolCallEventStream,
+    cx: &mut AsyncApp,
+) -> Result<String, String> {
+    // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/`TEMP`
+    // environment variables pointing at it) is provisioned by the thread
+    // environment in `create_terminal`, which also adds it to the sandbox's
+    // writable scope. We must not set `$TMPDIR` here: the environment
+    // overrides it with the per-thread directory, so a per-command directory
+    // set here would never be the `$TMPDIR` the command actually sees and
+    // would be left out of the writable scope, breaking writes into `$TMPDIR`.
+    let extra_env = Vec::new();
+
+    let terminal = environment
+        .create_terminal(
+            command.clone(),
+            extra_env,
+            working_dir,
+            Some(COMMAND_OUTPUT_LIMIT),
+            sandbox_wrap,
+            cx,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let terminal_id = terminal.id(cx).map_err(|e| e.to_string())?;
+    event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+        acp::ToolCallContent::Terminal(acp::Terminal::new(terminal_id)),
+    ]));
+
+    let timeout = timeout_ms.map(Duration::from_millis);
+
+    let mut timed_out = false;
+    let mut user_stopped_via_signal = false;
+    let wait_for_exit = terminal.wait_for_exit(cx).map_err(|e| e.to_string())?;
+
+    match timeout {
+        Some(timeout) => {
+            let timeout_task = cx.background_executor().timer(timeout);
+
+            futures::select! {
+                _ = wait_for_exit.clone().fuse() => {},
+                _ = timeout_task.fuse() => {
+                    timed_out = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    user_stopped_via_signal = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+            }
+        }
+        None => {
+            futures::select! {
+                _ = wait_for_exit.clone().fuse() => {},
+                _ = event_stream.cancelled_by_user().fuse() => {
+                    user_stopped_via_signal = true;
+                    terminal.kill(cx).map_err(|e| e.to_string())?;
+                    wait_for_exit.await;
+                }
+            }
+        }
+    };
+
+    // Check if user stopped - we check both:
+    // 1. The cancellation signal from RunningTurn::cancel (e.g. user pressed main Stop button)
+    // 2. The terminal's user_stopped flag (e.g. user clicked Stop on the terminal card)
+    // Note: user_stopped_via_signal is already set above if we detected cancellation in the select!
+    // but we also check was_cancelled_by_user() for cases where cancellation happened after wait_for_exit completed
+    let user_stopped_via_signal = user_stopped_via_signal || event_stream.was_cancelled_by_user();
+    let user_stopped_via_terminal = terminal.was_stopped_by_user(cx).unwrap_or(false);
+    let user_stopped = user_stopped_via_signal || user_stopped_via_terminal;
+
+    let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
+
+    Ok(process_content(output, &command, timed_out, user_stopped))
 }
 
 /// Resolve model-requested write paths into absolute paths.
@@ -497,13 +628,8 @@ fn process_content(
     content
 }
 
-fn working_dir(
-    input: &TerminalToolInput,
-    project: &Entity<Project>,
-    cx: &mut App,
-) -> Result<Option<PathBuf>> {
+fn working_dir(cd: &str, project: &Entity<Project>, cx: &mut App) -> Result<Option<PathBuf>> {
     let project = project.read(cx);
-    let cd = &input.cd;
 
     if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
@@ -549,7 +675,6 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
-                    ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -609,7 +734,6 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
-                ..Default::default()
             };
 
             let title = format_initial_title(Ok(input));
@@ -647,7 +771,6 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
-            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -677,7 +800,6 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
-            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -884,7 +1006,6 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -952,7 +1073,6 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1014,7 +1134,6 @@ mod tests {
                     command: "echo $(rm -rf /)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1084,7 +1203,6 @@ mod tests {
                     command: "PAGER=blah git log --oneline".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1158,7 +1276,6 @@ mod tests {
                     command: "PAGER=blah git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1266,7 +1383,6 @@ mod tests {
                     command: command.to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1434,7 +1550,6 @@ mod tests {
                     command: "echo $(whoami)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1507,7 +1622,6 @@ mod tests {
                     command: "PAGER=other git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1574,7 +1688,6 @@ mod tests {
                     command: "A=1 B=2 git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1652,7 +1765,6 @@ mod tests {
                     command: "PAGER=\"less -R\" git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
-                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1773,11 +1885,10 @@ mod tests {
 
     #[test]
     fn test_input_schema_includes_sandbox_flags() {
-        // The model only sees these fields when the sandboxing prompt
-        // section is rendered, but they're always present in the schema so
-        // input validation doesn't reject them when sent. Guard against
+        // The sandboxed terminal tool advertises these fields so the model can
+        // request escalations when the sandbox is in effect. Guard against
         // accidentally renaming or removing them.
-        let schema = serde_json::to_string(&schemars::schema_for!(TerminalToolInput))
+        let schema = serde_json::to_string(&schemars::schema_for!(SandboxedTerminalToolInput))
             .expect("input schema should serialize");
         assert!(
             schema.contains("allow_network"),
@@ -1803,7 +1914,7 @@ mod tests {
         // calls. Make sure deserialization doesn't reject the minimal
         // payload and that the fields default to `None` (which the tool
         // interprets as "no escalation requested").
-        let input: TerminalToolInput = serde_json::from_value(serde_json::json!({
+        let input: SandboxedTerminalToolInput = serde_json::from_value(serde_json::json!({
             "command": "echo hi",
             "cd": ".",
         }))
