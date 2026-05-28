@@ -1135,6 +1135,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
+    use language_model::{LanguageModelRequestMessage, Role};
     use parking_lot::Mutex;
     use std::future::Future;
     use std::pin::Pin;
@@ -1228,6 +1229,13 @@ mod tests {
         }
     }
 
+    fn make_fresh_credentials_with_account() -> CodexCredentials {
+        CodexCredentials {
+            account_id: Some("account-1".to_string()),
+            ..make_fresh_credentials()
+        }
+    }
+
     fn fake_token_response() -> String {
         serde_json::json!({
             "access_token": "fresh_access",
@@ -1235,6 +1243,74 @@ mod tests {
             "expires_in": 3600
         })
         .to_string()
+    }
+
+    #[gpui::test]
+    async fn test_stream_completion_sends_codex_session_header(cx: &mut TestAppContext) {
+        let captured_headers =
+            Arc::new(Mutex::new(None::<http_client::http::HeaderMap>));
+        let captured_headers_clone = captured_headers.clone();
+        let http_client = FakeHttpClient::create(move |request| {
+            *captured_headers_clone.lock() = Some(request.headers().clone());
+            async move {
+                let body = r#"data: {"type":"response.completed","response":{"id":"resp_1","status":"completed"}}"#;
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(http_client::AsyncBody::from(format!("{body}\n\n")))?)
+            }
+        });
+
+        let state = cx.new(|_cx| State {
+            credentials: Some(make_fresh_credentials_with_account()),
+            sign_in_task: None,
+            refresh_task: None,
+            load_task: None,
+            credentials_provider: Arc::new(FakeCredentialsProvider::new()),
+            auth_generation: 0,
+            last_auth_error: None,
+        });
+
+        let model = OpenAiSubscribedLanguageModel {
+            id: LanguageModelId::from(ChatGptModel::Gpt55.id().to_string()),
+            model: ChatGptModel::Gpt55,
+            state,
+            http_client,
+            request_limiter: RateLimiter::new(4),
+        };
+        let request = LanguageModelRequest {
+            thread_id: Some("thread-1".to_string()),
+            prompt_id: Some("prompt-1".to_string()),
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec!["Hello".into()],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let mut stream = model
+            .stream_completion(request, &cx.to_async())
+            .await
+            .expect("stream should start");
+        stream.next().await.expect("stream should emit event").unwrap();
+
+        let captured_headers = captured_headers
+            .lock()
+            .clone()
+            .expect("request headers should be captured");
+        assert_eq!(
+            captured_headers
+                .get("session-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("thread-1")
+        );
+        assert_eq!(
+            captured_headers
+                .get("ChatGPT-Account-Id")
+                .and_then(|value| value.to_str().ok()),
+            Some("account-1")
+        );
     }
 
     #[gpui::test]
