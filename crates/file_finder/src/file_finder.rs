@@ -6,11 +6,12 @@ pub use open_path_prompt::OpenPathDelegate;
 
 use channel::ChannelStore;
 use client::ChannelId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use fuzzy_nucleo::{PathMatch, PathMatchCandidate};
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
@@ -19,7 +20,7 @@ use gpui::{
 use language::{BufferSnapshot, Point};
 use open_path_prompt::{
     OpenPathPrompt,
-    file_finder_settings::{FileFinderSettings, FileFinderWidth},
+    file_finder_settings::{FileFinderSettings, FileFinderWidth, RecencyDecay},
 };
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -139,10 +140,17 @@ impl FileFinder {
             Some(FoundPath::new(project_path, abs_path))
         });
 
-        let history_items = workspace
-            .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
+        let raw_history =
+            workspace.recent_navigation_history_with_timestamps(Some(MAX_RECENT_SELECTIONS), cx);
+        // Capture timestamps before consuming the entries so we can pass
+        // them to the delegate alongside the (possibly filtered) FoundPaths.
+        let mut history_timestamps: HashMap<ProjectPath, usize> = HashMap::default();
+        for (project_path, _, timestamp) in &raw_history {
+            history_timestamps.insert(project_path.clone(), *timestamp);
+        }
+        let history_items = raw_history
             .into_iter()
-            .filter_map(|(project_path, abs_path)| {
+            .filter_map(|(project_path, abs_path, _)| {
                 if project.entry_for_path(&project_path, cx).is_some() {
                     return Some(Task::ready(Some(FoundPath::new(project_path, abs_path?))));
                 }
@@ -168,6 +176,20 @@ impl FileFinder {
                 .update_in(cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
                     let weak_workspace = cx.entity().downgrade();
+                    // Snapshot open-tab paths here, while we are already in
+                    // the workspace's update context. push_new_matches may
+                    // re-enter the workspace later (during a query refresh),
+                    // when a fresh `read_with` would panic, so we capture
+                    // the set once and accept a brief staleness during the
+                    // picker's lifetime.
+                    let mut open_tab_paths: HashSet<ProjectPath> = HashSet::default();
+                    for pane in workspace.panes() {
+                        for item in pane.read(cx).items() {
+                            if let Some(project_path) = item.project_path(cx) {
+                                open_tab_paths.insert(project_path);
+                            }
+                        }
+                    }
                     workspace.toggle_modal(window, cx, |window, cx| {
                         let delegate = FileFinderDelegate::new(
                             cx.entity().downgrade(),
@@ -175,6 +197,8 @@ impl FileFinder {
                             project,
                             currently_opened_path,
                             history_items.collect(),
+                            history_timestamps,
+                            open_tab_paths,
                             separate_history,
                             window,
                             cx,
@@ -408,6 +432,18 @@ pub struct FileFinderDelegate {
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
     history_items: Vec<FoundPath>,
+    /// Navigation timestamps for `history_items`, keyed by `ProjectPath`.
+    /// Populated from `Workspace::recent_navigation_history_with_timestamps`.
+    /// Read on every `Match::History` construction so the ranking model can
+    /// apply a recency boost.
+    history_timestamps: HashMap<ProjectPath, usize>,
+    /// Snapshot of paths currently open in any pane of the active
+    /// workspace, captured at picker open time. Used by the ranking
+    /// model's open-tab boost. Held by value (not via a workspace borrow)
+    /// because `push_new_matches` may run while the workspace entity is
+    /// already mutably borrowed by an outer update, in which case a
+    /// `read_with` would panic.
+    open_tab_paths: HashSet<ProjectPath>,
     separate_history: bool,
     first_update: bool,
     filter_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -454,6 +490,10 @@ impl PartialOrd for ProjectPanelOrdMatch {
 struct Matches {
     separate_history: bool,
     matches: Vec<Match>,
+    /// Precomputed inputs for the per-candidate ranking boosts. Refreshed
+    /// at the start of each `push_new_matches` so the boosts are constant
+    /// during one sort pass. Defaults to the inactive state (no boosts).
+    ranking_state: RankingState,
 }
 
 #[derive(Debug, Clone)]
@@ -461,6 +501,10 @@ enum Match {
     History {
         path: FoundPath,
         panel_match: Option<ProjectPanelOrdMatch>,
+        /// Monotonic counter from `Workspace::recent_navigation_history_iter_with_timestamps`,
+        /// or `None` if this history entry was loaded before the timestamp
+        /// API existed. Used by the ranking model to apply a recency boost.
+        recency_timestamp: Option<usize>,
     },
     Search(ProjectPanelOrdMatch),
     Channel {
@@ -501,6 +545,216 @@ impl Match {
             Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
+
+    /// Project-relative identity of this match, used to look up open-tab
+    /// state for the ranking boost. Returns `None` for non-file variants
+    /// (Channel, CreateNew) where the concept doesn't apply.
+    fn project_path(&self) -> Option<ProjectPath> {
+        match self {
+            Match::History { path, .. } => Some(path.project.clone()),
+            Match::Search(pm) => Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(pm.0.worktree_id),
+                path: pm.0.path.clone(),
+            }),
+            Match::Channel { .. } | Match::CreateNew(_) => None,
+        }
+    }
+}
+
+/// Additive boost applied to a candidate whose path starts with one of the
+/// configured `file_finder.directory_priority` prefixes. Kept small so it
+/// only acts as a tiebreaker for same-name files across directories.
+const DIRECTORY_PRIORITY_BOOST: f64 = 0.1;
+
+/// Additive penalty applied to a candidate whose path starts with one of
+/// the configured `file_finder.directory_deprioritize` prefixes. Mirror of
+/// `DIRECTORY_PRIORITY_BOOST`.
+const DIRECTORY_DEPRIORITIZE_PENALTY: f64 = -0.1;
+
+/// Large additive boost applied to candidates whose path matches one of
+/// the configured `file_finder.pinned_files` globs. Chosen to dominate the
+/// typical fuzzy score range (0.0..1.0) so pinned files appear at the top
+/// of any query they match, while still letting CreateNew remain last.
+const PINNED_BOOST: f64 = 5.0;
+
+/// Approximate translation between the monotonic `pane_history_timestamp`
+/// counter (which increments per navigation event) and the user-facing
+/// `recency_horizon_days`. We don't have wall-clock timestamps in the
+/// navigation history; this multiplier converts the configured day budget
+/// into an event budget under the rough assumption of 100 navigation
+/// events per active day.
+const RECENCY_EVENTS_PER_DAY: usize = 100;
+
+/// Precomputed inputs to the per-candidate ranking boosts, refreshed at
+/// the start of each `Matches::push_new_matches` invocation. Defaults to a
+/// "no-op" state so users who do not opt in to any of the new settings
+/// observe byte-identical ranking to the pre-feature behaviour.
+#[derive(Debug, Default)]
+struct RankingState {
+    recency_boost: f32,
+    recency_decay: RecencyDecay,
+    /// Already converted from days to navigation-event units via
+    /// `RECENCY_EVENTS_PER_DAY`.
+    recency_horizon_events: usize,
+    open_tab_boost: f32,
+    /// Highest timestamp observed in `history_timestamps`. Used as the
+    /// "now" anchor for recency decay since `pane_history_timestamp` is a
+    /// monotonic counter rather than wall-clock time.
+    current_max_timestamp: usize,
+    /// Paths currently open in any pane of the active workspace.
+    open_tabs: HashSet<ProjectPath>,
+    /// Validated directory prefixes (each ends with `/`) earning a boost.
+    directory_priority: Vec<String>,
+    /// Validated directory prefixes (each ends with `/`) earning a penalty.
+    directory_deprioritize: Vec<String>,
+    /// Precompiled globs for `pinned_files`; empty when none configured.
+    pinned_globset: GlobSet,
+}
+
+impl RankingState {
+    /// Combine the per-candidate fuzzy score with whichever boosts are
+    /// active. Returns the base score unchanged when every boost is
+    /// configured to its zero default, so the comparator falls back to
+    /// pure fuzzy ranking and matches today's behaviour.
+    fn combined_score(&self, m: &Match, base_score: f64) -> f64 {
+        let mut score = base_score;
+        if self.recency_boost > 0.0
+            && let Match::History {
+                recency_timestamp: Some(ts),
+                ..
+            } = m
+        {
+            score += self.recency_boost as f64
+                * recency_decay_score(
+                    *ts,
+                    self.current_max_timestamp,
+                    self.recency_horizon_events,
+                    self.recency_decay,
+                );
+        }
+        if self.open_tab_boost > 0.0
+            && let Some(project_path) = m.project_path()
+            && self.open_tabs.contains(&project_path)
+        {
+            score += self.open_tab_boost as f64;
+        }
+        if let Some(rel) = m.relative_path() {
+            let path_str = rel.as_unix_str();
+            for prefix in &self.directory_priority {
+                if path_str.starts_with(prefix.as_str()) {
+                    score += DIRECTORY_PRIORITY_BOOST;
+                    break;
+                }
+            }
+            for prefix in &self.directory_deprioritize {
+                if path_str.starts_with(prefix.as_str()) {
+                    score += DIRECTORY_DEPRIORITIZE_PENALTY;
+                    break;
+                }
+            }
+            if !self.pinned_globset.is_empty() && self.pinned_globset.is_match(path_str) {
+                score += PINNED_BOOST;
+            }
+        }
+        score
+    }
+
+    /// Returns true when every boost is at its disabling default, so
+    /// callers can short-circuit to the legacy pure-fuzzy comparator.
+    fn is_inactive(&self) -> bool {
+        self.recency_boost <= 0.0
+            && self.open_tab_boost <= 0.0
+            && self.directory_priority.is_empty()
+            && self.directory_deprioritize.is_empty()
+            && self.pinned_globset.is_empty()
+    }
+}
+
+/// Build a `RankingState` snapshot from the current settings and
+/// workspace state. Called once per `push_new_matches` invocation so the
+/// boost data is constant for the duration of one sort pass.
+fn build_ranking_state(
+    settings: &FileFinderSettings,
+    history_timestamps: &HashMap<ProjectPath, usize>,
+    open_tabs: HashSet<ProjectPath>,
+) -> RankingState {
+    let current_max_timestamp = history_timestamps
+        .values()
+        .copied()
+        .filter(|t| *t != usize::MAX)
+        .max()
+        .unwrap_or(0);
+    let recency_horizon_events = (settings.recency_horizon_days as usize)
+        .saturating_mul(RECENCY_EVENTS_PER_DAY)
+        .max(1);
+    let pinned_globset = build_pinned_globset(&settings.pinned_files);
+    RankingState {
+        recency_boost: settings.recency_boost,
+        recency_decay: settings.recency_decay,
+        recency_horizon_events,
+        open_tab_boost: settings.open_tab_boost,
+        current_max_timestamp,
+        open_tabs,
+        directory_priority: settings.directory_priority.clone(),
+        directory_deprioritize: settings.directory_deprioritize.clone(),
+        pinned_globset,
+    }
+}
+
+/// Compile `pinned_files` patterns into a `GlobSet`. Invalid patterns are
+/// dropped with a one-time warning so a typo in settings cannot crash the
+/// file finder.
+fn build_pinned_globset(patterns: &[String]) -> GlobSet {
+    let mut builder = GlobSetBuilder::new();
+    for pattern in patterns {
+        match Glob::new(pattern) {
+            Ok(glob) => {
+                builder.add(glob);
+            }
+            Err(e) => {
+                log::warn!("file_finder: invalid pinned_files glob {pattern:?}: {e}");
+            }
+        }
+    }
+    builder.build().unwrap_or_else(|e| {
+        log::warn!("file_finder: failed to build pinned_files globset: {e}");
+        GlobSet::empty()
+    })
+}
+
+/// Decay factor in [0.0, 1.0] describing how much of the configured
+/// recency boost a candidate earns based on its last-visit timestamp.
+///
+/// * `Linear` falls off proportionally to elapsed events.
+/// * `Exponential` is `linear^3`, sharply favouring very recent visits.
+/// * `Step` returns full boost inside the horizon and zero outside it.
+fn recency_decay_score(
+    timestamp: usize,
+    current_max: usize,
+    horizon_events: usize,
+    decay: RecencyDecay,
+) -> f64 {
+    // Anchor: the currently-active item is stored with `usize::MAX`, so
+    // it always beats the most recent history entry without underflowing.
+    if timestamp >= current_max {
+        return 1.0;
+    }
+    let age = current_max - timestamp;
+    if age >= horizon_events {
+        return 0.0;
+    }
+    let normalized = 1.0 - (age as f64 / horizon_events as f64);
+    match decay {
+        RecencyDecay::Linear => normalized,
+        RecencyDecay::Exponential => normalized * normalized * normalized,
+        RecencyDecay::Step => {
+            if normalized > 0.0 {
+                1.0
+            } else {
+                0.0
+            }
+        }
+    }
 }
 
 impl Matches {
@@ -520,6 +774,7 @@ impl Matches {
         if let Match::History {
             path,
             panel_match: None,
+            recency_timestamp: _,
         } = entry
         {
             // Slow case: linear search by path. Should not happen actually,
@@ -537,7 +792,14 @@ impl Matches {
             self.matches.binary_search_by(|m| {
                 // `reverse()` since if cmp_matches(a, b) == Ordering::Greater, then a is better than b.
                 // And we want the better entries go first.
-                Self::cmp_matches(self.separate_history, currently_opened, m, entry).reverse()
+                Self::cmp_matches(
+                    &self.ranking_state,
+                    self.separate_history,
+                    currently_opened,
+                    m,
+                    entry,
+                )
+                .reverse()
             })
         }
     }
@@ -547,18 +809,25 @@ impl Matches {
         worktree_store: Entity<WorktreeStore>,
         cx: &'a App,
         history_items: impl IntoIterator<Item = &'a FoundPath> + Clone,
+        history_timestamps: &HashMap<ProjectPath, usize>,
         currently_opened: Option<&'a FoundPath>,
         query: Option<&FileSearchQuery>,
         new_search_matches: impl Iterator<Item = ProjectPanelOrdMatch>,
         extend_old_matches: bool,
         path_style: PathStyle,
+        settings: &FileFinderSettings,
+        open_tabs: HashSet<ProjectPath>,
     ) {
+        // Refresh the ranking inputs once per sort pass; cmp_matches reads
+        // these directly through `self.ranking_state`.
+        self.ranking_state = build_ranking_state(settings, history_timestamps, open_tabs);
         let Some(query) = query else {
             // assuming that if there's no query, then there's no search matches.
             self.matches.clear();
             let path_to_entry = |found_path: &FoundPath| Match::History {
                 path: found_path.clone(),
                 panel_match: None,
+                recency_timestamp: history_timestamps.get(&found_path.project).copied(),
             };
 
             self.matches
@@ -586,6 +855,7 @@ impl Matches {
             worktree_name_by_id,
             query,
             path_style,
+            history_timestamps,
         );
         let new_search_matches: Vec<Match> = new_search_matches
             .filter(|path_match| {
@@ -628,6 +898,7 @@ impl Matches {
 
     /// If a < b, then a is a worse match, aligning with the `ProjectPanelOrdMatch` ordering.
     fn cmp_matches(
+        ranking_state: &RankingState,
         separate_history: bool,
         currently_opened: Option<&FoundPath>,
         a: &Match,
@@ -662,8 +933,20 @@ impl Matches {
         }
 
         // For file-vs-file matches, use the existing detailed comparison.
+        // When the user has configured any ranking boost we apply the
+        // combined score first (recency / open-tab / directory / pin) and
+        // fall back to the existing tiebreakers on ties, preserving the
+        // worktree-id and ancestor-distance ordering for true ties.
         if let (Some(a_panel), Some(b_panel)) = (a.panel_match(), b.panel_match()) {
-            return a_panel.cmp(b_panel);
+            if ranking_state.is_inactive() {
+                return a_panel.cmp(b_panel);
+            }
+            let a_score = ranking_state.combined_score(a, a_panel.0.score);
+            let b_score = ranking_state.combined_score(b, b_panel.0.score);
+            return a_score
+                .partial_cmp(&b_score)
+                .unwrap_or(cmp::Ordering::Equal)
+                .then_with(|| a_panel.cmp(b_panel));
         }
 
         let a_score = Self::match_score(a);
@@ -690,6 +973,7 @@ fn matching_history_items<'a>(
     worktree_name_by_id: Option<HashMap<WorktreeId, Arc<RelPath>>>,
     query: &FileSearchQuery,
     path_style: PathStyle,
+    history_timestamps: &HashMap<ProjectPath, usize>,
 ) -> HashMap<ProjectPath, Match> {
     let mut candidates_paths = HashMap::default();
 
@@ -759,11 +1043,13 @@ fn matching_history_items<'a>(
                         path: Arc::clone(&path_match.path),
                     })
                     .map(|(project_path, found_path)| {
+                        let recency_timestamp = history_timestamps.get(project_path).copied();
                         (
                             project_path.clone(),
                             Match::History {
                                 path: found_path.clone(),
                                 panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                                recency_timestamp,
                             },
                         )
                     })
@@ -912,6 +1198,8 @@ impl FileFinderDelegate {
         project: Entity<Project>,
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
+        history_timestamps: HashMap<ProjectPath, usize>,
+        open_tab_paths: HashSet<ProjectPath>,
         separate_history: bool,
         window: &mut Window,
         cx: &mut Context<FileFinder>,
@@ -937,6 +1225,8 @@ impl FileFinderDelegate {
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
             history_items,
+            history_timestamps,
+            open_tab_paths,
             separate_history,
             first_update: true,
             filter_popover_menu_handle: PopoverMenuHandle::default(),
@@ -1048,15 +1338,20 @@ impl FileFinderDelegate {
             };
 
             let path_style = self.project.read(cx).path_style(cx);
+            let settings = FileFinderSettings::get_global(cx).clone();
+            let open_tabs = self.open_tab_paths.clone();
             self.matches.push_new_matches(
                 self.project.read(cx).worktree_store(),
                 cx,
                 &self.history_items,
+                &self.history_timestamps,
                 self.currently_opened_path.as_ref(),
                 Some(&query),
                 matches.into_iter(),
                 extend_old_matches,
                 path_style,
+                &settings,
+                open_tabs,
             );
 
             // Add channel matches
@@ -1195,6 +1490,7 @@ impl FileFinderDelegate {
                 Match::History {
                     path: entry_path,
                     panel_match,
+                    recency_timestamp: _,
                 } => {
                     let worktree_id = entry_path.project.worktree_id;
                     let worktree = self
@@ -1552,7 +1848,8 @@ impl PickerDelegate for FileFinderDelegate {
                     ..Matches::default()
                 };
                 let path_style = self.project.read(cx).path_style(cx);
-
+                let settings = FileFinderSettings::get_global(cx).clone();
+                let open_tabs = self.open_tab_paths.clone();
                 self.matches.push_new_matches(
                     project.worktree_store(),
                     cx,
@@ -1563,11 +1860,14 @@ impl PickerDelegate for FileFinderDelegate {
                             || project.is_local()
                             || project.is_via_remote_server()
                     }),
+                    &self.history_timestamps,
                     self.currently_opened_path.as_ref(),
                     None,
                     None.into_iter(),
                     false,
                     path_style,
+                    &settings,
+                    open_tabs,
                 );
 
                 self.first_update = false;
@@ -2110,5 +2410,164 @@ impl<'a> PathComponentSlice<'a> {
         let byte_range = self.component_ranges[elided_range.start].1.start
             ..self.component_ranges[elided_range.end - 1].1.end;
         Some(byte_range)
+    }
+}
+
+#[cfg(test)]
+mod ranking_tests {
+    //! Pure-function tests for the ranking helpers (decay, glob compilation,
+    //! combined score). These do not require a GPUI context and run in
+    //! milliseconds; integration tests for the full picker live in
+    //! `file_finder_tests.rs`.
+    use super::*;
+
+    /// Build a `Match::History` carrying just enough data for the
+    /// `combined_score` path. Tests don't need a real `panel_match` because
+    /// they pass the base score directly.
+    fn history_match(rel: &'static str, timestamp: Option<usize>) -> Match {
+        let path = FoundPath::new(
+            ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: RelPath::new(Path::new(rel), PathStyle::Posix)
+                    .unwrap()
+                    .into_arc(),
+            },
+            PathBuf::from(format!("/abs/{rel}")),
+        );
+        Match::History {
+            path,
+            panel_match: None,
+            recency_timestamp: timestamp,
+        }
+    }
+
+    fn state_with(boost: f32, decay: RecencyDecay, horizon_events: usize) -> RankingState {
+        RankingState {
+            recency_boost: boost,
+            recency_decay: decay,
+            recency_horizon_events: horizon_events,
+            current_max_timestamp: 1000,
+            ..RankingState::default()
+        }
+    }
+
+    #[test]
+    fn recency_score_linear_decays_proportionally() {
+        // Halfway through the horizon yields half the boost.
+        let score = recency_decay_score(500, 1000, 1000, RecencyDecay::Linear);
+        assert!((score - 0.5).abs() < 1e-9, "got {score}");
+    }
+
+    #[test]
+    fn recency_score_step_is_binary() {
+        let inside = recency_decay_score(999, 1000, 1000, RecencyDecay::Step);
+        let outside = recency_decay_score(0, 1000, 1000, RecencyDecay::Step);
+        assert_eq!(inside, 1.0);
+        assert_eq!(outside, 0.0);
+    }
+
+    #[test]
+    fn recency_score_exponential_favours_very_recent() {
+        // For x in (0, 1), x^3 < x. So exponential gives less boost than
+        // linear for the same age — but never less than 0 and never more
+        // than 1.
+        let linear = recency_decay_score(500, 1000, 1000, RecencyDecay::Linear);
+        let exp = recency_decay_score(500, 1000, 1000, RecencyDecay::Exponential);
+        assert!(exp < linear, "exp={exp} linear={linear}");
+        assert!(exp > 0.0 && exp <= 1.0);
+    }
+
+    #[test]
+    fn recency_score_outside_horizon_returns_zero() {
+        let score = recency_decay_score(0, 1_000_000, 100, RecencyDecay::Linear);
+        assert_eq!(score, 0.0);
+    }
+
+    #[test]
+    fn recency_score_active_item_sentinel_caps_at_one() {
+        // Workspace marks the currently active item with usize::MAX; a
+        // history candidate at that timestamp should get the full boost.
+        let score = recency_decay_score(usize::MAX, 1000, 1000, RecencyDecay::Linear);
+        assert_eq!(score, 1.0);
+    }
+
+    #[test]
+    fn build_pinned_globset_drops_invalid_patterns_without_panicking() {
+        let set = build_pinned_globset(&[
+            "src/main.rs".to_string(),
+            "[invalid".to_string(),
+            "**/lib.rs".to_string(),
+        ]);
+        assert!(set.is_match("src/main.rs"));
+        assert!(set.is_match("crates/foo/lib.rs"));
+        assert!(!set.is_match("docs/intro.md"));
+    }
+
+    #[test]
+    fn build_pinned_globset_empty_when_no_patterns() {
+        let set = build_pinned_globset(&[]);
+        assert!(set.is_empty());
+    }
+
+    #[test]
+    fn ranking_state_is_inactive_with_defaults_preserves_legacy_behaviour() {
+        let state = RankingState::default();
+        assert!(
+            state.is_inactive(),
+            "default RankingState must be inactive so users who don't opt in see no change",
+        );
+    }
+
+    #[test]
+    fn combined_score_unchanged_when_boost_is_zero() {
+        let state = RankingState::default();
+        let m = history_match("src/main.rs", Some(900));
+        let score = state.combined_score(&m, 0.42);
+        assert_eq!(score, 0.42);
+    }
+
+    #[test]
+    fn combined_score_adds_recency_boost_for_recent_history() {
+        let state = state_with(0.5, RecencyDecay::Linear, 1000);
+        // timestamp 900 with current_max 1000 and horizon 1000 → boost
+        // factor = 1 - 100/1000 = 0.9. Final addition = 0.5 * 0.9 = 0.45.
+        let recent = history_match("src/main.rs", Some(900));
+        let older = history_match("src/main.rs", Some(0)); // outside horizon
+        let recent_score = state.combined_score(&recent, 0.5);
+        let older_score = state.combined_score(&older, 0.5);
+        assert!(
+            recent_score > older_score,
+            "recent={recent_score} older={older_score}",
+        );
+    }
+
+    #[test]
+    fn combined_score_directory_priority_adds_boost() {
+        let mut state = RankingState::default();
+        state.directory_priority.push("src/".to_string());
+        let in_src = history_match("src/main.rs", None);
+        let in_test = history_match("test/main.rs", None);
+        assert!(state.combined_score(&in_src, 0.5) > state.combined_score(&in_test, 0.5));
+    }
+
+    #[test]
+    fn combined_score_directory_deprioritize_subtracts() {
+        let mut state = RankingState::default();
+        state.directory_deprioritize.push("vendor/".to_string());
+        let in_vendor = history_match("vendor/util.rs", None);
+        let elsewhere = history_match("src/util.rs", None);
+        assert!(state.combined_score(&elsewhere, 0.5) > state.combined_score(&in_vendor, 0.5));
+    }
+
+    #[test]
+    fn combined_score_pinned_files_dominate_other_boosts() {
+        let mut state = state_with(0.1, RecencyDecay::Linear, 1000);
+        state.pinned_globset = build_pinned_globset(&["**/main.rs".to_string()]);
+        let pinned = history_match("crates/foo/main.rs", Some(900));
+        let unpinned = history_match("crates/foo/lib.rs", Some(900));
+        let pinned_score = state.combined_score(&pinned, 0.5);
+        let unpinned_score = state.combined_score(&unpinned, 0.5);
+        // Pin boost (5.0) is much larger than recency boost (0.1 * decay).
+        assert!(pinned_score - unpinned_score > 4.0);
     }
 }

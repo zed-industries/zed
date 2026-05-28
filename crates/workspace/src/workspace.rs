@@ -2722,6 +2722,95 @@ impl Workspace {
             })
     }
 
+    /// Sibling of [`recent_navigation_history_iter`] that also exposes the
+    /// per-path navigation timestamp. The timestamp is a monotonically
+    /// increasing counter (`Pane::pane_history_timestamp`), so larger means
+    /// more recent. `usize::MAX` is used internally to anchor the currently
+    /// active item ahead of every history entry; consumers comparing
+    /// timestamps should be tolerant of that sentinel.
+    ///
+    /// Used by the file finder ranking model to apply a recency boost to
+    /// candidates that the user has recently visited.
+    pub fn recent_navigation_history_iter_with_timestamps(
+        &self,
+        cx: &App,
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>, usize)> + use<> {
+        let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
+        let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
+
+        for pane in &self.panes {
+            let pane = pane.read(cx);
+
+            pane.nav_history()
+                .for_each_entry(cx, &mut |entry, (project_path, fs_path)| {
+                    if let Some(fs_path) = &fs_path {
+                        abs_paths_opened
+                            .entry(fs_path.clone())
+                            .or_default()
+                            .insert(project_path.clone());
+                    }
+                    let timestamp = entry.timestamp;
+                    match history.entry(project_path) {
+                        hash_map::Entry::Occupied(mut entry) => {
+                            let (_, old_timestamp) = entry.get();
+                            if &timestamp > old_timestamp {
+                                entry.insert((fs_path, timestamp));
+                            }
+                        }
+                        hash_map::Entry::Vacant(entry) => {
+                            entry.insert((fs_path, timestamp));
+                        }
+                    }
+                });
+
+            if let Some(item) = pane.active_item()
+                && let Some(project_path) = item.project_path(cx)
+            {
+                let fs_path = self.project.read(cx).absolute_path(&project_path, cx);
+
+                if let Some(fs_path) = &fs_path {
+                    abs_paths_opened
+                        .entry(fs_path.clone())
+                        .or_default()
+                        .insert(project_path.clone());
+                }
+
+                history.insert(project_path, (fs_path, std::usize::MAX));
+            }
+        }
+
+        history
+            .into_iter()
+            .sorted_by_key(|(_, (_, order))| *order)
+            .map(|(project_path, (fs_path, timestamp))| (project_path, fs_path, timestamp))
+            .rev()
+            .filter(move |(history_path, abs_path, _)| {
+                let latest_project_path_opened = abs_path
+                    .as_ref()
+                    .and_then(|abs_path| abs_paths_opened.get(abs_path))
+                    .and_then(|project_paths| {
+                        project_paths
+                            .iter()
+                            .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
+                    });
+
+                latest_project_path_opened.is_none_or(|path| path == history_path)
+            })
+    }
+
+    /// Same as [`recent_navigation_history`] but also exposes the per-path
+    /// navigation timestamp. See
+    /// [`recent_navigation_history_iter_with_timestamps`] for semantics.
+    pub fn recent_navigation_history_with_timestamps(
+        &self,
+        limit: Option<usize>,
+        cx: &App,
+    ) -> Vec<(ProjectPath, Option<PathBuf>, usize)> {
+        self.recent_navigation_history_iter_with_timestamps(cx)
+            .take(limit.unwrap_or(usize::MAX))
+            .collect()
+    }
+
     pub fn recent_navigation_history(
         &self,
         limit: Option<usize>,
