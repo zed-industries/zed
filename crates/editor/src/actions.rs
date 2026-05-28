@@ -460,6 +460,10 @@ actions!(
         ConvertToRot13,
         /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Base64-encodes the selected text or word under cursor.
+        ConvertToBase64,
+        /// Base64-decodes the selected text or word under cursor.
+        ConvertFromBase64,
         /// Copies selected text to the clipboard.
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.
@@ -497,6 +501,9 @@ actions!(
         ExpandAllDiffHunks,
         /// Collapses all diff hunks in the editor.
         CollapseAllDiffHunks,
+        /// Toggles all diff hunks in the editor. Collapses all hunks if any are
+        /// currently expanded, otherwise expands all hunks.
+        ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds the next match in the search.

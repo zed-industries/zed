@@ -13,7 +13,7 @@ use crate::{
     ActionLink, DynamicItem, PROJECT, SettingField, SettingItem, SettingsFieldMetadata,
     SettingsPage, SettingsPageItem, SubPageLink, USER, active_language, all_language_names,
     pages::{
-        open_audio_test_window, render_edit_prediction_setup_page,
+        open_audio_test_window, render_edit_prediction_setup_page, render_skills_setup_page,
         render_tool_permissions_setup_page,
     },
 };
@@ -62,7 +62,7 @@ macro_rules! concat_sections {
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
-    let mut pages = vec![
+    vec![
         general_page(cx),
         appearance_page(),
         keymap_page(),
@@ -77,56 +77,58 @@ pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
         collaboration_page(),
         ai_page(cx),
         network_page(),
-    ];
-
-    use feature_flags::FeatureFlagAppExt as _;
-    if cx.is_staff() || cfg!(debug_assertions) {
-        pages.push(developer_page());
-    }
-
-    pages
+        developer_page(cx),
+    ]
 }
 
-fn developer_page() -> SettingsPage {
+fn developer_page(cx: &App) -> SettingsPage {
+    use feature_flags::FeatureFlagAppExt as _;
+
+    let mut items: Vec<SettingsPageItem> = Vec::new();
+
+    // Feature flag overrides are a staff-only affordance, so only surface the section when the overrides are enabled.
+    if cx.feature_flag_overrides_enabled() {
+        items.push(SettingsPageItem::SectionHeader("Feature Flags"));
+        items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            title: "Feature Flags".into(),
+            r#type: Default::default(),
+            description: None,
+            json_path: Some("feature_flags"),
+            in_json: true,
+            files: USER,
+            render: crate::pages::render_feature_flags_page,
+        }));
+    }
+
+    items.push(SettingsPageItem::SectionHeader("Instrumentation"));
+    items.push(SettingsPageItem::SettingItem(SettingItem {
+        title: "Performance Profiler",
+        description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
+        field: Box::new(SettingField {
+            json_path: Some("instrumentation.performance_profiler.enabled"),
+            pick: |settings_content| {
+                settings_content
+                    .instrumentation
+                    .as_ref()
+                    .and_then(|i| i.performance_profiler.as_ref())
+                    .and_then(|p| p.enabled.as_ref())
+            },
+            write: |settings_content, value, _| {
+                settings_content
+                    .instrumentation
+                    .get_or_insert_default()
+                    .performance_profiler
+                    .get_or_insert_default()
+                    .enabled = value;
+            },
+        }),
+        metadata: None,
+        files: USER,
+    }));
+
     SettingsPage {
         title: "Developer",
-        items: Box::new([
-            SettingsPageItem::SectionHeader("Feature Flags"),
-            SettingsPageItem::SubPageLink(SubPageLink {
-                title: "Feature Flags".into(),
-                r#type: Default::default(),
-                description: None,
-                json_path: Some("feature_flags"),
-                in_json: true,
-                files: USER,
-                render: crate::pages::render_feature_flags_page,
-            }),
-            SettingsPageItem::SectionHeader("Instrumentation"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Performance Profiler",
-                description: "Collect timing data for foreground and background executor tasks so they can be inspected via `zed: open performance profiler`. May lead to increased memory usage.",
-                field: Box::new(SettingField {
-                    json_path: Some("instrumentation.performance_profiler.enabled"),
-                    pick: |settings_content| {
-                        settings_content
-                            .instrumentation
-                            .as_ref()
-                            .and_then(|i| i.performance_profiler.as_ref())
-                            .and_then(|p| p.enabled.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .instrumentation
-                            .get_or_insert_default()
-                            .performance_profiler
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]),
+        items: items.into_boxed_slice(),
     }
 }
 
@@ -1145,9 +1147,9 @@ fn appearance_page() -> SettingsPage {
                 description: "When to hide the mouse cursor.",
                 field: Box::new(SettingField {
                     json_path: Some("hide_mouse"),
-                    pick: |settings_content| settings_content.editor.hide_mouse.as_ref(),
+                    pick: |settings_content| settings_content.hide_mouse.as_ref(),
                     write: |settings_content, value, _| {
-                        settings_content.editor.hide_mouse = value;
+                        settings_content.hide_mouse = value;
                     },
                 }),
                 metadata: None,
@@ -2573,7 +2575,7 @@ fn editor_page() -> SettingsPage {
         ]
     }
 
-    fn vim_settings_section() -> [SettingsPageItem; 13] {
+    fn vim_settings_section() -> [SettingsPageItem; 14] {
         [
             SettingsPageItem::SectionHeader("Vim"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -2695,6 +2697,28 @@ fn editor_page() -> SettingsPage {
                             .vim
                             .get_or_insert_default()
                             .use_regex_search = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Edit Predictions in Normal Mode",
+                description: "Whether edit predictions are shown in normal mode. By default, edit predictions are only shown in insert and replace modes.",
+                field: Box::new(SettingField {
+                    json_path: Some("vim.show_edit_predictions_in_normal_mode"),
+                    pick: |settings_content| {
+                        settings_content
+                            .vim
+                            .as_ref()?
+                            .show_edit_predictions_in_normal_mode
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .vim
+                            .get_or_insert_default()
+                            .show_edit_predictions_in_normal_mode = value;
                     },
                 }),
                 metadata: None,
@@ -2924,7 +2948,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                             .go_to_diagnostic_searches_at_cursor
                             .as_ref()
                     },
-                    write: |settings_content, value| {
+                    write: |settings_content, value, _cx| {
                         settings_content
                             .diagnostics
                             .get_or_insert_default()
@@ -3509,7 +3533,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 10] {
+    fn status_bar_section() -> [SettingsPageItem; 11] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3591,6 +3615,28 @@ fn window_and_layout_page() -> SettingsPage {
                             .status_bar
                             .get_or_insert_default()
                             .cursor_position_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Endings Button",
+                description: "Show the active line endings button in the status bar.",
+                field: Box::new(SettingField {
+                    json_path: Some("status_bar.line_endings_button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .line_endings_button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .line_endings_button = value;
                     },
                 }),
                 metadata: None,
@@ -7258,7 +7304,7 @@ fn version_control_page() -> SettingsPage {
         ]
     }
 
-    fn git_hunks_section() -> [SettingsPageItem; 3] {
+    fn git_hunks_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Git Hunks"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7282,6 +7328,28 @@ fn version_control_page() -> SettingsPage {
                     pick: |settings_content| settings_content.git.as_ref()?.path_style.as_ref(),
                     write: |settings_content, value, _| {
                         settings_content.git.get_or_insert_default().path_style = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Show Stage/Restore Buttons",
+                description: "Whether to show the stage and restore buttons on diff hunks.",
+                field: Box::new(SettingField {
+                    json_path: Some("git.show_stage_restore_buttons"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git
+                            .as_ref()?
+                            .show_stage_restore_buttons
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git
+                            .get_or_insert_default()
+                            .show_stage_restore_buttons = value;
                     },
                 }),
                 metadata: None,
@@ -7441,6 +7509,15 @@ fn ai_page(cx: &App) -> SettingsPage {
         let mut items = vec![
             SettingsPageItem::SectionHeader("Agent Configuration"),
             SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Skills".into(),
+                r#type: Default::default(),
+                json_path: Some("agent.skills"),
+                description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                in_json: false,
+                files: USER | PROJECT,
+                render: render_skills_setup_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
                 title: "Tool Permissions".into(),
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
@@ -7450,29 +7527,6 @@ fn ai_page(cx: &App) -> SettingsPage {
                 render: render_tool_permissions_setup_page,
             }),
         ];
-
-        items.push(SettingsPageItem::SettingItem(SettingItem {
-            title: "New Thread Location",
-            description: "Whether to start a new thread in the current local project or in a new Git worktree.",
-            field: Box::new(SettingField {
-                json_path: Some("agent.new_thread_location"),
-                pick: |settings_content| {
-                    settings_content
-                        .agent
-                        .as_ref()?
-                        .new_thread_location
-                        .as_ref()
-                },
-                write: |settings_content, value, _| {
-                    settings_content
-                        .agent
-                        .get_or_insert_default()
-                        .new_thread_location = value;
-                },
-            }),
-            metadata: None,
-            files: USER,
-        }));
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
@@ -8501,7 +8555,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn completions_section() -> [SettingsPageItem; 7] {
+    fn completions_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Completions"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8608,6 +8662,21 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                     },
                     write: |settings_content, value, _| {
                         settings_content.editor.completion_detail_alignment = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Completion Menu Item Kind",
+                description: "How to display the LSP item kind (function, method, variable, etc.) of each entry in the completions menu.",
+                field: Box::new(SettingField {
+                    json_path: Some("editor.completion_menu_item_kind"),
+                    pick: |settings_content| {
+                        settings_content.editor.completion_menu_item_kind.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.editor.completion_menu_item_kind = value;
                     },
                 }),
                 metadata: None,

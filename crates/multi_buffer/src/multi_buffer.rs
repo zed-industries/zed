@@ -5258,6 +5258,16 @@ impl MultiBufferSnapshot {
         Some(Anchor::in_buffer(path_key_index, anchor))
     }
 
+    /// Lifts a buffer anchor range to a multibuffer anchor range without checking against excerpt boundaries. Returns `None` if there are no excerpts for the buffer.
+    pub fn anchor_range_in_buffer(&self, range: Range<text::Anchor>) -> Option<Range<Anchor>> {
+        if range.start.buffer_id != range.end.buffer_id {
+            return None;
+        }
+
+        let path_key_index = self.path_key_index_for_buffer(range.start.buffer_id)?;
+        Some(Anchor::range_in_buffer(path_key_index, range))
+    }
+
     /// Creates a multibuffer anchor for the given buffer anchor, if it is contained in any excerpt.
     pub fn anchor_in_excerpt(&self, text_anchor: text::Anchor) -> Option<Anchor> {
         let excerpts = {
@@ -5295,6 +5305,19 @@ impl MultiBufferSnapshot {
         &self,
         text_anchor: Range<text::Anchor>,
     ) -> Option<Range<Anchor>> {
+        if self.is_singleton() {
+            let excerpt = self.excerpts.first()?;
+            let buffer_snapshot = excerpt.buffer_snapshot(self);
+            if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
+                && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
+            {
+                return Some(Anchor::range_in_buffer(excerpt.path_key_index, text_anchor));
+            }
+        }
+
+        // for each search match
+
+        let mut buffer_snapshot = None;
         for excerpt in {
             let this = &self;
             let buffer_id = text_anchor.start.buffer_id;
@@ -5316,7 +5339,8 @@ impl MultiBufferSnapshot {
             .into_iter()
             .flatten()
         } {
-            let buffer_snapshot = excerpt.buffer_snapshot(self);
+            let buffer_snapshot =
+                buffer_snapshot.get_or_insert_with(|| excerpt.buffer_snapshot(self));
             if excerpt.range.contains(&text_anchor.start, &buffer_snapshot)
                 && excerpt.range.contains(&text_anchor.end, &buffer_snapshot)
             {
@@ -7910,7 +7934,11 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         if self.range.start >= self.range.end {
             return None;
         }
-        if self.range.start == self.diff_transforms.end().0 {
+        while self
+            .diff_transforms
+            .item()
+            .is_some_and(|_| self.range.start >= self.diff_transforms.end().0)
+        {
             self.diff_transforms.next();
         }
 
@@ -7937,10 +7965,17 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let chunk_end = self.range.start + chunk.text.len();
                 let diff_transform_end = diff_transform_end.min(self.range.end);
 
-                if diff_transform_end < chunk_end {
-                    let split_idx = diff_transform_end - self.range.start;
+                let split_idx = if diff_transform_end < chunk_end {
+                    chunk
+                        .text
+                        .ceil_char_boundary(diff_transform_end - self.range.start)
+                } else {
+                    chunk.text.len()
+                };
+
+                if split_idx < chunk.text.len() {
                     let (before, after) = chunk.text.split_at(split_idx);
-                    self.range.start = diff_transform_end;
+                    self.range.start += split_idx;
                     let mask = 1u128.unbounded_shl(split_idx as u32).wrapping_sub(1);
                     let chars = chunk.chars & mask;
                     let tabs = chunk.tabs & mask;

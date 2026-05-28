@@ -314,24 +314,32 @@ impl TeacherPrompt {
     }
 
     fn format_diagnostics(example: &Example) -> String {
-        example
-            .prompt_inputs
-            .as_ref()
-            .map(|prompt_inputs| {
-                prompt_inputs
-                    .active_buffer_diagnostics
-                    .iter()
-                    .map(|diagnostic| {
-                        format!(
-                            "*{}*:\n```\n{}\n```\n",
-                            &diagnostic.message, &diagnostic.snippet
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .filter(|m| !m.is_empty())
-            .unwrap_or("No Diagnostics".to_string())
+        let Some(prompt_inputs) = example.prompt_inputs.as_ref() else {
+            return "No Diagnostics".to_string();
+        };
+
+        let cursor_buffer_row = prompt_inputs.excerpt_start_row.map(|excerpt_start_row| {
+            excerpt_start_row
+                + prompt_inputs.cursor_excerpt[..prompt_inputs.cursor_offset_in_excerpt]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count() as u32
+        });
+        let diagnostics = zeta_prompt::format_active_buffer_diagnostics_with_budget(
+            &prompt_inputs.active_buffer_diagnostics,
+            cursor_buffer_row,
+            2_000,
+        );
+
+        let diagnostics = diagnostics
+            .strip_prefix("<filename>diagnostics\n")
+            .unwrap_or(&diagnostics);
+
+        if diagnostics.is_empty() {
+            "No Diagnostics".to_string()
+        } else {
+            diagnostics.to_string()
+        }
     }
 }
 
@@ -846,6 +854,9 @@ mod tests {
                     tags: Vec::new(),
                     reasoning: None,
                     uncommitted_diff: String::new(),
+                    recently_opened_files: Vec::new(),
+                    recently_viewed_files: Vec::new(),
+                    uncommitted_diff_contains_edit_history: false,
                     cursor_path: std::sync::Arc::from(std::path::Path::new("src/main.rs")),
                     cursor_position: "0:0".to_string(),
                     edit_history: String::new(),
@@ -925,6 +936,9 @@ mod tests {
                     tags: Vec::new(),
                     reasoning: None,
                     uncommitted_diff: String::new(),
+                    recently_opened_files: Vec::new(),
+                    recently_viewed_files: Vec::new(),
+                    uncommitted_diff_contains_edit_history: false,
                     cursor_path: std::sync::Arc::from(std::path::Path::new("src/main.rs")),
                     cursor_position: "0:0".to_string(),
                     edit_history: String::new(),

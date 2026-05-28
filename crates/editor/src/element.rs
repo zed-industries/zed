@@ -1,11 +1,11 @@
 use crate::{
-    ActiveDiagnostic, BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext,
-    ChunkReplacement, CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker,
-    ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
-    CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction,
-    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
-    FocusedBlock, GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
+    BUFFER_HEADER_PADDING, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
+    CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
+    ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
+    DisplayDiffHunk, DisplayPoint, DisplayRow, EditDisplayMode, EditPrediction, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock,
+    GutterDimensions, GutterHoverButton, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp, MAX_LINE_LEN,
     MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp,
     PhantomDiffReviewIndicator, Point, RowExt, RowRangeExt, SelectPhase, Selection,
     SelectionDragState, SelectionEffects, SizingBehavior, SoftWrap, StickyHeaderExcerpt, ToPoint,
@@ -46,9 +46,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
     MousePressureEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, PressureStage, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement, WeakEntity, Window,
-    anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, pattern_slash,
-    point, px, quad, relative, size, solid_background, transparent_black,
+    Style, Styled, StyledText, TaskExt, TextAlign, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline,
+    pattern_slash, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -468,6 +468,7 @@ impl EditorElement {
         register_action(editor, window, Editor::unstage_and_next);
         register_action(editor, window, Editor::expand_all_diff_hunks);
         register_action(editor, window, Editor::collapse_all_diff_hunks);
+        register_action(editor, window, Editor::toggle_all_diff_hunks);
         register_action(editor, window, Editor::toggle_review_comments_expanded);
         register_action(editor, window, Editor::submit_diff_review_comment_action);
         register_action(editor, window, Editor::edit_review_comment);
@@ -555,6 +556,8 @@ impl EditorElement {
             register_action(editor, window, Editor::toggle_case);
             register_action(editor, window, Editor::convert_to_rot13);
             register_action(editor, window, Editor::convert_to_rot47);
+            register_action(editor, window, Editor::convert_to_base64);
+            register_action(editor, window, Editor::convert_from_base64);
             register_action(editor, window, Editor::delete_to_previous_word_start);
             register_action(editor, window, Editor::delete_to_previous_subword_start);
             register_action(editor, window, Editor::delete_to_next_word_end);
@@ -568,7 +571,9 @@ impl EditorElement {
             register_action(editor, window, Editor::move_line_up);
             register_action(editor, window, Editor::move_line_down);
             register_action(editor, window, Editor::transpose);
-            register_action(editor, window, Editor::rewrap);
+            register_action(editor, window, |editor, _: &crate::Rewrap, _, cx| {
+                editor.rewrap(crate::RewrapOptions::default(), cx);
+            });
             register_action(editor, window, Editor::cut);
             register_action(editor, window, Editor::kill_ring_cut);
             register_action(editor, window, Editor::kill_ring_yank);
@@ -1262,7 +1267,6 @@ impl EditorElement {
         let text_hovered = text_hitbox.is_hovered(window);
         let gutter_hovered = gutter_hitbox.is_hovered(window);
         editor.set_gutter_hovered(gutter_hovered, cx);
-        editor.show_mouse_cursor(cx);
 
         let point_for_position = position_map.point_for_position(event.position);
         let valid_point = point_for_position.nearest_valid;
@@ -2497,12 +2501,7 @@ impl EditorElement {
             None => return HashMap::default(),
         };
 
-        let active_diagnostics_group =
-            if let ActiveDiagnostic::Group(group) = &self.editor.read(cx).active_diagnostics {
-                Some(group.group_id)
-            } else {
-                None
-            };
+        let active_diagnostics_group = self.editor.read(cx).active_diagnostic_group_id();
 
         let diagnostics_by_rows = self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(window, cx);
@@ -3684,7 +3683,7 @@ impl EditorElement {
     fn bg_segments_per_row(
         rows: Range<DisplayRow>,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
-        highlight_ranges: &[(Range<DisplayPoint>, Hsla)],
+        highlight_ranges: impl IntoIterator<Item = (Range<DisplayPoint>, Hsla)>,
         base_background: Hsla,
     ) -> Vec<Vec<(Range<DisplayPoint>, Hsla)>> {
         if rows.start >= rows.end {
@@ -3694,7 +3693,7 @@ impl EditorElement {
             // We don't actually know what color is behind this editor.
             return Vec::new();
         }
-        let highlight_iter = highlight_ranges.iter().cloned();
+        let highlight_iter = highlight_ranges.into_iter();
         let selection_iter = selections.iter().flat_map(|(player_color, layouts)| {
             let color = player_color.selection;
             layouts.iter().filter_map(move |selection_layout| {
@@ -6607,9 +6606,7 @@ impl EditorElement {
             }),
             |window| {
                 let editor = self.editor.read(cx);
-                if editor.mouse_cursor_hidden {
-                    window.set_window_cursor_style(CursorStyle::None);
-                } else if let SelectionDragState::ReadyToDrag {
+                if let SelectionDragState::ReadyToDrag {
                     mouse_down_time, ..
                 } = &editor.selection_drag_state
                 {
@@ -9004,6 +9001,15 @@ impl LineWithInvisibles {
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
+                if line_exceeded_max_len {
+                    continue;
+                }
+
+                if len + line.len() + highlighted_chunk.text.len() > max_line_len {
+                    line_exceeded_max_len = true;
+                    continue;
+                }
+
                 if !line.is_empty() {
                     let segments = bg_segments_per_row.get(row).map(|v| &v[..]).unwrap_or(&[]);
                     let text_runs: &[TextRun] = if segments.is_empty() {
@@ -9135,13 +9141,18 @@ impl LineWithInvisibles {
                             Cow::Borrowed(text_style)
                         };
 
-                        if line.len() + line_chunk.len() > max_line_len {
-                            let mut chunk_len = max_line_len - line.len();
+                        let current_line_len = len + line.len();
+                        if current_line_len + line_chunk.len() > max_line_len {
+                            let mut chunk_len = max_line_len - current_line_len;
                             while !line_chunk.is_char_boundary(chunk_len) {
                                 chunk_len -= 1;
                             }
                             line_chunk = &line_chunk[..chunk_len];
                             line_exceeded_max_len = true;
+                        }
+
+                        if line_chunk.is_empty() {
+                            continue;
                         }
 
                         styles.push(TextRun {
@@ -10087,8 +10098,6 @@ impl Element for EditorElement {
                         .editor
                         .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
 
-                    let is_light = cx.theme().appearance().is_light();
-
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
                         .map(|editor| {
@@ -10128,42 +10137,49 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
+                    struct DiffHunkHighlightColors {
+                        filled_background: Hsla,
+                        hollow_background: Hsla,
+                        hollow_border: Hsla,
+                    }
+
+                    let colors = cx.theme().colors();
+                    let added_diff_hunk_colors = DiffHunkHighlightColors {
+                        filled_background: colors.editor_diff_hunk_added_background,
+                        hollow_background: colors.editor_diff_hunk_added_hollow_background,
+                        hollow_border: colors.editor_diff_hunk_added_hollow_border,
+                    };
+                    let deleted_diff_hunk_colors = DiffHunkHighlightColors {
+                        filled_background: colors.editor_diff_hunk_deleted_background,
+                        hollow_background: colors.editor_diff_hunk_deleted_hollow_background,
+                        hollow_border: colors.editor_diff_hunk_deleted_hollow_border,
+                    };
+                    let drag_highlight_color = colors.editor_active_line_background;
+                    let drag_border_color = colors.border_focused;
+
                     for (ix, row_info) in row_infos.iter().enumerate() {
                         let Some(diff_status) = row_info.diff_status else {
                             continue;
                         };
 
-                        let background_color = match diff_status.kind {
-                            DiffHunkStatusKind::Added => cx.theme().colors().version_control_added,
-                            DiffHunkStatusKind::Deleted => {
-                                cx.theme().colors().version_control_deleted
-                            }
+                        let diff_hunk_colors = match diff_status.kind {
+                            DiffHunkStatusKind::Added => &added_diff_hunk_colors,
+                            DiffHunkStatusKind::Deleted => &deleted_diff_hunk_colors,
                             DiffHunkStatusKind::Modified => {
                                 debug_panic!("modified diff status for row info");
                                 continue;
                             }
                         };
 
-                        let hunk_opacity = if is_light { 0.16 } else { 0.12 };
-
                         let hollow_highlight = LineHighlight {
-                            background: (background_color.opacity(if is_light {
-                                0.08
-                            } else {
-                                0.06
-                            }))
-                            .into(),
-                            border: Some(if is_light {
-                                background_color.opacity(0.48)
-                            } else {
-                                background_color.opacity(0.36)
-                            }),
+                            background: diff_hunk_colors.hollow_background.into(),
+                            border: Some(diff_hunk_colors.hollow_border),
                             include_gutter: true,
                             type_id: None,
                         };
 
                         let filled_highlight = LineHighlight {
-                            background: solid_background(background_color.opacity(hunk_opacity)),
+                            background: solid_background(diff_hunk_colors.filled_background),
                             border: None,
                             include_gutter: true,
                             type_id: None,
@@ -10188,11 +10204,9 @@ impl Element for EditorElement {
                         let range = drag_state.row_range(&snapshot.display_snapshot);
                         let start_row = range.start().0;
                         let end_row = range.end().0;
-                        let drag_highlight_color =
-                            cx.theme().colors().editor_active_line_background;
                         let drag_highlight = LineHighlight {
                             background: solid_background(drag_highlight_color),
-                            border: Some(cx.theme().colors().border_focused),
+                            border: Some(drag_border_color),
                             include_gutter: true,
                             type_id: None,
                         };
@@ -10411,20 +10425,14 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let merged_highlighted_ranges =
-                        if let Some((_, colors)) = document_colors.as_ref() {
-                            &highlighted_ranges
-                                .clone()
-                                .into_iter()
-                                .chain(colors.clone())
-                                .collect()
-                        } else {
-                            &highlighted_ranges
-                        };
                     let bg_segments_per_row = Self::bg_segments_per_row(
                         start_row..end_row,
                         &selections,
-                        &merged_highlighted_ranges,
+                        highlighted_ranges.iter().cloned().chain(
+                            document_colors
+                                .iter()
+                                .flat_map(|(_, colors)| colors.iter().cloned()),
+                        ),
                         self.style.background,
                     );
 
@@ -12194,9 +12202,9 @@ impl PositionMap {
         let x = position.x + (scroll_position.x as f32 * self.em_layout_width);
         let row = ((y / self.line_height) as f64 + scroll_position.y) as u32;
 
-        let (column, x_overshoot_after_line_end) = if let Some(line) = self
-            .line_layouts
-            .get(row as usize - scroll_position.y as usize)
+        let (column, x_overshoot_after_line_end) = if let Some(line_index) =
+            row.checked_sub(self.visible_row_range.start.0)
+            && let Some(line) = self.line_layouts.get(line_index as usize)
         {
             let alignment_offset = line.alignment_offset(self.text_align, self.content_width);
             let x_relative_to_text = x - alignment_offset;
@@ -12929,6 +12937,47 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_point_for_position_clipped_rows(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let text = "aaa\nbbb";
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(text, cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = editor.update(cx, |editor, cx| editor.style(cx).clone());
+        let line_height = window
+            .update(cx, |_, window, _| {
+                style.text.line_height_in_pixels(window.rem_size())
+            })
+            .unwrap();
+
+        // the first line is clipped
+        let (_, state) = cx.draw(
+            point(Pixels::ZERO, Pixels::ZERO - line_height * 1.5),
+            size(px(500.), px(500.)),
+            |_, _| EditorElement::new(&editor, style),
+        );
+
+        // click at the end of the second line
+        let target_point = DisplayPoint::new(DisplayRow(1), 3);
+        let click_x = state.content_origin.x
+            + editor.update_in(cx, |editor, window, cx| {
+                editor
+                    .snapshot(window, cx)
+                    .x_for_display_point(target_point, &editor.text_layout_details(window, cx))
+            });
+
+        let point = state
+            .position_map
+            .point_for_position(point(click_x, px(0.)));
+        assert_eq!(point.nearest_valid, target_point);
+    }
+
+    #[gpui::test]
     fn test_navigation_overlay_covered_text_highlights_are_replaced(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let window = cx.add_window(|window, cx| {
@@ -13539,6 +13588,67 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_replacement_chunks_are_clipped_to_max_line_len(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let editor_mode = EditorMode::full();
+        let max_line_len = "\u{00a0}abcdef".len();
+
+        window
+            .update(cx, |_, window, cx| {
+                let chunks = std::iter::once(HighlightedChunk {
+                    text: "\u{00a0}",
+                    style: None,
+                    is_tab: false,
+                    is_inlay: false,
+                    replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
+                })
+                .chain(std::iter::once(HighlightedChunk {
+                    text: "abcdefghi",
+                    style: None,
+                    is_tab: false,
+                    is_inlay: false,
+                    replacement: None,
+                }))
+                .chain(
+                    std::iter::repeat_with(|| HighlightedChunk {
+                        text: "\u{00a0}",
+                        style: None,
+                        is_tab: false,
+                        is_inlay: false,
+                        replacement: Some(ChunkReplacement::Str("\u{2007}".into())),
+                    })
+                    .take(8),
+                );
+
+                let layouts = LineWithInvisibles::from_chunks(
+                    chunks,
+                    &style,
+                    max_line_len,
+                    1,
+                    &editor_mode,
+                    px(500.),
+                    |_| false,
+                    &[],
+                    window,
+                    cx,
+                );
+
+                assert_eq!(layouts.len(), 1);
+                assert_eq!(layouts[0].len, max_line_len);
+                assert!(layouts[0].fragments.len() <= max_line_len);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn test_invisibles_dont_appear_in_certain_editors(cx: &mut TestAppContext) {
         init_test(cx, |s| {
             s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
@@ -13809,7 +13919,7 @@ mod tests {
             let result = EditorElement::bg_segments_per_row(
                 DisplayRow(0)..DisplayRow(5),
                 &selections,
-                &[],
+                [].into_iter(),
                 base_bg,
             );
 
@@ -13858,7 +13968,7 @@ mod tests {
             let result = EditorElement::bg_segments_per_row(
                 DisplayRow(0)..DisplayRow(4),
                 &selections,
-                &[],
+                [].into_iter(),
                 base_bg,
             );
 

@@ -174,6 +174,12 @@ On Linux:
 ls ~/.local/share/zed/extensions/installed
 ```
 
+On Windows:
+
+```pwsh
+Get-ChildItem "$env:LOCALAPPDATA\Zed\extensions\installed" -Name
+```
+
 Define extensions which should be installed (`true`) or never installed (`false`).
 
 ```json [settings]
@@ -801,9 +807,8 @@ List of `string` values
 
 ## Hide Mouse
 
-- Description: Determines when the mouse cursor should be hidden in an editor or input box.
-- Setting: `hide_mouse`
-- Default: `on_typing_and_movement`
+- Description: Determines when the mouse cursor should be hidden in response to keyboard input.
+- Default: `on_typing_and_action`
 
 **Options**
 
@@ -823,11 +828,11 @@ List of `string` values
 }
 ```
 
-3. Hide on both typing and cursor movement:
+3. Hide on typing and on key bindings that resolve to an action:
 
 ```json [settings]
 {
-  "hide_mouse": "on_typing_and_movement"
+  "hide_mouse": "on_typing_and_action"
 }
 ```
 
@@ -3007,6 +3012,16 @@ Configuration for various AI model providers including API URLs and authenticati
 3. `border`: Draw a border around the color text.
 4. `none`: Do not query and render document colors.
 
+## LSP Document Links
+
+- Description: Whether to query and display LSP `textDocument/documentLink` links in the editor
+- Setting: `lsp_document_links`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Max Tabs
 
 - Description: Maximum number of tabs to show in the tab bar
@@ -3156,7 +3171,7 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 ### Performance Profiler
 
-- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the `zed: open performance profiler` action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
+- Description: Collects timing data for foreground and background executor tasks so they can be inspected via the {#action zed::OpenPerformanceProfiler} action. Enabling this may lead to increased memory usage, hence it's disabled by default for regular builds.
 - Setting: `instrumentation.performance_profiler.enabled`
 - Default: `false`
 
@@ -3940,8 +3955,7 @@ Positive integer values
 1. `none` to avoid wrapping generally, unless the line is too long
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
-4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
-5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
+4. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Show Wrap Guides
 
@@ -5569,7 +5583,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 ## Settings Profiles
 
-- Description: Configure any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.
+- Description: Configure any number of settings profiles that are temporarily applied when selected from {#action settings_profile_selector::Toggle}.
 - Setting: `profiles`
 - Default: `{}`
 
@@ -5611,7 +5625,7 @@ Example:
 }
 ```
 
-To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for `settings profile selector: toggle`.
+To preview and enable a settings profile, open the command palette via {#kb command_palette::Toggle} and search for {#action settings_profile_selector::Toggle}.
 
 ## An example configuration:
 

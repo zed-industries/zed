@@ -3,6 +3,8 @@ pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
+#[cfg(target_os = "macos")]
+pub(crate) mod move_to_applications;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
@@ -13,6 +15,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use agent_settings::{UserAgentsMdState, init_user_agents_md};
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -34,7 +37,7 @@ use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TitlebarOptions,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
     actions, image_cache, img, point, px, retain_all,
 };
@@ -46,7 +49,6 @@ use language_tools::lsp_log_view::LspLogToolbarItemView;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::migrate_keymap;
-use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -97,8 +99,15 @@ use workspace::{
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
-    OpenZedUrl, Quit,
+    OpenStatusPage, OpenZedUrl, Quit,
 };
+
+const DOCS_URL: &str = "https://zed.dev/docs/";
+const STATUS_URL: &str = "https://status.zed.dev";
+
+pub struct CrashHandler(pub Arc<crashes::Client>);
+
+impl gpui::Global for CrashHandler {}
 
 actions!(
     zed,
@@ -378,6 +387,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     })
     .detach();
 
+    init_cursor_hide_mode(cx);
+
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -515,7 +526,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            crashes::set_gpu_info(specs);
+            if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                crashes::set_gpu_info(&crash_client.0, specs);
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -849,6 +862,7 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,
@@ -1540,7 +1554,7 @@ fn open_about_window(cx: &mut App) {
             window_bounds: Some(WindowBounds::centered(window_size, cx)),
             is_resizable: false,
             is_minimizable: false,
-            kind: WindowKind::Normal,
+            kind: WindowKind::Floating,
             app_id: Some(ReleaseChannel::global(cx).app_id().to_owned()),
             ..Default::default()
         },
@@ -1844,6 +1858,51 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             }
         }
     };
+}
+
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct CursorHideModeSetting(gpui::CursorHideMode);
+
+impl Settings for CursorHideModeSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(match content.hide_mouse.unwrap_or_default() {
+            settings::HideMouseMode::Never => gpui::CursorHideMode::Never,
+            settings::HideMouseMode::OnTyping => gpui::CursorHideMode::OnTyping,
+            settings::HideMouseMode::OnTypingAndAction => gpui::CursorHideMode::OnTypingAndAction,
+        })
+    }
+}
+
+fn init_cursor_hide_mode(cx: &mut App) {
+    let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
+/// Starts watching `~/.config/zed/AGENTS.md` (or the platform equivalent) and
+/// surfaces any read errors using the same notification UI as settings errors.
+///
+/// The file itself is loaded into [`agent_settings::UserAgentsMd`] for inclusion
+/// in prompts.
+pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
+    struct UserAgentsMdParseError;
+    let notification_id = NotificationId::unique::<UserAgentsMdParseError>();
+
+    init_user_agents_md(fs, cx, move |state, cx| match state {
+        UserAgentsMdState::Loaded(_) | UserAgentsMdState::Empty => {
+            dismiss_app_notification(&notification_id, cx);
+        }
+        UserAgentsMdState::Error(message) => {
+            let path = paths::agents_file().display().to_string();
+            log::error!("Failed to load user AGENTS.md from {path}: {message}");
+            let body = format!("Failed to load {path}\n{message}");
+            let notification_id = notification_id.clone();
+            show_app_notification(notification_id, cx, move |cx| {
+                let body = body.clone();
+                cx.new(|cx| MessageNotification::new(body, cx))
+            });
+        }
+    });
 }
 
 pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
@@ -2327,12 +2386,12 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let (worktree_creation_task, settings_open_task) = workspace
+        workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
                     let project = workspace.project().clone();
 
-                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
                         let config_dir = project
                             .update(cx, |project, cx| {
                                 project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
@@ -2347,20 +2406,23 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        project
+                        let (_worktree, _) = project
                             .update(cx, |project, cx| {
                                 project.find_or_create_worktree(&config_dir, false, cx)
                             })
-                            .await
-                    });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
-                    (worktree_creation_task, settings_open_task)
+                            .await?;
+
+                        workspace
+                            .update_in(cx, |_, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, default_content)
+                            })?
+                            .await?;
+                        anyhow::Ok(())
+                    })
                 })
             })?
+            .await?
             .await?;
-        let _ = worktree_creation_task.await?;
-        let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
@@ -4116,7 +4178,7 @@ mod tests {
         let (editor_1, buffer) = workspace.update_in(cx, |_, window, cx| {
             pane_1.update(cx, |pane_1, cx| {
                 let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-                assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                assert_eq!(editor.read(cx).active_project_path(cx), Some(file1.clone()));
                 let buffer = editor.update(cx, |editor, cx| {
                     editor.insert("dirt", window, cx);
                     editor.buffer().downgrade()
@@ -4672,7 +4734,7 @@ mod tests {
                     let scroll_position = editor_ref.scroll_position(cx);
 
                     (
-                        editor_ref.project_path(cx).unwrap(),
+                        editor_ref.active_project_path(cx).unwrap(),
                         selections[0].start,
                         scroll_position.y,
                     )
@@ -5194,6 +5256,7 @@ mod tests {
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
+                "skill_creator",
                 "snippets",
                 "stash_picker",
                 "svg",

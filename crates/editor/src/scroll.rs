@@ -623,6 +623,14 @@ impl Editor {
         self.scroll_manager.has_autoscroll_request()
     }
 
+    pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
+        self.scroll_manager.set_forbid_vertical_scroll(forbid);
+    }
+
+    pub fn scroll_top_display_point(&self, snapshot: &DisplaySnapshot, cx: &App) -> DisplayPoint {
+        self.scroll_manager.scroll_top_display_point(snapshot, cx)
+    }
+
     pub fn vertical_scroll_margin(&self) -> usize {
         self.scroll_manager.vertical_scroll_margin as usize
     }
