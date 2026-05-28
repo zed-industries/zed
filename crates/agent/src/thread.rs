@@ -14,6 +14,7 @@ use feature_flags::{
     UpdateTitleToolFeatureFlag,
 };
 
+use crate::sandboxing::{ConversationSandboxGrants, SandboxRequest};
 use agent_client_protocol::schema as acp;
 use agent_settings::{
     AgentProfileId, AgentSettings, SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
@@ -51,6 +52,7 @@ use serde::{Deserialize, Serialize};
 use settings::{
     LanguageModelSelection, Settings, SettingsStore, ToolPermissionMode, update_settings_file,
 };
+use std::cell::RefCell;
 use std::fmt::Write;
 use std::{
     collections::BTreeMap,
@@ -1008,6 +1010,11 @@ pub struct Thread {
     running_subagents: Vec<WeakEntity<Thread>>,
     inherits_parent_model_settings: bool,
     sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Sandbox permissions the user approved "for the rest of the
+    /// conversation". Shared with each tool call's event stream so repeated
+    /// requests for already-granted permissions skip the approval prompt.
+    /// Never persisted — lives and dies with this thread.
+    sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
 }
 
 impl Thread {
@@ -1135,6 +1142,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: Rc::new(RefCell::new(ConversationSandboxGrants::default())),
         }
     }
 
@@ -1328,6 +1336,7 @@ impl Thread {
                 stream.clone(),
                 Some(self.project.read(cx).fs().clone()),
                 cancellation_rx,
+                self.sandbox_grants.clone(),
             );
             tool.replay(tool_use.input.clone(), output, tool_event_stream, cx)
                 .log_err();
@@ -1478,6 +1487,7 @@ impl Thread {
             running_subagents: Vec::new(),
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: db_thread.sandboxed_terminal_temp_dir,
+            sandbox_grants: Rc::new(RefCell::new(ConversationSandboxGrants::default())),
         }
     }
 
@@ -2581,6 +2591,7 @@ impl Thread {
             event_stream.clone(),
             Some(fs),
             cancellation_rx,
+            self.sandbox_grants.clone(),
         );
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
@@ -3833,6 +3844,8 @@ pub struct ToolCallEventStream {
     stream: ThreadEventStream,
     fs: Option<Arc<dyn Fs>>,
     cancellation_rx: watch::Receiver<bool>,
+    /// Shared, conversation-scoped sandbox grants (see [`Thread::sandbox_grants`]).
+    sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
 }
 
 impl ToolCallEventStream {
@@ -3852,6 +3865,7 @@ impl ToolCallEventStream {
             ThreadEventStream(events_tx),
             None,
             cancellation_rx,
+            Rc::new(RefCell::new(ConversationSandboxGrants::default())),
         );
 
         (
@@ -3872,12 +3886,14 @@ impl ToolCallEventStream {
         stream: ThreadEventStream,
         fs: Option<Arc<dyn Fs>>,
         cancellation_rx: watch::Receiver<bool>,
+        sandbox_grants: Rc<RefCell<ConversationSandboxGrants>>,
     ) -> Self {
         Self {
             tool_use_id,
             stream,
             fs,
             cancellation_rx,
+            sandbox_grants,
         }
     }
 
@@ -4058,6 +4074,88 @@ impl ToolCallEventStream {
         let title = title.into();
         let options = context.build_permission_options();
         self.run_authorization_loop(title, options, Some(context), None, cx)
+    }
+
+    /// Gate a sandbox *escalation* (network access, per-path writes, or full
+    /// filesystem write access) on user approval.
+    ///
+    /// Unlike [`Self::authorize`] / [`Self::authorize_always_prompt`], the
+    /// decision is never read from or written to settings. Instead it offers
+    /// the user two grant lifetimes — "once" and "for the rest of this
+    /// conversation" — and records conversation grants in the shared,
+    /// in-memory [`ConversationSandboxGrants`]. A request already covered by
+    /// a prior conversation grant resolves immediately without prompting.
+    pub(crate) fn authorize_sandbox(
+        &self,
+        title: impl Into<String>,
+        request: SandboxRequest,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        // Already approved for this conversation — run without prompting.
+        if self.sandbox_grants.borrow().covers(&request) {
+            return Task::ready(Ok(()));
+        }
+
+        let title = title.into();
+        let options = acp_thread::PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow"),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("allow_conversation"),
+                "Allow for this conversation",
+                acp::PermissionOptionKind::AllowAlways,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new("deny"),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ]);
+
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        let sandbox_grants = self.sandbox_grants.clone();
+        cx.spawn(async move |_cx| {
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new().title(title),
+                        ),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
+                    },
+                )))
+            {
+                log::error!("Failed to send sandbox authorization: {error}");
+                return Err(anyhow!("Failed to send sandbox authorization: {error}"));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+
+            match outcome.option_id.0.as_ref() {
+                "allow" => Ok(()),
+                "allow_conversation" => {
+                    sandbox_grants.borrow_mut().record(&request);
+                    Ok(())
+                }
+                "deny" => Err(anyhow!("Permission to run tool denied by user")),
+                other => {
+                    debug_assert!(false, "unexpected sandbox permission option_id: {other}");
+                    Err(anyhow!("Permission to run tool denied by user"))
+                }
+            }
+        })
     }
 
     /// Prompts the user to choose between an explicit set of actions and

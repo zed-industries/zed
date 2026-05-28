@@ -59,24 +59,37 @@ pub struct TerminalToolInput {
     /// to approve before the command runs.
     #[serde(default)]
     pub allow_network: Option<bool>,
-    /// Request unrestricted filesystem-write access for this command.
+    /// Request write access to specific paths for this command.
     ///
     /// Only meaningful when the system prompt's "Terminal sandbox" section
     /// is present — ignored otherwise. By default sandboxed commands can
     /// only write to the project worktree directories and a per-command
-    /// temporary directory; set this to `true` only when the command
-    /// needs to write elsewhere. The user will be prompted to approve
-    /// before the command runs.
+    /// temporary directory. List the absolute (or worktree-relative) paths
+    /// the command needs to write to here; each directory grants write
+    /// access to its whole subtree. Prefer this over `allow_fs_write_all`
+    /// whenever the set of paths is known. The user will be prompted to
+    /// approve before the command runs, and can grant access for just this
+    /// command or for the rest of the conversation.
     #[serde(default)]
-    pub allow_fs_write: Option<bool>,
+    pub fs_write_paths: Vec<String>,
+    /// Request unrestricted filesystem-write access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. This is the broad escape hatch: use
+    /// it only when the specific paths to write can't be enumerated up
+    /// front; otherwise prefer `fs_write_paths`. The user will be prompted
+    /// to approve before the command runs.
+    #[serde(default)]
+    pub allow_fs_write_all: Option<bool>,
     /// Request to run this command outside the sandbox entirely.
     ///
     /// Only meaningful when the system prompt's "Terminal sandbox" section
-    /// is present — ignored otherwise. Prefer `allow_network: true` or
-    /// `allow_fs_write: true` when one of those is enough. Set this to
-    /// `true` ONLY when the command needs behavior that the sandbox can't
-    /// grant on a per-permission basis. The user will be prompted to
-    /// approve before the command runs without sandbox restrictions.
+    /// is present — ignored otherwise. Prefer `allow_network: true`,
+    /// `fs_write_paths`, or `allow_fs_write_all: true` when one of those is
+    /// enough. Set this to `true` ONLY when the command needs behavior that
+    /// the sandbox can't grant on a per-permission basis. The user will be
+    /// prompted to approve before the command runs without sandbox
+    /// restrictions.
     #[serde(default)]
     pub unsandboxed: Option<bool>,
 }
@@ -144,37 +157,68 @@ impl AgentTool for TerminalTool {
             // change runtime behavior by setting flags described as a no-op
             // in the system prompt.
             let want_network = sandboxing && input.allow_network == Some(true);
-            let want_fs_write = sandboxing && input.allow_fs_write == Some(true);
+            let want_fs_write_all = sandboxing && input.allow_fs_write_all == Some(true);
             let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
 
-            // `unsandboxed: true` bypasses the wrap entirely; per-permission
-            // requests are only meaningful when the command is still being
-            // sandboxed.
-            let escalate = !want_unsandboxed && (want_network || want_fs_write);
+            // Resolve the requested write paths against the project up front:
+            // we need them both for the approval prompt and the sandbox
+            // policy. Skipped when running unsandboxed (no wrap is applied)
+            // or when sandboxing is off (the flags are a no-op). Resolution
+            // is done against the project worktrees / working directory, and
+            // the user approves the concrete resolved paths.
+            let write_paths: Vec<PathBuf> = if sandboxing && !want_unsandboxed {
+                cx.update(|cx| {
+                    resolve_write_paths(
+                        &input.fs_write_paths,
+                        working_dir.as_deref(),
+                        &self.project,
+                        cx,
+                    )
+                })
+            } else {
+                Vec::new()
+            };
 
-            if want_unsandboxed || escalate {
-                let title = sandbox_approval_title(want_network, want_fs_write, want_unsandboxed);
+            // `unsandboxed: true` bypasses the wrap entirely, so the
+            // per-permission requests below are moot — it gets its own,
+            // always-prompt confirmation as the strongest trust boundary.
+            if want_unsandboxed {
                 let approve = cx.update(|cx| {
                     let context = crate::ToolPermissionContext::new(
                         Self::NAME,
                         vec![input.command.clone()],
                     );
-                    // Sandbox escalations always prompt, even if the user
-                    // has `always_allow` rules for this command — the
-                    // escalation is a stronger trust boundary than the
-                    // baseline command approval.
-                    event_stream.authorize_always_prompt(title, context, cx)
+                    event_stream.authorize_always_prompt(
+                        "Allow this command to run outside the sandbox?",
+                        context,
+                        cx,
+                    )
                 });
                 if let Err(error) = approve.await {
-                    return Ok(if want_unsandboxed {
-                        format!(
-                            "Command cancelled: user denied permission to run outside the sandbox ({error})."
-                        )
-                    } else {
-                        format!(
+                    return Ok(format!(
+                        "Command cancelled: user denied permission to run outside the sandbox ({error})."
+                    ));
+                }
+            } else {
+                let request = crate::sandboxing::SandboxRequest {
+                    network: want_network,
+                    allow_fs_write_all: want_fs_write_all,
+                    write_paths: write_paths.clone(),
+                };
+                if request.needs_escalation() {
+                    let title = sandbox_approval_title(&request);
+                    // Sandbox escalations always prompt (unless already
+                    // granted for the conversation), independent of any
+                    // `always_allow` tool-permission rules — the escalation
+                    // is a stronger trust boundary than the baseline command
+                    // approval.
+                    let approve =
+                        cx.update(|cx| event_stream.authorize_sandbox(title, request, cx));
+                    if let Err(error) = approve.await {
+                        return Ok(format!(
                             "Command cancelled: user denied the requested sandbox permissions ({error})."
-                        )
-                    });
+                        ));
+                    }
                 }
             }
 
@@ -205,8 +249,9 @@ impl AgentTool for TerminalTool {
                 });
                 Some(acp_thread::SandboxWrap {
                     writable_paths,
+                    extra_write_paths: write_paths,
                     allow_network: want_network,
-                    allow_fs_write: want_fs_write,
+                    allow_fs_write: want_fs_write_all,
                 })
             } else {
                 None
@@ -288,26 +333,87 @@ impl AgentTool for TerminalTool {
     }
 }
 
-/// User-facing title for the sandbox-escalation approval prompt.
+/// Resolve model-requested write paths into absolute paths.
 ///
-/// `want_unsandboxed` wins over the per-permission flags because
-/// `unsandboxed: true` bypasses the per-permission machinery entirely.
-fn sandbox_approval_title(
-    want_network: bool,
-    want_fs_write: bool,
-    want_unsandboxed: bool,
-) -> &'static str {
-    if want_unsandboxed {
-        "Allow this command to run outside the sandbox?"
+/// Relative paths are resolved against the command's working directory when
+/// known, otherwise against the project's first worktree root. Paths that
+/// can't be made absolute (relative paths with no base) are dropped. The
+/// resulting paths are shown to the user for approval, so resolving against
+/// model-controlled inputs is safe — nothing is granted without that prompt.
+fn resolve_write_paths(
+    raw_paths: &[String],
+    working_dir: Option<&Path>,
+    project: &Entity<Project>,
+    cx: &App,
+) -> Vec<PathBuf> {
+    if raw_paths.is_empty() {
+        return Vec::new();
+    }
+    let base = working_dir.map(Path::to_path_buf).or_else(|| {
+        project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+    });
+    join_write_paths(raw_paths, base.as_deref())
+}
+
+/// Pure path-joining step of [`resolve_write_paths`], split out so it can be
+/// unit-tested without a `Project`/`App`.
+fn join_write_paths(raw_paths: &[String], base: Option<&Path>) -> Vec<PathBuf> {
+    raw_paths
+        .iter()
+        .filter_map(|raw| {
+            let path = Path::new(raw);
+            if path.is_absolute() {
+                Some(path.to_path_buf())
+            } else {
+                base.map(|base| base.join(path))
+            }
+        })
+        .collect()
+}
+
+/// User-facing title for the sandbox-escalation approval prompt. Only called
+/// when the request actually asks for something (see
+/// [`crate::sandboxing::SandboxRequest::needs_escalation`]).
+fn sandbox_approval_title(request: &crate::sandboxing::SandboxRequest) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if request.network {
+        parts.push("network access".to_string());
+    }
+    if request.allow_fs_write_all {
+        parts.push("unrestricted filesystem writes".to_string());
+    } else if !request.write_paths.is_empty() {
+        parts.push(format!(
+            "write access to {}",
+            describe_paths(&request.write_paths)
+        ));
+    }
+    match parts.as_slice() {
+        // Unreachable in practice: the caller only prompts when at least one
+        // permission is requested.
+        [] => "Allow this command extra permissions?".to_string(),
+        [only] => format!("Allow {only}?"),
+        [first, second] => format!("Allow {first} and {second}?"),
+        _ => format!("Allow {}?", parts.join(", ")),
+    }
+}
+
+/// Render a short, human-readable summary of requested write paths for the
+/// approval prompt, capping the number listed so the title stays readable.
+fn describe_paths(paths: &[PathBuf]) -> String {
+    const MAX_SHOWN: usize = 3;
+    let shown: Vec<String> = paths
+        .iter()
+        .take(MAX_SHOWN)
+        .map(|path| path.display().to_string())
+        .collect();
+    if paths.len() > MAX_SHOWN {
+        format!("{} (+{} more)", shown.join(", "), paths.len() - MAX_SHOWN)
     } else {
-        match (want_network, want_fs_write) {
-            (true, true) => "Allow network access and arbitrary filesystem writes?",
-            (true, false) => "Allow network access?",
-            (false, true) => "Allow arbitrary filesystem writes?",
-            // Caller only invokes this when at least one flag is set, so
-            // this fallback is unreachable in practice.
-            (false, false) => "Allow this command to run?",
-        }
+        shown.join(", ")
     }
 }
 
@@ -1572,33 +1678,92 @@ mod tests {
         );
     }
 
+    fn sandbox_request(
+        network: bool,
+        all: bool,
+        paths: &[&str],
+    ) -> crate::sandboxing::SandboxRequest {
+        crate::sandboxing::SandboxRequest {
+            network,
+            allow_fs_write_all: all,
+            write_paths: paths.iter().map(PathBuf::from).collect(),
+        }
+    }
+
     #[test]
-    fn test_sandbox_approval_title_unsandboxed_wins() {
-        // `unsandboxed: true` skips the sandbox entirely, so the title should
-        // reflect that even when other flags are also set — they're moot.
-        assert_eq!(
-            sandbox_approval_title(true, true, true),
-            "Allow this command to run outside the sandbox?"
+    fn test_join_write_paths_resolves_relative_and_absolute() {
+        let base = PathBuf::from("/project");
+        let joined = join_write_paths(
+            &[
+                "/abs/path".to_string(),
+                "relative/dir".to_string(),
+                "file.txt".to_string(),
+            ],
+            Some(base.as_path()),
         );
         assert_eq!(
-            sandbox_approval_title(false, false, true),
-            "Allow this command to run outside the sandbox?"
+            joined,
+            vec![
+                PathBuf::from("/abs/path"),
+                PathBuf::from("/project/relative/dir"),
+                PathBuf::from("/project/file.txt"),
+            ]
         );
     }
 
     #[test]
-    fn test_sandbox_approval_title_per_permission_flags() {
+    fn test_join_write_paths_drops_relative_without_base() {
+        // Absolute paths still pass through; relative ones are dropped when
+        // there's no base to resolve them against.
+        let joined = join_write_paths(
+            &["/abs/keep".to_string(), "relative/drop".to_string()],
+            None,
+        );
+        assert_eq!(joined, vec![PathBuf::from("/abs/keep")]);
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_all_access_and_network() {
         assert_eq!(
-            sandbox_approval_title(true, true, false),
-            "Allow network access and arbitrary filesystem writes?"
+            sandbox_approval_title(&sandbox_request(true, true, &[])),
+            "Allow network access and unrestricted filesystem writes?"
         );
         assert_eq!(
-            sandbox_approval_title(true, false, false),
+            sandbox_approval_title(&sandbox_request(true, false, &[])),
             "Allow network access?"
         );
         assert_eq!(
-            sandbox_approval_title(false, true, false),
-            "Allow arbitrary filesystem writes?"
+            sandbox_approval_title(&sandbox_request(false, true, &[])),
+            "Allow unrestricted filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_per_path_writes() {
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(false, false, &["/tmp/build"])),
+            "Allow write access to /tmp/build?"
+        );
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(true, false, &["/tmp/build"])),
+            "Allow network access and write access to /tmp/build?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_caps_listed_paths() {
+        let title =
+            sandbox_approval_title(&sandbox_request(false, false, &["/a", "/b", "/c", "/d"]));
+        assert_eq!(title, "Allow write access to /a, /b, /c (+1 more)?");
+    }
+
+    #[test]
+    fn test_all_access_takes_precedence_over_paths_in_title() {
+        // When all-access is requested, the specific paths are redundant and
+        // should not be listed.
+        assert_eq!(
+            sandbox_approval_title(&sandbox_request(false, true, &["/tmp/build"])),
+            "Allow unrestricted filesystem writes?"
         );
     }
 
@@ -1615,8 +1780,12 @@ mod tests {
             "schema should advertise allow_network: {schema}"
         );
         assert!(
-            schema.contains("allow_fs_write"),
-            "schema should advertise allow_fs_write: {schema}"
+            schema.contains("fs_write_paths"),
+            "schema should advertise fs_write_paths: {schema}"
+        );
+        assert!(
+            schema.contains("allow_fs_write_all"),
+            "schema should advertise allow_fs_write_all: {schema}"
         );
         assert!(
             schema.contains("unsandboxed"),
@@ -1636,7 +1805,8 @@ mod tests {
         }))
         .expect("minimal input should deserialize");
         assert_eq!(input.allow_network, None);
-        assert_eq!(input.allow_fs_write, None);
+        assert!(input.fs_write_paths.is_empty());
+        assert_eq!(input.allow_fs_write_all, None);
         assert_eq!(input.unsandboxed, None);
     }
 }
