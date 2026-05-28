@@ -40,7 +40,8 @@ use gpui::{
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
-    MarkdownEvent, MarkdownTag, MarkdownTagEnd, parse_links_only, parse_markdown_with_options,
+    MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
+    parse_markdown_with_options,
 };
 use pulldown_cmark::{Alignment, BlockQuoteKind};
 use sum_tree::TreeMap;
@@ -350,6 +351,7 @@ pub struct MarkdownOptions {
     pub parse_html: bool,
     pub render_mermaid_diagrams: bool,
     pub parse_heading_slugs: bool,
+    pub render_metadata_blocks: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -847,6 +849,7 @@ impl Markdown {
         let should_parse_html = self.options.parse_html;
         let should_render_mermaid_diagrams = self.options.render_mermaid_diagrams;
         let should_parse_heading_slugs = self.options.parse_heading_slugs;
+        let should_parse_metadata_blocks = self.options.render_metadata_blocks;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
 
@@ -860,6 +863,7 @@ impl Markdown {
                         languages_by_path: TreeMap::default(),
                         root_block_starts: Arc::default(),
                         html_blocks: BTreeMap::default(),
+                        metadata_blocks: BTreeMap::default(),
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
@@ -868,13 +872,18 @@ impl Markdown {
                 );
             }
 
-            let parsed =
-                parse_markdown_with_options(&source, should_parse_html, should_parse_heading_slugs);
+            let parsed = parse_markdown_with_options(
+                &source,
+                should_parse_html,
+                should_parse_heading_slugs,
+                should_parse_metadata_blocks,
+            );
             let events = parsed.events;
             let language_names = parsed.language_names;
             let paths = parsed.language_paths;
             let root_block_starts = parsed.root_block_starts;
             let html_blocks = parsed.html_blocks;
+            let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
@@ -942,6 +951,7 @@ impl Markdown {
                     languages_by_path,
                     root_block_starts: Arc::from(root_block_starts),
                     html_blocks,
+                    metadata_blocks,
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
@@ -1070,6 +1080,7 @@ pub struct ParsedMarkdown {
     pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
     pub root_block_starts: Arc<[usize]>,
     pub(crate) html_blocks: BTreeMap<usize, html::html_parser::ParsedHtmlBlock>,
+    pub(crate) metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
@@ -1396,6 +1407,114 @@ impl MarkdownElement {
     fn pop_markdown_block_quote(&self, builder: &mut MarkdownElementBuilder) {
         builder.pop_div();
         builder.pop_text_style();
+    }
+
+    fn push_metadata_block(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        source: &str,
+        metadata_block: &ParsedMetadataBlock,
+        markdown_end: usize,
+        cx: &App,
+    ) {
+        let content_range = &metadata_block.content_range;
+        if let Some(rows) = metadata_block.rows.as_deref() {
+            builder.push_div(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .w_full()
+                    .mb_2()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded_sm()
+                    .overflow_hidden(),
+                content_range,
+                markdown_end,
+            );
+
+            for (row_index, row) in rows.iter().enumerate() {
+                self.push_metadata_cell(
+                    builder,
+                    source,
+                    row.key.clone(),
+                    content_range,
+                    markdown_end,
+                    MetadataCellStyle {
+                        row_index,
+                        is_key: true,
+                    },
+                    cx,
+                );
+                self.push_metadata_cell(
+                    builder,
+                    source,
+                    row.value.clone(),
+                    content_range,
+                    markdown_end,
+                    MetadataCellStyle {
+                        row_index,
+                        is_key: false,
+                    },
+                    cx,
+                );
+            }
+
+            builder.pop_div();
+        } else {
+            let mut metadata_block = div().w_full().rounded_md();
+            metadata_block.style().refine(&self.style.code_block);
+            builder.push_text_style(self.style.code_block.text.to_owned());
+            builder.push_code_block(None);
+            builder.push_div(metadata_block, content_range, markdown_end);
+            builder.push_text(&source[content_range.clone()], content_range.clone());
+            builder.trim_trailing_newline();
+            builder.pop_div();
+            builder.pop_code_block();
+            builder.pop_text_style();
+        }
+    }
+
+    fn push_metadata_cell(
+        &self,
+        builder: &mut MarkdownElementBuilder,
+        source: &str,
+        text_range: Range<usize>,
+        block_range: &Range<usize>,
+        markdown_end: usize,
+        cell_style: MetadataCellStyle,
+        cx: &App,
+    ) {
+        builder.push_div(
+            div()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .px_2()
+                .py_1()
+                .border_color(cx.theme().colors().border)
+                .when(cell_style.row_index > 0, |this| this.border_t_1())
+                .when(!cell_style.is_key, |this| this.border_l_1())
+                .when(cell_style.is_key, |this| {
+                    this.bg(cx.theme().colors().panel_background)
+                }),
+            block_range,
+            markdown_end,
+        );
+
+        let text_style = if cell_style.is_key {
+            TextStyleRefinement {
+                color: Some(cx.theme().colors().text_muted),
+                font_weight: Some(FontWeight::SEMIBOLD),
+                ..Default::default()
+            }
+        } else {
+            TextStyleRefinement::default()
+        };
+        builder.push_text_style(text_style);
+        builder.push_text(&source[text_range.clone()], text_range);
+        builder.pop_text_style();
+        builder.pop_div();
     }
 
     fn push_markdown_list_item(
@@ -1809,6 +1928,7 @@ impl Element for MarkdownElement {
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
+        let mut rendered_metadata_block = false;
         for (index, (range, event)) in parsed_markdown.events.iter().enumerate() {
             // Skip alt text for images that rendered
             if let Some(current_img_block_range) = &current_img_block_range
@@ -1828,6 +1948,13 @@ impl Element for MarkdownElement {
             if rendered_mermaid_block {
                 if matches!(event, MarkdownEvent::End(MarkdownTagEnd::CodeBlock)) {
                     rendered_mermaid_block = false;
+                }
+                continue;
+            }
+
+            if rendered_metadata_block {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::MetadataBlock(_))) {
+                    rendered_metadata_block = false;
                 }
                 continue;
             }
@@ -2147,7 +2274,20 @@ impl Element for MarkdownElement {
                             );
                             builder.push_div(div().flex_1().w_0(), range, markdown_end);
                         }
-                        MarkdownTag::MetadataBlock(_) => {}
+                        MarkdownTag::MetadataBlock(_) => {
+                            if let Some(metadata_block) =
+                                parsed_markdown.metadata_blocks.get(&range.start)
+                            {
+                                self.push_metadata_block(
+                                    &mut builder,
+                                    &parsed_markdown.source,
+                                    metadata_block,
+                                    markdown_end,
+                                    cx,
+                                );
+                                rendered_metadata_block = true;
+                            }
+                        }
                         MarkdownTag::Table(alignments) => {
                             builder.table.start(alignments.clone());
 
@@ -2359,6 +2499,7 @@ impl Element for MarkdownElement {
                         builder.pop_div();
                         builder.pop_div();
                     }
+                    MarkdownTagEnd::MetadataBlock(_) => {}
                     _ => log::debug!("unsupported markdown tag end: {:?}", tag),
                 },
                 MarkdownEvent::Text => {
@@ -2750,6 +2891,11 @@ fn alignment_to_text_align(alignment: Alignment) -> Option<TextAlign> {
         Alignment::Right => Some(TextAlign::Right),
         Alignment::None => None,
     }
+}
+
+struct MetadataCellStyle {
+    row_index: usize,
+    is_key: bool,
 }
 
 struct MarkdownElementBuilder {
@@ -3586,6 +3732,34 @@ mod tests {
         render_markdown_with_language_registry(markdown, None, cx)
     }
 
+    #[gpui::test]
+    fn test_frontmatter_renders_without_delimiters(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\ntitle: Post\n---\nBody",
+            None,
+            MarkdownOptions {
+                render_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(rendered.text_for_range(0..24), "title\nPost\nBody");
+    }
+
+    #[gpui::test]
+    fn test_frontmatter_falls_back_to_code_block_for_nested_yaml(cx: &mut TestAppContext) {
+        let rendered = render_markdown_with_options(
+            "---\ntags:\n  - zed\n---\nBody",
+            None,
+            MarkdownOptions {
+                render_metadata_blocks: true,
+                ..Default::default()
+            },
+            cx,
+        );
+        assert_eq!(rendered.text_for_range(0..26), "tags:\n  - zed\nBody");
+    }
+
     fn render_markdown_with_code_span_link(
         markdown: &str,
         callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
@@ -3873,7 +4047,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_detection() {
         let md = "| Done |\n|------|\n| [x] |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false).events;
+        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_table = false;
         let mut cell_texts: Vec<String> = Vec::new();
@@ -3915,7 +4089,7 @@ mod tests {
     #[test]
     fn test_table_checkbox_marker_source_range() {
         let md = "| Done |\n|------|\n|  [x]  |\n| [ ] |";
-        let events = crate::parser::parse_markdown_with_options(md, false, false).events;
+        let events = crate::parser::parse_markdown_with_options(md, false, false, false).events;
 
         let mut in_cell = false;
         let mut pending_text = String::new();
@@ -4192,7 +4366,7 @@ mod tests {
     }
 
     fn has_code_block(markdown: &str) -> bool {
-        let parsed_data = parse_markdown_with_options(markdown, false, false);
+        let parsed_data = parse_markdown_with_options(markdown, false, false, false);
         parsed_data
             .events
             .iter()
