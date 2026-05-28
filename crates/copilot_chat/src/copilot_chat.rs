@@ -569,7 +569,7 @@ impl CopilotChat {
                 let auth_db_path = copilot_chat_config_dir().join("auth.db");
 
                 let oauth_token =
-                    read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path).await;
+                    read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path, cx).await;
 
                 if oauth_token.is_some() {
                     this.update(cx, |this, cx| {
@@ -583,11 +583,10 @@ impl CopilotChat {
         })
         .detach_and_log_err(cx);
 
+        // Initial state uses env var because it's cheap. The others do IO, so
+        // are on the background.
         let this = Self {
-            oauth_token: oauth_token_from_env().or_else(|| {
-                let db_path = copilot_chat_config_dir().join("auth.db");
-                extract_oauth_token_from_db(&db_path, &configuration.oauth_domain())
-            }),
+            oauth_token: oauth_token_from_env(),
             api_endpoint: None,
             models: None,
             configuration,
@@ -786,7 +785,7 @@ impl CopilotChat {
             let auth_db_path = copilot_chat_config_dir().join("auth.db");
 
             let new_token =
-                read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path).await;
+                read_oauth_token(&fs, &config_paths, &oauth_domain, &auth_db_path, cx).await;
 
             let token_present = this.update(cx, |this, cx| {
                 let changed = this.oauth_token != new_token;
@@ -968,12 +967,21 @@ async fn read_oauth_token(
     config_paths: &HashSet<PathBuf>,
     oauth_domain: &str,
     auth_db_path: &std::path::Path,
+    cx: &AsyncApp,
 ) -> Option<String> {
     if let Some(token) = oauth_token_from_env() {
         return Some(token);
     }
 
-    if let Some(token) = extract_oauth_token_from_db(auth_db_path, oauth_domain) {
+    let token_from_db = cx
+        .background_spawn({
+            let auth_db_path = auth_db_path.to_path_buf();
+            let oauth_domain = oauth_domain.to_string();
+            async move { extract_oauth_token_from_db(&auth_db_path, &oauth_domain) }
+        })
+        .await;
+
+    if let Some(token) = token_from_db {
         return Some(token);
     }
 
