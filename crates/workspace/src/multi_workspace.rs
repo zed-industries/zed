@@ -852,6 +852,46 @@ impl MultiWorkspace {
         }
     }
 
+    pub fn move_project_group_up(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        self.project_groups.swap(index - 1, index);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
+    pub fn move_project_group_down(
+        &mut self,
+        key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index + 1 >= self.project_groups.len() {
+            return false;
+        }
+        self.project_groups.swap(index, index + 1);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
     pub fn workspaces_for_project_group(
         &self,
         key: &ProjectGroupKey,

@@ -112,6 +112,7 @@ impl WindowsWindowInner {
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
+            WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
         };
         if let Some(n) = handled {
@@ -728,6 +729,17 @@ impl WindowsWindowInner {
 
     fn handle_activate_msg(self: &Rc<Self>, wparam: WPARAM) -> Option<isize> {
         let activated = wparam.loword() > 0;
+
+        let events = self
+            .state
+            .a11y
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut a11y| a11y.as_mut()?.adapter.update_window_focus_state(activated));
+        if let Some(events) = events {
+            events.raise();
+        }
+
         let this = self.clone();
 
         if !activated {
@@ -762,6 +774,23 @@ impl WindowsWindowInner {
             .detach();
 
         None
+    }
+
+    fn handle_wm_getobject(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        let result = {
+            let mut a11y = self.state.a11y.borrow_mut();
+            let a11y = a11y.as_mut()?;
+            a11y.adapter.handle_wm_getobject(
+                accesskit_windows::WPARAM(wparam.0),
+                accesskit_windows::LPARAM(lparam.0),
+                &mut a11y.activation_handler,
+            )?
+        };
+        // The borrow above must be dropped before calling `.into()`, because
+        // it calls `UiaReturnRawElementProvider` which may send a nested
+        // `WM_GETOBJECT` back into this window procedure.
+        let lresult: accesskit_windows::LRESULT = result.into();
+        Some(lresult.0)
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {

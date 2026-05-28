@@ -23,6 +23,7 @@ async-channel.workspace = true
 agent-client-protocol.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -50,6 +51,7 @@ parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+quick-xml.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
@@ -63,6 +65,7 @@ streaming_diff.workspace = true
 strsim.workspace = true
 task.workspace = true
 telemetry.workspace = true
+tempfile.workspace = true
 text.workspace = true
 thiserror.workspace = true
 ui.workspace = true
@@ -80,6 +83,7 @@ agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
 context_server = { workspace = true, "features" = ["test-support"] }
+criterion.workspace = true
 ctor.workspace = true
 db = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
@@ -97,10 +101,14 @@ project = { workspace = true, "features" = ["test-support"] }
 rand.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
-tempfile.workspace = true
 
 theme = { workspace = true, "features" = ["test-support"] }
 
 unindent = { workspace = true }
 
 zlog.workspace = true
+
+[[bench]]
+name = "edit_file_tool"
+harness = false
+required-features = ["test-support"]

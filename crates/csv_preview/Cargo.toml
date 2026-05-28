@@ -17,5 +17,8 @@ workspace.workspace = true
 log.workspace = true
 text.workspace = true
 
+[features]
+dev-tools = []
+
 [lints]
 workspace = true

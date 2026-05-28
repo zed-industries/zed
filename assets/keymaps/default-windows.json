@@ -732,6 +732,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "menu::Confirm",
+      "shift-r": "agent::RenameSelectedThread",
     },
   },
   {
@@ -970,6 +971,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "project_panel::Open",
+    },
+  },
+  {
+    "context": "GitPanel",
+    "bindings": {
+      "ctrl-1": "git_panel::ActivateChangesTab",
+      "ctrl-2": "git_panel::ActivateHistoryTab",
     },
   },
   {
@@ -1515,6 +1523,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-shift-backspace": "worktree_picker::DeleteWorktree",
+      "ctrl-alt-shift-backspace": "worktree_picker::ForceDeleteWorktree",
     },
   },
   {
@@ -1567,6 +1576,26 @@
     "bindings": {
       "tab": "git_graph::FocusNextTabStop",
       "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
+      "ctrl-enter": "skill_creator::SaveSkill",
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-w": "workspace::CloseWindow",
+      "ctrl-enter": "skill_creator::SaveSkill",
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

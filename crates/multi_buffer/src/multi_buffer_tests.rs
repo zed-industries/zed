@@ -12,7 +12,7 @@ use util::RandomCharIter;
 use util::rel_path::rel_path;
 use util::test::sample_text;
 
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
 }
@@ -1525,6 +1525,42 @@ async fn test_basic_diff_hunks(cx: &mut TestAppContext) {
             .collect::<Vec<_>>(),
         &[0..4, 5..7]
     );
+}
+
+#[gpui::test]
+fn test_text_for_range_with_diff_transform_boundary_inside_multibyte_character(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local("タx", cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let mut snapshot = multibuffer.read(cx).snapshot(cx);
+
+    fn ascii_summary_with_byte_len(byte_len: usize) -> MBTextSummary {
+        let text = "x".repeat(byte_len);
+        MBTextSummary::from(TextSummary::from(text.as_str()))
+    }
+
+    // FR-16 shown a diff transform boundary two bytes into the leading 'タ'.
+    // Build that transform tree directly so this test stays focused on chunk iteration.
+    let mut diff_transforms = SumTree::default();
+    diff_transforms.push(
+        DiffTransform::BufferContent {
+            summary: ascii_summary_with_byte_len(2),
+            inserted_hunk_info: None,
+        },
+        (),
+    );
+    diff_transforms.push(
+        DiffTransform::BufferContent {
+            summary: ascii_summary_with_byte_len("タx".len() - 2),
+            inserted_hunk_info: None,
+        },
+        (),
+    );
+    snapshot.diff_transforms = diff_transforms;
+
+    let text = snapshot
+        .text_for_range(MultiBufferOffset(0)..snapshot.len())
+        .collect::<String>();
+    assert_eq!(text, "タx");
 }
 
 #[gpui::test]

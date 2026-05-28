@@ -1046,8 +1046,9 @@ impl Dock {
         dispatch_context
     }
 
-    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut App) {
+    pub fn clamp_panel_size(&mut self, max_size: Pixels, window: &Window, cx: &mut Context<Self>) {
         let max_size = (max_size - RESIZE_HANDLE_SIZE).abs();
+        let mut clamped = false;
         for entry in &mut self.panel_entries {
             let use_flexible = entry.panel.has_flexible_size(window, cx);
             if use_flexible {
@@ -1060,7 +1061,11 @@ impl Dock {
                 .unwrap_or_else(|| entry.panel.default_size(window, cx));
             if size > max_size {
                 entry.size_state.size = Some(max_size.max(RESIZE_HANDLE_SIZE));
+                clamped = true;
             }
+        }
+        if clamped {
+            cx.notify();
         }
     }
 

@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use crate::sandboxing::sandboxing_enabled;
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
@@ -39,7 +40,7 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
 /// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user.
     ///
@@ -49,6 +50,35 @@ pub struct TerminalToolInput {
     pub cd: String,
     /// Optional maximum runtime (in milliseconds). If exceeded, the running terminal task is killed.
     pub timeout_ms: Option<u64>,
+    /// Request network access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. By default sandboxed commands
+    /// cannot make outbound network connections; set this to `true` only
+    /// when the command needs network access. The user will be prompted
+    /// to approve before the command runs.
+    #[serde(default)]
+    pub allow_network: Option<bool>,
+    /// Request unrestricted filesystem-write access for this command.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. By default sandboxed commands can
+    /// only write to the project worktree directories and a per-command
+    /// temporary directory; set this to `true` only when the command
+    /// needs to write elsewhere. The user will be prompted to approve
+    /// before the command runs.
+    #[serde(default)]
+    pub allow_fs_write: Option<bool>,
+    /// Request to run this command outside the sandbox entirely.
+    ///
+    /// Only meaningful when the system prompt's "Terminal sandbox" section
+    /// is present — ignored otherwise. Prefer `allow_network: true` or
+    /// `allow_fs_write: true` when one of those is enough. Set this to
+    /// `true` ONLY when the command needs behavior that the sandbox can't
+    /// grant on a per-permission basis. The user will be prompted to
+    /// approve before the command runs without sandbox restrictions.
+    #[serde(default)]
+    pub unsandboxed: Option<bool>,
 }
 
 pub struct TerminalTool {
@@ -96,24 +126,100 @@ impl AgentTool for TerminalTool {
         cx.spawn(async move |cx| {
             let input = input.recv().await.map_err(|e| e.to_string())?;
 
-            let (working_dir, authorize) = cx.update(|cx| {
+            let (working_dir, authorize, sandboxing) = cx.update(|cx| {
                 let working_dir =
                     working_dir(&input, &self.project, cx).map_err(|err| err.to_string())?;
                 let context =
                     crate::ToolPermissionContext::new(Self::NAME, vec![input.command.clone()]);
                 let authorize =
                     event_stream.authorize(self.initial_title(Ok(input.clone()), cx), context, cx);
-                Result::<_, String>::Ok((working_dir, authorize))
+                let sandboxing = sandboxing_enabled(cx);
+                Result::<_, String>::Ok((working_dir, authorize, sandboxing))
             })?;
 
             authorize.await.map_err(|e| e.to_string())?;
+
+            // Sandbox flags only do anything when sandboxing is on. When
+            // off, we treat them as `None` so the model can't surreptitiously
+            // change runtime behavior by setting flags described as a no-op
+            // in the system prompt.
+            let want_network = sandboxing && input.allow_network == Some(true);
+            let want_fs_write = sandboxing && input.allow_fs_write == Some(true);
+            let want_unsandboxed = sandboxing && input.unsandboxed == Some(true);
+
+            // `unsandboxed: true` bypasses the wrap entirely; per-permission
+            // requests are only meaningful when the command is still being
+            // sandboxed.
+            let escalate = !want_unsandboxed && (want_network || want_fs_write);
+
+            if want_unsandboxed || escalate {
+                let title = sandbox_approval_title(want_network, want_fs_write, want_unsandboxed);
+                let approve = cx.update(|cx| {
+                    let context = crate::ToolPermissionContext::new(
+                        Self::NAME,
+                        vec![input.command.clone()],
+                    );
+                    // Sandbox escalations always prompt, even if the user
+                    // has `always_allow` rules for this command — the
+                    // escalation is a stronger trust boundary than the
+                    // baseline command approval.
+                    event_stream.authorize_always_prompt(title, context, cx)
+                });
+                if let Err(error) = approve.await {
+                    return Ok(if want_unsandboxed {
+                        format!(
+                            "Command cancelled: user denied permission to run outside the sandbox ({error})."
+                        )
+                    } else {
+                        format!(
+                            "Command cancelled: user denied the requested sandbox permissions ({error})."
+                        )
+                    });
+                }
+            }
+
+            // The per-thread scratch directory (and the `$TMPDIR`/`TMP`/
+            // `TEMP` environment variables pointing at it) is provisioned by
+            // the thread environment in `create_terminal`, which also adds it
+            // to the sandbox's writable scope. We must not set `$TMPDIR` here:
+            // the environment overrides it with the per-thread directory, so a
+            // per-command directory set here would never be the `$TMPDIR` the
+            // command actually sees and would be left out of the writable
+            // scope, breaking writes into `$TMPDIR`.
+            let extra_env = Vec::new();
+
+            // Build the writable scope from the project's worktrees. The
+            // per-thread temp directory is appended by the thread environment
+            // (which owns it and points `$TMPDIR` at it). Crucially we do
+            // *not* include the resolved `cd` working directory — that's
+            // model-controlled, and using it as the writable scope would
+            // let the model widen its own write permissions outside the
+            // project.
+            let sandbox_wrap = if sandboxing && !want_unsandboxed {
+                let writable_paths: Vec<PathBuf> = cx.update(|cx| {
+                    self.project
+                        .read(cx)
+                        .worktrees(cx)
+                        .map(|w| w.read(cx).abs_path().to_path_buf())
+                        .collect::<Vec<_>>()
+                });
+                Some(acp_thread::SandboxWrap {
+                    writable_paths,
+                    allow_network: want_network,
+                    allow_fs_write: want_fs_write,
+                })
+            } else {
+                None
+            };
 
             let terminal = self
                 .environment
                 .create_terminal(
                     input.command.clone(),
+                    extra_env,
                     working_dir,
                     Some(COMMAND_OUTPUT_LIMIT),
+                    sandbox_wrap,
                     cx,
                 )
                 .await
@@ -179,6 +285,29 @@ impl AgentTool for TerminalTool {
                 user_stopped,
             ))
         })
+    }
+}
+
+/// User-facing title for the sandbox-escalation approval prompt.
+///
+/// `want_unsandboxed` wins over the per-permission flags because
+/// `unsandboxed: true` bypasses the per-permission machinery entirely.
+fn sandbox_approval_title(
+    want_network: bool,
+    want_fs_write: bool,
+    want_unsandboxed: bool,
+) -> &'static str {
+    if want_unsandboxed {
+        "Allow this command to run outside the sandbox?"
+    } else {
+        match (want_network, want_fs_write) {
+            (true, true) => "Allow network access and arbitrary filesystem writes?",
+            (true, false) => "Allow network access?",
+            (false, true) => "Allow arbitrary filesystem writes?",
+            // Caller only invokes this when at least one flag is set, so
+            // this fallback is unreachable in practice.
+            (false, false) => "Allow this command to run?",
+        }
     }
 }
 
@@ -310,6 +439,7 @@ mod tests {
                 .to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+                    ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -369,6 +499,7 @@ mod tests {
                 command: cmd.to_string(),
                 cd: ".".to_string(),
                 timeout_ms: None,
+                ..Default::default()
             };
 
             let title = format_initial_title(Ok(input));
@@ -406,6 +537,7 @@ mod tests {
             command: "echo 'hello world'".to_string(),
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -435,6 +567,7 @@ mod tests {
             command: long_command,
             cd: ".".to_string(),
             timeout_ms: None,
+            ..Default::default()
         };
 
         let title = format_initial_title(Ok(input));
@@ -641,6 +774,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -708,6 +842,7 @@ mod tests {
                     command: "echo $HOME".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -769,6 +904,7 @@ mod tests {
                     command: "echo $(rm -rf /)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -838,6 +974,7 @@ mod tests {
                     command: "PAGER=blah git log --oneline".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -911,6 +1048,7 @@ mod tests {
                     command: "PAGER=blah git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1018,6 +1156,7 @@ mod tests {
                     command: command.to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1185,6 +1324,7 @@ mod tests {
                     command: "echo $(whoami)".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1257,6 +1397,7 @@ mod tests {
                     command: "PAGER=other git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1323,6 +1464,7 @@ mod tests {
                     command: "A=1 B=2 git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1400,6 +1542,7 @@ mod tests {
                     command: "PAGER=\"less -R\" git log".to_string(),
                     cd: "root".to_string(),
                     timeout_ms: None,
+                    ..Default::default()
                 }),
                 event_stream,
                 cx,
@@ -1427,5 +1570,73 @@ mod tests {
             result.contains("command output") || result.contains("Command executed successfully."),
             "unexpected terminal result: {result}"
         );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_unsandboxed_wins() {
+        // `unsandboxed: true` skips the sandbox entirely, so the title should
+        // reflect that even when other flags are also set — they're moot.
+        assert_eq!(
+            sandbox_approval_title(true, true, true),
+            "Allow this command to run outside the sandbox?"
+        );
+        assert_eq!(
+            sandbox_approval_title(false, false, true),
+            "Allow this command to run outside the sandbox?"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_approval_title_per_permission_flags() {
+        assert_eq!(
+            sandbox_approval_title(true, true, false),
+            "Allow network access and arbitrary filesystem writes?"
+        );
+        assert_eq!(
+            sandbox_approval_title(true, false, false),
+            "Allow network access?"
+        );
+        assert_eq!(
+            sandbox_approval_title(false, true, false),
+            "Allow arbitrary filesystem writes?"
+        );
+    }
+
+    #[test]
+    fn test_input_schema_includes_sandbox_flags() {
+        // The model only sees these fields when the sandboxing prompt
+        // section is rendered, but they're always present in the schema so
+        // input validation doesn't reject them when sent. Guard against
+        // accidentally renaming or removing them.
+        let schema = serde_json::to_string(&schemars::schema_for!(TerminalToolInput))
+            .expect("input schema should serialize");
+        assert!(
+            schema.contains("allow_network"),
+            "schema should advertise allow_network: {schema}"
+        );
+        assert!(
+            schema.contains("allow_fs_write"),
+            "schema should advertise allow_fs_write: {schema}"
+        );
+        assert!(
+            schema.contains("unsandboxed"),
+            "schema should advertise unsandboxed: {schema}"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_flags_default_to_none_when_absent() {
+        // The model is expected to omit the sandbox fields entirely on most
+        // calls. Make sure deserialization doesn't reject the minimal
+        // payload and that the fields default to `None` (which the tool
+        // interprets as "no escalation requested").
+        let input: TerminalToolInput = serde_json::from_value(serde_json::json!({
+            "command": "echo hi",
+            "cd": ".",
+        }))
+        .expect("minimal input should deserialize");
+        assert_eq!(input.allow_network, None);
+        assert_eq!(input.allow_fs_write, None);
+        assert_eq!(input.unsandboxed, None);
     }
 }

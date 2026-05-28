@@ -1,6 +1,9 @@
 use action_log::DiffStats;
-use agent_client_protocol::schema as acp;
-use agent_ui::{TerminalId, thread_metadata_store::ThreadMetadata};
+#[cfg(test)]
+use agent_ui::TerminalId;
+use agent_ui::{
+    terminal_thread_metadata_store::TerminalThreadMetadata, thread_metadata_store::ThreadMetadata,
+};
 use gpui::{
     Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
@@ -9,9 +12,10 @@ use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, p
 use workspace::{ModalView, Workspace};
 use zed_actions::agents_sidebar::ToggleThreadSwitcher;
 
+use super::ThreadEntryWorkspace;
+
 #[derive(Clone)]
 pub(crate) struct ThreadSwitcherThreadEntry {
-    pub session_id: acp::SessionId,
     pub title: SharedString,
     pub icon: IconName,
     pub icon_from_external_svg: Option<SharedString>,
@@ -21,6 +25,7 @@ pub(crate) struct ThreadSwitcherThreadEntry {
     pub project_name: Option<SharedString>,
     pub worktrees: Vec<ThreadItemWorktreeInfo>,
     pub diff_stats: DiffStats,
+    pub is_draft: bool,
     pub is_title_generating: bool,
     pub notified: bool,
     pub timestamp: SharedString,
@@ -28,12 +33,10 @@ pub(crate) struct ThreadSwitcherThreadEntry {
 
 #[derive(Clone)]
 pub(crate) struct ThreadSwitcherTerminalEntry {
-    pub terminal_id: TerminalId,
-    pub title: SharedString,
-    pub workspace: Entity<Workspace>,
+    pub metadata: TerminalThreadMetadata,
+    pub(super) workspace: ThreadEntryWorkspace,
     pub project_name: Option<SharedString>,
     pub worktrees: Vec<ThreadItemWorktreeInfo>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
     pub notified: bool,
     pub timestamp: SharedString,
 }
@@ -45,26 +48,26 @@ pub(crate) enum ThreadSwitcherEntry {
 }
 
 #[derive(Clone)]
-pub(crate) enum ThreadSwitcherSelection {
+pub(super) enum ThreadSwitcherSelection {
     Thread {
         metadata: ThreadMetadata,
         workspace: Entity<Workspace>,
     },
     Terminal {
-        terminal_id: TerminalId,
-        workspace: Entity<Workspace>,
+        metadata: TerminalThreadMetadata,
+        workspace: ThreadEntryWorkspace,
     },
 }
 
 impl ThreadSwitcherEntry {
-    pub(crate) fn selection(&self) -> ThreadSwitcherSelection {
+    pub(super) fn selection(&self) -> ThreadSwitcherSelection {
         match self {
             Self::Thread(entry) => ThreadSwitcherSelection::Thread {
                 metadata: entry.metadata.clone(),
                 workspace: entry.workspace.clone(),
             },
             Self::Terminal(entry) => ThreadSwitcherSelection::Terminal {
-                terminal_id: entry.terminal_id,
+                metadata: entry.metadata.clone(),
                 workspace: entry.workspace.clone(),
             },
         }
@@ -72,24 +75,27 @@ impl ThreadSwitcherEntry {
 
     fn element_id(&self) -> SharedString {
         match self {
-            Self::Thread(entry) => {
-                SharedString::from(format!("thread-switcher-thread-{}", entry.session_id))
-            }
-            Self::Terminal(entry) => {
-                SharedString::from(format!("thread-switcher-terminal-{}", entry.terminal_id))
-            }
+            Self::Thread(entry) => SharedString::from(format!(
+                "thread-switcher-thread-{:?}",
+                entry.metadata.thread_id
+            )),
+            Self::Terminal(entry) => SharedString::from(format!(
+                "thread-switcher-terminal-{}",
+                entry.metadata.terminal_id
+            )),
         }
     }
 
     fn title(&self) -> SharedString {
         match self {
             Self::Thread(entry) => entry.title.clone(),
-            Self::Terminal(entry) => entry.title.clone(),
+            Self::Terminal(entry) => entry.metadata.title.clone(),
         }
     }
 
     fn icon(&self) -> IconName {
         match self {
+            Self::Thread(entry) if entry.is_draft => IconName::Circle,
             Self::Thread(entry) => entry.icon,
             Self::Terminal(_) => IconName::Terminal,
         }
@@ -97,6 +103,7 @@ impl ThreadSwitcherEntry {
 
     fn icon_from_external_svg(&self) -> Option<SharedString> {
         match self {
+            Self::Thread(entry) if entry.is_draft => None,
             Self::Thread(entry) => entry.icon_from_external_svg.clone(),
             Self::Terminal(_) => None,
         }
@@ -127,6 +134,13 @@ impl ThreadSwitcherEntry {
         match self {
             Self::Thread(entry) => entry.timestamp.clone(),
             Self::Terminal(entry) => entry.timestamp.clone(),
+        }
+    }
+
+    fn is_draft(&self) -> bool {
+        match self {
+            Self::Thread(entry) => entry.is_draft,
+            Self::Terminal(_) => false,
         }
     }
 
@@ -163,12 +177,12 @@ impl ThreadSwitcherEntry {
     pub fn terminal_id(&self) -> Option<TerminalId> {
         match self {
             Self::Thread(_) => None,
-            Self::Terminal(entry) => Some(entry.terminal_id),
+            Self::Terminal(entry) => Some(entry.metadata.terminal_id),
         }
     }
 }
 
-pub(crate) enum ThreadSwitcherEvent {
+pub(super) enum ThreadSwitcherEvent {
     Preview(ThreadSwitcherSelection),
     Confirmed(ThreadSwitcherSelection),
     Dismissed,
@@ -366,6 +380,11 @@ impl Render for ThreadSwitcher {
                         ThreadItem::new(entry.element_id(), entry.title())
                             .rounded(true)
                             .icon(entry.icon())
+                            .when(entry.is_draft(), |this| {
+                                this.icon_color(Color::Custom(
+                                    cx.theme().colors().icon_muted.opacity(0.2),
+                                ))
+                            })
                             .status(entry.status())
                             .when_some(entry.icon_from_external_svg(), |this, svg| {
                                 this.custom_icon_from_external_svg(svg)

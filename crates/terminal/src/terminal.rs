@@ -60,7 +60,7 @@ use std::{
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, RangeInclusive},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::Arc,
     time::{Duration, Instant},
@@ -2244,6 +2244,18 @@ impl Terminal {
         }
     }
 
+    /// Normalizes the command name of the foreground process, if one is known.
+    pub fn foreground_process_command_name(&self) -> Option<String> {
+        match &self.terminal_type {
+            TerminalType::Pty { info, .. } => info
+                .current
+                .read()
+                .as_ref()
+                .and_then(|process| foreground_process_command_from_argv(&process.argv)),
+            TerminalType::DisplayOnly => None,
+        }
+    }
+
     /// Returns the working directory of the process that's connected to the PTY.
     /// That means it returns the working directory of the local shell or program
     /// that's running inside the terminal.
@@ -2568,6 +2580,77 @@ impl Drop for Terminal {
 
 impl EventEmitter<Event> for Terminal {}
 
+fn normalize_path_command_name(command: &str) -> Option<String> {
+    const MAX_COMMAND_NAME_LENGTH: usize = 64;
+
+    let command = command.trim();
+    if command.is_empty()
+        || command.len() > MAX_COMMAND_NAME_LENGTH
+        || command.starts_with('.')
+        || command.starts_with('-')
+        || command.contains('/')
+        || command.contains('\\')
+    {
+        return None;
+    }
+
+    let mut command = command.to_ascii_lowercase();
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if command.ends_with(suffix) {
+            command.truncate(command.len() - suffix.len());
+            break;
+        }
+    }
+
+    if command.is_empty()
+        || !command.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+    {
+        return None;
+    }
+
+    Some(command)
+}
+
+fn foreground_process_command_from_argv(argv: &[String]) -> Option<String> {
+    let command = argv
+        .first()
+        .and_then(|command| normalize_path_command_name(command));
+
+    if !matches!(
+        command.as_deref(),
+        Some("node" | "python" | "python3" | "bun" | "deno")
+    ) {
+        return command;
+    }
+
+    argv.iter()
+        .skip(1)
+        .filter_map(|argument| normalize_script_command_name(argument))
+        .next()
+        .or(command)
+}
+
+fn normalize_script_command_name(argument: &str) -> Option<String> {
+    let path = Path::new(argument);
+    let file_stem = path
+        .file_stem()
+        .and_then(|file_stem| file_stem.to_str())
+        .and_then(normalize_path_command_name)?;
+
+    if file_stem != "index" {
+        return Some(file_stem);
+    }
+
+    path.parent()
+        .and_then(|parent| parent.parent())
+        .and_then(|package_path| package_path.file_name())
+        .and_then(|package_name| package_name.to_str())
+        .and_then(|package_name| package_name.strip_suffix("-cli").or(Some(package_name)))
+        .and_then(normalize_path_command_name)
+}
+
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
     let mut selection = Selection::new(SelectionType::Simple, *range.start(), AlacDirection::Left);
     selection.update(*range.end(), AlacDirection::Right);
@@ -2701,6 +2784,54 @@ mod tests {
     use rand::{Rng, distr, rngs::StdRng};
     use task::{Shell, ShellBuilder};
 
+    #[test]
+    fn test_normalize_path_command_name() {
+        assert_eq!(normalize_path_command_name("claude"), Some("claude".into()));
+        assert_eq!(normalize_path_command_name("Cargo"), Some("cargo".into()));
+        assert_eq!(normalize_path_command_name("node.exe"), Some("node".into()));
+        assert_eq!(
+            normalize_path_command_name("my-agent_cli.1"),
+            Some("my-agent_cli.1".into())
+        );
+        assert_eq!(normalize_path_command_name("./local-agent"), None);
+        assert_eq!(normalize_path_command_name("../local-agent"), None);
+        assert_eq!(normalize_path_command_name("/usr/local/bin/cargo"), None);
+        assert_eq!(
+            normalize_path_command_name("target\\debug\\agent.exe"),
+            None
+        );
+        assert_eq!(normalize_path_command_name(".hidden-agent"), None);
+        assert_eq!(normalize_path_command_name("agent with spaces"), None);
+        assert_eq!(normalize_path_command_name("zsh"), Some("zsh".into()));
+        assert_eq!(normalize_path_command_name("-zsh"), None);
+        assert_eq!(normalize_path_command_name("pwsh.exe"), Some("pwsh".into()));
+    }
+
+    #[test]
+    fn test_foreground_process_command_from_interpreter_wrapper() {
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js".to_string(),
+            ]),
+            Some("gemini".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "python3".to_string(),
+                "/Users/me/.local/bin/codex.py".to_string(),
+            ]),
+            Some("codex".to_string())
+        );
+        assert_eq!(
+            foreground_process_command_from_argv(&[
+                "node".to_string(),
+                "/Users/me/private-project/scripts/customer-data-export.js".to_string(),
+            ]),
+            Some("customer-data-export".to_string())
+        );
+    }
+
     #[cfg(not(target_os = "windows"))]
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2717,10 +2848,18 @@ mod tests {
         command: &str,
         args: &[&str],
     ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = async_channel::unbounded();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
+        build_test_terminal_with_arguments(cx, program, args).await
+    }
+
+    async fn build_test_terminal_with_arguments(
+        cx: &mut TestAppContext,
+        program: String,
+        args: Vec<String>,
+    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+        let (completion_tx, completion_rx) = async_channel::unbounded();
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
@@ -2805,10 +2944,7 @@ mod tests {
             completion_rx.recv().await.unwrap(),
             Some(ExitStatus::default())
         );
-        assert_eq!(
-            terminal.update(cx, |term, _| term.get_content()).trim(),
-            "hello"
-        );
+        assert_content_eventually(&terminal, "hello", cx).await;
 
         // Inject additional output directly into the emulator (display-only path)
         terminal.update(cx, |term, cx| {
@@ -2819,6 +2955,23 @@ mod tests {
         assert!(
             content_after.contains("from_injection"),
             "expected injected output to appear, got: {content_after}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_foreground_process_command_tracks_path_command(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (terminal, completion_rx) =
+            build_test_terminal_with_arguments(cx, "sleep".to_string(), vec!["1".to_string()])
+                .await;
+
+        assert_foreground_process_command_eventually(&terminal, "sleep", cx).await;
+
+        assert!(
+            completion_rx.recv().await.is_ok(),
+            "expected terminal completion after sleep exits"
         );
     }
 
@@ -4004,6 +4157,42 @@ mod tests {
                 .await;
         }
         panic!("Expected terminal content to contain {expected:?}, got: {content}");
+    }
+
+    #[cfg(unix)]
+    async fn assert_foreground_process_command_eventually(
+        terminal: &Entity<Terminal>,
+        expected: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let mut command_name = None;
+        for _ in 0..100 {
+            terminal.update(cx, |terminal, _| {
+                if let TerminalType::Pty { info, .. } = &terminal.terminal_type {
+                    info.load_for_test();
+                }
+            });
+            command_name =
+                terminal.update(cx, |terminal, _| terminal.foreground_process_command_name());
+            if command_name.as_deref() == Some(expected) {
+                return;
+            }
+            cx.background_executor
+                .timer(Duration::from_millis(10))
+                .await;
+        }
+        let process_info = terminal.update(cx, |terminal, _| match &terminal.terminal_type {
+            TerminalType::Pty { info, .. } => format!(
+                "pid={:?}, fallback_pid={:?}, has_current_info={}",
+                info.pid(),
+                info.pid_getter().fallback_pid(),
+                info.current.read().is_some()
+            ),
+            TerminalType::DisplayOnly => "display-only".to_string(),
+        });
+        panic!(
+            "Expected foreground process command name to be {expected:?}, got {command_name:?}; process info: {process_info:?}"
+        );
     }
 
     /// Test that kill_active_task properly terminates both the foreground process

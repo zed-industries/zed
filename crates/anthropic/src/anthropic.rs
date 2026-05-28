@@ -15,6 +15,7 @@ pub mod batches;
 pub mod completion;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
+const FAST_MODE_BETA_HEADER: &str = "fast-mode-2026-02-01";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -147,7 +148,12 @@ impl Model {
             AnthropicModelMode::Default
         };
 
-        let supports_speed = entry.id == "claude-opus-4-6";
+        let supports_speed = matches!(entry.id.as_str(), "claude-opus-4-6" | "claude-opus-4-7");
+
+        let mut extra_beta_headers = Vec::new();
+        if supports_speed {
+            extra_beta_headers.push(FAST_MODE_BETA_HEADER.to_string());
+        }
 
         Self {
             display_name: entry.display_name,
@@ -162,7 +168,7 @@ impl Model {
             supports_speed,
             supported_effort_levels,
             tool_override: None,
-            extra_beta_headers: Vec::new(),
+            extra_beta_headers,
         }
     }
 
@@ -504,9 +510,26 @@ pub enum CacheControlType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+pub enum CacheTtl {
+    /// Anthropic's default ephemeral TTL (currently 5 minutes). Refreshes for
+    /// free on every cache hit.
+    #[serde(rename = "5m")]
+    FiveMinutes,
+    /// Anthropic's extended ephemeral TTL (currently 1 hour). Costs 2x base
+    /// input tokens to write, but persists across longer idle gaps.
+    #[serde(rename = "1h")]
+    OneHour,
+}
+
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub struct CacheControl {
     #[serde(rename = "type")]
     pub cache_type: CacheControlType,
+    /// Omitted (None) means the API's default 5-minute TTL. Anthropic requires
+    /// that cache entries with longer TTLs appear before shorter ones in the
+    /// prefix order (tools → system → messages).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl: Option<CacheTtl>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -614,6 +637,8 @@ pub struct Tool {
     pub input_schema: serde_json::Value,
     #[serde(default, skip_serializing_if = "is_false")]
     pub eager_input_streaming: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -680,6 +705,12 @@ pub struct Request {
     pub tool_choice: Option<ToolChoice>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub system: Option<StringOrContents>,
+    /// Top-level cache_control opts into Anthropic's automatic prompt caching.
+    /// When set, Anthropic places the cache breakpoint on the last cacheable block
+    /// in the request (covering tools + system + the full conversation prefix), so
+    /// we don't have to micromanage per-block breakpoints ourselves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
