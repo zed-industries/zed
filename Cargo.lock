@@ -11011,6 +11011,7 @@ dependencies = [
  "assets",
  "base64 0.22.1",
  "collections",
+ "criterion",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.32",
