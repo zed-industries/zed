@@ -1808,10 +1808,19 @@ mod tests {
 
     #[test]
     fn test_join_write_paths_resolves_relative_and_absolute() {
-        let base = PathBuf::from("/project");
+        let base = PathBuf::from(if cfg!(windows) {
+            "C:\\project"
+        } else {
+            "/project"
+        });
+        let abs = if cfg!(windows) {
+            "C:\\abs\\path"
+        } else {
+            "/abs/path"
+        };
         let joined = join_write_paths(
             &[
-                "/abs/path".to_string(),
+                abs.to_string(),
                 "relative/dir".to_string(),
                 "file.txt".to_string(),
             ],
@@ -1820,9 +1829,9 @@ mod tests {
         assert_eq!(
             joined,
             vec![
-                PathBuf::from("/abs/path"),
-                PathBuf::from("/project/relative/dir"),
-                PathBuf::from("/project/file.txt"),
+                PathBuf::from(abs),
+                base.join("relative/dir"),
+                base.join("file.txt"),
             ]
         );
     }
@@ -1831,11 +1840,13 @@ mod tests {
     fn test_join_write_paths_drops_relative_without_base() {
         // Absolute paths still pass through; relative ones are dropped when
         // there's no base to resolve them against.
-        let joined = join_write_paths(
-            &["/abs/keep".to_string(), "relative/drop".to_string()],
-            None,
-        );
-        assert_eq!(joined, vec![PathBuf::from("/abs/keep")]);
+        let abs = if cfg!(windows) {
+            "C:\\abs\\keep"
+        } else {
+            "/abs/keep"
+        };
+        let joined = join_write_paths(&[abs.to_string(), "relative/drop".to_string()], None);
+        assert_eq!(joined, vec![PathBuf::from(abs)]);
     }
 
     #[test]
